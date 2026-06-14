@@ -338,13 +338,16 @@ async fn handle_init(cli: Cli) -> anyhow::Result<()> {
         let default_config = easybot_core::config::generate_default_config();
         tokio::fs::write(&paths.config_file, &default_config).await?;
         tracing::info!("Created default configuration: {}", paths.config_file.display());
-    } else {
-        tracing::info!("Configuration file already exists: {}", paths.config_file.display());
-    }
 
-    println!("\nEasyBot initialized at:");
-    paths.print_tree();
-    println!("\nEdit {} to configure platforms, then run `easybot`.", paths.config_file.display());
+        println!("\nEasyBot initialized at:");
+        paths.print_tree();
+        println!("\nEdit {} to configure platforms, then run `easybot`.", paths.config_file.display());
+    } else {
+        tracing::info!("Configuration already exists: {}", paths.config_file.display());
+        println!("\nEasyBot is already initialized at:");
+        println!("  {}", home.display());
+        println!("\nEdit {} to update configuration.", paths.config_file.display());
+    }
 
     Ok(())
 }
