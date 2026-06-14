@@ -1,0 +1,15 @@
+# Slack Adapter Plugin Manifest
+#
+# Copy this directory (or its contents) to ~/.easybot/plugins/slack/
+# and enable in gateway.yaml:
+#   adapters:
+#     slack:
+#       enabled: true
+#       token: "${SLACK_BOT_TOKEN}"
+
+name: "slack"
+display_name: "Slack (Example Plugin)"
+description: "Example Slack adapter demonstrating EasyBot plugin system"
+version: "1.0.0"
+sdk_version: 1
+author: "EasyBot Contributors"

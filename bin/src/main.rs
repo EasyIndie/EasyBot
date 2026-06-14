@@ -155,6 +155,9 @@ async fn main() -> anyhow::Result<()> {
     // 注册内置适配器
     register_builtin_adapters(&adapter_manager, event_bus.clone()).await;
 
+    // 加载并注册插件适配器
+    load_plugin_adapters(&adapter_manager, &paths, event_bus.clone()).await;
+
     // 创建默认 API Key（仅开发环境）
     if cli.debug {
         match auth_manager.create_key("dev", vec!["*".to_string()], None).await {
@@ -318,6 +321,69 @@ async fn handle_init(cli: Cli) -> anyhow::Result<()> {
     println!("\nEdit {} to configure platforms, then run `easybot`.", paths.config_file.display());
 
     Ok(())
+}
+
+/// 加载并注册插件适配器
+#[cfg(feature = "plugin-system")]
+async fn load_plugin_adapters(
+    adapter_manager: &easybot_core::adapter::AdapterManager,
+    paths: &easybot_core::config::EasyBotPaths,
+    event_bus: std::sync::Arc<easybot_core::bus::EventBus>,
+) {
+    use easybot_core::plugin::PluginLoader;
+
+    if !paths.plugins_dir.exists() {
+        tracing::info!(
+            "No plugins directory at {}, skipping plugin loading",
+            paths.plugins_dir.display()
+        );
+        return;
+    }
+
+    tracing::info!("Loading plugins from {}", paths.plugins_dir.display());
+    let loader = PluginLoader::new(paths.plugins_dir.clone());
+    let (succeeded, failed) = loader.load_all().await;
+
+    for result in &succeeded {
+        if let Some(factory) = loader
+            .get_factory(&result.platform_name, event_bus.clone())
+            .await
+        {
+            adapter_manager
+                .registry()
+                .register(
+                    &result.platform_name,
+                    &result.display_name,
+                    factory,
+                )
+                .await;
+            tracing::info!(
+                "Registered plugin adapter: {} ({})",
+                result.platform_name,
+                result.display_name
+            );
+        }
+    }
+
+    for (path, error) in &failed {
+        tracing::warn!(
+            "Failed to load plugin from {}: {}",
+            path.display(),
+            error
+        );
+    }
+}
+
+/// 插件系统未启用时的空实现
+#[cfg(not(feature = "plugin-system"))]
+async fn load_plugin_adapters(
+    _adapter_manager: &easybot_core::adapter::AdapterManager,
+    _paths: &easybot_core::config::EasyBotPaths,
+    _event_bus: std::sync::Arc<easybot_core::bus::EventBus>,
+) {
+    tracing::info!(
+        "Plugin system not enabled (compile with --features plugin-system to enable)"
+    );
 }
 
 /// 注册内置适配器工厂

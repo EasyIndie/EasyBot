@@ -10,6 +10,8 @@ members = [
     "crates/easybot-adapter-qq",
     "crates/easybot-adapter-wechat",
     "crates/easybot-plugin-sdk",
+    "tests/plugins/mock-adapter",
+    "tests/integration",
 ]
 
 [workspace.package]
@@ -61,6 +63,9 @@ sha2 = "0.10"
 # 可观测性
 prometheus = { version = "0.13", features = ["process"] }
 
+# 动态库加载
+libloading = "0.8"
+
 # HTTP 客户端
 reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls"] }
 
@@ -77,7 +82,7 @@ utoipa = "5.1"
 utoipa-swagger-ui = "9"
 
 [workspace.lints.rust]
-unsafe_code = "forbid"
+unsafe_code = "deny"
 missing_docs = "warn"
 trivial_casts = "warn"
 trivial_numeric_casts = "warn"

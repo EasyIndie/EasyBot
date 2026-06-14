@@ -1,0 +1,401 @@
+//! 插件加载器
+//!
+//! 从 `plugins/` 目录发现并加载动态库插件。
+//! 所有 `unsafe` 代码隔离在此文件中。
+//!
+//! # 安全性
+//!
+//! - `PluginLibrary` 通过 `Arc<Library>` 管理动态库生命周期
+//! - 工厂闭包捕获 `Arc<Library>`，确保适配器存活期间库不被卸载
+//! - 所有裸指针操作限制在 `create_adapter()` 方法内
+//! - ABI 版本号在创建适配器前校验
+
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use tokio::sync::RwLock;
+use tracing::{info, warn};
+use libloading::{Library, Symbol};
+
+use super::manifest::PluginManifest;
+use crate::adapter::{AdapterFactory, AdapterRegistry};
+use crate::bus::EventBus;
+use crate::types::adapter::PlatformAdapter;
+
+/// 插件加载错误
+#[derive(Debug, thiserror::Error)]
+pub enum PluginError {
+    #[error("Plugin directory not found: {0}")]
+    DirectoryNotFound(PathBuf),
+
+    #[error("Plugin manifest not found: {0}")]
+    ManifestNotFound(PathBuf),
+
+    #[error("Failed to parse manifest {path}: {detail}")]
+    ManifestParseError { path: PathBuf, detail: String },
+
+    #[error("Library not found: {0}")]
+    LibraryNotFound(PathBuf),
+
+    #[error("Failed to load library {path}: {detail}")]
+    LibraryLoadError { path: PathBuf, detail: String },
+
+    #[error("Required symbol '{symbol}' not found in {path}: {detail}")]
+    SymbolNotFound {
+        path: PathBuf,
+        symbol: String,
+        detail: String,
+    },
+
+    #[error("ABI version mismatch: plugin uses v{got}, host expects v{expected}")]
+    AbiVersionMismatch { expected: u32, got: u32 },
+
+    #[error("Plugin returned null adapter pointer")]
+    NullAdapter,
+
+    #[error("Plugin platform '{0}' conflicts with already registered platform")]
+    PlatformConflict(String),
+}
+
+/// 已加载的插件库包装
+///
+/// 使用 `Arc<Library>` 允许多个工厂闭包共享同一个动态库句柄。
+/// 当所有引用释放时，库自动卸载。
+pub struct PluginLibrary {
+    inner: Arc<Library>,
+}
+
+// SAFETY: Library 自身不是 Send/Sync，但 Arc<Library> 通过引用计数管理，
+// 且所有实际内存访问发生在工厂闭包内部（通过 `unsafe` 方法）。
+// PluginLibrary 提供安全的封装，外部代码通过安全接口访问。
+unsafe impl Send for PluginLibrary {}
+unsafe impl Sync for PluginLibrary {}
+
+impl PluginLibrary {
+    /// 包装一个已加载的 Library
+    ///
+    /// # Safety
+    ///
+    /// `lib` 必须保持有效，直到所有从它创建的适配器都被销毁。
+    pub unsafe fn new(lib: Library) -> Self {
+        Self {
+            inner: Arc::new(lib),
+        }
+    }
+
+    /// 从插件创建适配器实例
+    ///
+    /// # Safety
+    ///
+    /// 返回的 `Box<dyn PlatformAdapter>` 包含指向本库代码段的函数指针。
+    /// 本 `PluginLibrary` 实例必须比所有适配器存活得更久。
+    pub unsafe fn create_adapter(
+        &self,
+    ) -> Result<Box<dyn PlatformAdapter>, PluginError> {
+        let create: Symbol<
+            unsafe extern "C" fn() -> *mut std::ffi::c_void,
+        > = self
+            .inner
+            .get(b"easybot_plugin_create")
+            .map_err(|e| PluginError::SymbolNotFound {
+                path: PathBuf::from("<plugin>"),
+                symbol: "easybot_plugin_create".into(),
+                detail: e.to_string(),
+            })?;
+
+        let ptr = create();
+        if ptr.is_null() {
+            return Err(PluginError::NullAdapter);
+        }
+
+        // `Box<dyn PlatformAdapter>` 是胖指针（128 bits），不能直接存为 `*mut c_void`
+        // 插件方通过 `Box<Box<dyn PlatformAdapter>>` 做了一层包装（瘦指针）
+        // 这里解一层 Box 即可
+        let inner: Box<Box<dyn PlatformAdapter>> =
+            Box::from_raw(ptr as *mut Box<dyn PlatformAdapter>);
+        let adapter: Box<dyn PlatformAdapter> = *inner;
+        Ok(adapter)
+    }
+
+    /// 验证插件 ABI 版本与主机匹配
+    fn check_abi_version(&self) -> Result<(), PluginError> {
+        unsafe {
+            let abi_version: Symbol<unsafe extern "C" fn() -> u32> = self
+                .inner
+                .get(b"easybot_abi_version")
+                .map_err(|e| PluginError::SymbolNotFound {
+                    path: PathBuf::from("<plugin>"),
+                    symbol: "easybot_abi_version".into(),
+                    detail: e.to_string(),
+                })?;
+
+            let version = abi_version();
+            let expected = super::EASYBOT_PLUGIN_ABI_VERSION;
+            if version != expected {
+                return Err(PluginError::AbiVersionMismatch {
+                    expected,
+                    got: version,
+                });
+            }
+            Ok(())
+        }
+    }
+}
+
+/// 单次插件加载的结果
+pub struct PluginLoadResult {
+    /// 平台标识符
+    pub platform_name: String,
+    /// 显示名称
+    pub display_name: String,
+}
+
+/// 插件加载器
+///
+/// 扫描指定目录，加载所有有效插件。
+pub struct PluginLoader {
+    plugins_dir: PathBuf,
+    loaded: RwLock<HashMap<String, Arc<PluginLibrary>>>,
+}
+
+impl PluginLoader {
+    /// 创建指向 `plugins/` 目录的加载器
+    pub fn new(plugins_dir: PathBuf) -> Self {
+        Self {
+            plugins_dir,
+            loaded: RwLock::new(HashMap::new()),
+        }
+    }
+
+    /// 扫描并加载所有有效插件
+    ///
+    /// 返回成功列表和失败列表。单插件失败不影响其他插件。
+    pub async fn load_all(
+        &self,
+    ) -> (Vec<PluginLoadResult>, Vec<(PathBuf, PluginError)>) {
+        let mut succeeded = Vec::new();
+        let mut failed = Vec::new();
+
+        let entries = match std::fs::read_dir(&self.plugins_dir) {
+            Ok(entries) => entries,
+            Err(e) => {
+                warn!(
+                    "Plugin directory {} not accessible: {}",
+                    self.plugins_dir.display(),
+                    e
+                );
+                return (succeeded, failed);
+            }
+        };
+
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+
+            match self.load_single(&path).await {
+                Ok(result) => {
+                    info!(
+                        "Loaded plugin '{}' ({}) from {}",
+                        result.platform_name,
+                        result.display_name,
+                        path.display()
+                    );
+                    succeeded.push(result);
+                }
+                Err(e) => {
+                    warn!(
+                        "Failed to load plugin from {}: {}",
+                        path.display(),
+                        e
+                    );
+                    failed.push((path, e));
+                }
+            }
+        }
+
+        (succeeded, failed)
+    }
+
+    /// 加载单个插件目录
+    async fn load_single(
+        &self,
+        dir: &Path,
+    ) -> Result<PluginLoadResult, PluginError> {
+        // 1. 解析 plugin.yaml
+        let manifest_path = dir.join("plugin.yaml");
+        if !manifest_path.exists() {
+            return Err(PluginError::ManifestNotFound(manifest_path));
+        }
+        let content = std::fs::read_to_string(&manifest_path).map_err(|e| {
+            PluginError::ManifestParseError {
+                path: manifest_path.clone(),
+                detail: e.to_string(),
+            }
+        })?;
+        let manifest: PluginManifest =
+            serde_yaml::from_str(&content).map_err(|e| {
+                PluginError::ManifestParseError {
+                    path: manifest_path,
+                    detail: e.to_string(),
+                }
+            })?;
+
+        // 2. 定位动态库
+        let lib_path = manifest.library_path(dir);
+        if !lib_path.exists() {
+            return Err(PluginError::LibraryNotFound(lib_path));
+        }
+
+        // 3. 加载动态库
+        // SAFETY: dlopen/dlsym 是 unsafe 操作，因为动态库中的代码
+        // 在执行构造函数时立即运行。我们已经验证了文件存在性。
+        let library = unsafe {
+            Library::new(&lib_path).map_err(|e| {
+                PluginError::LibraryLoadError {
+                    path: lib_path.clone(),
+                    detail: e.to_string(),
+                }
+            })?
+        };
+
+        let plugin_lib = unsafe { PluginLibrary::new(library) };
+
+        // 4. 验证 ABI 版本
+        plugin_lib.check_abi_version()?;
+
+        // 5. 创建临时适配器提取元信息
+        // SAFETY: 暂存适配器后立即释放，PluginLibrary 在此期间保持存活
+        let (platform_name, display_name) = unsafe {
+            let adapter = plugin_lib.create_adapter()?;
+            let name = adapter.platform_name().to_string();
+            let display = manifest
+                .display_name
+                .clone()
+                .unwrap_or_else(|| adapter.display_name().to_string());
+            // drop adapter 会通过 vtable 调用 plugin 的析构函数
+            // 此时 Library 仍然加载，所以是安全的
+            drop(adapter);
+            (name, display)
+        };
+
+        // 6. 检查平台名冲突
+        {
+            let loaded = self.loaded.read().await;
+            if loaded.contains_key(&platform_name) {
+                return Err(PluginError::PlatformConflict(platform_name));
+            }
+        }
+
+        // 7. 存储库引用
+        let arc_lib = Arc::new(plugin_lib);
+        {
+            let mut loaded = self.loaded.write().await;
+            loaded.insert(platform_name.clone(), arc_lib.clone());
+        }
+
+        Ok(PluginLoadResult {
+            platform_name,
+            display_name,
+        })
+    }
+
+    /// 为已加载的插件生成 AdapterFactory
+    ///
+    /// 工厂闭包捕获 `Arc<Library>`，确保适配器存活期间库不被卸载。
+    pub async fn get_factory(
+        &self,
+        platform_name: &str,
+        event_bus: Arc<EventBus>,
+    ) -> Option<AdapterFactory> {
+        let loaded = self.loaded.read().await;
+        let lib = loaded.get(platform_name)?.clone();
+        let platform = platform_name.to_string();
+        drop(loaded);
+
+        Some(Arc::new(move |config| {
+            let lib = lib.clone();
+            let eb = event_bus.clone();
+            let p = platform.clone();
+            Box::pin(async move {
+                // SAFETY: 适配器创建涉及从动态库加载函数指针
+                // Arc<Library> 确保库在闭包执行期间保持存活
+                unsafe {
+                    let mut adapter = lib
+                        .create_adapter()
+                        .map_err(|e| format!("plugin create failed: {}", e))?;
+
+                    adapter.set_event_bus(eb);
+
+                    let init_result = adapter.init(config).await.map_err(|e| {
+                        format!("plugin '{}' init failed: {}", p, e)
+                    })?;
+                    if !init_result.ok {
+                        return Err(init_result
+                            .error
+                            .unwrap_or_else(|| {
+                                format!("plugin '{}' init returned error", p)
+                            }));
+                    }
+                    Ok(adapter)
+                }
+            })
+        }))
+    }
+
+    /// 注册所有已加载插件到适配器注册表
+    pub async fn register_all(
+        &self,
+        registry: &AdapterRegistry,
+        event_bus: Arc<EventBus>,
+    ) {
+        let platforms = {
+            let loaded = self.loaded.read().await;
+            loaded.keys().cloned().collect::<Vec<_>>()
+        };
+
+        for platform in platforms {
+            if let Some(factory) = self.get_factory(&platform, event_bus.clone()).await {
+                // Use a default display name; PluginLoadResult has the real one
+                registry
+                    .register(&platform, &platform, factory)
+                    .await;
+            }
+        }
+    }
+}
+
+/// SDK ABI 版本常量（与 easybot-plugin-sdk 中的值同步）
+pub const EASYBOT_PLUGIN_ABI_VERSION: u32 = 1;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_plugin_error_messages() {
+        let err = PluginError::AbiVersionMismatch {
+            expected: 1,
+            got: 2,
+        };
+        let msg = err.to_string();
+        assert!(msg.contains("v1"), "expected 'v1' in '{}'", msg);
+        assert!(msg.contains("v2"), "expected 'v2' in '{}'", msg);
+
+        let err = PluginError::NullAdapter;
+        assert!(err.to_string().contains("null"));
+
+        let err = PluginError::PlatformConflict("test".into());
+        assert!(err.to_string().contains("test"));
+    }
+
+    #[tokio::test]
+    async fn test_load_from_nonexistent_dir() {
+        let loader =
+            PluginLoader::new(PathBuf::from("/tmp/nonexistent-plugin-dir-12345"));
+        let (succeeded, failed) = loader.load_all().await;
+        assert!(succeeded.is_empty());
+        assert!(failed.is_empty());
+    }
+}

@@ -27,9 +27,10 @@ COPY crates/ ./crates/
 COPY bin/ ./bin/
 
 # Build (use --mount for cache persistence across builds)
+# --features "full,plugin-system" 启用所有内置适配器 + 插件系统
 RUN --mount=type=cache,target=/app/target \
     --mount=type=cache,target=/usr/local/cargo/registry \
-    cargo build --release --features full --bin easybot && \
+    cargo build --release --features "full,plugin-system" --bin easybot && \
     cp target/release/easybot /easybot
 
 # ── Runtime Stage ──
@@ -43,7 +44,7 @@ RUN apt-get update && apt-get install -y \
 COPY --from=builder /easybot /usr/local/bin/easybot
 
 # Create data directory
-RUN mkdir -p /var/lib/easybot/data /var/lib/easybot/logs /etc/easybot
+RUN mkdir -p /var/lib/easybot/data /var/lib/easybot/logs /var/lib/easybot/plugins /etc/easybot
 
 # Expose API port
 EXPOSE 8080

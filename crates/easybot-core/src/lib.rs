@@ -7,6 +7,8 @@ pub mod bus;
 pub mod session;
 pub mod adapter;
 pub mod auth;
+#[cfg(feature = "plugin-system")]
+pub mod plugin;
 pub mod config;
 pub mod storage;
 pub mod webhook;

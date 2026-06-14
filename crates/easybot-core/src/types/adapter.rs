@@ -153,6 +153,10 @@ pub trait PlatformAdapter: Send + Sync {
     /// 能力列表
     fn capabilities(&self) -> &[Capability];
 
+    /// 设置事件总线（在 init() 前由管理器调用）
+    /// 默认实现为空操作；需要发布 IM 消息到总线的适配器应覆盖此方法。
+    fn set_event_bus(&mut self, _bus: std::sync::Arc<crate::bus::EventBus>) {}
+
     // ── 生命周期 ──
 
     /// 初始化适配器，检查配置但不建立网络连接
