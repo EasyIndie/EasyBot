@@ -3,8 +3,32 @@
 //! 定义 EasyBot API 的 OpenAPI 3.1 规范，自动从路由处理函数和数据结构生成。
 //! 通过 utoipa 的宏标注自动收集所有端点和类型定义。
 
-use utoipa::OpenApi;
+use utoipa::{OpenApi, Modify};
+use utoipa::openapi::security::{HttpBuilder, HttpAuthScheme, SecurityScheme};
+use utoipa::openapi::SecurityRequirement;
 use crate::routes;
+
+/// OpenAPI 修改器：添加 Bearer Token 安全方案
+struct SecurityAddon;
+
+impl Modify for SecurityAddon {
+    fn modify(&self, openapi: &mut utoipa::openapi::OpenApi) {
+        if let Some(components) = openapi.components.as_mut() {
+            components.add_security_scheme(
+                "ApiKeyAuth",
+                SecurityScheme::Http(
+                    HttpBuilder::new()
+                        .scheme(HttpAuthScheme::Bearer)
+                        .bearer_format("eb_xxxx")
+                        .description(Some(String::from("输入完整的 Bearer token，例如 `Bearer eb_xxxxxxxxxxxx`")))
+                        .build(),
+                ),
+            );
+        }
+        let req = SecurityRequirement::new("ApiKeyAuth", Vec::<String>::new());
+        openapi.security = Some(vec![req]);
+    }
+}
 
 /// EasyBot API 的 OpenAPI 文档定义
 #[derive(OpenApi)]
@@ -18,10 +42,12 @@ use crate::routes;
             所有涉及消息发送的接口，目标格式为 `platform:chatId`，例如 `telegram:123456789`。\n\n\
             ## 认证\n\
             所有 API 请求（除 /health 外）需要携带 API Key。\n\
-            认证方式：在 HTTP Header 中添加 `Authorization: Bearer <api-key>`。",
+            认证方式：在 HTTP Header 中添加 `Authorization: Bearer <api-key>`。\n\
+            在 Swagger UI 中点击右上角的 **Authorize** 按钮，输入 API Key（如 `eb_xxxxxxxx`）即可。",
         version = env!("CARGO_PKG_VERSION"),
         license(name = "MIT"),
     ),
+    modifiers(&SecurityAddon),
     servers(
         (url = "http://localhost:8080", description = "Local development"),
     ),
