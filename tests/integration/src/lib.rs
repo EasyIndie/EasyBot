@@ -1,7 +1,9 @@
 //! EasyBot 集成测试
 //!
-//! 插件加载集成测试。构建 mock-adapter cdylib 后，
-//! 使用 PluginLoader 加载并验证基本功能。
+//! 覆盖 CLI、插件系统等端到端场景。
+
+#[cfg(test)]
+mod cli;
 
 #[cfg(test)]
 mod tests {
