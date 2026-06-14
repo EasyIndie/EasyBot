@@ -4,9 +4,10 @@
 //! 媒体附件、交互式按钮等数据模型。
 
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 /// 入站消息（从 IM 平台接收的消息）
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct InboundMessage {
     /// 平台消息 ID
     pub id: String,
@@ -41,7 +42,7 @@ pub struct InboundMessage {
 }
 
 /// 出站消息（发往 IM 平台的消息）
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct OutboundMessage {
     /// 消息文本
     pub text: String,
@@ -51,7 +52,7 @@ pub struct OutboundMessage {
 }
 
 /// 发送文本消息参数
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct SendTextParams {
     /// 目标聊天 ID
     pub chat_id: String,
@@ -64,7 +65,7 @@ pub struct SendTextParams {
 }
 
 /// 发送媒体消息参数
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct SendMediaParams {
     /// 目标聊天 ID
     pub chat_id: String,
@@ -77,7 +78,7 @@ pub struct SendMediaParams {
 }
 
 /// 发送交互式消息（带按钮）参数
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct SendInteractiveParams {
     /// 目标聊天 ID
     pub chat_id: String,
@@ -90,7 +91,7 @@ pub struct SendInteractiveParams {
 }
 
 /// 编辑消息参数
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct EditMessageParams {
     /// 目标聊天 ID
     pub chat_id: String,
@@ -103,13 +104,18 @@ pub struct EditMessageParams {
 }
 
 /// 发送结果
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct SendResult {
+    #[schema(example = true)]
     pub success: bool,
+    #[schema(example = "msg_abc123")]
     pub message_id: Option<String>,
     pub timestamp: Option<i64>,
+    #[schema(example = "null")]
     pub error: Option<String>,
+    #[schema(example = "null")]
     pub error_code: Option<String>,
+    #[schema(example = false)]
     pub retryable: bool,
 }
 
@@ -140,7 +146,7 @@ impl SendResult {
 }
 
 /// 编辑结果
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct EditResult {
     pub success: bool,
     pub updated_at: Option<i64>,
@@ -148,7 +154,7 @@ pub struct EditResult {
 }
 
 /// 删除结果
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct DeleteResult {
     pub success: bool,
     pub error: Option<String>,
@@ -157,7 +163,7 @@ pub struct DeleteResult {
 // ── 支持类型 ──
 
 /// 聊天类型
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq)]
 pub enum ChatType {
     /// 私聊
     Dm,
@@ -170,7 +176,7 @@ pub enum ChatType {
 }
 
 /// 消息作者
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct MessageAuthor {
     pub id: String,
     pub name: Option<String>,
@@ -178,7 +184,7 @@ pub struct MessageAuthor {
 }
 
 /// 媒体附件
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct MediaAttachment {
     pub media_type: MediaType,
     pub url: Option<String>,
@@ -192,7 +198,7 @@ pub struct MediaAttachment {
 }
 
 /// 媒体类型
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub enum MediaType {
     Image,
     Audio,
@@ -203,28 +209,28 @@ pub enum MediaType {
 }
 
 /// 斜杠命令
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct CommandData {
     pub name: String,
     pub args: String,
 }
 
 /// 按钮回调
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct CallbackData {
     pub data: String,
     pub message_id: String,
 }
 
 /// 消息引用（回复链）
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct MessageReference {
     pub message_id: String,
     pub text: Option<String>,
 }
 
 /// 文本解析模式
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, Default, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum ParseMode {
     /// Markdown 格式
@@ -237,19 +243,19 @@ pub enum ParseMode {
 }
 
 /// 行内键盘（按钮布局）
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct InlineKeyboard {
     pub rows: Vec<KeyboardRow>,
 }
 
 /// 键盘行
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct KeyboardRow {
     pub buttons: Vec<Button>,
 }
 
 /// 按钮
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct Button {
     pub text: String,
     pub callback_data: Option<String>,
@@ -257,7 +263,7 @@ pub struct Button {
 }
 
 /// 按钮回调事件
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct CallbackEvent {
     pub id: String,
     pub platform: String,
@@ -269,7 +275,7 @@ pub struct CallbackEvent {
 }
 
 /// 聊天信息
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ChatInfo {
     pub chat_id: String,
     pub name: Option<String>,
@@ -278,7 +284,7 @@ pub struct ChatInfo {
 }
 
 /// 聊天过滤器
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ChatFilter {
     pub chat_type: Option<ChatType>,
     pub query: Option<String>,

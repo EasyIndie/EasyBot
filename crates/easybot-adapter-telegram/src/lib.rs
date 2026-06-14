@@ -1,12 +1,31 @@
 //! Telegram 平台适配器
 //!
 //! 使用 Telegram Bot API 实现消息收发。
-//! Phase 1 实现基本的文本消息发送。
+//! Phase 2 实现:
+//! - 真实 HTTP 消息发送（sendMessage API）
+//! - getUpdates 长轮询接收消息
+//! - 通过 EventBus 发布入站消息事件
+
+mod types;
+
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Duration;
 
 use async_trait::async_trait;
+use tokio::sync::broadcast;
+use easybot_core::bus::EventBus;
 use easybot_core::types::adapter::*;
 use easybot_core::types::message::*;
 use easybot_core::types::error::GatewayError;
+use easybot_core::types::event::GatewayEvent;
+use types::*;
+
+/// Telegram Bot API 基础 URL
+const TELEGRAM_API: &str = "https://api.telegram.org/bot";
+
+/// 长轮询超时（秒）
+const POLL_TIMEOUT: i64 = 30;
 
 /// Telegram 适配器
 pub struct TelegramAdapter {
@@ -16,9 +35,11 @@ pub struct TelegramAdapter {
     state: AdapterState,
     bot_info: Option<BotInfo>,
     capabilities: Vec<Capability>,
-    messages_in: u64,
-    messages_out: u64,
-    errors: u64,
+    messages_in: AtomicU64,
+    messages_out: AtomicU64,
+    errors: AtomicU64,
+    event_bus: Option<Arc<EventBus>>,
+    cancel_tx: Option<broadcast::Sender<()>>,
 }
 
 impl TelegramAdapter {
@@ -46,10 +67,200 @@ impl TelegramAdapter {
                 Capability { name: CapabilityName::ChatList, supported: false, limits: None },
                 Capability { name: CapabilityName::Streaming, supported: false, limits: None },
             ],
-            messages_in: 0,
-            messages_out: 0,
-            errors: 0,
+            messages_in: AtomicU64::new(0),
+            messages_out: AtomicU64::new(0),
+            errors: AtomicU64::new(0),
+            event_bus: None,
+            cancel_tx: None,
         }
+    }
+
+    /// 设置事件总线（在 init 之前调用）
+    pub fn set_event_bus(&mut self, event_bus: Arc<EventBus>) {
+        self.event_bus = Some(event_bus);
+    }
+
+    /// 构造 Bot API URL
+    fn api_url(&self, method: &str) -> String {
+        let token = self.config.as_ref()
+            .and_then(|c| c.token.clone())
+            .unwrap_or_default();
+        format!("{}{}/{}", TELEGRAM_API, token, method)
+    }
+
+    /// 将 Telegram 消息转换为网关 InboundMessage
+    fn convert_message(tg_msg: TelegramMessage) -> Option<InboundMessage> {
+        let chat_id = tg_msg.chat.id.to_string();
+        let platform = "telegram".to_string();
+        let text = tg_msg.text.or(tg_msg.caption);
+
+        let chat_type = match tg_msg.chat.chat_type.as_str() {
+            "private" => ChatType::Dm,
+            "group" => ChatType::Group,
+            "supergroup" => ChatType::Group,
+            "channel" => ChatType::Channel,
+            _ => ChatType::Dm,
+        };
+
+        let author = tg_msg.from.map(|u| MessageAuthor {
+            id: u.id.to_string(),
+            name: Some(u.first_name),
+            is_bot: u.is_bot,
+        }).unwrap_or_else(|| MessageAuthor {
+            id: "0".to_string(),
+            name: None,
+            is_bot: false,
+        });
+
+        // 检测斜杠命令
+        let command = text.as_ref().and_then(|t| {
+            if t.starts_with('/') {
+                let parts: Vec<&str> = t.splitn(2, char::is_whitespace).collect();
+                let name = parts[0].trim_start_matches('/').to_string();
+                let args = parts.get(1).unwrap_or(&"").to_string();
+                Some(CommandData { name, args })
+            } else {
+                None
+            }
+        });
+
+        // 检测回复引用
+        let reply_to = tg_msg.reply_to_message.map(|reply| MessageReference {
+            message_id: reply.message_id.to_string(),
+            text: reply.text.or(reply.caption),
+        });
+
+        Some(InboundMessage {
+            id: tg_msg.message_id.to_string(),
+            platform,
+            chat_id,
+            chat_name: tg_msg.chat.title.or(tg_msg.chat.first_name),
+            chat_type,
+            text,
+            author,
+            timestamp: tg_msg.date * 1000,
+            media: None,
+            command,
+            callback: None,
+            reply_to,
+            thread_id: None,
+            is_group: tg_msg.chat.chat_type != "private",
+            metadata: None,
+        })
+    }
+
+    /// 调用 Telegram API 的辅助方法
+    async fn api_call<T: serde::de::DeserializeOwned>(
+        &self,
+        method: &str,
+        body: Option<serde_json::Value>,
+    ) -> Result<T, GatewayError> {
+        let client = reqwest::Client::new();
+        let url = self.api_url(method);
+
+        let req = if let Some(json) = body {
+            client.post(&url).json(&json)
+        } else {
+            client.get(&url)
+        };
+
+        let resp = req.send().await
+            .map_err(|e| GatewayError::Internal(format!("HTTP request failed: {}", e)))?;
+
+        let api_resp: TelegramApiResponse<T> = resp.json().await
+            .map_err(|e| GatewayError::Internal(format!("JSON parse failed: {}", e)))?;
+
+        if api_resp.ok {
+            api_resp.result.ok_or_else(|| {
+                GatewayError::Internal(format!("Telegram API returned ok but no result for {}", method))
+            })
+        } else {
+            let desc = api_resp.description.unwrap_or_else(|| "Unknown error".to_string());
+            Err(GatewayError::Internal(format!("Telegram API error: {}", desc)))
+        }
+    }
+
+    /// getUpdates 长轮询循环
+    async fn polling_loop(
+        token: String,
+        event_bus: Arc<EventBus>,
+        mut cancel_rx: broadcast::Receiver<()>,
+    ) {
+        let client = reqwest::Client::new();
+        let mut offset: i64 = 0;
+        tracing::info!("Telegram long polling started");
+
+        loop {
+            tokio::select! {
+                _ = cancel_rx.recv() => {
+                    tracing::info!("Telegram polling cancelled");
+                    break;
+                }
+                result = Self::poll_once(&client, &token, &mut offset) => {
+                    match result {
+                        Ok(updates) => {
+                            for update in updates {
+                                if update.update_id >= offset {
+                                    offset = update.update_id + 1;
+                                }
+                                if let Some(tg_msg) = update.message {
+                                    if let Some(inbound) = Self::convert_message(tg_msg) {
+                                        let event = GatewayEvent::new(
+                                            easybot_core::types::event::event_types::MESSAGE_INBOUND,
+                                            "telegram",
+                                            serde_json::to_value(&inbound).unwrap_or_default(),
+                                        );
+                                        event_bus.publish(event);
+                                    }
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!("Telegram polling error: {}", e);
+                            tokio::time::sleep(Duration::from_secs(5)).await;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// 单次 getUpdates 调用
+    async fn poll_once(
+        client: &reqwest::Client,
+        token: &str,
+        offset: &mut i64,
+    ) -> Result<Vec<TelegramUpdate>, GatewayError> {
+        let url = format!("{}{}/getUpdates", TELEGRAM_API, token);
+        let params = serde_json::json!({
+            "offset": *offset,
+            "timeout": POLL_TIMEOUT,
+            "allowed_updates": ["message"],
+        });
+
+        let resp = client.post(&url)
+            .json(&params)
+            .timeout(Duration::from_secs(POLL_TIMEOUT as u64 + 10))
+            .send()
+            .await
+            .map_err(|e| GatewayError::Internal(format!("Poll request failed: {}", e)))?;
+
+        let api_resp: TelegramApiResponse<Vec<TelegramUpdate>> = resp.json().await
+            .map_err(|e| GatewayError::Internal(format!("Poll parse failed: {}", e)))?;
+
+        if api_resp.ok {
+            Ok(api_resp.result.unwrap_or_default())
+        } else {
+            Err(GatewayError::Internal(
+                api_resp.description.unwrap_or_else(|| "Unknown polling error".to_string())
+            ))
+        }
+    }
+}
+
+impl Default for TelegramAdapter {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -82,26 +293,56 @@ impl PlatformAdapter for TelegramAdapter {
     async fn connect(&mut self) -> Result<ConnectResult, GatewayError> {
         let token = self.config.as_ref()
             .and_then(|c| c.token.clone())
-            .unwrap_or_default();
+            .ok_or_else(|| GatewayError::ConfigError("Telegram token not configured".to_string()))?;
 
-        // Phase 1: 模拟连接成功，验证 token 格式
-        // Phase 2+: 使用 Telegram Bot API 验证 token 并获取 bot 信息
-        if token.len() < 10 {
+        // 通过 getMe 验证 Token 并获取 Bot 信息
+        let client = reqwest::Client::new();
+        let url = format!("{}bot{}/getMe", TELEGRAM_API, token);
+
+        let resp = client.get(&url)
+            .send()
+            .await
+            .map_err(|e| GatewayError::Internal(format!("Failed to connect to Telegram: {}", e)))?;
+
+        let api_resp: TelegramApiResponse<TelegramBotInfo> = resp.json().await
+            .map_err(|e| GatewayError::Internal(format!("Failed to parse getMe response: {}", e)))?;
+
+        if !api_resp.ok {
+            let desc = api_resp.description.unwrap_or_else(|| "Invalid token".to_string());
             return Ok(ConnectResult {
                 ok: false,
-                error: Some("Invalid token format".to_string()),
+                error: Some(format!("Telegram auth failed: {}", desc)),
                 bot_info: None,
             });
         }
 
+        let bot = api_resp.result.ok_or_else(|| {
+            GatewayError::Internal("getMe returned no bot info".to_string())
+        })?;
+
         self.state = AdapterState::Connected;
         self.bot_info = Some(BotInfo {
-            name: "EasyBot".to_string(),
-            username: Some("easybot".to_string()),
-            id: token.split(':').next().unwrap_or("0").to_string(),
+            name: bot.first_name.clone(),
+            username: bot.username.clone(),
+            id: bot.id.to_string(),
         });
 
-        tracing::info!("Telegram adapter connected (bot id: {})", self.bot_info.as_ref().unwrap().id);
+        tracing::info!(
+            "Telegram adapter connected: {} (@{})",
+            bot.first_name,
+            bot.username.as_deref().unwrap_or("unknown")
+        );
+
+        // 启动长轮询（如果配置了 EventBus）
+        if let Some(event_bus) = self.event_bus.clone() {
+            let (cancel_tx, cancel_rx) = broadcast::channel(1);
+            self.cancel_tx = Some(cancel_tx);
+            let token_clone = token.clone();
+
+            tokio::spawn(async move {
+                Self::polling_loop(token_clone, event_bus, cancel_rx).await;
+            });
+        }
 
         Ok(ConnectResult {
             ok: true,
@@ -111,6 +352,11 @@ impl PlatformAdapter for TelegramAdapter {
     }
 
     async fn disconnect(&mut self) -> Result<(), GatewayError> {
+        // 发送取消信号停止轮询
+        if let Some(cancel_tx) = &self.cancel_tx {
+            let _ = cancel_tx.send(());
+        }
+        self.cancel_tx = None;
         self.state = AdapterState::Stopped;
         tracing::info!("Telegram adapter disconnected");
         Ok(())
@@ -131,59 +377,133 @@ impl PlatformAdapter for TelegramAdapter {
             last_connected_at: None,
             last_error_at: None,
             last_error: None,
-            messages_in: self.messages_in,
-            messages_out: self.messages_out,
-            errors: self.errors,
+            messages_in: self.messages_in.load(Ordering::Relaxed),
+            messages_out: self.messages_out.load(Ordering::Relaxed),
+            errors: self.errors.load(Ordering::Relaxed),
             uptime: None,
         }
     }
 
     async fn send(&self, params: SendTextParams) -> Result<SendResult, GatewayError> {
-        let token = self.config.as_ref()
-            .and_then(|c| c.token.clone())
-            .ok_or_else(|| GatewayError::ConfigError("Telegram token not configured".to_string()))?;
+        let mut body = serde_json::json!({
+            "chat_id": params.chat_id,
+            "text": params.message.text,
+        });
 
-        // Phase 1: 使用 reqwest 调用 Telegram Bot API 的 sendMessage
-        // Phase 1 暂不引入 HTTP 客户端依赖，返回模拟成功
-        // 实际实现将在引入 reqwest 后使用:
-        //
-        // let client = reqwest::Client::new();
-        // let url = format!("https://api.telegram.org/bot{}/sendMessage", token);
-        // let resp = client.post(&url)
-        //     .json(&serde_json::json!({
-        //         "chat_id": params.chat_id,
-        //         "text": params.message.text,
-        //         "parse_mode": match params.message.parse_mode {
-        //             ParseMode::Markdown => "MarkdownV2",
-        //             ParseMode::Html => "HTML",
-        //             ParseMode::None => "",
-        //         },
-        //     }))
-        //     .send()
-        //     .await
-        //     .map_err(|e| GatewayError::Internal(e.to_string()))?;
+        // 解析模式
+        match params.message.parse_mode {
+            ParseMode::Markdown => { body["parse_mode"] = serde_json::Value::String("MarkdownV2".into()); }
+            ParseMode::Html => { body["parse_mode"] = serde_json::Value::String("HTML".into()); }
+            ParseMode::None => {}
+        }
 
-        tracing::info!(
-            "[Telegram] Sending message to {}: {}",
-            params.chat_id,
-            &params.message.text[..params.message.text.len().min(50)]
-        );
+        // 回复引用
+        if let Some(reply_to) = &params.reply_to {
+            body["reply_to_message_id"] = serde_json::json!(reply_to);
+        }
 
-        Ok(SendResult::ok(format!("sim_msg_{}", chrono::Utc::now().timestamp_millis())))
+        // 平台特定参数
+        if let Some(meta) = &params.metadata {
+            if let Some(obj) = meta.as_object() {
+                for (k, v) in obj {
+                    body[k] = v.clone();
+                }
+            }
+        }
+
+        let result: TelegramMessage = match self.api_call("sendMessage", Some(body)).await {
+            Ok(msg) => msg,
+            Err(e) => {
+                self.errors.fetch_add(1, Ordering::Relaxed);
+                return Ok(SendResult::fail(e.to_string(), true));
+            }
+        };
+
+        self.messages_out.fetch_add(1, Ordering::Relaxed);
+
+        Ok(SendResult {
+            success: true,
+            message_id: Some(result.message_id.to_string()),
+            timestamp: Some(result.date as i64 * 1000),
+            error: None,
+            error_code: None,
+            retryable: false,
+        })
     }
 
     async fn send_typing(&self, _chat_id: &str) -> Result<(), GatewayError> {
-        // Telegram Bot API: sendChatAction with "typing"
+        let body = serde_json::json!({
+            "chat_id": _chat_id,
+            "action": "typing",
+        });
+        self.api_call::<serde_json::Value>("sendChatAction", Some(body)).await?;
         Ok(())
     }
 
     async fn get_chat_info(&self, _chat_id: &str) -> Result<ChatInfo, GatewayError> {
+        let body = serde_json::json!({ "chat_id": _chat_id });
+        let chat: TelegramChat = self.api_call("getChat", Some(body)).await?;
+
+        let chat_type = match chat.chat_type.as_str() {
+            "private" => ChatType::Dm,
+            "group" => ChatType::Group,
+            "supergroup" => ChatType::Group,
+            "channel" => ChatType::Channel,
+            _ => ChatType::Dm,
+        };
+
         Ok(ChatInfo {
-            chat_id: _chat_id.to_string(),
-            name: Some("Unknown".to_string()),
-            chat_type: ChatType::Dm,
+            chat_id: chat.id.to_string(),
+            name: chat.title.or(chat.first_name),
+            chat_type,
             member_count: None,
         })
+    }
+
+    async fn edit_message(&self, params: EditMessageParams) -> Result<EditResult, GatewayError> {
+        let mut body = serde_json::json!({
+            "chat_id": params.chat_id,
+            "message_id": params.message_id,
+            "text": params.message.text,
+        });
+
+        match params.message.parse_mode {
+            ParseMode::Markdown => { body["parse_mode"] = "MarkdownV2".into(); }
+            ParseMode::Html => { body["parse_mode"] = "HTML".into(); }
+            ParseMode::None => {}
+        }
+
+        match self.api_call::<TelegramMessage>("editMessageText", Some(body)).await {
+            Ok(msg) => Ok(EditResult {
+                success: true,
+                updated_at: Some(msg.date as i64 * 1000),
+                error: None,
+            }),
+            Err(e) => Ok(EditResult {
+                success: false,
+                updated_at: None,
+                error: Some(e.to_string()),
+            }),
+        }
+    }
+
+    async fn delete_message(
+        &self,
+        chat_id: &str,
+        message_id: &str,
+    ) -> Result<DeleteResult, GatewayError> {
+        let body = serde_json::json!({
+            "chat_id": chat_id,
+            "message_id": message_id,
+        });
+
+        match self.api_call::<serde_json::Value>("deleteMessage", Some(body)).await {
+            Ok(_) => Ok(DeleteResult { success: true, error: None }),
+            Err(e) => Ok(DeleteResult {
+                success: false,
+                error: Some(e.to_string()),
+            }),
+        }
     }
 
     fn runtime_config(&self) -> AdapterRuntimeConfig {
@@ -203,8 +523,8 @@ impl PlatformAdapter for TelegramAdapter {
             health: None,
             last_error: None,
             uptime: None,
-            messages_in: self.messages_in,
-            messages_out: self.messages_out,
+            messages_in: self.messages_in.load(Ordering::Relaxed),
+            messages_out: self.messages_out.load(Ordering::Relaxed),
         }
     }
 }
@@ -226,29 +546,35 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_init_and_connect() {
+    async fn test_init_and_connect_without_real_token() {
         let mut adapter = TelegramAdapter::new();
-        adapter.init(AdapterConfig {
+        let init_result = adapter.init(AdapterConfig {
             enabled: true,
-            token: Some("123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11".to_string()),
+            token: Some("123456:test-token".to_string()),
             api_key: None,
             extra: serde_json::json!({}),
         }).await.unwrap();
+        assert!(init_result.ok);
+
+        // Without a real token, getMe fails → return ok:false, state stays Created
         let result = adapter.connect().await.unwrap();
-        assert!(result.ok);
+        assert_eq!(result.ok, false);
+        assert!(result.error.is_some());
+        assert_eq!(adapter.state(), AdapterState::Created);
     }
 
     #[tokio::test]
-    async fn test_send_message() {
+    async fn test_send_message_mocked() {
         let mut adapter = TelegramAdapter::new();
         adapter.init(AdapterConfig {
             enabled: true,
-            token: Some("123456:valid_token_format".to_string()),
+            token: Some("123456:test-token".to_string()),
             api_key: None,
             extra: serde_json::json!({}),
         }).await.unwrap();
-        adapter.connect().await.unwrap();
 
+        // 跳过 connect（因为没有真实的 HTTP 连接）
+        // send 会尝试发送 HTTP，这里预期会失败（因为 token 无效）
         let result = adapter.send(SendTextParams {
             chat_id: "123456789".to_string(),
             message: OutboundMessage {
@@ -259,6 +585,52 @@ mod tests {
             metadata: None,
         }).await.unwrap();
 
-        assert!(result.success);
+        // 因为 HTTP 请求会失败，返回 fail 结果
+        assert!(!result.success);
+        assert!(result.error.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_convert_message() {
+        let tg_msg = TelegramMessage {
+            message_id: 42,
+            from: Some(TelegramUser {
+                id: 12345,
+                is_bot: false,
+                first_name: "TestUser".to_string(),
+                last_name: None,
+                username: None,
+            }),
+            chat: TelegramChat {
+                id: -100123456,
+                chat_type: "group".to_string(),
+                title: Some("Test Group".to_string()),
+                username: None,
+                first_name: None,
+                last_name: None,
+            },
+            date: 1700000000,
+            text: Some("/start hello".to_string()),
+            entities: None,
+            reply_to_message: None,
+            caption: None,
+        };
+
+        let inbound = TelegramAdapter::convert_message(tg_msg).unwrap();
+        assert_eq!(inbound.id, "42");
+        assert_eq!(inbound.platform, "telegram");
+        assert_eq!(inbound.chat_id, "-100123456");
+        assert_eq!(inbound.chat_name.as_deref(), Some("Test Group"));
+        assert_eq!(inbound.chat_type, ChatType::Group);
+        assert_eq!(inbound.author.id, "12345");
+        assert_eq!(inbound.author.name.as_deref(), Some("TestUser"));
+        assert!(inbound.is_group);
+        assert_eq!(inbound.text.as_deref(), Some("/start hello"));
+
+        // 验证命令解析
+        assert!(inbound.command.is_some());
+        let cmd = inbound.command.unwrap();
+        assert_eq!(cmd.name, "start");
+        assert_eq!(cmd.args, "hello");
     }
 }

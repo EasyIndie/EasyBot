@@ -10,9 +10,12 @@ use axum::{
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 use tracing::info;
+use utoipa::OpenApi;
+use utoipa_swagger_ui::SwaggerUi;
 
 use crate::AppState;
 use crate::routes;
+use crate::openapi::ApiDoc;
 
 /// API 服务器
 pub struct Server {
@@ -61,9 +64,15 @@ impl Server {
             // WebSocket
             .route("/ws", get(routes::ws::ws_handler));
 
+        // OpenAPI 文档路径（Swagger UI）
+        let openapi_json_path = "/openapi.json";
+        let swagger = SwaggerUi::new("/swagger")
+            .url(openapi_json_path, ApiDoc::openapi());
+
         // 基础路径
         let base_path = &self.state.config.api.base_path;
         let app = Router::new()
+            .merge(swagger)
             .nest(base_path, api_routes)
             .layer(TraceLayer::new_for_http())
             .layer(CorsLayer::permissive())

@@ -13,6 +13,7 @@ use easybot_core::types::config::GatewayConfig;
 pub mod server;
 pub mod routes;
 pub mod response;
+pub mod openapi;
 
 /// 应用共享状态
 #[derive(Clone)]

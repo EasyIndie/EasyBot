@@ -5,23 +5,36 @@ use axum::{
     extract::{State, Path},
 };
 use serde::Serialize;
+use utoipa::ToSchema;
 use crate::AppState;
 
 /// 适配器列表响应
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub struct AdapterListResponse {
     pub adapters: Vec<AdapterItem>,
 }
 
-#[derive(Serialize)]
+/// 适配器列表项
+#[derive(Serialize, ToSchema)]
 pub struct AdapterItem {
+    #[schema(example = "telegram")]
     pub platform: String,
+    #[schema(example = "Telegram")]
     pub display_name: String,
+    #[schema(example = "Connected")]
     pub status: String,
     pub connected: bool,
 }
 
-/// GET /api/v1/adapters
+/// 获取适配器列表
+#[utoipa::path(
+    get,
+    path = "/api/v1/adapters",
+    tag = "Adapters",
+    responses(
+        (status = 200, description = "List of all registered adapters", body = AdapterListResponse)
+    )
+)]
 pub async fn list_adapters(
     State(state): State<AppState>,
 ) -> Json<AdapterListResponse> {
@@ -39,7 +52,19 @@ pub async fn list_adapters(
     Json(AdapterListResponse { adapters: items })
 }
 
-/// POST /api/v1/adapters/{platform}/start
+/// 启动适配器
+#[utoipa::path(
+    post,
+    path = "/api/v1/adapters/{platform}/start",
+    tag = "Adapters",
+    params(
+        ("platform" = String, Path, description = "Platform identifier, e.g. 'telegram'")
+    ),
+    responses(
+        (status = 200, description = "Start result", body = serde_json::Value),
+        (status = 404, description = "Platform not found"),
+    )
+)]
 pub async fn start_adapter(
     State(state): State<AppState>,
     Path(platform): Path<String>,
@@ -63,7 +88,18 @@ pub async fn start_adapter(
     }
 }
 
-/// POST /api/v1/adapters/{platform}/stop
+/// 停止适配器
+#[utoipa::path(
+    post,
+    path = "/api/v1/adapters/{platform}/stop",
+    tag = "Adapters",
+    params(
+        ("platform" = String, Path, description = "Platform identifier")
+    ),
+    responses(
+        (status = 200, description = "Stop result", body = serde_json::Value)
+    )
+)]
 pub async fn stop_adapter(
     State(state): State<AppState>,
     Path(platform): Path<String>,
@@ -74,7 +110,19 @@ pub async fn stop_adapter(
     }
 }
 
-/// GET /api/v1/adapters/{platform}/status
+/// 获取适配器详细状态
+#[utoipa::path(
+    get,
+    path = "/api/v1/adapters/{platform}/status",
+    tag = "Adapters",
+    params(
+        ("platform" = String, Path, description = "Platform identifier")
+    ),
+    responses(
+        (status = 200, description = "Adapter status details", body = serde_json::Value),
+        (status = 404, description = "Platform not found"),
+    )
+)]
 pub async fn adapter_status(
     State(state): State<AppState>,
     Path(platform): Path<String>,

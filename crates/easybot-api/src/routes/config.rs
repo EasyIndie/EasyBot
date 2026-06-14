@@ -3,14 +3,30 @@
 use axum::{Json, extract::State};
 use crate::AppState;
 
-/// GET /api/v1/config
+/// 获取当前配置
+#[utoipa::path(
+    get,
+    path = "/api/v1/config",
+    tag = "Config",
+    responses(
+        (status = 200, description = "Current gateway configuration", body = serde_json::Value),
+    )
+)]
 pub async fn get_config(
     State(state): State<AppState>,
 ) -> Json<serde_json::Value> {
     Json(serde_json::to_value(&*state.config).unwrap_or_default())
 }
 
-/// PUT /api/v1/config
+/// 更新配置（Phase 4 实现）
+#[utoipa::path(
+    put,
+    path = "/api/v1/config",
+    tag = "Config",
+    responses(
+        (status = 200, description = "Not yet implemented", body = serde_json::Value),
+    )
+)]
 pub async fn update_config(
     State(_state): State<AppState>,
     Json(_body): Json<serde_json::Value>,

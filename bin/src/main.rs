@@ -74,7 +74,7 @@ async fn main() -> anyhow::Result<()> {
     let auth_manager = Arc::new(easybot_core::auth::ApiKeyManager::new());
 
     // 注册内置适配器
-    register_builtin_adapters(&adapter_manager).await;
+    register_builtin_adapters(&adapter_manager, event_bus.clone()).await;
 
     // 创建默认 API Key（仅开发环境）
     if cli.debug {
@@ -143,15 +143,21 @@ async fn handle_init(cli: Cli) -> anyhow::Result<()> {
 }
 
 /// 注册内置适配器工厂
-async fn register_builtin_adapters(adapter_manager: &easybot_core::adapter::AdapterManager) {
+async fn register_builtin_adapters(
+    adapter_manager: &easybot_core::adapter::AdapterManager,
+    event_bus: std::sync::Arc<easybot_core::bus::EventBus>,
+) {
     #[cfg(feature = "adapter-telegram")]
     {
         let registry = adapter_manager.registry();
+        let eb = event_bus.clone();
         let factory: easybot_core::adapter::AdapterFactory =
-            std::sync::Arc::new(|config| {
+            std::sync::Arc::new(move |config| {
+                let eb = eb.clone();
                 Box::pin(async move {
                     let mut adapter = easybot_adapter_telegram::TelegramAdapter::new();
-                    // init 是 PlatformAdapter trait 的方法，需要 trait 在作用域内
+                    // 设置事件总线，使适配器能推送入站消息
+                    adapter.set_event_bus(eb);
                     let init_result = adapter.init(config).await
                         .map_err(|e| format!("telegram init failed: {}", e))?;
                     if !init_result.ok {
@@ -166,6 +172,7 @@ async fn register_builtin_adapters(adapter_manager: &easybot_core::adapter::Adap
 
     #[cfg(not(feature = "adapter-telegram"))]
     {
+        let _ = event_bus; // suppress unused warning
         tracing::warn!("Telegram adapter not enabled (compile with --features adapter-telegram)");
     }
 }

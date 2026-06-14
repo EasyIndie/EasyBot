@@ -6,7 +6,18 @@ use axum::{
 };
 use crate::AppState;
 
-/// GET /api/v1/chats/{platform}
+/// 获取指定平台的聊天列表
+#[utoipa::path(
+    get,
+    path = "/api/v1/chats/{platform}",
+    tag = "Chats",
+    params(
+        ("platform" = String, Path, description = "Platform identifier")
+    ),
+    responses(
+        (status = 200, description = "List of chats", body = serde_json::Value),
+    )
+)]
 pub async fn list_chats(
     State(state): State<AppState>,
     Path(platform): Path<String>,
@@ -26,7 +37,19 @@ pub async fn list_chats(
     Json(serde_json::json!({ "chats": chats }))
 }
 
-/// GET /api/v1/chats/{platform}/{chat_id}
+/// 获取指定聊天的详细信息
+#[utoipa::path(
+    get,
+    path = "/api/v1/chats/{platform}/{chat_id}",
+    tag = "Chats",
+    params(
+        ("platform" = String, Path, description = "Platform identifier"),
+        ("chat_id" = String, Path, description = "Chat ID"),
+    ),
+    responses(
+        (status = 200, description = "Chat info", body = serde_json::Value),
+    )
+)]
 pub async fn get_chat(
     State(state): State<AppState>,
     Path((platform, chat_id)): Path<(String, String)>,

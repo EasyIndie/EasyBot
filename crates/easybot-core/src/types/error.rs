@@ -6,6 +6,7 @@
 use std::pin::Pin;
 use std::future::Future;
 use serde::Serialize;
+use utoipa::ToSchema;
 
 /// 类型别名：堆上分配的异步 Future
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
@@ -103,13 +104,13 @@ impl GatewayError {
 }
 
 /// API 错误响应格式
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ApiErrorResponse {
     pub error: ApiErrorDetail,
 }
 
 /// API 错误详情
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ApiErrorDetail {
     pub code: String,
     pub message: String,

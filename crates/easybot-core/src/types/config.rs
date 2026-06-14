@@ -4,11 +4,12 @@
 //! 支持环境变量引用（${VAR_NAME}）和分层配置合并。
 
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 use std::collections::HashMap;
 use crate::types::adapter::AdapterConfig;
 
 /// 网关主配置
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct GatewayConfig {
     /// 服务器配置
     #[serde(default)]
@@ -36,7 +37,7 @@ pub struct GatewayConfig {
 }
 
 /// 服务器配置
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ServerConfig {
     #[serde(default = "default_host")]
     pub host: String,
@@ -56,7 +57,7 @@ fn default_port() -> u16 {
 }
 
 /// TLS 配置
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct TlsConfig {
     #[serde(default)]
     pub enabled: bool,
@@ -79,7 +80,7 @@ impl Default for TlsConfig {
 }
 
 /// API 配置
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ApiConfig {
     #[serde(default = "default_api_base_path")]
     pub base_path: String,
@@ -102,7 +103,7 @@ impl Default for ApiConfig {
 }
 
 /// WebSocket 配置
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct WebSocketConfig {
     #[serde(default = "default_ws_enabled")]
     pub enabled: bool,
@@ -135,7 +136,7 @@ impl Default for WebSocketConfig {
 }
 
 /// 存储配置
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct StorageConfig {
     #[serde(default = "default_storage_type")]
     pub storage_type: String,
@@ -162,7 +163,7 @@ impl Default for StorageConfig {
 }
 
 /// 日志配置
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct LoggingConfig {
     #[serde(default = "default_log_level")]
     pub level: String,
@@ -195,7 +196,7 @@ impl Default for LoggingConfig {
 }
 
 /// Webhook 配置
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct WebhookConfig {
     pub name: String,
     pub url: String,

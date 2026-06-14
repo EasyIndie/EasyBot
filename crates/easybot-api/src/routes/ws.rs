@@ -13,7 +13,20 @@ use futures::{SinkExt, StreamExt};
 use tracing::{info, warn};
 use crate::AppState;
 
-/// GET /api/v1/ws
+/// WebSocket 实时事件流
+///
+/// 通过 WebSocket 连接订阅网关事件的实时推送。连接后需要先发送认证帧。
+/// 认证帧示例: { "token": "your-api-key" }
+/// 认证成功后会自动推送 message.inbound, message.sent, adapter.connected 等事件。
+#[utoipa::path(
+    get,
+    path = "/api/v1/ws",
+    tag = "WebSocket",
+    responses(
+        (status = 101, description = "WebSocket upgrade successful"),
+        (status = 400, description = "WebSocket upgrade failed"),
+    )
+)]
 pub async fn ws_handler(
     ws: WebSocketUpgrade,
     State(state): State<AppState>,

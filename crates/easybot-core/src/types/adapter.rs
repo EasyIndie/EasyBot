@@ -4,11 +4,12 @@
 //! 包含适配器生命周期、能力声明、消息发送、健康检查等。
 
 use async_trait::async_trait;
+use utoipa::ToSchema;
 use crate::types::message::*;
 use crate::types::error::GatewayError;
 
 /// 适配器能力名称
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, ToSchema, PartialEq)]
 pub enum CapabilityName {
     Text,
     Image,
@@ -31,7 +32,7 @@ pub enum CapabilityName {
 }
 
 /// 适配器能力声明
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, ToSchema)]
 pub struct Capability {
     pub name: CapabilityName,
     pub supported: bool,
@@ -39,7 +40,7 @@ pub struct Capability {
 }
 
 /// 能力限制
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, ToSchema)]
 pub struct CapabilityLimits {
     pub max_text_length: Option<usize>,
     pub max_file_size: Option<u64>,
@@ -47,7 +48,7 @@ pub struct CapabilityLimits {
 }
 
 /// 适配器状态
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, ToSchema, PartialEq)]
 pub enum AdapterState {
     Created,
     Starting,
@@ -58,7 +59,7 @@ pub enum AdapterState {
 }
 
 /// 健康状态
-#[derive(Debug, Clone, serde::Serialize, PartialEq)]
+#[derive(Debug, Clone, serde::Serialize, ToSchema, PartialEq)]
 pub enum HealthStatus {
     Healthy,
     Degraded,
@@ -66,7 +67,7 @@ pub enum HealthStatus {
 }
 
 /// 健康报告
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, ToSchema)]
 pub struct HealthReport {
     pub status: HealthStatus,
     pub connected: bool,
@@ -95,7 +96,7 @@ pub struct InitResult {
 }
 
 /// 机器人基本信息
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, ToSchema)]
 pub struct BotInfo {
     pub name: String,
     pub username: Option<String>,
@@ -103,7 +104,7 @@ pub struct BotInfo {
 }
 
 /// 适配器配置（来源自配置文件）
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, ToSchema)]
 pub struct AdapterConfig {
     #[serde(default)]
     pub enabled: bool,
@@ -114,7 +115,7 @@ pub struct AdapterConfig {
 }
 
 /// 适配器运行时配置状态
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, ToSchema)]
 pub struct AdapterRuntimeConfig {
     pub enabled: bool,
     pub token_configured: bool,
@@ -122,7 +123,7 @@ pub struct AdapterRuntimeConfig {
 }
 
 /// 适配器状态摘要（对外 API 使用）
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, ToSchema)]
 pub struct AdapterStatusSummary {
     pub platform: String,
     pub display_name: String,

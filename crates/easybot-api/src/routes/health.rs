@@ -2,30 +2,46 @@
 
 use axum::{Json, extract::State};
 use serde::Serialize;
+use utoipa::ToSchema;
 use crate::AppState;
 
 /// 健康检查响应
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub struct HealthResponse {
+    #[schema(example = "healthy")]
     pub status: String,
+    #[schema(example = "0.1.0")]
     pub version: String,
+    /// 服务运行时间（秒）
     pub uptime: i64,
     pub adapters: AdapterSummary,
     pub sessions: SessionSummary,
 }
 
-#[derive(Serialize)]
+/// 适配器摘要
+#[derive(Serialize, ToSchema)]
 pub struct AdapterSummary {
     pub total: usize,
     pub connected: usize,
 }
 
-#[derive(Serialize)]
+/// 会话摘要
+#[derive(Serialize, ToSchema)]
 pub struct SessionSummary {
     pub active: usize,
 }
 
-/// GET /api/v1/health
+/// 健康检查
+///
+/// 返回网关服务的当前状态，包括适配器连接情况和活跃会话数。
+#[utoipa::path(
+    get,
+    path = "/api/v1/health",
+    tag = "Health",
+    responses(
+        (status = 200, description = "Service health status", body = HealthResponse)
+    )
+)]
 pub async fn health_check(
     State(state): State<AppState>,
 ) -> Json<HealthResponse> {

@@ -13,3 +13,4 @@ async-trait.workspace = true
 tracing.workspace = true
 chrono.workspace = true
 anyhow.workspace = true
+reqwest = { workspace = true }

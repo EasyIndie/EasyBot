@@ -5,31 +5,45 @@ use axum::{
     extract::{State, Path, Query},
 };
 use serde::{Deserialize, Serialize};
+use utoipa::{IntoParams, ToSchema};
 use crate::AppState;
 use crate::response::{ApiError, api_error};
 use easybot_core::types::message::*;
 use easybot_core::types::event::GatewayEvent;
 
 /// 发送消息请求
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 pub struct SendMessageRequest {
+    /// 目标格式 "platform:chatId"，例如 "telegram:123456"
+    #[schema(example = "telegram:123456")]
     pub target: String,
+    /// 消息文本内容
+    #[schema(example = "Hello, World!")]
     pub text: String,
+    /// 文本解析模式（markdown / html / none）
     pub parse_mode: Option<ParseMode>,
+    /// 被回复消息 ID（可选）
     pub reply_to: Option<String>,
+    /// 平台特有元数据
     pub metadata: Option<serde_json::Value>,
 }
 
 /// 批量发送请求
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 pub struct BatchSendRequest {
+    /// 目标列表，每个元素格式 "platform:chatId"
+    #[schema(example = json!(["telegram:123456", "telegram:789012"]))]
     pub targets: Vec<String>,
+    /// 消息文本
+    #[schema(example = "Broadcast message")]
     pub text: String,
+    /// 文本解析模式
     pub parse_mode: Option<ParseMode>,
 }
 
 /// 消息历史查询参数
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct MessageHistoryParams {
     pub session_key: Option<String>,
     pub platform: Option<String>,
@@ -38,7 +52,21 @@ pub struct MessageHistoryParams {
     pub before: Option<i64>,
 }
 
-/// POST /api/v1/messages/send
+/// 发送消息
+///
+/// 向指定 IM 平台的目标聊天发送一条文本消息。
+/// 目标格式为 "platform:chatId"，例如 "telegram:123456789"。
+#[utoipa::path(
+    post,
+    path = "/api/v1/messages/send",
+    tag = "Messages",
+    request_body = SendMessageRequest,
+    responses(
+        (status = 200, description = "Message sent", body = serde_json::Value),
+        (status = 400, description = "Invalid request or target format"),
+        (status = 404, description = "Platform or chat not found"),
+    )
+)]
 pub async fn send_message(
     State(state): State<AppState>,
     Json(req): Json<SendMessageRequest>,
@@ -65,15 +93,34 @@ pub async fn send_message(
         serde_json::to_value(&result).unwrap_or_default(),
     ));
 
-    Ok(Json(serde_json::json!({
+    let mut resp = serde_json::json!({
         "id": result.message_id,
         "status": if result.success { "sent" } else { "failed" },
         "messageId": result.message_id,
         "timestamp": result.timestamp,
-    })))
+    });
+    if let Some(ref err) = result.error {
+        resp["error"] = serde_json::json!(err);
+    }
+    if let Some(ref err_code) = result.error_code {
+        resp["errorCode"] = serde_json::json!(err_code);
+    }
+    Ok(Json(resp))
 }
 
-/// POST /api/v1/messages/batch-send
+/// 批量发送消息
+///
+/// 向多个目标发送相同的文本消息。每个目标格式为 "platform:chatId"。
+#[utoipa::path(
+    post,
+    path = "/api/v1/messages/batch-send",
+    tag = "Messages",
+    request_body = BatchSendRequest,
+    responses(
+        (status = 200, description = "Batch send results", body = serde_json::Value),
+        (status = 400, description = "Invalid request"),
+    )
+)]
 pub async fn batch_send(
     State(state): State<AppState>,
     Json(req): Json<BatchSendRequest>,
@@ -121,7 +168,18 @@ pub async fn batch_send(
     }))
 }
 
-/// PUT /api/v1/messages/{message_id}
+/// 编辑消息（Phase 2 实现）
+#[utoipa::path(
+    put,
+    path = "/api/v1/messages/{message_id}",
+    tag = "Messages",
+    params(
+        ("message_id" = String, Path, description = "Platform message ID")
+    ),
+    responses(
+        (status = 200, description = "Not yet implemented", body = serde_json::Value),
+    )
+)]
 pub async fn edit_message(
     State(_state): State<AppState>,
     Path(_message_id): Path<String>,
@@ -134,7 +192,18 @@ pub async fn edit_message(
     }))
 }
 
-/// DELETE /api/v1/messages/{message_id}
+/// 删除消息（Phase 2 实现）
+#[utoipa::path(
+    delete,
+    path = "/api/v1/messages/{message_id}",
+    tag = "Messages",
+    params(
+        ("message_id" = String, Path, description = "Platform message ID")
+    ),
+    responses(
+        (status = 200, description = "Not yet implemented", body = serde_json::Value),
+    )
+)]
 pub async fn delete_message(
     State(_state): State<AppState>,
     Path(_message_id): Path<String>,
@@ -145,14 +214,27 @@ pub async fn delete_message(
     }))
 }
 
-/// 消息历史查询（Phase 1 简化：仅返回内存中的信息）
-#[derive(Serialize)]
+/// 消息历史查询响应
+#[derive(Serialize, ToSchema)]
 pub struct MessageHistoryResponse {
     pub messages: Vec<serde_json::Value>,
     pub has_more: bool,
 }
 
-/// GET /api/v1/messages
+/// 查询消息历史
+///
+/// Phase 1 简化：仅返回内存中的会话信息，消息内容存储将在 Phase 2 实现。
+#[utoipa::path(
+    get,
+    path = "/api/v1/messages",
+    tag = "Messages",
+    params(
+        MessageHistoryParams
+    ),
+    responses(
+        (status = 200, description = "Message history", body = MessageHistoryResponse),
+    )
+)]
 pub async fn message_history(
     State(state): State<AppState>,
     Query(params): Query<MessageHistoryParams>,

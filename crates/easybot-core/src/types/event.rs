@@ -4,9 +4,10 @@
 //! 事件用于组件间解耦通信，支持广播到多个订阅者。
 
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 /// 网关内部事件
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct GatewayEvent {
     /// 事件类型，如 "message.inbound", "adapter.connected"
     #[serde(rename = "event")]
@@ -22,7 +23,7 @@ pub struct GatewayEvent {
 }
 
 /// 事件元数据
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct EventMetadata {
     /// 关联 ID，用于追踪消息链路
     pub correlation_id: Option<String>,

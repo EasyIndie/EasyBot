@@ -4,10 +4,11 @@
 //! 会话以 session_key（platform:chatId[:threadId]）作为唯一标识。
 
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 use crate::types::message::ChatType;
 
 /// 会话
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct Session {
     /// 会话键，格式 "platform:chatId" 或 "platform:chatId:threadId"
     pub key: String,
@@ -32,7 +33,7 @@ pub struct Session {
 }
 
 /// 会话来源
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct SessionSource {
     /// 平台标识
     pub platform: String,
@@ -51,7 +52,7 @@ pub struct SessionSource {
 }
 
 /// 会话重置策略
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, Default, PartialEq)]
 pub enum ResetPolicy {
     /// 从不重置
     #[default]
