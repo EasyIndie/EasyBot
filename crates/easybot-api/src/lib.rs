@@ -37,6 +37,7 @@ pub struct AppState {
 
 impl AppState {
     /// 创建新的应用状态
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         event_bus: Arc<EventBus>,
         adapter_manager: Arc<AdapterManager>,

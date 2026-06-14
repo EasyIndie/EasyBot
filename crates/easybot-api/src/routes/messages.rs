@@ -154,7 +154,7 @@ pub async fn batch_send(
         let handle = tokio::spawn(async move {
             let _permit = semaphore.acquire().await;
 
-            let _result = match parse_target(&target) {
+            match parse_target(&target) {
                 Some((platform, chat_id)) => {
                     let send_result = tokio::time::timeout(
                         std::time::Duration::from_secs(15),

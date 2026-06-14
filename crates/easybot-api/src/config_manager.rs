@@ -65,8 +65,8 @@ impl ConfigManager {
     /// 返回旧配置。
     pub async fn swap(&self, new_config: GatewayConfig) -> Arc<GatewayConfig> {
         let mut current = self.current.write().await;
-        let old = std::mem::replace(&mut *current, Arc::new(new_config));
-        old
+        
+        std::mem::replace(&mut *current, Arc::new(new_config))
     }
 
     /// 检查配置文件是否有变更（轮询）

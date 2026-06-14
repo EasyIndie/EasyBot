@@ -281,13 +281,12 @@ impl QqAdapter {
 
                                 match payload.op {
                                     0 => {
-                                        if !identified {
-                                            if payload.t.as_deref() == Some("READY") {
+                                        if !identified
+                                            && payload.t.as_deref() == Some("READY") {
                                                 identified = true;
                                                 tracing::info!("QQ Gateway ready");
                                                 continue;
                                             }
-                                        }
                                         if let Some(ref et) = payload.t {
                                             Self::handle_dispatch(et, &payload, &event_bus, &bot_id).await;
                                         }

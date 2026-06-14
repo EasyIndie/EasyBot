@@ -10,6 +10,7 @@
 use std::sync::Arc;
 use clap::Parser;
 use tracing_subscriber::EnvFilter;
+#[allow(unused_imports)]
 use easybot_core::PlatformAdapter;
 use easybot_core::types::event::{GatewayEvent, event_types};
 

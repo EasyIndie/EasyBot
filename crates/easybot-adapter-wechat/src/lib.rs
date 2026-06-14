@@ -151,7 +151,7 @@ impl WeChatAdapter {
             .ok_or_else(|| GatewayError::Internal("No access_token in wechat response".to_string()))?;
 
         *self.access_token.write().await = Some(token.clone());
-        *self.token_expires_at.write().await = chrono::Utc::now().timestamp_millis() + 7100_000; // 接近2小时
+        *self.token_expires_at.write().await = chrono::Utc::now().timestamp_millis() + 7_100_000; // 接近2小时
 
         Ok(token)
     }
@@ -251,14 +251,13 @@ impl PlatformAdapter for WeChatAdapter {
         let has_secret = config.token.is_some();
         let has_webhook = config.extra.get("webhook_url").and_then(|v| v.as_str()).is_some();
 
-        if !has_corpid || !has_secret {
-            if !has_webhook {
+        if (!has_corpid || !has_secret)
+            && !has_webhook {
                 return Ok(InitResult {
                     ok: false,
                     error: Some("企业微信适配器需要配置 token(corp_secret) + extra.corpid，或 extra.webhook_url".to_string()),
                 });
             }
-        }
 
         self.config = Some(config);
         self.http_client = Some(reqwest::Client::builder()

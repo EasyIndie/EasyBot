@@ -35,6 +35,12 @@ pub struct MetricsRegistry {
     pub adapter_status: Gauge,
 }
 
+impl Default for MetricsRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MetricsRegistry {
     /// 创建新的指标注册表
     pub fn new() -> Self {

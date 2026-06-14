@@ -336,9 +336,7 @@ impl PlatformAdapter for FeishuAdapter {
 
         // 飞书 send message API: POST /open-apis/im/v1/messages
         // Query param: receive_id_type=chat_id
-        let path = format!(
-            "/im/v1/messages?receive_id_type=chat_id"
-        );
+        let path = "/im/v1/messages?receive_id_type=chat_id".to_string();
 
         let body = serde_json::json!({
             "receive_id": params.chat_id,
@@ -378,7 +376,7 @@ impl PlatformAdapter for FeishuAdapter {
         // 先上传文件获取 file_key
         let file_key = self.upload_media(&params.media).await?;
 
-        let path = format!("/im/v1/messages?receive_id_type=chat_id");
+        let path = "/im/v1/messages?receive_id_type=chat_id".to_string();
         let content = serde_json::json!({
             "file_key": file_key,
         });
@@ -422,7 +420,7 @@ impl PlatformAdapter for FeishuAdapter {
             }).collect::<Vec<_>>(),
         });
 
-        let path = format!("/im/v1/messages?receive_id_type=chat_id");
+        let path = "/im/v1/messages?receive_id_type=chat_id".to_string();
         let body = serde_json::json!({
             "receive_id": params.chat_id,
             "msg_type": "interactive",
