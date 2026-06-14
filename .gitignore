@@ -1,0 +1,24 @@
+# Rust
+/target/
+*.rs.bk
+Cargo.lock
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# EasyBot
+gateway.local.yaml
+.env
+/data/
+/logs/
+
+# Environment
+.env
+*.env.local

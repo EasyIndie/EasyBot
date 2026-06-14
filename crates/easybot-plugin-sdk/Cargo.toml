@@ -1,0 +1,11 @@
+[package]
+name = "easybot-plugin-sdk"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+easybot-core = { path = "../easybot-core" }
+
+serde.workspace = true
+serde_json.workspace = true
+async-trait.workspace = true

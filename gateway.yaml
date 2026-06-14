@@ -1,0 +1,32 @@
+# EasyBot 默认配置
+# 配置文件支持环境变量引用: ${VAR_NAME}
+# 使用 gateway.local.yaml 覆盖本配置（不上传到版本控制）
+
+server:
+  host: "127.0.0.1"
+  port: 8080
+  tls:
+    enabled: false
+    certFile: ""
+    keyFile: ""
+
+api:
+  basePath: "/api/v1"
+  websocket:
+    enabled: true
+    maxClients: 1000
+    heartbeatInterval: 30
+
+storage:
+  type: "sqlite"
+  path: ""
+
+logging:
+  level: "info"
+  format: "text"
+  output: "stdout"
+
+adapters:
+  telegram:
+    enabled: false
+    # token: "${TELEGRAM_BOT_TOKEN}"

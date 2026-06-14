@@ -1,0 +1,19 @@
+[package]
+name = "easybot-api"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+easybot-core = { path = "../easybot-core" }
+
+axum.workspace = true
+tokio.workspace = true
+tower.workspace = true
+tower-http.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+tracing.workspace = true
+futures.workspace = true
+anyhow.workspace = true

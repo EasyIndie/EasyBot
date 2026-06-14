@@ -1,0 +1,26 @@
+[package]
+name = "easybot-bin"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+easybot-core = { path = "../crates/easybot-core" }
+easybot-api = { path = "../crates/easybot-api" }
+easybot-adapter-telegram = { path = "../crates/easybot-adapter-telegram", optional = true }
+
+tokio.workspace = true
+clap.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+serde_yaml.workspace = true
+anyhow.workspace = true
+dirs.workspace = true
+
+[features]
+default = ["adapter-telegram"]
+adapter-telegram = ["easybot-adapter-telegram"]
+full = ["adapter-telegram"]
+
+[[bin]]
+name = "easybot"
+path = "src/main.rs"

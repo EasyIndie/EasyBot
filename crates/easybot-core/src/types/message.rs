@@ -1,0 +1,284 @@
+//! 消息模型
+//!
+//! 定义入站消息（IM 平台 → 网关）、出站消息（网关 → IM 平台）、
+//! 媒体附件、交互式按钮等数据模型。
+
+use serde::{Deserialize, Serialize};
+
+/// 入站消息（从 IM 平台接收的消息）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InboundMessage {
+    /// 平台消息 ID
+    pub id: String,
+    /// 来源平台标识
+    pub platform: String,
+    /// 来源聊天 ID
+    pub chat_id: String,
+    /// 聊天名称（可选）
+    pub chat_name: Option<String>,
+    /// 聊天类型
+    pub chat_type: ChatType,
+    /// 消息文本内容
+    pub text: Option<String>,
+    /// 消息作者
+    pub author: MessageAuthor,
+    /// 消息时间戳（毫秒）
+    pub timestamp: i64,
+    /// 媒体附件
+    pub media: Option<Vec<MediaAttachment>>,
+    /// 斜杠命令
+    pub command: Option<CommandData>,
+    /// 按钮回调
+    pub callback: Option<CallbackData>,
+    /// 回复引用
+    pub reply_to: Option<MessageReference>,
+    /// 话题 ID
+    pub thread_id: Option<String>,
+    /// 是否为群组消息
+    pub is_group: bool,
+    /// 平台特有元数据
+    pub metadata: Option<serde_json::Value>,
+}
+
+/// 出站消息（发往 IM 平台的消息）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OutboundMessage {
+    /// 消息文本
+    pub text: String,
+    /// 文本解析模式
+    #[serde(default)]
+    pub parse_mode: ParseMode,
+}
+
+/// 发送文本消息参数
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SendTextParams {
+    /// 目标聊天 ID
+    pub chat_id: String,
+    /// 消息内容
+    pub message: OutboundMessage,
+    /// 被回复消息 ID（可选）
+    pub reply_to: Option<String>,
+    /// 平台特有元数据
+    pub metadata: Option<serde_json::Value>,
+}
+
+/// 发送媒体消息参数
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SendMediaParams {
+    /// 目标聊天 ID
+    pub chat_id: String,
+    /// 媒体附件
+    pub media: MediaAttachment,
+    /// 文本说明（可选）
+    pub text: Option<String>,
+    /// 被回复消息 ID（可选）
+    pub reply_to: Option<String>,
+}
+
+/// 发送交互式消息（带按钮）参数
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SendInteractiveParams {
+    /// 目标聊天 ID
+    pub chat_id: String,
+    /// 消息文本
+    pub text: String,
+    /// 行内键盘
+    pub keyboard: InlineKeyboard,
+    /// 被回复消息 ID（可选）
+    pub reply_to: Option<String>,
+}
+
+/// 编辑消息参数
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EditMessageParams {
+    /// 目标聊天 ID
+    pub chat_id: String,
+    /// 平台消息 ID
+    pub message_id: String,
+    /// 新消息内容
+    pub message: OutboundMessage,
+    /// 更新后的键盘（可选）
+    pub keyboard: Option<InlineKeyboard>,
+}
+
+/// 发送结果
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SendResult {
+    pub success: bool,
+    pub message_id: Option<String>,
+    pub timestamp: Option<i64>,
+    pub error: Option<String>,
+    pub error_code: Option<String>,
+    pub retryable: bool,
+}
+
+impl SendResult {
+    /// 构造成功结果
+    pub fn ok(message_id: String) -> Self {
+        Self {
+            success: true,
+            message_id: Some(message_id),
+            timestamp: Some(chrono::Utc::now().timestamp_millis()),
+            error: None,
+            error_code: None,
+            retryable: false,
+        }
+    }
+
+    /// 构造失败结果
+    pub fn fail(error: impl Into<String>, retryable: bool) -> Self {
+        Self {
+            success: false,
+            message_id: None,
+            timestamp: None,
+            error: Some(error.into()),
+            error_code: None,
+            retryable,
+        }
+    }
+}
+
+/// 编辑结果
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EditResult {
+    pub success: bool,
+    pub updated_at: Option<i64>,
+    pub error: Option<String>,
+}
+
+/// 删除结果
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeleteResult {
+    pub success: bool,
+    pub error: Option<String>,
+}
+
+// ── 支持类型 ──
+
+/// 聊天类型
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum ChatType {
+    /// 私聊
+    Dm,
+    /// 群组
+    Group,
+    /// 频道
+    Channel,
+    /// 话题/子线程
+    Thread,
+}
+
+/// 消息作者
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MessageAuthor {
+    pub id: String,
+    pub name: Option<String>,
+    pub is_bot: bool,
+}
+
+/// 媒体附件
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MediaAttachment {
+    pub media_type: MediaType,
+    pub url: Option<String>,
+    pub data: Option<String>, // Base64 编码数据（小型文件）
+    pub mime_type: String,
+    pub filename: Option<String>,
+    pub caption: Option<String>,
+    pub thumbnail_url: Option<String>,
+    pub file_size: Option<u64>,
+    pub duration: Option<f64>, // 音频/视频时长（秒）
+}
+
+/// 媒体类型
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum MediaType {
+    Image,
+    Audio,
+    Video,
+    Document,
+    Sticker,
+    Animation,
+}
+
+/// 斜杠命令
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommandData {
+    pub name: String,
+    pub args: String,
+}
+
+/// 按钮回调
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CallbackData {
+    pub data: String,
+    pub message_id: String,
+}
+
+/// 消息引用（回复链）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MessageReference {
+    pub message_id: String,
+    pub text: Option<String>,
+}
+
+/// 文本解析模式
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+pub enum ParseMode {
+    /// Markdown 格式
+    #[default]
+    Markdown,
+    /// HTML 格式
+    Html,
+    /// 纯文本（不解析）
+    None,
+}
+
+/// 行内键盘（按钮布局）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InlineKeyboard {
+    pub rows: Vec<KeyboardRow>,
+}
+
+/// 键盘行
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KeyboardRow {
+    pub buttons: Vec<Button>,
+}
+
+/// 按钮
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Button {
+    pub text: String,
+    pub callback_data: Option<String>,
+    pub url: Option<String>,
+}
+
+/// 按钮回调事件
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CallbackEvent {
+    pub id: String,
+    pub platform: String,
+    pub chat_id: String,
+    pub user_id: String,
+    pub data: String,
+    pub message_id: String,
+    pub metadata: Option<serde_json::Value>,
+}
+
+/// 聊天信息
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChatInfo {
+    pub chat_id: String,
+    pub name: Option<String>,
+    pub chat_type: ChatType,
+    pub member_count: Option<u32>,
+}
+
+/// 聊天过滤器
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChatFilter {
+    pub chat_type: Option<ChatType>,
+    pub query: Option<String>,
+}
