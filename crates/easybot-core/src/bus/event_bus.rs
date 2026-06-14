@@ -21,13 +21,23 @@ const MERGE_POLL_INTERVAL_MS: u64 = 10;
 /// 基于 tokio broadcast channel，每个事件类型有独立的通道。
 pub struct EventBus {
     channels: DashMap<String, broadcast::Sender<GatewayEvent>>,
+    capacity: usize,
 }
 
 impl EventBus {
-    /// 创建新的事件总线
+    /// 创建新的事件总线（默认容量 256）
     pub fn new() -> Self {
+        Self::with_capacity(DEFAULT_CHANNEL_CAPACITY)
+    }
+
+    /// 创建指定容量的事件总线
+    ///
+    /// `capacity` 决定每个事件类型 broadcast channel 的缓冲区大小。
+    /// 当消费者慢于生产者时，超出 capacity 的旧事件会被丢弃。
+    pub fn with_capacity(capacity: usize) -> Self {
         Self {
             channels: DashMap::new(),
+            capacity,
         }
     }
 
@@ -55,10 +65,11 @@ impl EventBus {
         &self,
         event_type: &str,
     ) -> broadcast::Sender<GatewayEvent> {
+        let cap = self.capacity;
         self.channels
             .entry(event_type.to_string())
             .or_insert_with(|| {
-                let (tx, _) = broadcast::channel(DEFAULT_CHANNEL_CAPACITY);
+                let (tx, _) = broadcast::channel(cap);
                 tx
             })
             .value()
@@ -70,7 +81,7 @@ impl EventBus {
     /// 创建一个合并的接收器，订阅列表中所有事件类型。
     /// 使用单个后台任务轮询所有 channel，避免为每个事件类型 spawn 独立 task。
     pub fn subscribe_many(&self, event_types: &[&str]) -> broadcast::Receiver<GatewayEvent> {
-        let (global_tx, global_rx) = broadcast::channel(DEFAULT_CHANNEL_CAPACITY);
+        let (global_tx, global_rx) = broadcast::channel(self.capacity);
 
         let mut receivers: Vec<broadcast::Receiver<GatewayEvent>> = event_types
             .iter()

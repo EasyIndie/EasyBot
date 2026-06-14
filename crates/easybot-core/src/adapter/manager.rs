@@ -139,6 +139,12 @@ impl AdapterManager {
         adapter.send(params).await
     }
 
+    /// 获取单个适配器状态（O(1) 查找）
+    pub async fn get_status(&self, platform: &str) -> Option<AdapterStatusSummary> {
+        let statuses = self.statuses.read().await;
+        statuses.get(platform).cloned()
+    }
+
     /// 列出所有适配器状态
     pub async fn list_statuses(&self) -> Vec<AdapterStatusSummary> {
         let adapters = self.adapters.read().await;

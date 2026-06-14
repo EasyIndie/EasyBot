@@ -50,6 +50,8 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
 
     let mut authenticated = false;
     let mut event_seq: u64 = 0;
+    let mut dropped_events: u32 = 0;
+    const MAX_DROPPED_EVENTS: u32 = 50; // 连续丢弃超过 N 个事件则断开
 
     info!("WebSocket client connected");
 
@@ -98,7 +100,7 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
                 }
             }
 
-            // 推送网关事件到客户端
+            // 推送网关事件到客户端（带背压处理）
             event = event_rx.recv() => {
                 match event {
                     Ok(event) => {
@@ -111,9 +113,25 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
                             "timestamp": event.timestamp,
                         });
 
-                        if sender.send(Message::Text(frame.to_string().into())).await.is_err() {
-                            warn!("WebSocket client disconnected (send failed)");
-                            break;
+                        // 超时发送：100ms 内发不出去则丢弃，防止慢客户端反压
+                        let msg = Message::Text(frame.to_string().into());
+                        let send_fut = sender.send(msg);
+                        tokio::select! {
+                            result = send_fut => {
+                                if result.is_err() {
+                                    warn!("WebSocket client disconnected (send failed)");
+                                    break;
+                                }
+                                dropped_events = 0;
+                            }
+                            _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => {
+                                dropped_events += 1;
+                                warn!("WS client too slow, dropped event #{}", event_seq);
+                                if dropped_events > MAX_DROPPED_EVENTS {
+                                    info!("WS client disconnected (too many dropped events)");
+                                    break;
+                                }
+                            }
                         }
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {

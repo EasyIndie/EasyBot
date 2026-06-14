@@ -440,17 +440,17 @@ impl PlatformAdapter for TelegramAdapter {
         })
     }
 
-    async fn send_typing(&self, _chat_id: &str) -> Result<(), GatewayError> {
+    async fn send_typing(&self, chat_id: &str) -> Result<(), GatewayError> {
         let body = serde_json::json!({
-            "chat_id": _chat_id,
+            "chat_id": chat_id,
             "action": "typing",
         });
         self.api_call::<serde_json::Value>("sendChatAction", Some(body)).await?;
         Ok(())
     }
 
-    async fn get_chat_info(&self, _chat_id: &str) -> Result<ChatInfo, GatewayError> {
-        let body = serde_json::json!({ "chat_id": _chat_id });
+    async fn get_chat_info(&self, chat_id: &str) -> Result<ChatInfo, GatewayError> {
+        let body = serde_json::json!({ "chat_id": chat_id });
         let chat: TelegramChat = self.api_call("getChat", Some(body)).await?;
 
         let chat_type = match chat.chat_type.as_str() {

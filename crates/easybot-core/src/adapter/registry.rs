@@ -8,7 +8,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use crate::types::adapter::*;
-use crate::types::error::BoxFuture;
+use crate::types::BoxFuture;
 
 /// 适配器工厂
 ///

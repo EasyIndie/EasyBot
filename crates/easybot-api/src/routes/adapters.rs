@@ -127,14 +127,12 @@ pub async fn adapter_status(
     State(state): State<AppState>,
     Path(platform): Path<String>,
 ) -> Json<serde_json::Value> {
-    let statuses = state.adapter_manager.list_statuses().await;
-    for s in statuses {
-        if s.platform == platform {
-            return Json(serde_json::to_value(s).unwrap_or_default());
-        }
+    // 使用新的 O(1) get_status 方法，绕过 Vec 遍历
+    match state.adapter_manager.get_status(&platform).await {
+        Some(s) => Json(serde_json::to_value(s).unwrap_or_default()),
+        None => Json(serde_json::json!({
+            "error": "PLATFORM_NOT_FOUND",
+            "message": format!("Platform '{}' not found", platform),
+        })),
     }
-    Json(serde_json::json!({
-        "error": "PLATFORM_NOT_FOUND",
-        "message": format!("Platform '{}' not found", platform),
-    }))
 }

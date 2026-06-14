@@ -3,13 +3,8 @@
 //! 定义网关的统⼀错误模型。所有错误都有错误码、HTTP 状态码映射、
 //! 和人类可读的消息。遵循架构设计中定义的错误码规范。
 
-use std::pin::Pin;
-use std::future::Future;
 use serde::Serialize;
 use utoipa::ToSchema;
-
-/// 类型别名：堆上分配的异步 Future
-pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
 /// 网关统⼀错误类型
 #[derive(Debug, Clone, thiserror::Error)]
