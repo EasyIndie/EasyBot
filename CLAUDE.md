@@ -42,7 +42,7 @@ cargo fmt
 
 ## Architecture Overview
 
-EasyBot is an independent **IM Gateway** service connecting multiple instant messaging platforms (Telegram, Discord, WhatsApp, etc.) and exposing a unified REST API + WebSocket for third-party clients. Written in Rust with a tokio + axum stack.
+EasyBot is an independent **IM Gateway** service connecting multiple instant messaging platforms (Telegram, Discord, 飞书/Lark, QQ, WeChat) and exposing a unified REST API + WebSocket for third-party clients. Written in Rust with a tokio + axum stack.
 
 ### Three-Layer Architecture
 
@@ -62,8 +62,10 @@ EasyBot is an independent **IM Gateway** service connecting multiple instant mes
                           ↕
 ┌─────────── Adapter Layer (easybot-adapter-*) ────────────┐
 │  TelegramAdapter  (implements PlatformAdapter trait)      │
-│  DiscordAdapter   (Phase 3)                               │
-│  WhatsAppAdapter  (Phase 3)                               │
+│  DiscordAdapter   (Gateway WebSocket)                      │
+│  FeishuAdapter    (REST API)                               │
+│  QQAdapter        (Gateway WebSocket)                      │
+│  WeChatAdapter    (企业微信 REST API)                         │
 └──────────────────────────────────────────────────────────┘
 ```
 
@@ -75,6 +77,7 @@ EasyBot is an independent **IM Gateway** service connecting multiple instant mes
 | `crates/easybot-core` | Core library: types, event bus, sessions, adapter management, auth, config |
 | `crates/easybot-api` | API layer: axum server, REST routes, WebSocket, error responses |
 | `crates/easybot-adapter-telegram` | Telegram Bot API adapter |
+| `crates/easybot-adapter-discord` | Discord Bot API / Gateway adapter |
 | `crates/easybot-plugin-sdk` | Re-exports core types for third-party plugin devs |
 
 ### Core Types (`easybot-core/src/types/`)
@@ -138,11 +141,11 @@ The `AdapterRegistry` holds factory functions keyed by platform name. `AdapterMa
 
 | Phase | Scope | Status |
 |-------|-------|--------|
-| **P1 MVP** | Core types, PlatformAdapter trait, Telegram adapter (mock), REST API, config loading, cross-platform paths | ✅ Done |
-| **P2 Bidirectional** | Event bus → WebSocket push, webhooks, inbound message handling, session persistence | ⬜ |
-| **P3 Multi-platform** | Discord + WhatsApp adapters, media sending | ⬜ |
-| **P4 Production** | API key auth, rate limiting, hot-reload, graceful shutdown, PostgreSQL, Prometheus, Docker | ⬜ |
-| **P5 Plugin System** | Plugin SDK, dynamic library loading, plugin registry | ⬜ |
+| **P1 MVP** | Core types, PlatformAdapter trait, Telegram adapter, REST API, config loading, cross-platform paths | ✅ Done |
+| **P2 Bidirectional** | Event bus, WebSocket push, webhooks, inbound message handling, session persistence, message edit/delete, adapter lifecycle events | 100% ✅ |
+| **P3 Multi-platform** | Telegram ✅, Discord ✅, **飞书/Lark** ✅, **QQ** ✅, **企业微信** ✅ — 五个平台 + 媒体发送 | 100% ✅ |
+| **P4 Production** | API key auth (basic), Argon2 upgrade, rate limiting, hot-reload, graceful shutdown, PostgreSQL, Prometheus, Docker, TTL retention | ⬜ |
+| **P5 Plugin System** | Plugin SDK, dynamic library loading, plugin registry | ❌ Not started |
 
 ### Key Patterns
 

@@ -8,6 +8,8 @@ pub mod session;
 pub mod adapter;
 pub mod auth;
 pub mod config;
+pub mod storage;
+pub mod webhook;
 
 /// 重新导出核心类型，方便外部 crate 使用
 pub use types::message::*;

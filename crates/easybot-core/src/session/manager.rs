@@ -1,9 +1,11 @@
 //! 会话管理器实现
 //!
-//! 提供内存中的会话管理功能，暂不涉及持久化存储。
-//! Phase 1 使用 DashMap 内存存储，后续接入 SQLite。
+//! 提供内存中的会话管理功能，可选支持 SQLite 持久化。
+//! DashMap 提供快速读取，持久化写入委托给 SessionStore。
 
+use std::sync::Arc;
 use dashmap::DashMap;
+use crate::storage::SessionStore;
 use crate::types::session::{Session, SessionFilter, SessionSource, ResetPolicy};
 
 /// 默认构造会话使用的重置策略
@@ -12,23 +14,51 @@ const DEFAULT_RESET_POLICY: ResetPolicy = ResetPolicy::Never;
 /// 会话管理器
 ///
 /// 管理所有活跃会话的生命周期。
-/// Phase 1 使用内存存储，Phase 4 接入 SQLite 持久化。
+/// - 快速读取：DashMap（O(1) 查找）
+/// - 写入持久化：可选的 SessionStore
 pub struct SessionManager {
     sessions: DashMap<String, Session>,
+    store: Option<Arc<dyn SessionStore>>,
 }
 
 impl SessionManager {
-    /// 创建新的会话管理器
+    /// 创建纯内存会话管理器（无持久化）
     pub fn new() -> Self {
         Self {
             sessions: DashMap::new(),
+            store: None,
+        }
+    }
+
+    /// 创建带持久化存储的会话管理器
+    pub fn with_store(store: Arc<dyn SessionStore>) -> Self {
+        Self {
+            sessions: DashMap::new(),
+            store: Some(store),
+        }
+    }
+
+    /// 从存储层加载所有会话到 DashMap
+    ///
+    /// 应在启动时调用，将持久化的会话恢复到内存中。
+    pub async fn load_from_store(&self) -> Result<usize, crate::storage::StoreError> {
+        if let Some(ref store) = self.store {
+            let sessions = store.load_all_sessions().await?;
+            let count = sessions.len();
+            for session in sessions {
+                self.sessions.insert(session.key.clone(), session);
+            }
+            Ok(count)
+        } else {
+            Ok(0)
         }
     }
 
     /// 获取或创建会话
     ///
     /// 根据 session_key 查找已有会话，不存在则创建新的。
-    pub fn get_or_create(
+    /// 如果配置了持久化存储，创建/更新操作会同步写入。
+    pub async fn get_or_create(
         &self,
         key: &str,
         source: SessionSource,
@@ -36,9 +66,13 @@ impl SessionManager {
         if let Some(entry) = self.sessions.get(key) {
             let session = entry.value().clone();
             drop(entry);
-            // 更新活跃时间（"写"操作在 DashMap 中需要可变引用）
+            // 更新活跃时间
             if let Some(mut entry) = self.sessions.get_mut(key) {
                 entry.updated_at = chrono::Utc::now().timestamp_millis();
+                // 持久化更新
+                if let Some(ref store) = self.store {
+                    let _ = store.upsert_session(&entry.clone()).await;
+                }
             }
             session
         } else {
@@ -55,21 +89,33 @@ impl SessionManager {
                 metadata: serde_json::json!({}),
             };
             self.sessions.insert(key.to_string(), session.clone());
+            // 持久化新会话
+            if let Some(ref store) = self.store {
+                let _ = store.upsert_session(&session).await;
+            }
             session
         }
     }
 
-    /// 获取会话
+    /// 获取会话（同步，仅读 DashMap）
     pub fn get(&self, key: &str) -> Option<Session> {
         self.sessions.get(key).map(|e| e.value().clone())
     }
 
     /// 删除会话
-    pub fn delete(&self, key: &str) -> bool {
-        self.sessions.remove(key).is_some()
+    ///
+    /// 从 DashMap 和持久化存储中同时删除。
+    pub async fn delete(&self, key: &str) -> bool {
+        let removed = self.sessions.remove(key).is_some();
+        if removed {
+            if let Some(ref store) = self.store {
+                let _ = store.delete_session(key).await;
+            }
+        }
+        removed
     }
 
-    /// 列出会话
+    /// 列出会话（同步，仅读 DashMap）
     pub fn list(&self, filter: Option<SessionFilter>) -> Vec<Session> {
         let mut results: Vec<Session> = self
             .sessions
@@ -105,13 +151,15 @@ impl SessionManager {
         results
     }
 
-    /// 获取会话数量
+    /// 获取会话数量（同步）
     pub fn count(&self) -> usize {
         self.sessions.len()
     }
 
     /// 更新会话
-    pub fn update(&self, key: &str, mutation: SessionMutation) -> Option<Session> {
+    ///
+    /// 更新 DashMap 中的会话，并持久化到存储。
+    pub async fn update(&self, key: &str, mutation: SessionMutation) -> Option<Session> {
         if let Some(mut entry) = self.sessions.get_mut(key) {
             let session = entry.value_mut();
             session.updated_at = chrono::Utc::now().timestamp_millis();
@@ -121,7 +169,12 @@ impl SessionManager {
             if let Some(meta) = mutation.metadata {
                 session.metadata = meta;
             }
-            Some(session.clone())
+            let cloned = session.clone();
+            // 持久化更新
+            if let Some(ref store) = self.store {
+                let _ = store.upsert_session(&cloned).await;
+            }
+            Some(cloned)
         } else {
             None
         }
@@ -174,34 +227,34 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_get_or_create() {
+    #[tokio::test]
+    async fn test_get_or_create() {
         let mgr = SessionManager::new();
         let key = "telegram:12345";
         let source = make_source("telegram", "12345");
 
-        let session = mgr.get_or_create(key, source);
+        let session = mgr.get_or_create(key, source).await;
         assert_eq!(session.key, key);
         assert_eq!(session.platform, "telegram");
 
         // 再次获取应返回同一会话
-        let session2 = mgr.get_or_create(key, make_source("telegram", "12345"));
+        let session2 = mgr.get_or_create(key, make_source("telegram", "12345")).await;
         assert_eq!(session2.created_at, session.created_at);
     }
 
-    #[test]
-    fn test_delete() {
+    #[tokio::test]
+    async fn test_delete() {
         let mgr = SessionManager::new();
-        mgr.get_or_create("test:1", make_source("test", "1"));
-        assert!(mgr.delete("test:1"));
-        assert!(!mgr.delete("nonexistent"));
+        mgr.get_or_create("test:1", make_source("test", "1")).await;
+        assert!(mgr.delete("test:1").await);
+        assert!(!mgr.delete("nonexistent").await);
     }
 
-    #[test]
-    fn test_list_filter_by_platform() {
+    #[tokio::test]
+    async fn test_list_filter_by_platform() {
         let mgr = SessionManager::new();
-        mgr.get_or_create("telegram:1", make_source("telegram", "1"));
-        mgr.get_or_create("discord:2", make_source("discord", "2"));
+        mgr.get_or_create("telegram:1", make_source("telegram", "1")).await;
+        mgr.get_or_create("discord:2", make_source("discord", "2")).await;
 
         let filter = SessionFilter {
             platform: Some("telegram".to_string()),

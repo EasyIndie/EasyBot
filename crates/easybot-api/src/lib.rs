@@ -8,6 +8,7 @@ use easybot_core::bus::EventBus;
 use easybot_core::adapter::AdapterManager;
 use easybot_core::session::SessionManager;
 use easybot_core::auth::ApiKeyManager;
+use easybot_core::storage::MessageStore;
 use easybot_core::types::config::GatewayConfig;
 
 pub mod server;
@@ -21,6 +22,7 @@ pub struct AppState {
     pub event_bus: Arc<EventBus>,
     pub adapter_manager: Arc<AdapterManager>,
     pub session_manager: Arc<SessionManager>,
+    pub message_store: Arc<dyn MessageStore>,
     pub auth_manager: Arc<ApiKeyManager>,
     pub config: Arc<GatewayConfig>,
 }
@@ -31,6 +33,7 @@ impl AppState {
         event_bus: Arc<EventBus>,
         adapter_manager: Arc<AdapterManager>,
         session_manager: Arc<SessionManager>,
+        message_store: Arc<dyn MessageStore>,
         auth_manager: Arc<ApiKeyManager>,
         config: GatewayConfig,
     ) -> Self {
@@ -38,6 +41,7 @@ impl AppState {
             event_bus,
             adapter_manager,
             session_manager,
+            message_store,
             auth_manager,
             config: Arc::new(config),
         }

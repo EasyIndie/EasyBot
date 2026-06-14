@@ -74,4 +74,19 @@ pub mod event_types {
     pub const GATEWAY_STARTED: &str = "gateway.started";
     /// 网关关闭
     pub const GATEWAY_STOPPING: &str = "gateway.stopping";
+
+    /// 返回所有预定义事件类型列表
+    pub fn all() -> &'static [&'static str] {
+        &[
+            MESSAGE_INBOUND,
+            MESSAGE_SENT,
+            MESSAGE_FAILED,
+            ADAPTER_CONNECTED,
+            ADAPTER_DISCONNECTED,
+            ADAPTER_ERROR,
+            CALLBACK_RECEIVED,
+            GATEWAY_STARTED,
+            GATEWAY_STOPPING,
+        ]
+    }
 }

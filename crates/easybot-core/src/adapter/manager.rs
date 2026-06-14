@@ -3,11 +3,15 @@
 //! 管理所有平台适配器的生命周期、健康轮询和状态查询。
 
 use std::collections::HashMap;
+use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{info, warn};
+use tracing::{info, warn, error};
 
+use crate::bus::EventBus;
 use crate::types::adapter::*;
 use crate::types::error::GatewayError;
+use crate::types::event::GatewayEvent;
+use crate::types::event::event_types;
 use crate::adapter::registry::AdapterRegistry;
 
 /// 适配器管理器
@@ -20,6 +24,8 @@ pub struct AdapterManager {
     adapters: RwLock<HashMap<String, Box<dyn PlatformAdapter>>>,
     /// 适配器状态缓存
     statuses: RwLock<HashMap<String, AdapterStatusSummary>>,
+    /// 事件总线（用于发布适配器生命周期事件）
+    event_bus: Option<Arc<EventBus>>,
 }
 
 impl AdapterManager {
@@ -29,7 +35,14 @@ impl AdapterManager {
             registry: AdapterRegistry::new(),
             adapters: RwLock::new(HashMap::new()),
             statuses: RwLock::new(HashMap::new()),
+            event_bus: None,
         }
+    }
+
+    /// 设置事件总线（用于发布生命周期事件）
+    pub fn with_event_bus(mut self, event_bus: Arc<EventBus>) -> Self {
+        self.event_bus = Some(event_bus);
+        self
     }
 
     /// 获取适配器注册表引用
@@ -53,6 +66,8 @@ impl AdapterManager {
         // 初始化
         let init_result = adapter.init(config).await?;
         if !init_result.ok {
+            let error_msg = init_result.error.clone().unwrap_or_default();
+            self.publish_adapter_error(platform, &error_msg);
             return Ok(StartAdapterResult {
                 ok: false,
                 platform: platform.to_string(),
@@ -73,6 +88,7 @@ impl AdapterManager {
         }
 
         // 更新状态缓存
+        let connected = connect_result.ok;
         {
             let mut statuses = self.statuses.write().await;
             statuses.insert(
@@ -80,29 +96,36 @@ impl AdapterManager {
                 AdapterStatusSummary {
                     platform: platform_name.clone(),
                     display_name,
-                    state: if connect_result.ok {
+                    state: if connected {
                         AdapterState::Connected
                     } else {
                         AdapterState::Failed
                     },
-                    connected: connect_result.ok,
+                    connected,
                     health: None,
                     last_error: connect_result.error.clone(),
-                    uptime: if connect_result.ok { Some(0) } else { None },
+                    uptime: if connected { Some(0) } else { None },
                     messages_in: 0,
                     messages_out: 0,
                 },
             );
         }
 
-        info!(
-            "Adapter '{}' started (connected: {})",
-            platform_name,
-            connect_result.ok
-        );
+        // 发布生命周期事件
+        if connected {
+            self.publish_event(event_types::ADAPTER_CONNECTED, serde_json::json!({
+                "platform": &platform_name,
+                "connected": true,
+            }));
+            info!("Adapter '{}' started (connected: true)", platform_name);
+        } else {
+            let error_msg = connect_result.error.clone().unwrap_or_default();
+            self.publish_adapter_error(&platform_name, &error_msg);
+            info!("Adapter '{}' started (connected: false)", platform_name);
+        }
 
         Ok(StartAdapterResult {
-            ok: connect_result.ok,
+            ok: connected,
             platform: platform_name,
             error: connect_result.error,
             bot_info: connect_result.bot_info,
@@ -121,6 +144,10 @@ impl AdapterManager {
             if let Err(e) = adapter.disconnect().await {
                 warn!("Error disconnecting adapter '{}': {}", platform, e);
             }
+            self.publish_event(event_types::ADAPTER_DISCONNECTED, serde_json::json!({
+                "platform": platform,
+                "connected": false,
+            }));
             info!("Adapter '{}' stopped", platform);
         }
         Ok(())
@@ -137,6 +164,33 @@ impl AdapterManager {
             .get(platform)
             .ok_or_else(|| GatewayError::AdapterNotConnected(platform.to_string()))?;
         adapter.send(params).await
+    }
+
+    /// 编辑消息
+    pub async fn edit_message(
+        &self,
+        platform: &str,
+        params: crate::types::message::EditMessageParams,
+    ) -> Result<crate::types::message::EditResult, GatewayError> {
+        let adapters = self.adapters.read().await;
+        let adapter = adapters
+            .get(platform)
+            .ok_or_else(|| GatewayError::AdapterNotConnected(platform.to_string()))?;
+        adapter.edit_message(params).await
+    }
+
+    /// 删除消息
+    pub async fn delete_message(
+        &self,
+        platform: &str,
+        chat_id: &str,
+        message_id: &str,
+    ) -> Result<crate::types::message::DeleteResult, GatewayError> {
+        let adapters = self.adapters.read().await;
+        let adapter = adapters
+            .get(platform)
+            .ok_or_else(|| GatewayError::AdapterNotConnected(platform.to_string()))?;
+        adapter.delete_message(chat_id, message_id).await
     }
 
     /// 获取单个适配器状态（O(1) 查找）
@@ -196,6 +250,10 @@ impl AdapterManager {
             if let Err(e) = adapter.disconnect().await {
                 warn!("Error disconnecting adapter '{}': {}", name, e);
             }
+            self.publish_event(event_types::ADAPTER_DISCONNECTED, serde_json::json!({
+                "platform": &name,
+                "connected": false,
+            }));
             info!("Adapter '{}' disconnected", name);
         }
     }
@@ -204,6 +262,22 @@ impl AdapterManager {
     pub async fn has_connected(&self) -> bool {
         let adapters = self.adapters.read().await;
         adapters.values().any(|a| a.is_connected())
+    }
+
+    /// 发布事件到 EventBus
+    fn publish_event(&self, event_type: &str, data: serde_json::Value) {
+        if let Some(ref bus) = self.event_bus {
+            bus.publish(GatewayEvent::new(event_type, "adapter_manager", data));
+        }
+    }
+
+    /// 发布适配器错误事件
+    fn publish_adapter_error(&self, platform: &str, error: &str) {
+        error!("Adapter '{}' error: {}", platform, error);
+        self.publish_event(event_types::ADAPTER_ERROR, serde_json::json!({
+            "platform": platform,
+            "error": error,
+        }));
     }
 }
 

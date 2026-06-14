@@ -75,7 +75,7 @@ pub async fn delete_session(
     State(state): State<AppState>,
     Path(key): Path<String>,
 ) -> Json<serde_json::Value> {
-    if state.session_manager.delete(&key) {
+    if state.session_manager.delete(&key).await {
         Json(serde_json::json!({ "ok": true }))
     } else {
         Json(serde_json::json!({

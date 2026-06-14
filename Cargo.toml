@@ -5,6 +5,10 @@ members = [
     "crates/easybot-core",
     "crates/easybot-api",
     "crates/easybot-adapter-telegram",
+    "crates/easybot-adapter-discord",
+    "crates/easybot-adapter-feishu",
+    "crates/easybot-adapter-qq",
+    "crates/easybot-adapter-wechat",
     "crates/easybot-plugin-sdk",
 ]
 
@@ -55,10 +59,11 @@ hmac = "0.12"
 sha2 = "0.10"
 
 # HTTP 客户端
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls"] }
 
 # 异步工具
 futures = "0.3"
+tokio-tungstenite = "0.24"
 dashmap = "6"
 parking_lot = "0.12"
 async-trait = "0.1"

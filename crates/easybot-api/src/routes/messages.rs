@@ -9,7 +9,9 @@ use serde::{Deserialize, Serialize};
 use utoipa::{IntoParams, ToSchema};
 use crate::AppState;
 use crate::response::{ApiError, api_error};
+use easybot_core::storage::{MessageFilter, StoredMessage};
 use easybot_core::types::message::*;
+use easybot_core::types::error::GatewayError;
 use easybot_core::types::event::GatewayEvent;
 
 /// 发送消息请求
@@ -78,14 +80,22 @@ pub async fn send_message(
         )))?;
 
     let result = state.adapter_manager.send_message(&platform, SendTextParams {
-        chat_id,
+        chat_id: chat_id.clone(),
         message: OutboundMessage {
-            text: req.text,
+            text: req.text.clone(),
             parse_mode: req.parse_mode.unwrap_or_default(),
         },
         reply_to: req.reply_to,
         metadata: req.metadata,
     }).await.map_err(api_error)?;
+
+    // 持久化出站消息
+    let stored = StoredMessage::from_outbound(
+        &platform, &chat_id, None, &req.text, &result,
+    );
+    if let Err(e) = state.message_store.store_message(&stored).await {
+        tracing::warn!("Failed to persist outbound message: {}", e);
+    }
 
     // 发布事件
     state.event_bus.publish(GatewayEvent::new(
@@ -204,7 +214,33 @@ pub async fn batch_send(
     }))
 }
 
-/// 编辑消息（Phase 2 实现）
+/// 编辑消息请求
+#[derive(Deserialize, ToSchema)]
+pub struct EditMessageRequest {
+    /// 目标格式 "platform:chatId"，例如 "telegram:123456"
+    #[schema(example = "telegram:123456")]
+    pub target: String,
+    /// 新的消息文本
+    #[schema(example = "Updated text")]
+    pub text: String,
+    /// 文本解析模式
+    pub parse_mode: Option<ParseMode>,
+    /// 更新后的行内键盘（可选）
+    pub keyboard: Option<InlineKeyboard>,
+}
+
+/// 删除消息请求
+#[derive(Deserialize, ToSchema)]
+pub struct DeleteMessageRequest {
+    /// 目标格式 "platform:chatId"，例如 "telegram:123456"
+    #[schema(example = "telegram:123456")]
+    pub target: String,
+}
+
+/// 编辑消息
+///
+/// 编辑已发送的消息内容。目标格式为 "platform:chatId"。
+/// 仅当适配器支持 MessageEdit 能力时有效。
 #[utoipa::path(
     put,
     path = "/api/v1/messages/{message_id}",
@@ -212,23 +248,58 @@ pub async fn batch_send(
     params(
         ("message_id" = String, Path, description = "Platform message ID")
     ),
+    request_body = EditMessageRequest,
     responses(
-        (status = 200, description = "Not yet implemented", body = serde_json::Value),
+        (status = 200, description = "Message edited", body = serde_json::Value),
+        (status = 400, description = "Invalid request"),
+        (status = 404, description = "Message or platform not found"),
     )
 )]
 pub async fn edit_message(
-    State(_state): State<AppState>,
-    Path(_message_id): Path<String>,
-    Json(_req): Json<serde_json::Value>,
-) -> Json<serde_json::Value> {
-    // Phase 1 简化：编辑消息需要 platform + chat_id 上下文
-    Json(serde_json::json!({
-        "error": "NOT_IMPLEMENTED",
-        "message": "Message editing not yet implemented in Phase 1"
-    }))
+    State(state): State<AppState>,
+    Path(message_id): Path<String>,
+    Json(req): Json<EditMessageRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let (platform, chat_id) = parse_target(&req.target)
+        .ok_or_else(|| api_error(GatewayError::InvalidRequest(
+            "Invalid target format. Expected 'platform:chatId'".to_string()
+        )))?;
+
+    let params = EditMessageParams {
+        chat_id,
+        message_id: message_id.clone(),
+        message: OutboundMessage {
+            text: req.text,
+            parse_mode: req.parse_mode.unwrap_or_default(),
+        },
+        keyboard: req.keyboard,
+    };
+
+    let result = state.adapter_manager.edit_message(&platform, params).await
+        .map_err(api_error)?;
+
+    // 发布事件
+    state.event_bus.publish(GatewayEvent::new(
+        easybot_core::types::event::event_types::MESSAGE_SENT,
+        "api",
+        serde_json::json!({
+            "action": "edit",
+            "message_id": message_id,
+            "result": result,
+        }),
+    ));
+
+    Ok(Json(serde_json::json!({
+        "ok": result.success,
+        "updated_at": result.updated_at,
+        "error": result.error,
+    })))
 }
 
-/// 删除消息（Phase 2 实现）
+/// 删除消息
+///
+/// 删除已发送的消息。目标格式为 "platform:chatId"。
+/// 仅当适配器支持 MessageDelete 能力时有效。
 #[utoipa::path(
     delete,
     path = "/api/v1/messages/{message_id}",
@@ -236,18 +307,41 @@ pub async fn edit_message(
     params(
         ("message_id" = String, Path, description = "Platform message ID")
     ),
+    request_body = DeleteMessageRequest,
     responses(
-        (status = 200, description = "Not yet implemented", body = serde_json::Value),
+        (status = 200, description = "Message deleted", body = serde_json::Value),
+        (status = 400, description = "Invalid request"),
+        (status = 404, description = "Message or platform not found"),
     )
 )]
 pub async fn delete_message(
-    State(_state): State<AppState>,
-    Path(_message_id): Path<String>,
-) -> Json<serde_json::Value> {
-    Json(serde_json::json!({
-        "error": "NOT_IMPLEMENTED",
-        "message": "Message deletion not yet implemented in Phase 1"
-    }))
+    State(state): State<AppState>,
+    Path(message_id): Path<String>,
+    Json(req): Json<DeleteMessageRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let (platform, chat_id) = parse_target(&req.target)
+        .ok_or_else(|| api_error(GatewayError::InvalidRequest(
+            "Invalid target format. Expected 'platform:chatId'".to_string()
+        )))?;
+
+    let result = state.adapter_manager.delete_message(&platform, &chat_id, &message_id).await
+        .map_err(api_error)?;
+
+    // 发布事件
+    state.event_bus.publish(GatewayEvent::new(
+        easybot_core::types::event::event_types::MESSAGE_SENT,
+        "api",
+        serde_json::json!({
+            "action": "delete",
+            "message_id": message_id,
+            "result": result,
+        }),
+    ));
+
+    Ok(Json(serde_json::json!({
+        "ok": result.success,
+        "error": result.error,
+    })))
 }
 
 /// 消息历史查询响应
@@ -259,7 +353,8 @@ pub struct MessageHistoryResponse {
 
 /// 查询消息历史
 ///
-/// Phase 1 简化：仅返回内存中的会话信息，消息内容存储将在 Phase 2 实现。
+/// 从持久化存储中查询消息历史，支持按会话键、平台、聊天 ID 过滤。
+/// 分页使用 before 游标（基于时间戳）和 limit。
 #[utoipa::path(
     get,
     path = "/api/v1/messages",
@@ -275,25 +370,30 @@ pub async fn message_history(
     State(state): State<AppState>,
     Query(params): Query<MessageHistoryParams>,
 ) -> Json<MessageHistoryResponse> {
-    // Phase 1: 仅查询活跃会话
-    if let Some(key) = &params.session_key {
-        if let Some(session) = state.session_manager.get(key) {
-            return Json(MessageHistoryResponse {
-                messages: vec![serde_json::json!({
-                    "sessionKey": session.key,
-                    "platform": session.platform,
-                    "chatId": session.chat_id,
-                    "createdAt": session.created_at,
-                    "updatedAt": session.updated_at,
-                })],
-                has_more: false,
-            });
-        }
-    }
+    let limit = params.limit.unwrap_or(50);
+
+    let filter = MessageFilter {
+        session_key: params.session_key,
+        platform: params.platform,
+        chat_id: params.chat_id,
+        limit: Some(limit + 1), // 多取一条判断 has_more
+        offset: None,
+        before: params.before,
+    };
+
+    let messages = state.message_store.list_messages(&filter).await
+        .unwrap_or_default();
+
+    let has_more = messages.len() > limit;
+    let messages: Vec<serde_json::Value> = messages
+        .into_iter()
+        .take(limit)
+        .map(|m| serde_json::to_value(&m).unwrap_or_default())
+        .collect();
 
     Json(MessageHistoryResponse {
-        messages: vec![],
-        has_more: false,
+        messages,
+        has_more,
     })
 }
 

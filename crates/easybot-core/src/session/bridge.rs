@@ -37,7 +37,7 @@ impl SessionBridge {
                 match event_rx.recv().await {
                     Ok(event) => {
                         if let Some(inbound) = Self::parse_inbound(&event.data) {
-                            Self::handle_inbound(&session_manager, inbound);
+                            Self::handle_inbound(&session_manager, inbound).await;
                         }
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
@@ -58,7 +58,7 @@ impl SessionBridge {
     }
 
     /// 处理入站消息：创建或更新会话
-    fn handle_inbound(session_manager: &SessionManager, msg: InboundMessage) {
+    async fn handle_inbound(session_manager: &SessionManager, msg: InboundMessage) {
         let key = Session::build_key(&msg.platform, &msg.chat_id, msg.thread_id.as_deref());
 
         let source = SessionSource {
@@ -71,7 +71,7 @@ impl SessionBridge {
             is_bot: msg.author.is_bot,
         };
 
-        let _session = session_manager.get_or_create(&key, source);
+        let _session = session_manager.get_or_create(&key, source).await;
     }
 }
 

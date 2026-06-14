@@ -5,5 +5,7 @@
 
 mod manager;
 mod bridge;
+mod message_persister;
 pub use manager::*;
 pub use bridge::*;
+pub use message_persister::*;

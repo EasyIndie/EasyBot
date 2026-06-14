@@ -57,6 +57,8 @@ use crate::routes;
             // Messages
             crate::routes::messages::SendMessageRequest,
             crate::routes::messages::BatchSendRequest,
+            crate::routes::messages::EditMessageRequest,
+            crate::routes::messages::DeleteMessageRequest,
             crate::routes::messages::MessageHistoryParams,
             crate::routes::messages::MessageHistoryResponse,
             // Core types (API-facing)
