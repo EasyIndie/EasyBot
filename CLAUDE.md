@@ -147,6 +147,10 @@ The `AdapterRegistry` holds factory functions keyed by platform name. `AdapterMa
 | **P4 Production** | API key auth (basic), Argon2 upgrade, rate limiting, hot-reload, graceful shutdown, PostgreSQL, Prometheus, Docker, TTL retention | ⬜ |
 | **P5 Plugin System** | Plugin SDK, dynamic library loading, plugin registry | ❌ Not started |
 
+### 不可退让的设计约束
+
+- **必须同时支持 Docker 部署和独立运行**。任何功能迭代不得引入仅 Docker 可用的能力，也不得引入仅裸机可用的能力。核心功能的配置、运行、调试路径在两种模式中必须一致。测试默认在独立运行模式下执行。
+
 ### Key Patterns
 
 - **Error handling**: Use `GatewayError` enum, convert to API via `ApiError` newtype in `easybot-api::response`
