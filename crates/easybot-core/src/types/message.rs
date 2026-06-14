@@ -225,6 +225,7 @@ pub struct MessageReference {
 
 /// 文本解析模式
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+#[serde(rename_all = "lowercase")]
 pub enum ParseMode {
     /// Markdown 格式
     #[default]

@@ -21,7 +21,7 @@ struct Cli {
     config: Option<String>,
 
     /// 数据目录（默认为 ~/.easybot/ 或平台标准目录）
-    #[arg(short, long)]
+    #[arg(long)]
     dir: Option<String>,
 
     /// 初始化配置目录
