@@ -5,6 +5,8 @@
 //! MessageStore 用于消息历史存储。
 
 pub mod sqlite;
+pub mod postgres;
+pub mod retention;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -60,6 +62,12 @@ pub trait SessionStore: Send + Sync {
 
     /// 加载所有会话（启动时使用）
     async fn load_all_sessions(&self) -> Result<Vec<Session>, StoreError>;
+
+    /// 删除 updated_at 早于 before 的过期会话
+    /// 返回删除的行数。默认实现返回 0（不执行清理）。
+    async fn delete_expired_sessions(&self, _before: i64) -> Result<u64, StoreError> {
+        Ok(0)
+    }
 }
 
 // ── MessageStore Trait ──
@@ -78,6 +86,12 @@ pub trait MessageStore: Send + Sync {
 
     /// 删除单条消息
     async fn delete_message(&self, id: &str) -> Result<bool, StoreError>;
+
+    /// 删除 created_at 早于 before 的过期消息
+    /// 返回删除的行数。默认实现返回 0（不执行清理）。
+    async fn delete_expired_messages(&self, _before: i64) -> Result<u64, StoreError> {
+        Ok(0)
+    }
 }
 
 // ── StoredMessage ──

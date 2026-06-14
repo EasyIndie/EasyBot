@@ -1,0 +1,69 @@
+version: "3.9"
+
+# EasyBot Stack
+#
+# Quick start:
+#   cp .env.example .env   # Edit tokens
+#   docker-compose up -d
+#   curl localhost:8080/health
+#
+# For monitoring (optional):
+#   docker-compose --profile monitoring up -d
+#   open http://localhost:9091  # Prometheus
+
+services:
+  easybot:
+    build: .
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./gateway.yaml:/etc/easybot/gateway.yaml:ro
+      - easybot_data:/var/lib/easybot/data
+    environment:
+      - EASYBOT_HOME=/var/lib/easybot
+      # Pass secrets through environment — referenced via ${VAR_NAME} in gateway.yaml
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN:-}
+      - FEISHU_APP_ID=${FEISHU_APP_ID:-}
+      - FEISHU_APP_SECRET=${FEISHU_APP_SECRET:-}
+      - QQ_BOT_TOKEN=${QQ_BOT_TOKEN:-}
+      - WECHAT_CORP_ID=${WECHAT_CORP_ID:-}
+      - WECHAT_CORP_SECRET=${WECHAT_CORP_SECRET:-}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: easybot
+      POSTGRES_USER: easybot
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U easybot"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    profiles:
+      - postgres
+    restart: unless-stopped
+
+  # Optional: Prometheus monitoring
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9091:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    profiles:
+      - monitoring
+    restart: unless-stopped
+
+volumes:
+  easybot_data:
+  pg_data:

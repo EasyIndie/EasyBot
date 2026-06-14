@@ -69,6 +69,55 @@ pub struct TlsConfig {
     pub key_file: String,
 }
 
+/// Prometheus 指标配置
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct MetricsConfig {
+    #[serde(default = "default_metrics_enabled")]
+    pub enabled: bool,
+    /// 指标端点路径
+    #[serde(default = "default_metrics_path")]
+    pub path: String,
+}
+
+fn default_metrics_enabled() -> bool { true }
+fn default_metrics_path() -> String { "/metrics".to_string() }
+
+impl Default for MetricsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            path: "/metrics".to_string(),
+        }
+    }
+}
+
+/// 速率限制配置
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct RateLimitConfig {
+    #[serde(default = "default_rl_enabled")]
+    pub enabled: bool,
+    /// 每分钟允许的请求数
+    #[serde(default = "default_rl_requests")]
+    pub requests_per_minute: u64,
+    /// 突发大小（1 秒内允许的峰值请求）
+    #[serde(default = "default_rl_burst")]
+    pub burst_size: u32,
+}
+
+fn default_rl_enabled() -> bool { true }
+fn default_rl_requests() -> u64 { 60 }
+fn default_rl_burst() -> u32 { 10 }
+
+impl Default for RateLimitConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            requests_per_minute: 60,
+            burst_size: 10,
+        }
+    }
+}
+
 /// API 配置
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ApiConfig {
@@ -77,6 +126,12 @@ pub struct ApiConfig {
 
     #[serde(default)]
     pub websocket: WebSocketConfig,
+
+    #[serde(default)]
+    pub rate_limit: RateLimitConfig,
+
+    #[serde(default)]
+    pub metrics: MetricsConfig,
 }
 
 fn default_api_base_path() -> String {
@@ -88,6 +143,8 @@ impl Default for ApiConfig {
         Self {
             base_path: default_api_base_path(),
             websocket: WebSocketConfig::default(),
+            rate_limit: RateLimitConfig::default(),
+            metrics: MetricsConfig::default(),
         }
     }
 }
@@ -125,6 +182,34 @@ impl Default for WebSocketConfig {
     }
 }
 
+/// TTL 保留策略配置
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct RetentionConfig {
+    /// 消息保留天数（默认 90）
+    #[serde(default = "default_message_ttl_days")]
+    pub message_ttl_days: u64,
+    /// 会话保留天数（默认 365）
+    #[serde(default = "default_session_ttl_days")]
+    pub session_ttl_days: u64,
+    /// 清理间隔秒数（默认 3600 = 1 小时）
+    #[serde(default = "default_cleanup_interval_secs")]
+    pub cleanup_interval_secs: u64,
+}
+
+fn default_message_ttl_days() -> u64 { 90 }
+fn default_session_ttl_days() -> u64 { 365 }
+fn default_cleanup_interval_secs() -> u64 { 3600 }
+
+impl Default for RetentionConfig {
+    fn default() -> Self {
+        Self {
+            message_ttl_days: 90,
+            session_ttl_days: 365,
+            cleanup_interval_secs: 3600,
+        }
+    }
+}
+
 /// 存储配置
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct StorageConfig {
@@ -136,10 +221,28 @@ pub struct StorageConfig {
 
     #[serde(default)]
     pub connection_string: String,
+
+    /// PostgreSQL 连接池大小（仅 postgres 类型有效）
+    #[serde(default = "default_pool_size")]
+    pub pool_size: u32,
+
+    /// PostgreSQL SSL 模式（仅 postgres 类型有效）
+    #[serde(default = "default_ssl_mode")]
+    pub ssl_mode: String,
+
+    /// TTL 保留策略
+    #[serde(default)]
+    pub retention: RetentionConfig,
 }
 
 fn default_storage_type() -> String {
     "sqlite".to_string()
+}
+fn default_pool_size() -> u32 {
+    10
+}
+fn default_ssl_mode() -> String {
+    "prefer".to_string()
 }
 
 impl Default for StorageConfig {
@@ -148,6 +251,9 @@ impl Default for StorageConfig {
             storage_type: "sqlite".to_string(),
             path: String::new(),
             connection_string: String::new(),
+            pool_size: 10,
+            ssl_mode: "prefer".to_string(),
+            retention: RetentionConfig::default(),
         }
     }
 }

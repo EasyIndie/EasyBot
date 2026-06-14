@@ -156,6 +156,11 @@ impl SessionManager {
         self.sessions.len()
     }
 
+    /// 获取底层 SessionStore 的引用（用于 TTL 清理等后台任务）
+    pub fn store_ref(&self) -> Option<Arc<dyn SessionStore>> {
+        self.store.clone()
+    }
+
     /// 更新会话
     ///
     /// 更新 DashMap 中的会话，并持久化到存储。

@@ -10,7 +10,11 @@ use easybot_core::session::SessionManager;
 use easybot_core::auth::ApiKeyManager;
 use easybot_core::storage::MessageStore;
 use easybot_core::types::config::GatewayConfig;
+use crate::config_manager::ConfigManager;
 
+pub mod config_manager;
+pub mod metrics;
+pub mod middleware;
 pub mod server;
 pub mod routes;
 pub mod response;
@@ -24,7 +28,11 @@ pub struct AppState {
     pub session_manager: Arc<SessionManager>,
     pub message_store: Arc<dyn MessageStore>,
     pub auth_manager: Arc<ApiKeyManager>,
+    /// 当前配置快照（热重载时通过 config_manager 更新）
     pub config: Arc<GatewayConfig>,
+    /// 配置管理器（支持原子替换和文件监听）
+    pub config_manager: ConfigManager,
+    pub metrics: Option<Arc<metrics::MetricsRegistry>>,
 }
 
 impl AppState {
@@ -36,14 +44,19 @@ impl AppState {
         message_store: Arc<dyn MessageStore>,
         auth_manager: Arc<ApiKeyManager>,
         config: GatewayConfig,
+        config_manager: ConfigManager,
+        metrics: Option<Arc<metrics::MetricsRegistry>>,
     ) -> Self {
+        let config_arc = Arc::new(config);
         Self {
             event_bus,
             adapter_manager,
             session_manager,
             message_store,
             auth_manager,
-            config: Arc::new(config),
+            config: config_arc,
+            config_manager,
+            metrics,
         }
     }
 }

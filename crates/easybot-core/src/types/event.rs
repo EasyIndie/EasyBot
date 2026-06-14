@@ -74,6 +74,8 @@ pub mod event_types {
     pub const GATEWAY_STARTED: &str = "gateway.started";
     /// 网关关闭
     pub const GATEWAY_STOPPING: &str = "gateway.stopping";
+    /// 配置变更
+    pub const CONFIG_CHANGED: &str = "config.changed";
 
     /// 返回所有预定义事件类型列表
     pub fn all() -> &'static [&'static str] {
@@ -87,6 +89,7 @@ pub mod event_types {
             CALLBACK_RECEIVED,
             GATEWAY_STARTED,
             GATEWAY_STOPPING,
+            CONFIG_CHANGED,
         ]
     }
 }

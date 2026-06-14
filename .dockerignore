@@ -1,0 +1,12 @@
+target/
+.git/
+.gitignore
+.claude/
+CLAUDE.md
+plugins/
+docs/
+gateway.local.yaml
+.env
+*.md
+*.drawio
+**/*.rs.bk

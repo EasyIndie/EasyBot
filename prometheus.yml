@@ -1,0 +1,14 @@
+# Prometheus scrape configuration for EasyBot
+#
+# Used by docker-compose --profile monitoring.
+# EasyBot exposes metrics at /metrics (default port 8080).
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: "easybot"
+    static_configs:
+      - targets: ["easybot:8080"]
+    metrics_path: /api/v1/metrics

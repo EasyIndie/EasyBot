@@ -71,48 +71,81 @@ async fn main() -> anyhow::Result<()> {
     // 创建核心组件
     let event_bus = Arc::new(easybot_core::bus::EventBus::new());
 
-    // 初始化持久化存储（如配置了 SQLite）
+    // 初始化持久化存储
     let db_path = if !config.storage.path.is_empty() {
         std::path::PathBuf::from(&config.storage.path)
     } else {
         paths.db_path.clone()
     };
-    let (message_store, session_manager) = if config.storage.storage_type == "sqlite" {
-        match easybot_core::storage::sqlite::create_pool(&db_path).await {
-            Ok(pool) => {
-                easybot_core::storage::sqlite::run_migrations(&pool).await
-                    .map_err(|e| anyhow::anyhow!("Migration failed: {}", e))?;
-                tracing::info!("SQLite storage initialized: {}", db_path.display());
+    let (message_store, session_manager) = match config.storage.storage_type.as_str() {
+        "postgres" => {
+            let conn_str = if !config.storage.connection_string.is_empty() {
+                config.storage.connection_string.clone()
+            } else {
+                "postgresql://localhost:5432/easybot".to_string()
+            };
+            match easybot_core::storage::postgres::create_pool(&conn_str, config.storage.pool_size).await {
+                Ok(pool) => {
+                    easybot_core::storage::postgres::run_migrations(&pool).await
+                        .map_err(|e| anyhow::anyhow!("PostgreSQL migration failed: {}", e))?;
+                    tracing::info!("PostgreSQL storage initialized: {}", conn_str);
 
-                let store: Arc<dyn easybot_core::storage::SessionStore> =
-                    Arc::new(easybot_core::storage::sqlite::SqliteSessionStore::new(pool.clone()));
-                let msg_store: Arc<dyn easybot_core::storage::MessageStore> =
-                    Arc::new(easybot_core::storage::sqlite::SqliteMessageStore::new(pool));
+                    let store: Arc<dyn easybot_core::storage::SessionStore> =
+                        Arc::new(easybot_core::storage::postgres::PgSessionStore::new(pool.clone()));
+                    let msg_store: Arc<dyn easybot_core::storage::MessageStore> =
+                        Arc::new(easybot_core::storage::postgres::PgMessageStore::new(pool));
 
-                let sm = Arc::new(easybot_core::session::SessionManager::with_store(store));
-                let loaded = sm.load_from_store().await
-                    .map_err(|e| anyhow::anyhow!("Failed to load sessions: {}", e))?;
-                tracing::info!("Loaded {} sessions from database", loaded);
+                    let sm = Arc::new(easybot_core::session::SessionManager::with_store(store));
+                    let loaded = sm.load_from_store().await
+                        .map_err(|e| anyhow::anyhow!("Failed to load sessions: {}", e))?;
+                    tracing::info!("Loaded {} sessions from database", loaded);
 
-                (msg_store, sm)
-            }
-            Err(e) => {
-                tracing::warn!("Failed to initialize SQLite ({}), falling back to in-memory: {}", db_path.display(), e);
-                let msg_store: Arc<dyn easybot_core::storage::MessageStore> =
-                    Arc::new(easybot_core::storage::sqlite::SqliteMessageStore::new(
-                        easybot_core::storage::sqlite::create_pool(&db_path).await
-                            .unwrap_or_else(|_| panic!("Cannot proceed without SQLite"))
-                    ));
-                (msg_store, Arc::new(easybot_core::session::SessionManager::new()))
+                    (msg_store, sm)
+                }
+                Err(e) => {
+                    return Err(anyhow::anyhow!("PostgreSQL connection failed: {}", e));
+                }
             }
         }
-    } else {
-        let msg_store: Arc<dyn easybot_core::storage::MessageStore> =
-            Arc::new(easybot_core::storage::sqlite::SqliteMessageStore::new(
-                easybot_core::storage::sqlite::create_pool(&db_path).await
-                    .unwrap_or_else(|_| panic!("Cannot proceed without SQLite"))
-            ));
-        (msg_store, Arc::new(easybot_core::session::SessionManager::new()))
+        "sqlite" => {
+            match easybot_core::storage::sqlite::create_pool(&db_path).await {
+                Ok(pool) => {
+                    easybot_core::storage::sqlite::run_migrations(&pool).await
+                        .map_err(|e| anyhow::anyhow!("Migration failed: {}", e))?;
+                    tracing::info!("SQLite storage initialized: {}", db_path.display());
+
+                    let store: Arc<dyn easybot_core::storage::SessionStore> =
+                        Arc::new(easybot_core::storage::sqlite::SqliteSessionStore::new(pool.clone()));
+                    let msg_store: Arc<dyn easybot_core::storage::MessageStore> =
+                        Arc::new(easybot_core::storage::sqlite::SqliteMessageStore::new(pool));
+
+                    let sm = Arc::new(easybot_core::session::SessionManager::with_store(store));
+                    let loaded = sm.load_from_store().await
+                        .map_err(|e| anyhow::anyhow!("Failed to load sessions: {}", e))?;
+                    tracing::info!("Loaded {} sessions from database", loaded);
+
+                    (msg_store, sm)
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to initialize SQLite ({}), falling back to in-memory: {}", db_path.display(), e);
+                    let msg_store: Arc<dyn easybot_core::storage::MessageStore> =
+                        Arc::new(easybot_core::storage::sqlite::SqliteMessageStore::new(
+                            easybot_core::storage::sqlite::create_pool(&db_path).await
+                                .unwrap_or_else(|_| panic!("Cannot proceed without SQLite"))
+                        ));
+                    (msg_store, Arc::new(easybot_core::session::SessionManager::new()))
+                }
+            }
+        }
+        _ => {
+            tracing::warn!("Unknown storage type '{}', falling back to in-memory", config.storage.storage_type);
+            let msg_store: Arc<dyn easybot_core::storage::MessageStore> =
+                Arc::new(easybot_core::storage::sqlite::SqliteMessageStore::new(
+                    easybot_core::storage::sqlite::create_pool(&db_path).await
+                        .unwrap_or_else(|_| panic!("Cannot proceed without SQLite"))
+                ));
+            (msg_store, Arc::new(easybot_core::session::SessionManager::new()))
+        }
     };
 
     let adapter_manager = Arc::new(easybot_core::adapter::AdapterManager::new()
@@ -157,20 +190,58 @@ async fn main() -> anyhow::Result<()> {
         config.webhooks.clone(),
     );
 
+    // 提取 TTL 清理所需数据（后续 config/session_manager 将被消费）
+    let ttl_session_store = session_manager.store_ref();
+    let ttl_config = easybot_core::storage::retention::RetentionConfig {
+        message_ttl_days: config.storage.retention.message_ttl_days,
+        session_ttl_days: config.storage.retention.session_ttl_days,
+        cleanup_interval_secs: config.storage.retention.cleanup_interval_secs,
+    };
+
+    // 创建指标注册表
+    let metrics_registry = if config.api.metrics.enabled {
+        let reg = Arc::new(easybot_api::metrics::MetricsRegistry::new());
+        tracing::info!("Prometheus metrics enabled at {}", config.api.metrics.path);
+        Some(reg)
+    } else {
+        tracing::info!("Prometheus metrics disabled");
+        None
+    };
+
+    // 创建配置管理器（用于热重载）
+    let config_file_path = if let Some(config_path) = &cli.config {
+        std::path::PathBuf::from(config_path)
+    } else if paths.config_file.exists() {
+        paths.config_file.clone()
+    } else {
+        // 默认路径
+        paths.config_file.clone()
+    };
+    let config_manager = if config_file_path.exists() {
+        easybot_api::config_manager::ConfigManager::with_path(
+            config.clone(),
+            config_file_path,
+        )
+    } else {
+        easybot_api::config_manager::ConfigManager::new(config.clone())
+    };
+
     // 构建应用状态
     let server_config = config.server.clone();
     let app_state = easybot_api::AppState::new(
         event_bus.clone(),
         adapter_manager.clone(),
         session_manager,
-        message_store,
+        message_store.clone(),
         auth_manager,
         config,
+        config_manager,
+        metrics_registry,
     );
 
     // 启动 API 服务器（支持优雅关闭）
     let server = easybot_api::server::Server::new(
-        app_state,
+        app_state.clone(),
         server_config,
     );
 
@@ -179,6 +250,25 @@ async fn main() -> anyhow::Result<()> {
     let server_handle = server.start(async move {
         sig.notified().await;
     }).await?;
+
+    // 启动配置文件轮询监听器（每 60 秒检查一次变更）
+    easybot_api::config_manager::start_config_watcher(
+        app_state.config_manager.clone(),
+        event_bus.clone(),
+        60,
+    );
+    tracing::info!("Config file watcher started (polling every 60s)");
+
+    // 启动 TTL 保留清理 worker（服务器启动后运行，避免启动时争用）
+    if let Some(session_store) = ttl_session_store {
+        easybot_core::storage::retention::RetentionWorker::start(
+            message_store,
+            session_store,
+            ttl_config,
+        );
+    } else {
+        tracing::info!("No session store available, TTL retention disabled");
+    }
 
     // 发布网关启动事件
     event_bus.publish(GatewayEvent::new(

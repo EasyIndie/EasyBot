@@ -253,6 +253,14 @@ impl SessionStore for SqliteSessionStore {
         Ok(row.0)
     }
 
+    async fn delete_expired_sessions(&self, before: i64) -> Result<u64, StoreError> {
+        let result = sqlx::query("DELETE FROM sessions WHERE updated_at < ?")
+            .bind(before)
+            .execute(&self.pool)
+            .await?;
+        Ok(result.rows_affected())
+    }
+
     async fn load_all_sessions(&self) -> Result<Vec<Session>, StoreError> {
         let rows = sqlx::query(
             "SELECT key, platform, chat_id, thread_id, created_at, updated_at, source_json, reset_policy, metadata
@@ -427,6 +435,14 @@ impl MessageStore for SqliteMessageStore {
             .execute(&self.pool)
             .await?;
         Ok(result.rows_affected() > 0)
+    }
+
+    async fn delete_expired_messages(&self, before: i64) -> Result<u64, StoreError> {
+        let result = sqlx::query("DELETE FROM messages WHERE created_at < ?")
+            .bind(before)
+            .execute(&self.pool)
+            .await?;
+        Ok(result.rows_affected())
     }
 }
 

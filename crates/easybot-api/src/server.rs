@@ -49,8 +49,30 @@ impl Server {
         // ── 公共路由（无需认证）──
 
         // 健康检查
-        let public_routes = Router::new()
+        let mut public_routes = Router::new()
             .route("/health", get(routes::health::health_check));
+
+        // ── 指标端点（从 AppState 提取 MetricsRegistry）──
+        if state.metrics.is_some() {
+            public_routes = public_routes.route(
+                &state.config.api.metrics.path,
+                get(crate::metrics::metrics_handler),
+            );
+        }
+
+        // ── 速率限制器 ──
+        let rl_config = easybot_core::types::config::RateLimitConfig {
+            enabled: state.config.api.rate_limit.enabled,
+            requests_per_minute: state.config.api.rate_limit.requests_per_minute,
+            burst_size: state.config.api.rate_limit.burst_size,
+        };
+        let rate_limiter = crate::middleware::rate_limit::RateLimiter::new(
+            crate::middleware::rate_limit::RateLimitConfig {
+                enabled: rl_config.enabled,
+                requests_per_minute: rl_config.requests_per_minute,
+                burst_size: rl_config.burst_size,
+            },
+        );
 
         // ── 受保护路由（需要 Bearer Token 认证）──
 
@@ -78,6 +100,11 @@ impl Server {
             .route("/config", put(routes::config::update_config))
             // WebSocket
             .route("/ws", get(routes::ws::ws_handler))
+            // 速率限制中间件（在认证之前）
+            .route_layer(middleware::from_fn_with_state(
+                rate_limiter.clone(),
+                crate::middleware::rate_limit::rate_limit_middleware,
+            ))
             // 认证中间件（作用于以上所有路由）
             .route_layer(middleware::from_fn_with_state(
                 state.clone(),
@@ -140,15 +167,28 @@ impl Server {
     /// `shutdown_signal` 是一个 Future，当它完成时服务器开始优雅关闭：
     /// 停止接受新连接，等待现有请求完成。
     /// 返回 JoinHandle 以便在关闭时等待服务器完全停止。
+    ///
+    /// # TLS 说明
+    ///
+    /// EasyBot 本身基于 TCP 提供服务，TLS 终止建议在基础设施层完成
+    /// （如反向代理 nginx/caddy/traefik，或负载均衡器）。
+    /// Docker 部署时可添加 TLS proxy sidecar。
+    /// `TlsConfig` 中的证书路径用于文档化证书位置，不在应用层处理。
     pub async fn start(
         &self,
         shutdown_signal: impl Future<Output = ()> + Send + 'static,
     ) -> Result<tokio::task::JoinHandle<()>, std::io::Error> {
         let addr = format!("{}:{}", self.config.host, self.config.port);
+
+        if self.config.tls.enabled {
+            info!("TLS enabled in config. TLS termination should be handled by reverse proxy (nginx/caddy/traefik).");
+            info!("Cert: {}, Key: {}", self.config.tls.cert_file, self.config.tls.key_file);
+        }
+
         let listener = tokio::net::TcpListener::bind(&addr).await?;
         let router = self.build_router();
 
-        info!("API server listening on {}", addr);
+        info!("API server listening on http://{}", addr);
 
         let handle = tokio::spawn(async move {
             axum::serve(listener, router)
