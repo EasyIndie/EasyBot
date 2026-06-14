@@ -10,6 +10,7 @@ mod types;
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -40,6 +41,8 @@ pub struct TelegramAdapter {
     errors: AtomicU64,
     event_bus: Option<Arc<EventBus>>,
     cancel_tx: Option<broadcast::Sender<()>>,
+    /// 缓存的 HTTP 客户端（连接池复用，延迟初始化）
+    http_client: OnceLock<reqwest::Client>,
 }
 
 impl TelegramAdapter {
@@ -72,7 +75,13 @@ impl TelegramAdapter {
             errors: AtomicU64::new(0),
             event_bus: None,
             cancel_tx: None,
+            http_client: OnceLock::new(),
         }
+    }
+
+    /// 获取或创建缓存的 HTTP 客户端（延迟初始化，连接池复用）
+    fn http_client(&self) -> &reqwest::Client {
+        self.http_client.get_or_init(reqwest::Client::new)
     }
 
     /// 设置事件总线（在 init 之前调用）
@@ -155,7 +164,7 @@ impl TelegramAdapter {
         method: &str,
         body: Option<serde_json::Value>,
     ) -> Result<T, GatewayError> {
-        let client = reqwest::Client::new();
+        let client = self.http_client();
         let url = self.api_url(method);
 
         let req = if let Some(json) = body {
@@ -279,7 +288,7 @@ impl PlatformAdapter for TelegramAdapter {
     }
 
     async fn init(&mut self, config: AdapterConfig) -> Result<InitResult, GatewayError> {
-        if config.token.is_none() || config.token.as_ref().map_or(true, |t| t.is_empty()) {
+        if config.token.is_none() || config.token.as_ref().is_none_or(|t| t.is_empty()) {
             return Ok(InitResult {
                 ok: false,
                 error: Some("Telegram bot token is required".to_string()),
@@ -296,7 +305,7 @@ impl PlatformAdapter for TelegramAdapter {
             .ok_or_else(|| GatewayError::ConfigError("Telegram token not configured".to_string()))?;
 
         // 通过 getMe 验证 Token 并获取 Bot 信息
-        let client = reqwest::Client::new();
+        let client = self.http_client();
         let url = format!("{}bot{}/getMe", TELEGRAM_API, token);
 
         let resp = client.get(&url)
@@ -476,7 +485,7 @@ impl PlatformAdapter for TelegramAdapter {
         match self.api_call::<TelegramMessage>("editMessageText", Some(body)).await {
             Ok(msg) => Ok(EditResult {
                 success: true,
-                updated_at: Some(msg.date as i64 * 1000),
+                updated_at: Some(msg.date * 1000),
                 error: None,
             }),
             Err(e) => Ok(EditResult {
@@ -508,8 +517,8 @@ impl PlatformAdapter for TelegramAdapter {
 
     fn runtime_config(&self) -> AdapterRuntimeConfig {
         AdapterRuntimeConfig {
-            enabled: self.config.as_ref().map_or(false, |c| c.enabled),
-            token_configured: self.config.as_ref().and_then(|c| c.token.as_ref()).map_or(false, |t| !t.is_empty()),
+            enabled: self.config.as_ref().is_some_and(|c| c.enabled),
+            token_configured: self.config.as_ref().and_then(|c| c.token.as_ref()).is_some_and(|t| !t.is_empty()),
             extra: serde_json::json!({}),
         }
     }
@@ -558,7 +567,7 @@ mod tests {
 
         // Without a real token, getMe fails → return ok:false, state stays Created
         let result = adapter.connect().await.unwrap();
-        assert_eq!(result.ok, false);
+        assert!(!result.ok);
         assert!(result.error.is_some());
         assert_eq!(adapter.state(), AdapterState::Created);
     }

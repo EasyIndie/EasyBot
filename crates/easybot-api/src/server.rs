@@ -71,14 +71,12 @@ impl Server {
 
         // 基础路径
         let base_path = &self.state.config.api.base_path;
-        let app = Router::new()
+        Router::new()
             .merge(swagger)
             .nest(base_path, api_routes)
             .layer(TraceLayer::new_for_http())
             .layer(CorsLayer::permissive())
-            .with_state(self.state.clone());
-
-        app
+            .with_state(self.state.clone())
     }
 
     /// 启动服务器

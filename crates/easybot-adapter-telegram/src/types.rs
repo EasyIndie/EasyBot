@@ -2,6 +2,10 @@
 //!
 //! 定义用于反序列化 Telegram Bot API 响应数据的数据结构。
 //! 仅涵盖当前使用的端点（getMe、getUpdates、sendMessage）。
+//!
+//! #!\[allow(dead_code)\]：所有字段仅用于 JSON 反序列化，读取部分由使用方决定
+
+#![allow(dead_code)]
 
 use serde::Deserialize;
 

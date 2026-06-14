@@ -135,6 +135,7 @@ impl Default for SessionManager {
 }
 
 /// 会话变更参数
+#[derive(Default)]
 pub struct SessionMutation {
     pub reset_policy: Option<ResetPolicy>,
     pub metadata: Option<serde_json::Value>,
@@ -142,10 +143,7 @@ pub struct SessionMutation {
 
 impl SessionMutation {
     pub fn new() -> Self {
-        Self {
-            reset_policy: None,
-            metadata: None,
-        }
+        Self::default()
     }
 
     pub fn with_reset_policy(mut self, policy: ResetPolicy) -> Self {

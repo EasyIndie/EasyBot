@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use crate::types::adapter::AdapterConfig;
 
 /// 网关主配置
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
 pub struct GatewayConfig {
     /// 服务器配置
     #[serde(default)]
@@ -57,7 +57,7 @@ fn default_port() -> u16 {
 }
 
 /// TLS 配置
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
 pub struct TlsConfig {
     #[serde(default)]
     pub enabled: bool,
@@ -67,16 +67,6 @@ pub struct TlsConfig {
 
     #[serde(default)]
     pub key_file: String,
-}
-
-impl Default for TlsConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            cert_file: String::new(),
-            key_file: String::new(),
-        }
-    }
 }
 
 /// API 配置
@@ -215,15 +205,3 @@ impl Default for ServerConfig {
     }
 }
 
-impl Default for GatewayConfig {
-    fn default() -> Self {
-        Self {
-            server: ServerConfig::default(),
-            api: ApiConfig::default(),
-            storage: StorageConfig::default(),
-            logging: LoggingConfig::default(),
-            adapters: HashMap::new(),
-            webhooks: Vec::new(),
-        }
-    }
-}

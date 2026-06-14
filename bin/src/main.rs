@@ -93,6 +93,12 @@ async fn main() -> anyhow::Result<()> {
         tracing::warn!("Failed adapters: {:?}", start_result.failed);
     }
 
+    // 启动会话桥接器（入站消息 → 自动创建会话）
+    easybot_core::session::SessionBridge::start(
+        event_bus.clone(),
+        session_manager.clone(),
+    );
+
     // 构建应用状态
     let server_config = config.server.clone();
     let app_state = easybot_api::AppState::new(

@@ -40,6 +40,7 @@ pub struct ApiKeyManager {
 
 struct StoredKey {
     info: ApiKeyInfo,
+    #[allow(dead_code)]
     hash: String, // argon2 hash
 }
 

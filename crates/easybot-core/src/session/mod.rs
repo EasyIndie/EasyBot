@@ -4,4 +4,6 @@
 //! 会话以 "platform:chatId[:threadId]" 为键。
 
 mod manager;
+mod bridge;
 pub use manager::*;
+pub use bridge::*;
