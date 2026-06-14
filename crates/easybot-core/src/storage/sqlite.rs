@@ -50,6 +50,7 @@ CREATE INDEX IF NOT EXISTS idx_messages_ct ON messages(created_at);
 /// 创建 SQLite 连接池
 ///
 /// 自动启用 WAL 模式、外键约束和忙超时。
+/// 使用 `create_if_missing(true)` 确保数据库文件在不存在时自动创建。
 pub async fn create_pool(db_path: &std::path::Path) -> Result<SqlitePool, StoreError> {
     // 确保父目录存在
     if let Some(parent) = db_path.parent() {
@@ -57,8 +58,23 @@ pub async fn create_pool(db_path: &std::path::Path) -> Result<SqlitePool, StoreE
             .map_err(|e| StoreError::Database(format!("Failed to create db directory: {}", e)))?;
     }
 
-    let conn_str = db_path.to_string_lossy();
-    let pool = SqlitePool::connect(&conn_str)
+    use sqlx::sqlite::SqliteConnectOptions;
+
+    // `:memory:` 必须用 `SqlitePool::connect(":memory:")` 方式连接
+    // 以确保池中所有连接共享同一个内存数据库（`in_memory(true)` 会创建独立连接）
+    let is_memory = db_path.to_string_lossy() == ":memory:";
+    if is_memory {
+        let pool = SqlitePool::connect(":memory:")
+            .await
+            .map_err(|e| StoreError::Database(format!("Failed to connect to SQLite: {}", e)))?;
+        // 内存库不需要 PRAGMA 优化
+        return Ok(pool);
+    }
+
+    let connect_opts = SqliteConnectOptions::new()
+        .filename(db_path)
+        .create_if_missing(true);
+    let pool = SqlitePool::connect_with(connect_opts)
         .await
         .map_err(|e| StoreError::Database(format!("Failed to connect to SQLite: {}", e)))?;
 
