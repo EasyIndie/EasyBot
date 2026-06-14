@@ -3,12 +3,17 @@
 //! 使用 DashMap 存储按事件类型区分的 broadcast channel。
 //! 支持 publish/subscribe 模式，事件发布后所有活跃订阅者收到副本。
 
+use std::time::Duration;
 use dashmap::DashMap;
 use tokio::sync::broadcast;
+use tracing::warn;
 use crate::types::event::GatewayEvent;
 
 /// 默认广播通道容量
 const DEFAULT_CHANNEL_CAPACITY: usize = 256;
+
+/// 合并循环空闲时的休眠时间（避免 busy loop）
+const MERGE_POLL_INTERVAL_MS: u64 = 10;
 
 /// 消息总线
 ///
@@ -63,18 +68,49 @@ impl EventBus {
     /// 订阅多个事件类型
     ///
     /// 创建一个合并的接收器，订阅列表中所有事件类型。
+    /// 使用单个后台任务轮询所有 channel，避免为每个事件类型 spawn 独立 task。
     pub fn subscribe_many(&self, event_types: &[&str]) -> broadcast::Receiver<GatewayEvent> {
         let (global_tx, global_rx) = broadcast::channel(DEFAULT_CHANNEL_CAPACITY);
 
-        for et in event_types {
-            let mut sub = self.subscribe(et);
-            let tx = global_tx.clone();
-            tokio::spawn(async move {
-                while let Ok(event) = sub.recv().await {
-                    let _ = tx.send(event);
+        let mut receivers: Vec<broadcast::Receiver<GatewayEvent>> = event_types
+            .iter()
+            .map(|et| self.subscribe(et))
+            .collect();
+
+        tokio::spawn(async move {
+            loop {
+                // 尝试从所有 receiver 读取可用事件
+                let mut had_data = false;
+                for i in (0..receivers.len()).rev() {
+                    match receivers[i].try_recv() {
+                        Ok(event) => {
+                            had_data = true;
+                            if global_tx.send(event).is_err() {
+                                return; // 下游 receiver 已 drop
+                            }
+                        }
+                        Err(broadcast::error::TryRecvError::Closed) => {
+                            receivers.swap_remove(i);
+                        }
+                        Err(broadcast::error::TryRecvError::Lagged(n)) => {
+                            warn!("EventBus merge lagged by {} events", n);
+                            had_data = true;
+                        }
+                        Err(broadcast::error::TryRecvError::Empty) => {}
+                    }
                 }
-            });
-        }
+
+                if receivers.is_empty() {
+                    break;
+                }
+
+                if had_data {
+                    tokio::task::yield_now().await;
+                } else {
+                    tokio::time::sleep(Duration::from_millis(MERGE_POLL_INTERVAL_MS)).await;
+                }
+            }
+        });
 
         global_rx
     }

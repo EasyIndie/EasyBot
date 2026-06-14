@@ -109,20 +109,29 @@ async fn main() -> anyhow::Result<()> {
         config,
     );
 
-    // 启动 API 服务器
+    // 启动 API 服务器（支持优雅关闭）
     let server = easybot_api::server::Server::new(
         app_state,
         server_config,
     );
-    let server_handle = server.start().await?;
+
+    let shutdown = Arc::new(tokio::sync::Notify::new());
+    let sig = shutdown.clone();
+    let server_handle = server.start(async move {
+        sig.notified().await;
+    }).await?;
 
     // 等待关闭信号
     tracing::info!("EasyBot started. Press Ctrl+C to stop.");
     tokio::signal::ctrl_c().await?;
     tracing::info!("Shutting down...");
 
-    // 优雅关闭
-    drop(server_handle);
+    // 触发优雅关闭：停止接受新连接，等待现有请求完成
+    shutdown.notify_waiters();
+    let _ = server_handle.await;
+
+    // 停止所有适配器（释放长连接、取消轮询）
+    adapter_manager.stop_all().await;
     tracing::info!("EasyBot stopped.");
 
     Ok(())

@@ -60,18 +60,33 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
                 match msg {
                     Some(Ok(Message::Text(text))) => {
                         if !authenticated {
-                            // 尝试认证
-                            if text.contains("\"token\"") {
-                                // 简化认证：假设任何带 token 的消息都通过
-                                // Phase 4 接入真实 API Key 验证
-                                authenticated = true;
-                                let _ = sender.send(Message::Text(
-                                    r#"{"type":"auth_ok"}"#.into()
-                                )).await;
-                            } else {
-                                let _ = sender.send(Message::Text(
-                                    r#"{"type":"auth_required","message":"Please send auth frame with token"}"#.into()
-                                )).await;
+                            // 通过 ApiKeyManager 进行真实认证
+                            let token = serde_json::from_str::<serde_json::Value>(&text)
+                                .ok()
+                                .and_then(|v| v.get("token").and_then(|t| t.as_str()).map(|s| s.to_string()));
+
+                            match token {
+                                Some(ref key) => {
+                                    match state.auth_manager.authenticate(key).await {
+                                        Ok(_auth_info) => {
+                                            authenticated = true;
+                                            let _ = sender.send(Message::Text(
+                                                r#"{"type":"auth_ok"}"#.into()
+                                            )).await;
+                                        }
+                                        Err(_) => {
+                                            let _ = sender.send(Message::Text(
+                                                r#"{"type":"auth_failed","message":"Invalid API key"}"#.into()
+                                            )).await;
+                                            break;
+                                        }
+                                    }
+                                }
+                                None => {
+                                    let _ = sender.send(Message::Text(
+                                        r#"{"type":"auth_required","message":"Send auth frame: {\"token\":\"your-api-key\"}"}"#.into()
+                                    )).await;
+                                }
                             }
                         } else {
                             // 处理客户端帧 (Phase 2+ 实现)

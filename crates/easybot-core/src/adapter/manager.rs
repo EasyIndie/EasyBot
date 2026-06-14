@@ -110,9 +110,14 @@ impl AdapterManager {
     }
 
     /// 停止适配器
+    ///
+    /// 先从 HashMap 移除适配器（释放写锁），再执行断开操作，避免阻塞其他操作。
     pub async fn stop(&self, platform: &str) -> Result<(), GatewayError> {
-        let mut adapters = self.adapters.write().await;
-        if let Some(mut adapter) = adapters.remove(platform) {
+        let adapter = {
+            let mut adapters = self.adapters.write().await;
+            adapters.remove(platform)
+        };
+        if let Some(mut adapter) = adapter {
             if let Err(e) = adapter.disconnect().await {
                 warn!("Error disconnecting adapter '{}': {}", platform, e);
             }
@@ -174,9 +179,14 @@ impl AdapterManager {
     }
 
     /// 停止所有适配器
+    ///
+    /// 一次性取出所有适配器释放写锁，再逐个断开，避免阻塞其他操作。
     pub async fn stop_all(&self) {
-        let mut adapters = self.adapters.write().await;
-        for (name, mut adapter) in adapters.drain() {
+        let adapters: Vec<(String, Box<dyn PlatformAdapter>)> = {
+            let mut locked = self.adapters.write().await;
+            locked.drain().collect()
+        };
+        for (name, mut adapter) in adapters {
             if let Err(e) = adapter.disconnect().await {
                 warn!("Error disconnecting adapter '{}': {}", name, e);
             }

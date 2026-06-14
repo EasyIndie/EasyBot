@@ -1,5 +1,6 @@
 //! 消息收发路由
 
+use std::sync::Arc;
 use axum::{
     Json,
     extract::{State, Path, Query},
@@ -111,6 +112,7 @@ pub async fn send_message(
 /// 批量发送消息
 ///
 /// 向多个目标发送相同的文本消息。每个目标格式为 "platform:chatId"。
+/// 使用并发限制（最大 5 个并发）和整体 30 秒超时。
 #[utoipa::path(
     post,
     path = "/api/v1/messages/batch-send",
@@ -125,46 +127,80 @@ pub async fn batch_send(
     State(state): State<AppState>,
     Json(req): Json<BatchSendRequest>,
 ) -> Json<serde_json::Value> {
-    let mut results = serde_json::Map::new();
     let parse_mode = req.parse_mode.unwrap_or_default();
+    let semaphore = Arc::new(tokio::sync::Semaphore::new(5)); // 最大并发 5
+    let results = Arc::new(tokio::sync::Mutex::new(serde_json::Map::new()));
+    let mut handles = Vec::with_capacity(req.targets.len());
 
+    // 并发发送所有目标
     for target in &req.targets {
-        let result = match parse_target(target) {
-            Some((platform, chat_id)) => {
-                state.adapter_manager.send_message(&platform, SendTextParams {
-                    chat_id,
-                    message: OutboundMessage {
-                        text: req.text.clone(),
-                        parse_mode: parse_mode.clone(),
-                    },
-                    reply_to: None,
-                    metadata: None,
-                }).await
-            }
-            None => Err(easybot_core::types::error::GatewayError::InvalidRequest(
-                format!("Invalid target: {}", target)
-            )),
-        };
+        let target = target.clone();
+        let text = req.text.clone();
+        let parse_mode = parse_mode.clone();
+        let semaphore = semaphore.clone();
+        let results = results.clone();
+        let state = state.clone();
 
-        match result {
-            Ok(r) => {
-                results.insert(target.clone(), serde_json::json!({
-                    "status": "sent",
-                    "messageId": r.message_id,
-                }));
-            }
-            Err(e) => {
-                results.insert(target.clone(), serde_json::json!({
-                    "status": "failed",
-                    "error": e.to_string(),
-                }));
-            }
-        }
+        let handle = tokio::spawn(async move {
+            let _permit = semaphore.acquire().await;
+
+            let _result = match parse_target(&target) {
+                Some((platform, chat_id)) => {
+                    let send_result = tokio::time::timeout(
+                        std::time::Duration::from_secs(15),
+                        state.adapter_manager.send_message(&platform, SendTextParams {
+                            chat_id,
+                            message: OutboundMessage {
+                                text,
+                                parse_mode,
+                            },
+                            reply_to: None,
+                            metadata: None,
+                        }),
+                    ).await;
+
+                    match send_result {
+                        Ok(Ok(r)) => {
+                            results.lock().await.insert(target.clone(), serde_json::json!({
+                                "status": "sent",
+                                "messageId": r.message_id,
+                            }));
+                        }
+                        Ok(Err(e)) => {
+                            results.lock().await.insert(target.clone(), serde_json::json!({
+                                "status": "failed",
+                                "error": e.to_string(),
+                            }));
+                        }
+                        Err(_) => {
+                            results.lock().await.insert(target.clone(), serde_json::json!({
+                                "status": "failed",
+                                "error": "Request timed out (15s)",
+                            }));
+                        }
+                    }
+                }
+                None => {
+                    results.lock().await.insert(target.clone(), serde_json::json!({
+                        "status": "failed",
+                        "error": format!("Invalid target: {}", target),
+                    }));
+                }
+            };
+        });
+
+        handles.push(handle);
     }
+
+    // 等待所有发送完成（整体超时 30 秒）
+    let all_futures = futures::future::join_all(handles);
+    let _ = tokio::time::timeout(std::time::Duration::from_secs(30), all_futures).await;
+
+    let final_results = Arc::try_unwrap(results).unwrap().into_inner();
 
     Json(serde_json::json!({
         "total": req.targets.len(),
-        "results": results,
+        "results": final_results,
     }))
 }
 

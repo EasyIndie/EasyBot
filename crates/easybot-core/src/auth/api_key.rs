@@ -1,6 +1,6 @@
 //! API Key 管理
 //!
-//! 使用 argon2 哈希存储 API Key，Key 本身不持久化明文。
+//! 使用 SHA-256 哈希存储 API Key（Phase 4 将升级到 argon2），Key 本身不持久化明文。
 //! Phase 1 使用内存存储，后续接入数据库。
 
 use std::collections::HashMap;
@@ -41,7 +41,7 @@ pub struct ApiKeyManager {
 struct StoredKey {
     info: ApiKeyInfo,
     #[allow(dead_code)]
-    hash: String, // argon2 hash
+    hash: String, // SHA-256 hex digest (reserved for future DB persistence)
 }
 
 impl ApiKeyManager {
