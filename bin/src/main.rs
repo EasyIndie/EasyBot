@@ -16,7 +16,7 @@ use easybot_core::types::event::{GatewayEvent, event_types};
 
 /// EasyBot 命令行参数
 #[derive(Parser)]
-#[command(name = "easybot", about = "EasyBot - IM Gateway Service")]
+#[command(name = "easybot", version, about = "EasyBot - IM Gateway Service")]
 struct Cli {
     /// 配置文件路径（优先级高于 --dir）
     #[arg(short, long)]
