@@ -55,7 +55,7 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("EasyBot home: {}", home.display());
 
     // 加载配置
-    let config = if let Some(config_path) = &cli.config {
+    let mut config = if let Some(config_path) = &cli.config {
         easybot_core::config::load_config(std::path::Path::new(config_path)).await?
     } else if paths.config_file.exists() {
         easybot_core::config::load_config(&paths.config_file).await?
@@ -67,6 +67,31 @@ async fn main() -> anyhow::Result<()> {
         tracing::info!("Run `easybot --init` to create a default configuration.");
         easybot_core::types::config::GatewayConfig::default()
     };
+
+    // 合并 gateway.local.yaml（存在时覆盖基础配置）
+    if paths.local_config_file.exists() {
+        match easybot_core::config::load_config(&paths.local_config_file).await {
+            Ok(local_config) => {
+                // 通过 YAML Value 进行递归合并
+                let base_val = serde_yaml::to_value(&config).unwrap_or_default();
+                let local_val = serde_yaml::to_value(&local_config).unwrap_or_default();
+                let mut merged = base_val.clone();
+                easybot_core::config::merge_configs(&mut merged, local_val);
+                match serde_yaml::from_value::<easybot_core::types::config::GatewayConfig>(merged) {
+                    Ok(c) => {
+                        tracing::info!("Merged local overrides from {}", paths.local_config_file.display());
+                        config = c;
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to merge local config: {}. Using base config only.", e);
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!("Failed to load local config {}: {}", paths.local_config_file.display(), e);
+            }
+        }
+    }
 
     // 创建核心组件
     let event_bus = Arc::new(easybot_core::bus::EventBus::new());
@@ -128,22 +153,23 @@ async fn main() -> anyhow::Result<()> {
                 }
                 Err(e) => {
                     tracing::warn!("Failed to initialize SQLite ({}), falling back to in-memory: {}", db_path.display(), e);
+                    // 使用内存数据库作为回退
+                    let pool = easybot_core::storage::sqlite::create_pool(
+                        std::path::Path::new(":memory:")
+                    ).await.expect("In-memory SQLite should always work");
                     let msg_store: Arc<dyn easybot_core::storage::MessageStore> =
-                        Arc::new(easybot_core::storage::sqlite::SqliteMessageStore::new(
-                            easybot_core::storage::sqlite::create_pool(&db_path).await
-                                .unwrap_or_else(|_| panic!("Cannot proceed without SQLite"))
-                        ));
+                        Arc::new(easybot_core::storage::sqlite::SqliteMessageStore::new(pool));
                     (msg_store, Arc::new(easybot_core::session::SessionManager::new()))
                 }
             }
         }
         _ => {
             tracing::warn!("Unknown storage type '{}', falling back to in-memory", config.storage.storage_type);
+            let pool = easybot_core::storage::sqlite::create_pool(
+                std::path::Path::new(":memory:")
+            ).await.expect("In-memory SQLite should always work");
             let msg_store: Arc<dyn easybot_core::storage::MessageStore> =
-                Arc::new(easybot_core::storage::sqlite::SqliteMessageStore::new(
-                    easybot_core::storage::sqlite::create_pool(&db_path).await
-                        .unwrap_or_else(|_| panic!("Cannot proceed without SQLite"))
-                ));
+                Arc::new(easybot_core::storage::sqlite::SqliteMessageStore::new(pool));
             (msg_store, Arc::new(easybot_core::session::SessionManager::new()))
         }
     };
@@ -212,19 +238,18 @@ async fn main() -> anyhow::Result<()> {
     };
 
     // 创建配置管理器（用于热重载）
-    let config_file_path = if let Some(config_path) = &cli.config {
-        std::path::PathBuf::from(config_path)
-    } else if paths.config_file.exists() {
-        paths.config_file.clone()
-    } else {
-        // 默认路径
-        paths.config_file.clone()
-    };
-    let config_manager = if config_file_path.exists() {
-        easybot_api::config_manager::ConfigManager::with_path(
-            config.clone(),
-            config_file_path,
-        )
+    // 优先使用 --config 指定的路径，否则使用默认配置路径
+    let config_file_for_watch = cli.config.as_ref()
+        .map(std::path::PathBuf::from)
+        .or_else(|| {
+            if paths.config_file.exists() {
+                Some(paths.config_file.clone())
+            } else {
+                None
+            }
+        });
+    let config_manager = if let Some(path) = config_file_for_watch {
+        easybot_api::config_manager::ConfigManager::with_path(config.clone(), path)
     } else {
         easybot_api::config_manager::ConfigManager::new(config.clone())
     };

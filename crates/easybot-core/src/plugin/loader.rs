@@ -155,7 +155,8 @@ pub struct PluginLoadResult {
 /// 扫描指定目录，加载所有有效插件。
 pub struct PluginLoader {
     plugins_dir: PathBuf,
-    loaded: RwLock<HashMap<String, Arc<PluginLibrary>>>,
+    /// platform_name → (library, display_name)
+    loaded: RwLock<HashMap<String, (Arc<PluginLibrary>, String)>>,
 }
 
 impl PluginLoader {
@@ -288,11 +289,11 @@ impl PluginLoader {
             }
         }
 
-        // 7. 存储库引用
+        // 7. 存储库引用和显示名
         let arc_lib = Arc::new(plugin_lib);
         {
             let mut loaded = self.loaded.write().await;
-            loaded.insert(platform_name.clone(), arc_lib.clone());
+            loaded.insert(platform_name.clone(), (arc_lib.clone(), display_name.clone()));
         }
 
         Ok(PluginLoadResult {
@@ -310,7 +311,7 @@ impl PluginLoader {
         event_bus: Arc<EventBus>,
     ) -> Option<AdapterFactory> {
         let loaded = self.loaded.read().await;
-        let lib = loaded.get(platform_name)?.clone();
+        let (lib, _display_name) = loaded.get(platform_name)?.clone();
         let platform = platform_name.to_string();
         drop(loaded);
 
@@ -350,16 +351,17 @@ impl PluginLoader {
         registry: &AdapterRegistry,
         event_bus: Arc<EventBus>,
     ) {
-        let platforms = {
+        let platforms: Vec<(String, String)> = {
             let loaded = self.loaded.read().await;
-            loaded.keys().cloned().collect::<Vec<_>>()
+            loaded.iter()
+                .map(|(name, (_, display))| (name.clone(), display.clone()))
+                .collect()
         };
 
-        for platform in platforms {
+        for (platform, display_name) in platforms {
             if let Some(factory) = self.get_factory(&platform, event_bus.clone()).await {
-                // Use a default display name; PluginLoadResult has the real one
                 registry
-                    .register(&platform, &platform, factory)
+                    .register(&platform, &display_name, factory)
                     .await;
             }
         }

@@ -10,6 +10,7 @@ use crate::types::adapter::AdapterConfig;
 
 /// 网关主配置
 #[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct GatewayConfig {
     /// 服务器配置
     #[serde(default)]
@@ -38,6 +39,7 @@ pub struct GatewayConfig {
 
 /// 服务器配置
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct ServerConfig {
     #[serde(default = "default_host")]
     pub host: String,
@@ -58,6 +60,7 @@ fn default_port() -> u16 {
 
 /// TLS 配置
 #[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct TlsConfig {
     #[serde(default)]
     pub enabled: bool,
@@ -71,6 +74,7 @@ pub struct TlsConfig {
 
 /// Prometheus 指标配置
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct MetricsConfig {
     #[serde(default = "default_metrics_enabled")]
     pub enabled: bool,
@@ -93,6 +97,7 @@ impl Default for MetricsConfig {
 
 /// 速率限制配置
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct RateLimitConfig {
     #[serde(default = "default_rl_enabled")]
     pub enabled: bool,
@@ -120,6 +125,7 @@ impl Default for RateLimitConfig {
 
 /// API 配置
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct ApiConfig {
     #[serde(default = "default_api_base_path")]
     pub base_path: String,
@@ -151,6 +157,7 @@ impl Default for ApiConfig {
 
 /// WebSocket 配置
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct WebSocketConfig {
     #[serde(default = "default_ws_enabled")]
     pub enabled: bool,
@@ -184,6 +191,7 @@ impl Default for WebSocketConfig {
 
 /// TTL 保留策略配置
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct RetentionConfig {
     /// 消息保留天数（默认 90）
     #[serde(default = "default_message_ttl_days")]
@@ -212,6 +220,7 @@ impl Default for RetentionConfig {
 
 /// 存储配置
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct StorageConfig {
     #[serde(default = "default_storage_type")]
     pub storage_type: String,
@@ -260,6 +269,7 @@ impl Default for StorageConfig {
 
 /// 日志配置
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct LoggingConfig {
     #[serde(default = "default_log_level")]
     pub level: String,

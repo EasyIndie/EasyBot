@@ -3,6 +3,7 @@
 use axum::{
     Json,
     extract::{State, Path},
+    http::StatusCode,
 };
 use serde::Serialize;
 use utoipa::ToSchema;
@@ -126,13 +127,13 @@ pub async fn stop_adapter(
 pub async fn adapter_status(
     State(state): State<AppState>,
     Path(platform): Path<String>,
-) -> Json<serde_json::Value> {
+) -> (StatusCode, Json<serde_json::Value>) {
     // 使用新的 O(1) get_status 方法，绕过 Vec 遍历
     match state.adapter_manager.get_status(&platform).await {
-        Some(s) => Json(serde_json::to_value(s).unwrap_or_default()),
-        None => Json(serde_json::json!({
+        Some(s) => (StatusCode::OK, Json(serde_json::to_value(s).unwrap_or_default())),
+        None => (StatusCode::NOT_FOUND, Json(serde_json::json!({
             "error": "PLATFORM_NOT_FOUND",
             "message": format!("Platform '{}' not found", platform),
-        })),
+        }))),
     }
 }
