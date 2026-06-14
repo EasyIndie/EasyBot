@@ -5,6 +5,7 @@
 
 use std::path::PathBuf;
 use std::process::Command;
+use std::io::Read;
 
 /// 获取 easybot 二进制路径
 fn easybot_bin() -> PathBuf {
@@ -128,20 +129,115 @@ fn test_cli_short_flags() {
     let dir = tempfile::tempdir().expect("failed to create temp dir");
     let dir_path = dir.path().to_str().unwrap();
 
-    let output = Command::new(easybot_bin())
+    // Server will block, so use spawn + kill pattern
+    let mut child = Command::new(easybot_bin())
         .arg("-d")
         .arg("--dir")
         .arg(dir_path)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("failed to start easybot -d");
+
+    // Let it run briefly to see if it crashes
+    std::thread::sleep(std::time::Duration::from_millis(500));
+
+    // Check if still alive (if it crashed, we'd see an error)
+    match child.try_wait() {
+        Ok(Some(status)) => {
+            // Process already exited — read stderr to see why
+            let mut stderr = String::new();
+            child.stderr.take().unwrap().read_to_string(&mut stderr).unwrap();
+            panic!("easybot exited prematurely with status {}: {}", status, stderr);
+        }
+        Ok(None) => {
+            // Still running — expected
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        Err(e) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("failed to check easybot status: {}", e);
+        }
+    }
+}
+
+#[test]
+fn test_openapi_has_security_scheme() {
+    // Start the server
+    let dir = tempfile::tempdir().expect("failed to create temp dir");
+    let dir_path = dir.path().to_str().unwrap();
+
+    // First init the dir, then start the server
+    let init = Command::new(easybot_bin())
+        .arg("--init")
+        .arg("--dir")
+        .arg(dir_path)
         .output()
-        .expect("failed to run easybot -d");
-    // With --dir pointing to empty dir, it should start with default config
-    // and the --debug flag should enable debug logging.
-    // It may exit with error or start successfully depending on config.
-    // However it should not crash with a usage error.
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        !stderr.contains("error:"),
-        "short flag should not cause parse error: {}",
-        stderr
-    );
+        .expect("init failed");
+    assert!(init.status.success());
+
+    let mut child = Command::new(easybot_bin())
+        .arg("--debug")
+        .arg("--dir")
+        .arg(dir_path)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("failed to start easybot");
+
+    // Wait for server to start, then fetch openapi.json
+    std::thread::sleep(std::time::Duration::from_secs(2));
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let resp = ureq::get("http://localhost:8080/openapi.json")
+            .call()
+            .expect("failed to fetch openapi.json");
+        assert_eq!(resp.status(), 200, "openapi.json should return 200");
+
+        let mut body = String::new();
+        resp.into_reader().read_to_string(&mut body).unwrap();
+        let spec: serde_json::Value =
+            serde_json::from_str(&body).expect("openapi.json should be valid JSON");
+
+        // Check security scheme exists
+        let schemes = &spec["components"]["securitySchemes"];
+        assert!(
+            schemes.get("ApiKeyAuth").is_some(),
+            "openapi.json should have ApiKeyAuth security scheme"
+        );
+
+        let scheme = &schemes["ApiKeyAuth"];
+        assert_eq!(
+            scheme["type"], "http",
+            "security scheme type should be http"
+        );
+        assert_eq!(
+            scheme["scheme"], "bearer",
+            "security scheme should be bearer"
+        );
+
+        // Check global security requirement
+        let security = &spec["security"];
+        assert!(
+            security.as_array().map_or(false, |arr| !arr.is_empty()),
+            "openapi.json should have global security requirement"
+        );
+
+        // Check at least one non-health path exists
+        let paths = &spec["paths"];
+        assert!(
+            paths.get("/api/v1/adapters").is_some(),
+            "should have /api/v1/adapters endpoint"
+        );
+    }));
+
+    // Cleanup
+    let _ = child.kill();
+    let _ = child.wait();
+
+    if let Err(e) = result {
+        panic!("OpenAPI test failed: {:?}", e);
+    }
 }
