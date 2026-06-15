@@ -736,6 +736,7 @@ impl PlatformAdapter for DiscordAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
 
     #[test]
     fn test_platform_name() {
@@ -968,5 +969,90 @@ mod tests {
 
         let result = DiscordAdapter::convert_message(msg, "bot_id");
         assert!(result.is_none(), "Should filter bot's own messages");
+    }
+
+    // ── Gateway dispatch 测试 ──
+
+    #[test]
+    fn test_handle_dispatch_message_create() {
+        let event_bus = Arc::new(easybot_core::bus::EventBus::new());
+        // 先订阅确保 publish 能找到 sender
+        let mut rx = event_bus.subscribe(easybot_core::types::event::event_types::MESSAGE_INBOUND);
+
+        let data = serde_json::json!({
+            "id": "12345",
+            "channel_id": "67890",
+            "content": "Hello from Discord",
+            "timestamp": "2024-06-01T12:00:00.000000+00:00",
+            "author": {
+                "id": "user_001",
+                "username": "TestUser",
+                "global_name": "Test User",
+                "bot": false
+            }
+        });
+
+        DiscordAdapter::handle_dispatch("MESSAGE_CREATE", data, &event_bus, "bot_id_001");
+
+        let event = rx.try_recv().ok();
+        assert!(event.is_some(), "Expected MESSAGE_INBOUND event");
+        if let Some(e) = event {
+            assert_eq!(e.event_type, "message.inbound");
+            assert_eq!(e.source, "discord");
+        }
+    }
+
+    #[test]
+    fn test_handle_dispatch_self_message() {
+        let event_bus = Arc::new(easybot_core::bus::EventBus::new());
+        let mut rx = event_bus.subscribe(easybot_core::types::event::event_types::MESSAGE_INBOUND);
+
+        let data = serde_json::json!({
+            "id": "99999",
+            "channel_id": "67890",
+            "content": "I am the bot",
+            "timestamp": "2024-06-01T12:00:00.000000+00:00",
+            "author": {
+                "id": "bot_self",
+                "username": "MyBot",
+                "global_name": "My Bot",
+                "bot": true
+            }
+        });
+
+        DiscordAdapter::handle_dispatch("MESSAGE_CREATE", data, &event_bus, "bot_self");
+
+        let event = rx.try_recv().ok();
+        assert!(event.is_none(), "Self messages should be filtered out");
+    }
+
+    #[test]
+    fn test_handle_dispatch_ignored_event() {
+        let event_bus = Arc::new(easybot_core::bus::EventBus::new());
+        let mut rx = event_bus.subscribe(easybot_core::types::event::event_types::MESSAGE_INBOUND);
+
+        let data = serde_json::json!({"dummy": true});
+
+        DiscordAdapter::handle_dispatch("MESSAGE_UPDATE", data, &event_bus, "bot_id");
+
+        let event = rx.try_recv().ok();
+        assert!(event.is_none(), "Unhandled event type should not publish");
+    }
+
+    #[test]
+    fn test_handle_dispatch_malformed_data() {
+        let event_bus = Arc::new(easybot_core::bus::EventBus::new());
+
+        // 缺少 author/id 等必需字段
+        let data = serde_json::json!({
+            "id": "12345",
+            "content": "partial message"
+        });
+
+        DiscordAdapter::handle_dispatch("MESSAGE_CREATE", data, &event_bus, "bot_id");
+
+        let mut rx = event_bus.subscribe(easybot_core::types::event::event_types::MESSAGE_INBOUND);
+        let event = rx.try_recv().ok();
+        assert!(event.is_none(), "Malformed message should not be published");
     }
 }
