@@ -381,17 +381,20 @@ async fn handle_init(cli: Cli) -> anyhow::Result<()> {
         if !env_example_path.exists() {
             let env_example = easybot_core::config::generate_env_example();
             tokio::fs::write(&env_example_path, &env_example).await?;
-            tracing::info!(
-                "Created .env.example: {}",
-                env_example_path.display()
-            );
+            tracing::info!("Created .env.example: {}", env_example_path.display());
         }
 
         println!("\nEasyBot initialized at:");
         paths.print_tree();
         println!("\nNext steps:");
-        println!("  1. Edit {} to configure platforms", paths.config_file.display());
-        println!("  2. Edit {} to set tokens and secrets", env_example_path.display());
+        println!(
+            "  1. Edit {} to configure platforms",
+            paths.config_file.display()
+        );
+        println!(
+            "  2. Edit {} to set tokens and secrets",
+            env_example_path.display()
+        );
         println!("     (or copy it to .env in the same directory)");
         println!("  3. Run `easybot` to start");
     } else {
