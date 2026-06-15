@@ -6,7 +6,6 @@ use easybot_core::types::adapter::{AdapterConfig, AdapterState, PlatformAdapter}
 use easybot_core::types::message::{
     EditMessageParams, OutboundMessage, ParseMode, SendTextParams,
 };
-use std::time::Duration;
 use wiremock::{Mock, MockServer, ResponseTemplate};
 use wiremock::matchers::{method, path};
 

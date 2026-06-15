@@ -252,7 +252,7 @@ mod tests {
         assert!(msg.guild_id.is_none());
         assert!(msg.content.is_none());
         assert_eq!(msg.author.username, None);
-        assert_eq!(msg.author.bot, false); // default
+        assert!(!msg.author.bot); // default
     }
 
     #[test]

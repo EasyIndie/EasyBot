@@ -29,12 +29,11 @@ fn build_req(
         builder = builder.header("Authorization", format!("Bearer {}", key));
     }
 
-    let req = if let Some(b) = body {
+    if let Some(b) = body {
         builder.body(Body::from(b.to_string())).unwrap()
     } else {
         builder.body(Body::empty()).unwrap()
-    };
-    req
+    }
 }
 
 /// 发送请求并解析响应为 (StatusCode, JSON Value)

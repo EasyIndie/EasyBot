@@ -104,6 +104,7 @@ fn save_credentials_to_disk(creds: &WeChatCredentials) {
 const LONGPOLL_TIMEOUT: u64 = 35;
 
 /// Session 刷新间隔（秒），24 小时后过期需重连
+#[allow(dead_code)]
 const SESSION_REFRESH_INTERVAL: u64 = 82800; // 23 小时
 
 // ── iLink API 响应类型 ──
@@ -120,6 +121,7 @@ struct QrCodeResponse {
 
 /// QR 码状态响应
 #[derive(Debug, serde::Deserialize)]
+#[allow(dead_code)]
 struct QrCodeStatusResponse {
     ret: i64,
     errmsg: Option<String>,
@@ -147,6 +149,7 @@ struct GetUpdatesResponse {
 
 /// 微信消息（iLink Bot API 实际格式）
 #[derive(Debug, serde::Deserialize)]
+#[allow(dead_code)]
 struct WeixinMessage {
     #[serde(default)]
     message_id: Option<i64>,
@@ -185,6 +188,7 @@ struct WeixinTextItem {
 }
 
 #[derive(Debug, serde::Deserialize)]
+#[allow(dead_code)]
 struct WeixinImageItem {
     #[serde(default)]
     md5sum: Option<String>,
@@ -203,6 +207,7 @@ struct WeixinImageItem {
 }
 
 #[derive(Debug, serde::Deserialize)]
+#[allow(dead_code)]
 struct WeixinFileItem {
     #[serde(default)]
     md5sum: Option<String>,
@@ -218,6 +223,7 @@ struct WeixinFileItem {
 
 /// 发送消息响应（实际 API 无 ret 字段，直接返回结果）
 #[derive(Debug, serde::Deserialize)]
+#[allow(dead_code)]
 struct SendMessageResponse {
     #[serde(default)]
     msg_id: Option<i64>,
@@ -231,6 +237,7 @@ struct SendMessageResponse {
 
 /// Upload URL 响应
 #[derive(Debug, serde::Deserialize)]
+#[allow(dead_code)]
 struct UploadUrlResponse {
     ret: i64,
     errmsg: Option<String>,
@@ -353,7 +360,7 @@ impl WeChatAdapter {
 /// Base64 编码 uint32（与官方 SDK 对齐）
 fn base64_encode_uin(uin: u32) -> String {
     use base64::Engine;
-    base64::engine::general_purpose::STANDARD.encode(&uin.to_le_bytes())
+    base64::engine::general_purpose::STANDARD.encode(uin.to_le_bytes())
 }
 
 #[async_trait]

@@ -124,7 +124,7 @@ impl SessionManager {
             .collect();
 
         // 按更新时间降序排列（最近活跃的在前）
-        results.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
+        results.sort_by_key(|b| std::cmp::Reverse(b.updated_at));
 
         // 应用过滤条件
         if let Some(f) = filter {

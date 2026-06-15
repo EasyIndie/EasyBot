@@ -442,7 +442,7 @@ impl PlatformAdapter for TelegramAdapter {
         Ok(SendResult {
             success: true,
             message_id: Some(result.message_id.to_string()),
-            timestamp: Some(result.date as i64 * 1000),
+            timestamp: Some(result.date * 1000),
             error: None,
             error_code: None,
             retryable: false,
@@ -497,7 +497,7 @@ impl PlatformAdapter for TelegramAdapter {
             Ok(SendResult {
                 success: true,
                 message_id: Some(result.message_id.to_string()),
-                timestamp: Some(result.date as i64 * 1000),
+                timestamp: Some(result.date * 1000),
                 error: None,
                 error_code: None,
                 retryable: false,
@@ -549,7 +549,7 @@ impl PlatformAdapter for TelegramAdapter {
                     Ok(SendResult {
                         success: true,
                         message_id: Some(result.message_id.to_string()),
-                        timestamp: Some(result.date as i64 * 1000),
+                        timestamp: Some(result.date * 1000),
                         error: None,
                         error_code: None,
                         retryable: false,
@@ -611,7 +611,7 @@ impl PlatformAdapter for TelegramAdapter {
         Ok(SendResult {
             success: true,
             message_id: Some(result.message_id.to_string()),
-            timestamp: Some(result.date as i64 * 1000),
+            timestamp: Some(result.date * 1000),
             error: None,
             error_code: None,
             retryable: false,

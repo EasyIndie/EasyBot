@@ -246,7 +246,7 @@ fn test_openapi_has_security_scheme() {
         // Check global security requirement
         let security = &spec["security"];
         assert!(
-            security.as_array().map_or(false, |arr| !arr.is_empty()),
+            security.as_array().is_some_and(|arr| !arr.is_empty()),
             "openapi.json should have global security requirement"
         );
 

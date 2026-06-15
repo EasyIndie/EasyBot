@@ -194,8 +194,8 @@ mod tests {
         assert!(!ptr.is_null());
 
         unsafe {
-            let inner: &Box<dyn PlatformAdapter> =
-                &*(ptr as *const Box<dyn PlatformAdapter>);
+            let inner: &dyn PlatformAdapter =
+                &**(ptr as *const Box<dyn PlatformAdapter>);
             assert_eq!(inner.platform_name(), "test-adapter");
             assert_eq!(inner.state(), AdapterState::Created);
         }
