@@ -509,28 +509,6 @@ async fn register_builtin_adapters(
         tracing::info!("Registered built-in adapter: qq");
     }
 
-    #[cfg(feature = "adapter-wecom")]
-    {
-        let registry = adapter_manager.registry();
-        let eb = event_bus.clone();
-        let factory: easybot_core::adapter::AdapterFactory =
-            std::sync::Arc::new(move |config| {
-                let eb = eb.clone();
-                Box::pin(async move {
-                    let mut adapter = easybot_adapter_wecom::WeComAdapter::new();
-                    adapter.set_event_bus(eb);
-                    let init_result = adapter.init(config).await
-                        .map_err(|e| format!("wecom init failed: {}", e))?;
-                    if !init_result.ok {
-                        return Err(init_result.error.unwrap_or_else(|| "unknown init error".to_string()));
-                    }
-                    Ok(Box::new(adapter) as Box<dyn easybot_core::PlatformAdapter>)
-                })
-            });
-        registry.register("wecom", "企业微信", factory).await;
-        tracing::info!("Registered built-in adapter: wecom");
-    }
-
     #[cfg(feature = "adapter-wechat")]
     {
         let registry = adapter_manager.registry();
@@ -552,9 +530,9 @@ async fn register_builtin_adapters(
         tracing::info!("Registered built-in adapter: wechat");
     }
 
-    #[cfg(not(any(feature = "adapter-telegram", feature = "adapter-discord", feature = "adapter-feishu", feature = "adapter-qq", feature = "adapter-wecom", feature = "adapter-wechat")))]
+    #[cfg(not(any(feature = "adapter-telegram", feature = "adapter-discord", feature = "adapter-feishu", feature = "adapter-qq", feature = "adapter-wechat")))]
     {
         let _ = event_bus;
-        tracing::warn!("No adapters enabled (compile with features to enable: adapter-telegram, adapter-discord, adapter-feishu, adapter-qq, adapter-wecom, adapter-wechat)");
+        tracing::warn!("No adapters enabled (compile with features to enable: adapter-telegram, adapter-discord, adapter-feishu, adapter-qq, adapter-wechat)");
     }
 }
