@@ -72,7 +72,8 @@ pub(crate) struct DiscordUser {
     pub username: String,
     #[serde(default)]
     pub global_name: Option<String>,
-    pub bot: bool,
+    #[serde(default)]
+    pub bot: Option<bool>,
     #[serde(default)]
     pub avatar: Option<String>,
 }

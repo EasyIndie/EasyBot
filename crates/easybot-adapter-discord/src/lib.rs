@@ -15,8 +15,8 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use tokio::sync::broadcast;
-use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use futures::{SinkExt, StreamExt};
 use easybot_core::bus::EventBus;
 use easybot_core::types::adapter::*;
@@ -30,6 +30,9 @@ const DISCORD_API: &str = "https://discord.com/api/v10";
 
 /// Discord Gateway WebSocket URL (v10)
 const DISCORD_GATEWAY: &str = "wss://gateway.discord.gg/?v=10&encoding=json";
+
+/// Discord Gateway 主机名（用于 DNS 解析和 TLS SNI）
+const DISCORD_GATEWAY_HOST: &str = "gateway.discord.gg";
 
 /// Discord 适配器
 pub struct DiscordAdapter {
@@ -157,7 +160,7 @@ impl DiscordAdapter {
         let author = MessageAuthor {
             id: msg.author.id,
             name: Some(msg.author.global_name.unwrap_or(msg.author.username)),
-            is_bot: msg.author.bot,
+            is_bot: msg.author.bot.unwrap_or(false),
         };
 
         let timestamp = chrono::DateTime::parse_from_rfc3339(&msg.timestamp)
@@ -214,6 +217,47 @@ impl DiscordAdapter {
         }
     }
 
+    /// 建立到 Discord Gateway 的 WebSocket 连接（使用 webpki-roots 验证 TLS）
+    async fn connect_gateway() -> Result<
+        (tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>, tokio_tungstenite::tungstenite::http::Response<Option<Vec<u8>>>),
+        Box<dyn std::error::Error + Send + Sync>,
+    > {
+        use rustls::pki_types::ServerName;
+        use std::sync::Arc;
+        use tokio::net::TcpStream;
+        use tokio_rustls::TlsConnector;
+
+        // 注册默认 CryptoProvider（rustls 0.23 需要显式指定）
+        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+
+        // DNS 解析
+        let addr = tokio::net::lookup_host((DISCORD_GATEWAY_HOST, 443))
+            .await?
+            .next()
+            .ok_or("DNS resolution failed")?;
+
+        // TCP 连接
+        let tcp = TcpStream::connect(addr).await?;
+
+        // TLS 配置（使用 webpki-roots 作为根证书）
+        let mut root_store = rustls::RootCertStore::empty();
+        root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+        let config = rustls::ClientConfig::builder()
+            .with_root_certificates(root_store)
+            .with_no_client_auth();
+        let connector = TlsConnector::from(Arc::new(config));
+        let domain = ServerName::try_from(DISCORD_GATEWAY_HOST)?;
+        let tls = connector.connect(domain, tcp).await?;
+
+        // 包装为 MaybeTlsStream
+        let stream = tokio_tungstenite::MaybeTlsStream::Rustls(tls);
+
+        // 升级到 WebSocket
+        let request = DISCORD_GATEWAY.into_client_request()?;
+        let (ws_stream, resp) = tokio_tungstenite::client_async(request, stream).await?;
+        Ok((ws_stream, resp))
+    }
+
     /// 网关主循环（WebSocket 连接 + 心跳 + 事件接收）
     async fn gateway_loop(
         token: String,
@@ -223,7 +267,7 @@ impl DiscordAdapter {
     ) {
         tracing::info!("Discord Gateway connecting...");
 
-        let (ws_stream, _) = match connect_async(DISCORD_GATEWAY).await {
+        let (ws_stream, _) = match Self::connect_gateway().await {
             Ok(s) => s,
             Err(e) => {
                 tracing::error!("Discord Gateway connect failed: {}", e);
@@ -636,14 +680,25 @@ impl PlatformAdapter for DiscordAdapter {
         chat_id: &str,
         message_id: &str,
     ) -> Result<DeleteResult, GatewayError> {
-        let endpoint = format!("/channels/{}/messages/{}", chat_id, message_id);
+        let client = self.http_client();
+        let url = format!("{}/channels/{}/messages/{}", DISCORD_API, chat_id, message_id);
 
-        match self.api_call::<serde_json::Value>(reqwest::Method::DELETE, &endpoint, None).await {
-            Ok(_) => Ok(DeleteResult { success: true, error: None }),
-            Err(e) => Ok(DeleteResult {
+        let resp = client
+            .delete(&url)
+            .header("Authorization", self.auth_header())
+            .send()
+            .await
+            .map_err(|e| GatewayError::Internal(format!("Discord API delete failed: {}", e)))?;
+
+        let status = resp.status();
+        if status.is_success() {
+            Ok(DeleteResult { success: true, error: None })
+        } else {
+            let error_text = resp.text().await.unwrap_or_default();
+            Ok(DeleteResult {
                 success: false,
-                error: Some(e.to_string()),
-            }),
+                error: Some(format!("Discord API {}: {}", status.as_u16(), error_text)),
+            })
         }
     }
 
@@ -738,7 +793,7 @@ mod tests {
                 id: "333333333".to_string(),
                 username: "testuser".to_string(),
                 global_name: Some("TestUser".to_string()),
-                bot: false,
+                bot: Some(false),
                 avatar: None,
             },
             content: Some("Hello from Discord!".to_string()),
@@ -770,7 +825,7 @@ mod tests {
                 id: "333333333".to_string(),
                 username: "guilduser".to_string(),
                 global_name: None,
-                bot: false,
+                bot: Some(false),
                 avatar: None,
             },
             content: Some("Guild message".to_string()),
@@ -797,7 +852,7 @@ mod tests {
                 id: "bot_id".to_string(),
                 username: "mybot".to_string(),
                 global_name: None,
-                bot: true,
+                bot: Some(true),
                 avatar: None,
             },
             content: Some("I said this".to_string()),
