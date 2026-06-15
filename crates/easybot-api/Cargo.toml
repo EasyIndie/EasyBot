@@ -23,3 +23,8 @@ prometheus.workspace = true
 tokio-stream.workspace = true
 utoipa = { workspace = true, features = ["axum_extras"] }
 utoipa-swagger-ui = { workspace = true, features = ["axum"] }
+
+[dev-dependencies]
+sqlx = { workspace = true }
+http-body-util = "0.1"
+bytes = "1"

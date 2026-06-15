@@ -42,92 +42,9 @@ impl Server {
         }
     }
 
-    /// 构建路由器
+    /// 构建路由器（委托给公共函数）
     fn build_router(&self) -> Router {
-        let state = self.state.clone();
-
-        // ── 公共路由（无需认证）──
-
-        // 健康检查
-        let mut public_routes = Router::new()
-            .route("/health", get(routes::health::health_check));
-
-        // ── 指标端点（从 AppState 提取 MetricsRegistry）──
-        if state.metrics.is_some() {
-            public_routes = public_routes.route(
-                &state.config.api.metrics.path,
-                get(crate::metrics::metrics_handler),
-            );
-        }
-
-        // ── 速率限制器 ──
-        let rl_config = easybot_core::types::config::RateLimitConfig {
-            enabled: state.config.api.rate_limit.enabled,
-            requests_per_minute: state.config.api.rate_limit.requests_per_minute,
-            burst_size: state.config.api.rate_limit.burst_size,
-        };
-        let rate_limiter = crate::middleware::rate_limit::RateLimiter::new(
-            crate::middleware::rate_limit::RateLimitConfig {
-                enabled: rl_config.enabled,
-                requests_per_minute: rl_config.requests_per_minute,
-                burst_size: rl_config.burst_size,
-            },
-        );
-
-        // ── 受保护路由（需要 Bearer Token 认证）──
-
-        let protected_routes = Router::new()
-            // 适配器管理
-            .route("/adapters", get(routes::adapters::list_adapters))
-            .route("/adapters/{platform}/start", post(routes::adapters::start_adapter))
-            .route("/adapters/{platform}/stop", post(routes::adapters::stop_adapter))
-            .route("/adapters/{platform}/status", get(routes::adapters::adapter_status))
-            // 消息
-            .route("/messages/send", post(routes::messages::send_message))
-            .route("/messages/batch-send", post(routes::messages::batch_send))
-            .route("/messages/{message_id}", put(routes::messages::edit_message))
-            .route("/messages/{message_id}", delete(routes::messages::delete_message))
-            .route("/messages", get(routes::messages::message_history))
-            // 会话
-            .route("/sessions", get(routes::sessions::list_sessions))
-            .route("/sessions/{key}", get(routes::sessions::get_session))
-            .route("/sessions/{key}", delete(routes::sessions::delete_session))
-            // 聊天
-            .route("/chats/{platform}", get(routes::chats::list_chats))
-            .route("/chats/{platform}/{chat_id}", get(routes::chats::get_chat))
-            // 配置
-            .route("/config", get(routes::config::get_config))
-            .route("/config", put(routes::config::update_config))
-            // WebSocket
-            .route("/ws", get(routes::ws::ws_handler))
-            // 速率限制中间件（在认证之前）
-            .route_layer(middleware::from_fn_with_state(
-                rate_limiter.clone(),
-                crate::middleware::rate_limit::rate_limit_middleware,
-            ))
-            // 认证中间件（作用于以上所有路由）
-            .route_layer(middleware::from_fn_with_state(
-                state.clone(),
-                Self::auth_middleware,
-            ));
-
-        // 合并公共 + 受保护路由
-        let api_routes = Router::new()
-            .merge(public_routes)
-            .merge(protected_routes);
-
-        // OpenAPI 文档路径（Swagger UI，无需认证）
-        let swagger = SwaggerUi::new("/swagger")
-            .url("/openapi.json", ApiDoc::openapi());
-
-        // 基础路径
-        let base_path = &self.state.config.api.base_path;
-        Router::new()
-            .merge(swagger)
-            .nest(base_path, api_routes)
-            .layer(TraceLayer::new_for_http())
-            .layer(CorsLayer::permissive())
-            .with_state(self.state.clone())
+        create_router(self.state.clone())
     }
 
     /// Bearer Token 认证中间件
@@ -199,4 +116,93 @@ impl Server {
 
         Ok(handle)
     }
+}
+
+/// 构建 axum Router 实例
+///
+/// 作为公共函数暴露，以便测试代码可以直接使用。
+/// 构造包含所有路由（公共 + 受保护）、中间件（认证、限流）和 Swagger UI 的路由器。
+pub fn create_router(state: AppState) -> Router {
+    // ── 公共路由（无需认证）──
+
+    // 健康检查
+    let mut public_routes = Router::new()
+        .route("/health", get(routes::health::health_check));
+
+    // ── 指标端点（从 AppState 提取 MetricsRegistry）──
+    if state.metrics.is_some() {
+        public_routes = public_routes.route(
+            &state.config.api.metrics.path,
+            get(crate::metrics::metrics_handler),
+        );
+    }
+
+    // ── 速率限制器 ──
+    let rl_config = easybot_core::types::config::RateLimitConfig {
+        enabled: state.config.api.rate_limit.enabled,
+        requests_per_minute: state.config.api.rate_limit.requests_per_minute,
+        burst_size: state.config.api.rate_limit.burst_size,
+    };
+    let rate_limiter = crate::middleware::rate_limit::RateLimiter::new(
+        crate::middleware::rate_limit::RateLimitConfig {
+            enabled: rl_config.enabled,
+            requests_per_minute: rl_config.requests_per_minute,
+            burst_size: rl_config.burst_size,
+        },
+    );
+
+    // ── 受保护路由（需要 Bearer Token 认证）──
+
+    let protected_routes = Router::new()
+        // 适配器管理
+        .route("/adapters", get(routes::adapters::list_adapters))
+        .route("/adapters/{platform}/start", post(routes::adapters::start_adapter))
+        .route("/adapters/{platform}/stop", post(routes::adapters::stop_adapter))
+        .route("/adapters/{platform}/status", get(routes::adapters::adapter_status))
+        // 消息
+        .route("/messages/send", post(routes::messages::send_message))
+        .route("/messages/batch-send", post(routes::messages::batch_send))
+        .route("/messages/{message_id}", put(routes::messages::edit_message))
+        .route("/messages/{message_id}", delete(routes::messages::delete_message))
+        .route("/messages", get(routes::messages::message_history))
+        // 会话
+        .route("/sessions", get(routes::sessions::list_sessions))
+        .route("/sessions/{key}", get(routes::sessions::get_session))
+        .route("/sessions/{key}", delete(routes::sessions::delete_session))
+        // 聊天
+        .route("/chats/{platform}", get(routes::chats::list_chats))
+        .route("/chats/{platform}/{chat_id}", get(routes::chats::get_chat))
+        // 配置
+        .route("/config", get(routes::config::get_config))
+        .route("/config", put(routes::config::update_config))
+        // WebSocket
+        .route("/ws", get(routes::ws::ws_handler))
+        // 速率限制中间件（在认证之前）
+        .route_layer(middleware::from_fn_with_state(
+            rate_limiter.clone(),
+            crate::middleware::rate_limit::rate_limit_middleware,
+        ))
+        // 认证中间件（作用于以上所有路由）
+        .route_layer(middleware::from_fn_with_state(
+            state.clone(),
+            Server::auth_middleware,
+        ));
+
+    // 合并公共 + 受保护路由
+    let api_routes = Router::new()
+        .merge(public_routes)
+        .merge(protected_routes);
+
+    // OpenAPI 文档路径（Swagger UI，无需认证）
+    let swagger = SwaggerUi::new("/swagger")
+        .url("/openapi.json", ApiDoc::openapi());
+
+    // 基础路径
+    let base_path = &state.config.api.base_path;
+    Router::new()
+        .merge(swagger)
+        .nest(base_path, api_routes)
+        .layer(TraceLayer::new_for_http())
+        .layer(CorsLayer::permissive())
+        .with_state(state.clone())
 }
