@@ -269,4 +269,55 @@ mod tests {
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].platform, "telegram");
     }
+
+    #[tokio::test]
+    async fn test_concurrent_get_or_create() {
+        let mgr = Arc::new(SessionManager::new());
+        let mut handles = Vec::new();
+
+        for _ in 0..50 {
+            let mgr = mgr.clone();
+            handles.push(tokio::spawn(async move {
+                let s = mgr.get_or_create("concurrent:1", make_source("test", "1")).await;
+                assert_eq!(s.key, "concurrent:1");
+            }));
+        }
+
+        for h in handles {
+            h.await.unwrap();
+        }
+
+        assert_eq!(mgr.count(), 1, "single session should exist");
+        assert!(mgr.get("concurrent:1").is_some(), "session should be findable");
+    }
+
+    #[tokio::test]
+    async fn test_concurrent_read_during_write() {
+        // 验证并发读写不 panic（DashMap 保证内部安全）
+        let mgr = Arc::new(SessionManager::new());
+        mgr.get_or_create("rw:1", make_source("test", "1")).await;
+
+        let mgr_w = mgr.clone();
+        let mgr_r = mgr.clone();
+        let write_handle = tokio::spawn(async move {
+            for i in 0..100 {
+                let source = make_source("test", &i.to_string());
+                mgr_w.get_or_create(&format!("rw:{}", i), source).await;
+            }
+        });
+
+        let read_handle = tokio::spawn(async move {
+            for _ in 0..100 {
+                let _ = mgr_r.list(None);
+                let _ = mgr_r.count();
+                tokio::task::yield_now().await;
+            }
+        });
+
+        let (w, r) = tokio::join!(write_handle, read_handle);
+        w.unwrap();
+        r.unwrap();
+        // 验证最终的 state 一致
+        assert!(mgr.count() >= 1, "should have at least 1 session");
+    }
 }

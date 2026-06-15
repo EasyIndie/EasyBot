@@ -78,6 +78,7 @@ impl SessionBridge {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Duration;
     use crate::bus::EventBus;
     use crate::session::SessionManager;
     use crate::types::event::GatewayEvent;
@@ -130,5 +131,49 @@ mod tests {
             assert_eq!(s.platform, "telegram");
             assert_eq!(s.chat_id, "12345");
         }
+    }
+
+    #[tokio::test]
+    async fn test_bridge_session_source_fields() {
+        let bus = Arc::new(EventBus::new());
+        let sessions = Arc::new(SessionManager::new());
+
+        SessionBridge::start(bus.clone(), sessions.clone());
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        let msg = InboundMessage {
+            id: "src-test".to_string(),
+            platform: "test".to_string(),
+            chat_id: "source-check".to_string(),
+            chat_name: Some("Source Name".to_string()),
+            chat_type: ChatType::Dm,
+            text: Some("check".to_string()),
+            author: MessageAuthor {
+                id: "author-001".to_string(),
+                name: Some("AuthorName".to_string()),
+                is_bot: false,
+            },
+            timestamp: 1700000000000,
+            media: None,
+            command: None,
+            callback: None,
+            reply_to: None,
+            thread_id: None,
+            is_group: false,
+            metadata: None,
+        };
+
+        let event = GatewayEvent::new(
+            crate::types::event::event_types::MESSAGE_INBOUND,
+            "test",
+            serde_json::to_value(&msg).unwrap(),
+        );
+        bus.publish(event);
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        let session = sessions.get("test:source-check").unwrap();
+        assert_eq!(session.source.chat_name, Some("Source Name".to_string()));
+        assert_eq!(session.source.user_id, Some("author-001".to_string()));
+        assert_eq!(session.source.user_name, Some("AuthorName".to_string()));
     }
 }
