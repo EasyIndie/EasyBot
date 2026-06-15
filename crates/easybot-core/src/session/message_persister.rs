@@ -60,11 +60,13 @@ mod tests {
     use serde_json::json;
 
     use crate::bus::EventBus;
+    use crate::session::SessionManager;
+    use crate::session::bridge::SessionBridge;
+    use crate::session::message_persister::MessagePersister;
     use crate::storage::sqlite::{SqliteMessageStore, run_migrations};
     use crate::storage::{MessageFilter, MessageStore};
     use crate::types::message::{InboundMessage, MessageAuthor, ChatType};
     use crate::types::event::event_types::MESSAGE_INBOUND;
-    use super::MessagePersister;
 
     /// 创建测试用的入站消息
     fn test_inbound_message() -> InboundMessage {
@@ -206,5 +208,111 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(stored_messages.len(), 3, "Should have stored 3 messages");
+    }
+
+    // ── 全管线集成测试 ──
+
+    #[tokio::test]
+    async fn test_full_pipeline_inbound() {
+        let event_bus = Arc::new(EventBus::new());
+        let pool = sqlx::SqlitePool::connect(":memory:").await.unwrap();
+        run_migrations(&pool).await.unwrap();
+        let message_store: Arc<dyn MessageStore> =
+            Arc::new(SqliteMessageStore::new(pool.clone()));
+        let session_manager = Arc::new(SessionManager::new());
+
+        // 启动管线组件
+        SessionBridge::start(event_bus.clone(), session_manager.clone());
+        MessagePersister::start(event_bus.clone(), message_store.clone());
+
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        // 发布入站消息
+        let msg = InboundMessage {
+            id: "pipe-001".to_string(),
+            platform: "test".to_string(),
+            chat_id: "pipeline-chat".to_string(),
+            chat_name: Some("Pipe Test".to_string()),
+            chat_type: ChatType::Dm,
+            is_group: false,
+            text: Some("pipeline test".to_string()),
+            author: MessageAuthor {
+                id: "user-pipe".to_string(),
+                name: Some("PipelineUser".to_string()),
+                is_bot: false,
+            },
+            timestamp: chrono::Utc::now().timestamp_millis(),
+            media: None,
+            command: None,
+            callback: None,
+            reply_to: None,
+            thread_id: None,
+            metadata: None,
+        };
+        let event = crate::types::event::GatewayEvent {
+            event_type: MESSAGE_INBOUND.to_string(),
+            source: "test".to_string(),
+            timestamp: chrono::Utc::now().timestamp_millis(),
+            data: serde_json::to_value(&msg).unwrap(),
+            metadata: None,
+        };
+        event_bus.publish(event);
+
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        // 验证会话已创建
+        let session = session_manager.get("test:pipeline-chat");
+        assert!(session.is_some(), "SessionBridge should create session");
+        assert_eq!(session.unwrap().source.chat_name, Some("Pipe Test".to_string()));
+
+        // 验证消息已持久化
+        let stored = SqliteMessageStore::new(pool)
+            .list_messages(&MessageFilter {
+                session_key: None,
+                platform: Some("test".to_string()),
+                chat_id: None,
+                limit: Some(10),
+                offset: None,
+                before: None,
+            })
+            .await
+            .unwrap();
+        assert_eq!(stored.len(), 1, "MessagePersister should store 1 message");
+        assert_eq!(stored[0].text.as_deref(), Some("pipeline test"));
+    }
+
+    #[tokio::test]
+    async fn test_full_pipeline_non_inbound_ignored() {
+        let event_bus = Arc::new(EventBus::new());
+        let pool = sqlx::SqlitePool::connect(":memory:").await.unwrap();
+        run_migrations(&pool).await.unwrap();
+        let message_store: Arc<dyn MessageStore> =
+            Arc::new(SqliteMessageStore::new(pool.clone()));
+        let session_manager = Arc::new(SessionManager::new());
+
+        SessionBridge::start(event_bus.clone(), session_manager.clone());
+        MessagePersister::start(event_bus.clone(), message_store.clone());
+
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        // 发布非消息事件
+        let event = crate::types::event::GatewayEvent {
+            event_type: "adapter.connected".to_string(),
+            source: "test".to_string(),
+            timestamp: chrono::Utc::now().timestamp_millis(),
+            data: json!({"platform": "test"}),
+            metadata: None,
+        };
+        event_bus.publish(event);
+
+        tokio::time::sleep(Duration::from_millis(300)).await;
+
+        // 会话和消息均不应被创建
+        assert_eq!(session_manager.count(), 0, "No session should be created");
+        let stored = SqliteMessageStore::new(pool)
+            .list_messages(&MessageFilter::default())
+            .await
+            .unwrap();
+        assert!(stored.is_empty(), "No message should be stored");
     }
 }

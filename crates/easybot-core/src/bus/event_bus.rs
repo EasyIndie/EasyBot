@@ -136,6 +136,7 @@ impl Default for EventBus {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
 
     #[tokio::test]
     async fn test_publish_subscribe() {
@@ -163,5 +164,51 @@ mod tests {
         let event = GatewayEvent::new("unsubscribed", "test", serde_json::json!({}));
         // 不应 panic
         bus.publish(event);
+    }
+
+    #[tokio::test]
+    async fn test_multi_consumer_receive_same_event() {
+        let bus = EventBus::new();
+        let mut rx1 = bus.subscribe("test.event");
+        let mut rx2 = bus.subscribe("test.event");
+
+        let event = GatewayEvent::new("test.event", "test", serde_json::json!({"msg": "hello"}));
+        bus.publish(event);
+
+        // 两个消费者都应收到
+        let r1 = tokio::time::timeout(Duration::from_secs(1), rx1.recv()).await;
+        let r2 = tokio::time::timeout(Duration::from_secs(1), rx2.recv()).await;
+        assert!(r1.is_ok(), "consumer 1 should receive");
+        assert!(r2.is_ok(), "consumer 2 should receive");
+    }
+
+    #[tokio::test]
+    async fn test_subscribe_many_receives_all_types() {
+        let bus = EventBus::new();
+        let mut rx = bus.subscribe_many(&["event.a", "event.b"]);
+
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        bus.publish(GatewayEvent::new("event.a", "test", serde_json::json!({"n": 1})));
+        bus.publish(GatewayEvent::new("event.b", "test", serde_json::json!({"n": 2})));
+
+        // 两个事件都应收到
+        let e1 = tokio::time::timeout(Duration::from_secs(1), rx.recv()).await;
+        assert!(e1.is_ok(), "subscribe_many should receive event.a");
+        let e2 = tokio::time::timeout(Duration::from_secs(1), rx.recv()).await;
+        assert!(e2.is_ok(), "subscribe_many should receive event.b");
+    }
+
+    #[tokio::test]
+    async fn test_subscribe_many_dropped_receiver_stops_task() {
+        let bus = Arc::new(EventBus::new());
+        let rx = bus.subscribe_many(&["test.event"]);
+        drop(rx); // 丢弃接收器，后台任务应退出
+
+        // 给后台任务一点时间清理
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        // 后台任务已退出，此发布仅用于验证无 panic
+        bus.publish(GatewayEvent::new("test.event", "test", serde_json::json!({})));
     }
 }

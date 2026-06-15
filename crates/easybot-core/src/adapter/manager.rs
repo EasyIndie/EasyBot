@@ -446,6 +446,92 @@ mod tests {
         let status = manager.get_status("test-mock").await.unwrap();
         assert_eq!(status.state, AdapterState::Connected);
     }
+
+    #[tokio::test]
+    async fn test_has_connected_after_start() {
+        let manager = AdapterManager::new();
+        register_mock_adapter(&manager).await;
+
+        assert!(!manager.has_connected().await);
+
+        let config = AdapterConfig {
+            enabled: true,
+            token: Some("t".into()),
+            api_key: None,
+            base_url: None,
+            extra: serde_json::json!({}),
+        };
+        manager.start("test-mock", config).await.unwrap();
+
+        assert!(manager.has_connected().await);
+    }
+
+    #[tokio::test]
+    async fn test_send_message_delegation() {
+        let manager = AdapterManager::new();
+        register_mock_adapter(&manager).await;
+
+        let config = AdapterConfig {
+            enabled: true,
+            token: Some("t".into()),
+            api_key: None,
+            base_url: None,
+            extra: serde_json::json!({}),
+        };
+        manager.start("test-mock", config).await.unwrap();
+
+        let params = SendTextParams {
+            chat_id: "1".to_string(),
+            message: crate::types::message::OutboundMessage {
+                text: "hello".to_string(),
+                parse_mode: crate::types::message::ParseMode::None,
+            },
+            reply_to: None,
+            metadata: None,
+        };
+        let result = manager.send_message("test-mock", params).await.unwrap();
+        assert!(result.success);
+    }
+
+    #[tokio::test]
+    async fn test_stop_all_cleans_up() {
+        let manager = AdapterManager::new();
+        register_mock_adapter(&manager).await;
+
+        let config = AdapterConfig {
+            enabled: true,
+            token: Some("t".into()),
+            api_key: None,
+            base_url: None,
+            extra: serde_json::json!({}),
+        };
+        manager.start("test-mock", config).await.unwrap();
+        assert!(manager.has_connected().await);
+
+        manager.stop_all().await;
+        // stop_all 从 adapters map 中移除，has_connected 检查 map
+        assert!(!manager.has_connected().await);
+        // 注意：stop_all 不更新 statuses 缓存，这里只验证 map 已清空
+    }
+
+    #[tokio::test]
+    async fn test_start_all_skips_disabled() {
+        let manager = AdapterManager::new();
+        register_mock_adapter(&manager).await;
+
+        let mut configs = std::collections::HashMap::new();
+        configs.insert("test-mock".to_string(), AdapterConfig {
+            enabled: false,
+            token: None,
+            api_key: None,
+            base_url: None,
+            extra: serde_json::json!({}),
+        });
+
+        let result = manager.start_all(configs).await;
+        assert!(result.succeeded.is_empty(), "disabled adapter should not start");
+        assert!(result.failed.is_empty(), "disabled adapter should not fail either");
+    }
 }
 
 /// 启动适配器结果
