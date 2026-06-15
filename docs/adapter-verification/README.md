@@ -8,7 +8,7 @@
 |------|--------|------|
 | [telegram.md](telegram.md) | Telegram | ✅ 已验证 |
 | [discord.md](discord.md) | Discord | ✅ 已验证 |
-| _其他适配器待添加_ | | |
+| [qq.md](qq.md) | QQ | ✅ 已验证（鉴权升级 + TLS 修正） |
 
 ## 验证方法速览
 

@@ -83,7 +83,10 @@ pub struct GatewayResponse {
 pub struct QqUser {
     pub id: String,
     pub username: String,
-    pub bot: bool,
+    #[serde(default)]
+    pub bot: Option<bool>,
+    #[serde(default)]
+    pub avatar: Option<String>,
 }
 
 // ── 消息 ──

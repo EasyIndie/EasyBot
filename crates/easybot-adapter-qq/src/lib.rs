@@ -9,13 +9,14 @@ mod types;
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
 use std::time::Duration;
 
 use async_trait::async_trait;
 use futures::{SinkExt, StreamExt};
 use tokio::sync::broadcast;
-use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::MaybeTlsStream;
 use easybot_core::bus::EventBus;
 use easybot_core::types::adapter::*;
 use easybot_core::types::message::*;
@@ -25,6 +26,106 @@ use types::*;
 
 /// QQ API 基础 URL（正式环境）
 const QQ_API: &str = "https://api.sgroup.qq.com";
+
+// ── Access Token 管理 ──
+
+/// QQ 统一机器人平台 Access Token 存储
+///
+/// 通过 `Arc<Mutex>` 在适配器与 Gateway 事件循环间共享。
+/// 按需调用 `refresh()` 从 QQ 鉴权端点获取新 token。
+/// Token 有效期 7200 秒，提前 60 秒触发刷新。
+#[derive(Clone)]
+struct QqTokenStore {
+    state: Arc<Mutex<Option<(String, tokio::time::Instant)>>>,
+    app_id: String,
+    client_secret: String,
+}
+
+impl QqTokenStore {
+    fn new(app_id: String, client_secret: String) -> Self {
+        Self {
+            state: Arc::new(Mutex::new(None)),
+            app_id,
+            client_secret,
+        }
+    }
+
+    /// 从 QQ 鉴权端点获取新 token
+    async fn refresh(&self) -> Result<(), GatewayError> {
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(15))
+            .build()
+            .map_err(|e| GatewayError::Internal(format!("Failed to create HTTP client: {}", e)))?;
+
+        let body = serde_json::json!({
+            "appId": self.app_id,
+            "clientSecret": self.client_secret,
+        });
+
+        let resp = client
+            .post("https://bots.qq.com/app/getAppAccessToken")
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| {
+                GatewayError::Internal(format!("QQ getAppAccessToken request failed: {}", e))
+            })?;
+
+        let data: serde_json::Value = resp.json().await.map_err(|e| {
+            GatewayError::Internal(format!("QQ getAppAccessToken parse failed: {}", e))
+        })?;
+
+        let access_token = data["access_token"].as_str().ok_or_else(|| {
+            GatewayError::Internal("QQ getAppAccessToken: missing access_token".to_string())
+        })?;
+
+        let expires_in = data["expires_in"].as_u64().unwrap_or(7200);
+        let expires_at =
+            tokio::time::Instant::now() + Duration::from_secs(expires_in) - Duration::from_secs(60);
+
+        let mut guard = self.state.lock().map_err(|e| {
+            GatewayError::Internal(format!("Token mutex poisoned: {}", e))
+        })?;
+        *guard = Some((access_token.to_string(), expires_at));
+
+        tracing::info!(
+            "QQ access token refreshed, expires in {}s",
+            expires_in
+        );
+
+        Ok(())
+    }
+
+    /// 获取 `QQBot {access_token}` 格式的鉴权字符串
+    fn get(&self) -> Result<String, GatewayError> {
+        let guard = self.state.lock().map_err(|e| {
+            GatewayError::Internal(format!("Token mutex poisoned: {}", e))
+        })?;
+        let (token, expires_at) = guard.as_ref().ok_or_else(|| {
+            GatewayError::Internal("QQ access token not initialized".to_string())
+        })?;
+
+        if tokio::time::Instant::now() >= *expires_at {
+            // 过期了但尚未刷新 — 返回当前 token 并记录警告
+            // 调用方应确保在首次使用前 refresh()
+            tracing::warn!("QQ access token may be expired");
+        }
+
+        Ok(format!("QQBot {}", token))
+    }
+
+    /// 检查是否需要刷新
+    fn needs_refresh(&self) -> bool {
+        match self.state.lock() {
+            Ok(guard) => match guard.as_ref() {
+                Some((_, expires_at)) => tokio::time::Instant::now() >= *expires_at,
+                None => true,
+            },
+            Err(_) => true,
+        }
+    }
+
+}
 
 /// QQ 频道机器人适配器
 pub struct QqAdapter {
@@ -41,6 +142,7 @@ pub struct QqAdapter {
     cancel_tx: Option<broadcast::Sender<()>>,
     http_client: Option<reqwest::Client>,
     bot_user_id: Option<String>,
+    token_store: Option<QqTokenStore>,
 }
 
 impl QqAdapter {
@@ -67,6 +169,7 @@ impl QqAdapter {
             cancel_tx: None,
             http_client: None,
             bot_user_id: None,
+            token_store: None,
         }
     }
 
@@ -80,16 +183,11 @@ impl QqAdapter {
         })
     }
 
-    /// 构造 Bearer token: "Bot {appid}.{app_token}"
+    /// 获取鉴权头字符串：`QQBot {access_token}`
     fn bot_token(&self) -> Result<String, GatewayError> {
-        let config = self.config.as_ref()
-            .ok_or_else(|| GatewayError::ConfigError("Adapter not initialized".to_string()))?;
-        let app_id = config.extra.get("app_id")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| GatewayError::ConfigError("Missing 'app_id' in qq config.extra".to_string()))?;
-        let token = config.token.as_deref()
-            .ok_or_else(|| GatewayError::ConfigError("Missing 'token' for qq".to_string()))?;
-        Ok(format!("Bot {}.{}", app_id, token))
+        self.token_store.as_ref()
+            .ok_or_else(|| GatewayError::ConfigError("Token store not initialized (call connect() first)".to_string()))?
+            .get()
     }
 
     /// QQ API GET
@@ -174,16 +272,64 @@ impl QqAdapter {
 // ── Gateway WebSocket 事件循环 ──
 
 impl QqAdapter {
+    /// 建立到 QQ Gateway 的 WebSocket 连接（使用 native-tls / 系统 CA 证书）
+    async fn connect_gateway(
+        ws_url: &str,
+    ) -> Result<
+        tokio_tungstenite::WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>,
+        Box<dyn std::error::Error + Send + Sync>,
+    > {
+        use tokio::net::TcpStream;
+        use tokio_native_tls::TlsConnector;
+        use native_tls::TlsConnector as NativeTlsBuilder;
+
+        // 解析 URL 获取 hostname
+        let uri = ws_url.parse::<tokio_tungstenite::tungstenite::http::Uri>()?;
+        let host = uri.host().ok_or("No host in gateway URL")?.to_string();
+        let port = uri.port_u16().unwrap_or(443);
+
+        // DNS 解析
+        let addr = tokio::net::lookup_host((host.clone(), port))
+            .await?
+            .next()
+            .ok_or("DNS resolution failed")?;
+
+        // TCP 连接
+        let tcp = TcpStream::connect(addr).await?;
+
+        // TLS 配置（使用系统 CA 证书 — macOS SecureTransport / Linux OpenSSL）
+        let native_tls = NativeTlsBuilder::new()
+            .map_err(|e| format!("Failed to build native-tls connector: {}", e))?;
+        let connector = TlsConnector::from(native_tls);
+        let tls = connector.connect(&host, tcp).await?;
+
+        // 包装为 MaybeTlsStream
+        let stream = MaybeTlsStream::NativeTls(tls);
+
+        // 升级到 WebSocket
+        let (ws_stream, _) = tokio_tungstenite::client_async(uri, stream).await?;
+        Ok(ws_stream)
+    }
+
     #[allow(clippy::too_many_lines)]
     async fn gateway_loop(
-        token: String,
+        token_store: QqTokenStore,
         event_bus: Arc<EventBus>,
         bot_id: String,
         mut cancel_rx: broadcast::Receiver<()>,
     ) {
         loop {
+            // 每次重连前刷新 access token
+            if token_store.needs_refresh() {
+                if let Err(e) = token_store.refresh().await {
+                    tracing::error!("QQ token refresh failed: {}, retry 30s", e);
+                    tokio::time::sleep(Duration::from_secs(30)).await;
+                    continue;
+                }
+            }
+
             // 获取 Gateway URL
-            let gw_url = match Self::fetch_gateway_url(&token).await {
+            let gw_url = match Self::fetch_gateway_url(&token_store).await {
                 Some(url) => url,
                 None => {
                     tracing::error!("QQ Gateway: failed to get gateway URL, retry 30s");
@@ -194,11 +340,11 @@ impl QqAdapter {
 
             tracing::info!("QQ Gateway: connecting to {}", gw_url);
 
-            let (ws_stream, _) = match tokio::select! {
+            let ws_stream = match tokio::select! {
                 _ = cancel_rx.recv() => { tracing::info!("QQ cancelled"); return; }
-                r = connect_async(&gw_url) => r,
+                r = Self::connect_gateway(&gw_url) => r,
             } {
-                Ok(r) => r,
+                Ok(ws) => ws,
                 Err(e) => {
                     tracing::error!("QQ connect failed: {}", e);
                     tokio::time::sleep(Duration::from_secs(5)).await;
@@ -233,11 +379,18 @@ impl QqAdapter {
             );
             tracing::info!("QQ Gateway connected");
 
-            // 发送 Identify
+            // 发送 Identify（使用 QQBot {access_token} 格式）
+            let token_str = match token_store.get() {
+                Ok(t) => t,
+                Err(e) => {
+                    tracing::error!("QQ failed to get token: {}", e);
+                    continue;
+                }
+            };
             let identify = serde_json::json!({
                 "op": 2,
                 "d": {
-                    "token": token,
+                    "token": token_str,
                     "intents": types::intents::AT_MESSAGE | types::intents::C2C_MESSAGE | types::intents::GROUP_AT_MESSAGE,
                     "shard": [0, 1],
                 }
@@ -253,6 +406,10 @@ impl QqAdapter {
             let mut hb_timer = tokio::time::interval(hb_interval);
             hb_timer.tick().await; // 跳过第一次立即触发
 
+            // 定期刷新 token（~3500s ≈ 7200s 的一半）
+            let mut token_refresh_timer = tokio::time::interval(Duration::from_secs(3500));
+            token_refresh_timer.tick().await; // 跳过第一次
+
             loop {
                 tokio::select! {
                     _ = cancel_rx.recv() => {
@@ -265,6 +422,12 @@ impl QqAdapter {
                         if write.send(Message::Text(hb.to_string())).await.is_err() {
                             tracing::warn!("QQ heartbeat failed");
                             break;
+                        }
+                    }
+                    // 定时刷新 token
+                    _ = token_refresh_timer.tick() => {
+                        if let Err(e) = token_store.refresh().await {
+                            tracing::warn!("QQ token refresh failed: {}", e);
                         }
                     }
                     // 接收消息
@@ -306,10 +469,11 @@ impl QqAdapter {
         }
     }
 
-    async fn fetch_gateway_url(token: &str) -> Option<String> {
+    async fn fetch_gateway_url(token_store: &QqTokenStore) -> Option<String> {
+        let token = token_store.get().ok()?;
         let client = reqwest::Client::new();
         let resp = client.get(format!("{}/gateway/bot", QQ_API))
-            .header("Authorization", token)
+            .header("Authorization", &token)
             .send().await.ok()?;
         let data: GatewayResponse = resp.json().await.ok()?;
         Some(data.url)
@@ -388,7 +552,7 @@ impl PlatformAdapter for QqAdapter {
         if !has_app_id || !has_token {
             return Ok(InitResult {
                 ok: false,
-                error: Some("QQ 适配器需要配置 extra.app_id 和 token".to_string()),
+                error: Some("QQ 适配器需要配置 extra.app_id 和 token (注意: token 字段需填写 AppSecret, 不再使用旧的静态 Bot Token)".to_string()),
             });
         }
 
@@ -402,15 +566,41 @@ impl PlatformAdapter for QqAdapter {
     }
 
     async fn connect(&mut self) -> Result<ConnectResult, GatewayError> {
-        let token = self.bot_token()?;
+        let config = self.config.as_ref()
+            .ok_or_else(|| GatewayError::ConfigError("Adapter not initialized".to_string()))?;
+        let app_id = config.extra.get("app_id")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| GatewayError::ConfigError("Missing 'app_id' in qq config.extra".to_string()))?;
+        let client_secret = config.token.as_deref()
+            .ok_or_else(|| GatewayError::ConfigError("Missing 'token' (client_secret) for qq".to_string()))?;
+
+        // 创建 TokenStore 并获取 access token
+        let token_store = QqTokenStore::new(
+            app_id.to_string(),
+            client_secret.to_string(),
+        );
+        if let Err(e) = token_store.refresh().await {
+            return Ok(ConnectResult {
+                ok: false,
+                error: Some(format!("QQ auth failed (getAppAccessToken): {}", e)),
+                bot_info: None,
+            });
+        }
+
+        // 先设置 token_store，以便 api_get 等方法使用
+        let ts_clone = token_store.clone();
+        self.token_store = Some(token_store);
 
         let bot_user: QqUser = match self.api_get("/users/@me").await {
             Ok(u) => u,
-            Err(e) => return Ok(ConnectResult {
-                ok: false,
-                error: Some(format!("QQ auth failed: {}", e)),
-                bot_info: None,
-            }),
+            Err(e) => {
+                self.token_store = None;
+                return Ok(ConnectResult {
+                    ok: false,
+                    error: Some(format!("QQ auth failed: {}", e)),
+                    bot_info: None,
+                });
+            }
         };
 
         let bot_id = bot_user.id.clone();
@@ -430,7 +620,7 @@ impl PlatformAdapter for QqAdapter {
             self.cancel_tx = Some(cancel_tx);
             let eb = event_bus.clone();
             tokio::spawn(async move {
-                Self::gateway_loop(token, eb, bot_id, cancel_rx).await;
+                Self::gateway_loop(ts_clone, eb, bot_id, cancel_rx).await;
             });
         }
 
@@ -599,15 +789,33 @@ mod tests {
     }
 
     #[test]
-    fn test_bot_token_format() {
-        let adapter = QqAdapter {
-            config: Some(AdapterConfig {
-                enabled: true, token: Some("mytoken".into()), api_key: None,
-                extra: serde_json::json!({"app_id": "123"}),
-            }),
-            ..QqAdapter::new()
-        };
-        assert_eq!(adapter.bot_token().unwrap(), "Bot 123.mytoken");
+    fn test_bot_token_uninitialized() {
+        let adapter = QqAdapter::new();
+        // token_store 未设置时应返回错误
+        assert!(adapter.bot_token().is_err());
+    }
+
+    #[test]
+    fn test_token_store_new_needs_refresh() {
+        let store = QqTokenStore::new("app123".into(), "secret".into());
+        // 新创建的 store 还没有 token，需要 refresh
+        assert!(store.needs_refresh());
+    }
+
+    #[test]
+    fn test_token_store_get_uninitialized_returns_err() {
+        let store = QqTokenStore::new("app123".into(), "secret".into());
+        // 未 refresh 前 get 应该返回错误
+        assert!(store.get().is_err());
+    }
+
+    #[test]
+    fn test_token_store_clone() {
+        let store = QqTokenStore::new("app123".into(), "secret".into());
+        let cloned = store.clone();
+        // 两个实例共享同一个 Arc<Mutex> 状态
+        assert!(store.needs_refresh());
+        assert!(cloned.needs_refresh());
     }
 
     #[test]
