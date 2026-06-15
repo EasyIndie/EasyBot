@@ -63,9 +63,9 @@ EasyBot is an independent **IM Gateway** service connecting multiple instant mes
 ┌─────────── Adapter Layer (easybot-adapter-*) ────────────┐
 │  TelegramAdapter  (implements PlatformAdapter trait)      │
 │  DiscordAdapter   (Gateway WebSocket)                      │
-│  FeishuAdapter    (REST API)                               │
-│  QQAdapter        (Gateway WebSocket)                      │
-│  WeChatAdapter    (企业微信 REST API)                         │
+│  FeishuAdapter    (WebSocket 事件订阅)                           │
+│  QQAdapter        (统一 QQBot 鉴权 + Gateway WebSocket)         │
+│  WeChatAdapter    (企业微信 REST API + 群机器人 Webhook)          │
 └──────────────────────────────────────────────────────────┘
 ```
 
@@ -74,10 +74,13 @@ EasyBot is an independent **IM Gateway** service connecting multiple instant mes
 | Crate | Purpose |
 |-------|---------|
 | `bin/` | Binary entry: CLI args, component wiring, signal handling |
-| `crates/easybot-core` | Core library: types, event bus, sessions, adapter management, auth, config |
-| `crates/easybot-api` | API layer: axum server, REST routes, WebSocket, error responses |
+| `crates/easybot-core` | Core library: types, event bus, sessions, adapter management, auth, config, storage (SQLite/PostgreSQL) |
+| `crates/easybot-api` | API layer: axum server, REST routes, WebSocket, error responses, Prometheus metrics, rate limiting |
 | `crates/easybot-adapter-telegram` | Telegram Bot API adapter |
 | `crates/easybot-adapter-discord` | Discord Bot API / Gateway adapter |
+| `crates/easybot-adapter-feishu` | 飞书/Lark 适配器（REST API + WebSocket 事件订阅） |
+| `crates/easybot-adapter-qq` | QQ 机器人适配器（统一 QQBot 鉴权 + Gateway WebSocket） |
+| `crates/easybot-adapter-wechat` | 企业微信 (WeCom) 适配器（应用消息推送 + 群机器人 Webhook） |
 | `crates/easybot-plugin-sdk` | Re-exports core types for third-party plugin devs |
 
 ### Core Types (`easybot-core/src/types/`)
@@ -98,7 +101,7 @@ User-level config stored at `~/.easybot/` (macOS/Linux) or `%APPDATA%\easybot\` 
 ├── gateway.yaml              # Base config (version-controlled)
 ├── gateway.local.yaml        # Local overrides (.gitignore)
 ├── .env                      # Secrets (chmod 600)
-├── data/gateway.db           # SQLite (future)
+├── data/gateway.db           # SQLite database (auto-created)
 └── logs/                     # Log files
 ```
 
@@ -125,17 +128,18 @@ The `AdapterRegistry` holds factory functions keyed by platform name. `AdapterMa
 | `/adapters/{platform}/status` | GET | Adapter health detail |
 | `/messages/send` | POST | Send message to a chat (`target: "platform:chatId"`) |
 | `/messages/batch-send` | POST | Send to multiple targets |
-| `/messages/{id}` | PUT | Edit message (Phase 2+) |
-| `/messages/{id}` | DELETE | Delete message (Phase 2+) |
-| `/messages` | GET | Message history |
+| `/messages/{id}` | PUT | Edit message |
+| `/messages/{id}` | DELETE | Delete message |
+| `/messages` | GET | Message history (supports `?platform=` filter) |
 | `/sessions` | GET | List active sessions |
 | `/sessions/{key}` | GET | Get session details |
 | `/sessions/{key}` | DELETE | Delete session |
 | `/chats/{platform}` | GET | List chats for platform |
 | `/chats/{platform}/{chat_id}` | GET | Get chat info |
 | `/config` | GET | Get current config |
-| `/config` | PUT | Update config (Phase 4+) |
-| `/ws` | GET | WebSocket real-time event stream |
+| `/config` | PUT | Update config (hot-reload) |
+| `/ws` | GET | WebSocket real-time event stream (需先发送 `{"token":"..."}` 认证) |
+| `/metrics` | GET | Prometheus metrics |
 
 ### Implementation Roadmap
 
@@ -143,8 +147,8 @@ The `AdapterRegistry` holds factory functions keyed by platform name. `AdapterMa
 |-------|-------|--------|
 | **P1 MVP** | Core types, PlatformAdapter trait, Telegram adapter, REST API, config loading, cross-platform paths | ✅ Done |
 | **P2 Bidirectional** | Event bus, WebSocket push, webhooks, inbound message handling, session persistence, message edit/delete, adapter lifecycle events | 100% ✅ |
-| **P3 Multi-platform** | Telegram ✅, Discord ✅, **飞书/Lark** ✅, **QQ** ✅, **企业微信** ✅ — 五个平台 + 媒体发送 | 100% ✅ |
-| **P4 Production** | API key auth (basic), Argon2 upgrade, rate limiting, hot-reload, graceful shutdown, PostgreSQL, Prometheus, Docker, TTL retention | ⬜ |
+| **P3 Multi-platform** | Telegram ✅, Discord ✅, **飞书/Lark** ✅, **QQ** ✅ (群消息已验证, 频道 TODO), **企业微信** ❌ (代码就绪待验证) — 五个平台 + 媒体发送 | 80% ✅ |
+| **P4 Production** | API key auth (Argon2), rate limiting, hot-reload, graceful shutdown, PostgreSQL, Prometheus, Docker, TTL retention | 80% ✅ (均已完成，仅剩生产环境打磨) |
 | **P5 Plugin System** | Plugin SDK, dynamic library loading, plugin registry | ❌ Not started |
 
 ### 不可退让的设计约束
