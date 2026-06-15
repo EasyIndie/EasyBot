@@ -137,7 +137,7 @@ curl -s -H "Authorization: Bearer $API_KEY" \
 | **入站消息** | | |
 | 群聊 @消息接收 | ✅ | `GROUP_AT_MESSAGE_CREATE` 成功解析存储 |
 | 频道 @消息接收 | ⬜ TODO | 代码已实现 `AT_MESSAGE_CREATE` 解析，需端到端验证 |
-| C2C 私聊消息接收 | ⬜ TODO | 代码已实现 `C2C_MESSAGE_CREATE` 解析，未验证 |
+| C2C 私聊消息接收 | ⬜ TODO | 代码已实现 `C2C_MESSAGE_CREATE` 解析 + `try_send` C2C 端点，但 QQ 平台需开启私聊权限并发布版本后才能端到端验证 |
 | 自身消息过滤 | ❌ | 群消息不含 `bot` 字段，需另寻方案 |
 | **连接方式** | | |
 | Gateway WebSocket | ✅ | 使用 native-tls (系统 CA) |
@@ -163,6 +163,7 @@ curl -s -H "Authorization: Bearer $API_KEY" \
 | `GROUP_AT_MESSAGE_CREATE` 缺少 `channel_id` 字段解析失败 | 拆分为 `QqChannelMessageEvent` / `QqGroupMessageEvent` / `QqC2cMessageEvent` 三种消息结构 | `types.rs` |
 | 群聊消息发送使用 `/channels/` 路由返回"频道不存在" | 新增 `try_send()` 自动降级到 `/v2/groups/{openid}/messages` | `lib.rs` |
 | 主动消息"无权限"错误 | `send()` 增加 `msg_id` 参数支持被动回复 | `lib.rs` |
+| C2C 私聊消息发送失败 | 在 `try_send()` 中增加 `/v2/users/{openid}/messages` C2C 端点降级 | `lib.rs` |
 
 ## 测试方法
 
@@ -238,6 +239,7 @@ curl -s -X POST http://127.0.0.1:8080/api/v1/messages/send \
 ## 后续改进建议
 
 - [ ] **QQ 频道双向消息验证** — 目前只验证了群聊（`GROUP_AT_MESSAGE_CREATE`）。频道消息（`AT_MESSAGE_CREATE`）的解析已实现但未端到端验证，需要将机器人添加到一个 QQ 频道中进行测试
+- [ ] **C2C 私聊双向消息验证** — `C2C_MESSAGE_CREATE` 解析和 `try_send` C2C 端点已实现但未端到端验证，需在 QQ 开放平台开启私聊权限并发布版本后测试
 - [ ] 添加入站消息的 `chat_name` 字段填充
 - [ ] 补充 `list_chats` 实现（当前返回空列表）
 - [ ] 考虑 Docker Alpine 环境下 `native-tls` 需要 OpenSSL 支持

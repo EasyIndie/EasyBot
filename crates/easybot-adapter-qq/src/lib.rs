@@ -280,7 +280,7 @@ impl QqAdapter {
             Ok(resp) => return Ok(resp),
             Err(e) => {
                 if e.to_string().contains("频道不存在") || e.to_string().contains("11263") {
-                    tracing::debug!("QQ chat_id {} is a group, using group endpoint", chat_id);
+                    tracing::debug!("QQ chat_id {} is not a channel, trying other endpoints", chat_id);
                 } else {
                     return Err(e);
                 }
@@ -288,7 +288,19 @@ impl QqAdapter {
         }
         // 尝试群聊端点（v2 API）
         let group_path = format!("/v2/groups/{}/messages", chat_id);
-        self.api_post::<QqSendMessageResponse>(&group_path, body).await
+        match self.api_post::<QqSendMessageResponse>(&group_path, body).await {
+            Ok(resp) => return Ok(resp),
+            Err(e) => {
+                if e.to_string().contains("群") || e.to_string().contains("group") || e.to_string().contains("11263") {
+                    tracing::debug!("QQ chat_id {} is not a group, trying C2C endpoint", chat_id);
+                } else {
+                    return Err(e);
+                }
+            }
+        }
+        // 尝试 C2C 私聊端点（v2 API）
+        let c2c_path = format!("/v2/users/{}/messages", chat_id);
+        self.api_post::<QqSendMessageResponse>(&c2c_path, body).await
     }
 }
 
