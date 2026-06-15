@@ -532,6 +532,64 @@ mod tests {
         assert!(result.succeeded.is_empty(), "disabled adapter should not start");
         assert!(result.failed.is_empty(), "disabled adapter should not fail either");
     }
+
+    #[tokio::test]
+    async fn test_start_publishes_adapter_connected() {
+        let event_bus = Arc::new(EventBus::new());
+        let mut rx = event_bus.subscribe(event_types::ADAPTER_CONNECTED);
+        let manager = AdapterManager::new().with_event_bus(event_bus);
+        register_mock_adapter(&manager).await;
+
+        let config = AdapterConfig {
+            enabled: true,
+            token: Some("t".into()),
+            api_key: None,
+            base_url: None,
+            extra: serde_json::json!({}),
+        };
+        manager.start("test-mock", config).await.unwrap();
+
+        let event = tokio::time::timeout(
+            tokio::time::Duration::from_secs(1),
+            rx.recv(),
+        )
+        .await
+        .expect("should receive ADAPTER_CONNECTED")
+        .expect("event should be valid");
+
+        assert_eq!(event.event_type, event_types::ADAPTER_CONNECTED);
+        assert_eq!(event.source, "adapter_manager");
+    }
+
+    #[tokio::test]
+    async fn test_stop_publishes_adapter_disconnected() {
+        let event_bus = Arc::new(EventBus::new());
+        let mut rx = event_bus.subscribe(event_types::ADAPTER_DISCONNECTED);
+        let manager = AdapterManager::new().with_event_bus(event_bus);
+        register_mock_adapter(&manager).await;
+
+        let config = AdapterConfig {
+            enabled: true,
+            token: Some("t".into()),
+            api_key: None,
+            base_url: None,
+            extra: serde_json::json!({}),
+        };
+        manager.start("test-mock", config).await.unwrap();
+
+        manager.stop("test-mock").await.unwrap();
+
+        let event = tokio::time::timeout(
+            tokio::time::Duration::from_secs(1),
+            rx.recv(),
+        )
+        .await
+        .expect("should receive ADAPTER_DISCONNECTED")
+        .expect("event should be valid");
+
+        assert_eq!(event.event_type, event_types::ADAPTER_DISCONNECTED);
+        assert_eq!(event.source, "adapter_manager");
+    }
 }
 
 /// 启动适配器结果

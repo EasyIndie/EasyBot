@@ -3,7 +3,7 @@
 //! 使用 wiremock 模拟 iLink Bot API，验证 send() 方法正确构造请求并解析响应。
 //! WeChat send() 从 config.extra 中读取 bot_token，无 token 刷新流程。
 
-use easybot_core::types::adapter::{AdapterConfig, PlatformAdapter};
+use easybot_core::types::adapter::{AdapterConfig, AdapterState, PlatformAdapter};
 use easybot_core::types::message::{SendTextParams, OutboundMessage, ParseMode};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 use wiremock::matchers::{method, path};
@@ -177,4 +177,88 @@ async fn test_init_always_succeeds() {
     let result = adapter.init(config).await.unwrap();
     assert!(result.ok, "WeChat init should always succeed");
     // send() 的结果取决于是否有磁盘凭据，这里不验证
+}
+
+// ── 状态转换测试 ──
+
+#[tokio::test]
+async fn test_new_state_created() {
+    let adapter = easybot_adapter_wechat::WeChatAdapter::new();
+    assert_eq!(adapter.state(), AdapterState::Created);
+}
+
+#[tokio::test]
+async fn test_init_sets_starting() {
+    let config = AdapterConfig {
+        enabled: true,
+        token: None,
+        api_key: None,
+        base_url: None,
+        extra: serde_json::json!({
+            "bot_token": "test-token",
+            "ilink_bot_id": "bot-001",
+            "ilink_user_id": "user-001",
+        }),
+    };
+    let mut adapter = easybot_adapter_wechat::WeChatAdapter::new();
+    adapter.init(config).await.unwrap();
+    assert_eq!(adapter.state(), AdapterState::Starting);
+}
+
+#[tokio::test]
+async fn test_connect_success_with_credentials() {
+    // WeChat connect() 在提供了 bot_token/ilink_bot_id/ilink_user_id 时不发起 HTTP 请求
+    let config = AdapterConfig {
+        enabled: true,
+        token: None,
+        api_key: None,
+        base_url: None,
+        extra: serde_json::json!({
+            "bot_token": "test-bot-token",
+            "ilink_bot_id": "bot-001",
+            "ilink_user_id": "user-001",
+        }),
+    };
+    let mut adapter = easybot_adapter_wechat::WeChatAdapter::new();
+    adapter.init(config).await.unwrap();
+    assert_eq!(adapter.state(), AdapterState::Starting);
+
+    let result = adapter.connect().await.unwrap();
+    assert!(result.ok, "connect should succeed with credentials in config");
+    assert_eq!(adapter.state(), AdapterState::Connected);
+}
+
+#[tokio::test]
+async fn test_disconnect_from_created_is_idempotent() {
+    // 未 init/connect 状态下直接 disconnect
+    let mut adapter = easybot_adapter_wechat::WeChatAdapter::new();
+    adapter.disconnect().await.unwrap();
+    assert_eq!(adapter.state(), AdapterState::Stopped);
+
+    adapter.disconnect().await.unwrap();
+    assert_eq!(adapter.state(), AdapterState::Stopped);
+}
+
+#[tokio::test]
+async fn test_disconnect_sets_stopped() {
+    let config = AdapterConfig {
+        enabled: true,
+        token: None,
+        api_key: None,
+        base_url: None,
+        extra: serde_json::json!({
+            "bot_token": "test-token",
+            "ilink_bot_id": "bot-001",
+            "ilink_user_id": "user-001",
+        }),
+    };
+    let mut adapter = easybot_adapter_wechat::WeChatAdapter::new();
+    adapter.init(config).await.unwrap();
+
+    adapter.disconnect().await.unwrap();
+    assert_eq!(adapter.state(), AdapterState::Stopped);
+
+    // 重复断开应幂等
+    adapter.disconnect().await.unwrap();
+    assert_eq!(adapter.state(), AdapterState::Stopped);
 }

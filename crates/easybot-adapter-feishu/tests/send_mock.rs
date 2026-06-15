@@ -4,7 +4,7 @@
 //! send() 首先通过 POST /auth/v3/tenant_access_token/internal 获取 token，
 //! 然后通过 POST /im/v1/messages... 发送消息。
 
-use easybot_core::types::adapter::{AdapterConfig, PlatformAdapter};
+use easybot_core::types::adapter::{AdapterConfig, AdapterState, PlatformAdapter};
 use easybot_core::types::message::{SendTextParams, OutboundMessage, ParseMode};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 use wiremock::matchers::{method, path};
@@ -203,4 +203,113 @@ async fn test_init_requires_app_id_and_secret() {
     let mut adapter = easybot_adapter_feishu::FeishuAdapter::new();
     let result = adapter.init(config).await.unwrap();
     assert!(!result.ok, "init should fail without secret");
+}
+
+// ── 状态转换测试 ──
+
+#[tokio::test]
+async fn test_new_state_created() {
+    let adapter = easybot_adapter_feishu::FeishuAdapter::new();
+    assert_eq!(adapter.state(), AdapterState::Created);
+}
+
+#[tokio::test]
+async fn test_init_sets_starting() {
+    let config = AdapterConfig {
+        enabled: true,
+        token: Some("app-secret".into()),
+        api_key: None,
+        base_url: None,
+        extra: serde_json::json!({"app_id": "test-app"}),
+    };
+    let mut adapter = easybot_adapter_feishu::FeishuAdapter::new();
+    adapter.init(config).await.unwrap();
+    assert_eq!(adapter.state(), AdapterState::Starting);
+}
+
+#[tokio::test]
+async fn test_connect_success_state() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/auth/v3/tenant_access_token/internal"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "code": 0,
+            "msg": "ok",
+            "tenant_access_token": "test-access-token-12345",
+            "expire": 7200
+        })))
+        .expect(1..)
+        .mount(&mock_server)
+        .await;
+
+    let mock_port = mock_server.address().port();
+    let base_url = format!("http://127.0.0.1:{}", mock_port);
+    let config = AdapterConfig {
+        enabled: true,
+        token: Some("app-secret".into()),
+        api_key: None,
+        base_url: Some(base_url),
+        extra: serde_json::json!({"app_id": "test-app"}),
+    };
+    let mut adapter = easybot_adapter_feishu::FeishuAdapter::new();
+    adapter.init(config).await.unwrap();
+    assert_eq!(adapter.state(), AdapterState::Starting);
+
+    let result = adapter.connect().await.unwrap();
+    assert!(result.ok, "connect should succeed with mocked token");
+    assert_eq!(adapter.state(), AdapterState::Connected);
+}
+
+#[tokio::test]
+async fn test_connect_fails_without_mock() {
+    // 没有 mock server，token refresh 应失败
+    let config = AdapterConfig {
+        enabled: true,
+        token: Some("app-secret".into()),
+        api_key: None,
+        base_url: Some("http://127.0.0.1:1".into()),
+        extra: serde_json::json!({"app_id": "test-app"}),
+    };
+    let mut adapter = easybot_adapter_feishu::FeishuAdapter::new();
+    adapter.init(config).await.unwrap();
+
+    let result = adapter.connect().await;
+    assert!(result.is_err(), "connect should fail without reachable auth endpoint");
+}
+
+#[tokio::test]
+async fn test_disconnect_sets_stopped() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/auth/v3/tenant_access_token/internal"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "code": 0,
+            "msg": "ok",
+            "tenant_access_token": "test-access-token",
+            "expire": 7200
+        })))
+        .expect(0..)
+        .mount(&mock_server)
+        .await;
+
+    let base_url = format!("http://127.0.0.1:{}", mock_server.address().port());
+    let config = AdapterConfig {
+        enabled: true,
+        token: Some("secret".into()),
+        api_key: None,
+        base_url: Some(base_url),
+        extra: serde_json::json!({"app_id": "test-app"}),
+    };
+    let mut adapter = easybot_adapter_feishu::FeishuAdapter::new();
+    adapter.init(config).await.unwrap();
+
+    // 直接断开连接（不经过 connect）
+    adapter.disconnect().await.unwrap();
+    assert_eq!(adapter.state(), AdapterState::Stopped);
+
+    // 重复断开应幂等
+    adapter.disconnect().await.unwrap();
+    assert_eq!(adapter.state(), AdapterState::Stopped);
 }

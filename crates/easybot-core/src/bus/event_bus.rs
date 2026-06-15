@@ -211,4 +211,31 @@ mod tests {
         // 后台任务已退出，此发布仅用于验证无 panic
         bus.publish(GatewayEvent::new("test.event", "test", serde_json::json!({})));
     }
+
+    #[tokio::test]
+    async fn test_broadcast_full_lags_slow_receiver() {
+        // broadcast channel 满时覆盖最旧消息，慢消费者收到 Lagged 错误
+        let bus = EventBus::with_capacity(2);
+        let mut rx = bus.subscribe("test.event");
+
+        // 发送 3 个事件，容量仅 2，第 1 个被覆盖
+        bus.publish(GatewayEvent::new("test.event", "test", serde_json::json!({"seq": 1})));
+        bus.publish(GatewayEvent::new("test.event", "test", serde_json::json!({"seq": 2})));
+        bus.publish(GatewayEvent::new("test.event", "test", serde_json::json!({"seq": 3})));
+
+        // 慢消费者 recv 会先收到 Lagged(1)，然后读到最新消息
+        let first = rx.recv().await;
+        match first {
+            Err(broadcast::error::RecvError::Lagged(n)) => {
+                assert!(n >= 1, "should report at least 1 lagged message, got {}", n);
+            }
+            Ok(e) => {
+                // 在某些执行顺序下可能直接收到 seq=3（如果 seq=1 在 write 之前就被覆盖）
+                panic!("expected Lagged error but got event seq={:?}", e.data["seq"]);
+            }
+            Err(e) => {
+                panic!("unexpected error: {:?}", e);
+            }
+        }
+    }
 }
