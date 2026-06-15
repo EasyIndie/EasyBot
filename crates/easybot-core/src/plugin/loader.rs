@@ -375,6 +375,23 @@ pub const EASYBOT_PLUGIN_ABI_VERSION: u32 = 1;
 mod tests {
     use super::*;
 
+    /// 创建临时插件目录，包含一个指定内容的子目录（代表一个插件）
+    fn create_plugin_subdir(
+        parent: &std::path::Path,
+        name: &str,
+        manifest_content: &str,
+        lib_exists: bool,
+    ) -> PathBuf {
+        let dir = parent.join(name);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("plugin.yaml"), manifest_content).unwrap();
+        if lib_exists {
+            // 写入一个占位文件充当 "库文件"
+            std::fs::write(dir.join("libtest.so"), b"dummy").unwrap();
+        }
+        dir
+    }
+
     #[test]
     fn test_plugin_error_messages() {
         let err = PluginError::AbiVersionMismatch {
@@ -403,12 +420,162 @@ mod tests {
 
     #[tokio::test]
     async fn test_load_all_idempotent() {
-        // 第二次 load_all 不应 panic
         let loader =
             PluginLoader::new(PathBuf::from("/tmp/nonexistent-plugin-dir-12345"));
         let (s1, f1) = loader.load_all().await;
         let (s2, f2) = loader.load_all().await;
         assert_eq!(s1.len(), s2.len(), "should return same number of succeeded");
         assert_eq!(f1.len(), f2.len(), "should return same number of failed");
+    }
+
+    #[tokio::test]
+    async fn test_load_all_skips_files() {
+        // 顶层有文件而非目录时，应跳过
+        let dir = std::env::temp_dir().join(format!("plugin-test-skips-files-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // 创建一个文件（非目录）
+        std::fs::write(dir.join("not-a-dir.txt"), b"hello").unwrap();
+
+        let loader = PluginLoader::new(dir.clone());
+        let (succeeded, failed) = loader.load_all().await;
+        assert!(succeeded.is_empty());
+        assert!(failed.is_empty());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn test_load_single_missing_manifest() {
+        let dir = std::env::temp_dir().join(format!("plugin-test-missing-manifest-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let loader = PluginLoader::new(dir.parent().unwrap().to_path_buf());
+        let result = loader.load_single(&dir).await;
+        assert!(matches!(result, Err(PluginError::ManifestNotFound(_))));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn test_load_single_invalid_yaml() {
+        let dir = std::env::temp_dir().join(format!("plugin-test-invalid-yaml-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        create_plugin_subdir(dir.parent().unwrap(), dir.file_name().unwrap().to_str().unwrap(), "invalid_yaml: [", false);
+
+        let loader = PluginLoader::new(dir.parent().unwrap().to_path_buf());
+        let result = loader.load_single(&dir).await;
+        assert!(matches!(result, Err(PluginError::ManifestParseError { .. })));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn test_load_single_missing_library() {
+        let dir = std::env::temp_dir().join(format!("plugin-test-missing-lib-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        create_plugin_subdir(
+            dir.parent().unwrap(),
+            dir.file_name().unwrap().to_str().unwrap(),
+            r#"name: "test-plugin"
+display_name: "Test"
+version: "1.0"
+sdk_version: 1
+library: "libnonexistent.so"
+"#,
+            false, // lib does NOT exist
+        );
+
+        let loader = PluginLoader::new(dir.parent().unwrap().to_path_buf());
+        let result = loader.load_single(&dir).await;
+        assert!(matches!(result, Err(PluginError::LibraryNotFound(_))));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn test_load_all_mixed_results() {
+        // 混合场景：一个有效插件目录、一个缺少清单的、一个 YAML 错误的
+        let base = std::env::temp_dir().join(format!("plugin-test-mixed-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+
+        // 子目录1：缺 manifest
+        let no_manifest = base.join("no-manifest");
+        std::fs::create_dir_all(&no_manifest).unwrap();
+
+        // 子目录2：YAML 错误
+        let bad_yaml = base.join("bad-yaml");
+        std::fs::create_dir_all(&bad_yaml).unwrap();
+        std::fs::write(bad_yaml.join("plugin.yaml"), "bad: [").unwrap();
+
+        // 子目录3：缺失库文件（但 manifest 有效）
+        let missing_lib = base.join("missing-lib");
+        std::fs::create_dir_all(&missing_lib).unwrap();
+        std::fs::write(
+            missing_lib.join("plugin.yaml"),
+            r#"name: "missing-lib"
+display_name: "Missing Lib"
+version: "1.0"
+sdk_version: 1
+library: "libmissing.so"
+"#,
+        )
+        .unwrap();
+
+        let loader = PluginLoader::new(base.clone());
+        let (succeeded, failed) = loader.load_all().await;
+        assert!(succeeded.is_empty(), "no plugin should fully succeed");
+        assert_eq!(failed.len(), 3, "all 3 plugins should fail");
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[tokio::test]
+    async fn test_get_factory_for_unknown_plugin() {
+        let dir = std::env::temp_dir().join(format!("plugin-test-unknown-factory-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let loader = PluginLoader::new(dir.clone());
+        // 没有加载任何插件时，get_factory 应返回 None
+        let factory = loader.get_factory("unknown", Arc::new(crate::bus::EventBus::new())).await;
+        assert!(factory.is_none(), "factory for unknown plugin should be None");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn test_loader_empty_dir() {
+        let dir = std::env::temp_dir().join(format!("plugin-test-empty-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let loader = PluginLoader::new(dir.clone());
+        let (succeeded, failed) = loader.load_all().await;
+        assert!(succeeded.is_empty());
+        assert!(failed.is_empty());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn test_register_all_empty_registry() {
+        let dir = std::env::temp_dir().join(format!("plugin-test-empty-reg-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let loader = PluginLoader::new(dir.clone());
+        loader.load_all().await;
+
+        let registry = crate::adapter::AdapterRegistry::new();
+        let eb = Arc::new(crate::bus::EventBus::new());
+        // 没有加载任何插件时，register_all 不应 panic
+        loader.register_all(&registry, eb).await;
+        let platforms = registry.list_platforms().await;
+        assert!(platforms.is_empty(), "registry should still be empty");
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

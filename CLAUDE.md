@@ -11,12 +11,24 @@ cargo build
 # Build with all features
 cargo build --features full
 
+# Build with plugin system
+cargo build --features "full,plugin-system"
+
+# Build plugin test adapter (required before integration tests)
+cargo build -p mock-adapter
+
 # Run all tests
 cargo test
+
+# Run all tests with plugin system
+cargo test --features "full,plugin-system"
 
 # Run tests in a specific crate
 cargo test -p easybot-core
 cargo test -p easybot-adapter-telegram
+
+# Run integration tests (compile mock-adapter first)
+cargo build -p mock-adapter && cargo test -p integration-tests
 
 # Run a single test
 cargo test -p easybot-core test_get_or_create -- --exact
@@ -149,7 +161,7 @@ The `AdapterRegistry` holds factory functions keyed by platform name. `AdapterMa
 | **P2 Bidirectional** | Event bus, WebSocket push, webhooks, inbound message handling, session persistence, message edit/delete, adapter lifecycle events | 100% ✅ |
 | **P3 Multi-platform** | Telegram ✅, Discord ✅, **飞书/Lark** ✅, **QQ** ✅ (群消息已验证, C2C/频道 TODO), **个人微信(wechat)** ✅ (iLink Bot API 已验证) — 五个平台 + 媒体发送 | 90% ✅ |
 | **P4 Production** | API key auth (Argon2), rate limiting, hot-reload, graceful shutdown, PostgreSQL, Prometheus, Docker, TTL retention | 80% ✅ (均已完成，仅剩生产环境打磨) |
-| **P5 Plugin System** | Plugin SDK, dynamic library loading, plugin registry | ❌ Not started |
+| **P5 Plugin System** | Plugin SDK, dynamic library loading, plugin registry, loader tests, developer docs | ✅ Done |
 
 ### 不可退让的设计约束
 
