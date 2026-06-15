@@ -156,17 +156,150 @@ cargo run -- --version
 
 ```bash
 # 查看适配器列表
-curl -s http://127.0.0.1:8080/api/v1/adapters | jq .
+curl -s -H "Authorization: Bearer <your-api-key>" http://127.0.0.1:8080/api/v1/adapters | jq .
 
 # 查看适配器状态
-curl -s http://127.0.0.1:8080/api/v1/adapters/telegram/status | jq .
+curl -s -H "Authorization: Bearer <your-api-key>" http://127.0.0.1:8080/api/v1/adapters/telegram/status | jq .
 
 # 停止适配器
-curl -s -X POST http://127.0.0.1:8080/api/v1/adapters/telegram/stop | jq .
+curl -s -X POST -H "Authorization: Bearer <your-api-key>" http://127.0.0.1:8080/api/v1/adapters/telegram/stop | jq .
 
 # 重启适配器
-curl -s -X POST http://127.0.0.1:8080/api/v1/adapters/telegram/start | jq .
+curl -s -X POST -H "Authorization: Bearer <your-api-key>" http://127.0.0.1:8080/api/v1/adapters/telegram/start | jq .
 ```
+
+### 6. 消息双向收发验证
+
+> 所有 API 请求需要携带 `Authorization: Bearer <your-api-key>` header。
+
+#### 6.1 出站消息（API → Telegram）
+
+```bash
+# 6.1.1 纯文本（parse_mode 默认 none，不需要显式指定）
+curl -s -X POST http://127.0.0.1:8080/api/v1/messages/send \
+  -H "Content-Type: application/json" \
+  -d '{"target": "telegram:<chatId>", "text": "Hello from EasyBot!"}' | jq .
+
+# 6.1.2 Markdown 格式（API 接收小写枚举值）
+curl -s -X POST http://127.0.0.1:8080/api/v1/messages/send \
+  -H "Content-Type: application/json" \
+  -d '{"target": "telegram:<chatId>", "text": "*bold* _italic_ `code`", "parse_mode": "markdown"}' | jq .
+
+# 6.1.3 HTML 格式
+curl -s -X POST http://127.0.0.1:8080/api/v1/messages/send \
+  -H "Content-Type: application/json" \
+  -d '{"target": "telegram:<chatId>", "text": "<b>bold</b> <i>italic</i>", "parse_mode": "html"}' | jq .
+
+# 6.1.4 回复已有消息
+MSG_ID=$(curl -s http://127.0.0.1:8080/api/v1/messages?platform=telegram&limit=1 \
+  | jq -r '.messages[0].raw_data.id')
+curl -s -X POST http://127.0.0.1:8080/api/v1/messages/send \
+  -H "Content-Type: application/json" \
+  -d "{\"target\": \"telegram:<chatId>\", \"text\": \"回复消息\", \"reply_to\": \"$MSG_ID\"}" | jq .
+
+# 6.1.5 平台特有 metadata（合并到 Telegram API 请求 body）
+curl -s -X POST http://127.0.0.1:8080/api/v1/messages/send \
+  -H "Content-Type: application/json" \
+  -d '{"target": "telegram:<chatId>", "text": "无预览", "metadata": {"disable_web_page_preview": true}}' | jq .
+
+# 6.1.6 批量发送
+curl -s -X POST http://127.0.0.1:8080/api/v1/messages/batch-send \
+  -H "Content-Type: application/json" \
+  -d '{"targets": ["telegram:<chatId>"], "text": "批量消息", "parse_mode": "none"}' | jq .
+```
+
+**预期返回格式：**
+
+```json
+// 发送成功
+{"id": "4", "messageId": "4", "status": "sent", "timestamp": 1781487256000}
+
+// 发送失败
+{"id": null, "messageId": null, "status": "failed",
+ "error": "Internal error: Telegram API error: ..."}
+```
+
+#### 6.2 入站消息（Telegram → API）
+
+在 Telegram 中向 Bot 发消息后，通过以下方式查看：
+
+```bash
+# 查看消息历史（按平台筛选）
+curl -s "http://127.0.0.1:8080/api/v1/messages?platform=telegram" | jq '.messages[].raw_data'
+
+# 查看最近一条消息的完整字段
+curl -s "http://127.0.0.1:8080/api/v1/messages?platform=telegram&limit=1" | jq '.messages[0].raw_data'
+```
+
+**入站消息 `raw_data` 字段映射：**
+
+| 字段 | 来源 | 示例 |
+|------|------|------|
+| `id` | Telegram `message_id` | `"11"` |
+| `platform` | 硬编码 | `"telegram"` |
+| `chat_id` | `chat.id` | `"5668266914"` |
+| `chat_name` | `chat.title ?? chat.first_name` | `"joker"` |
+| `chat_type` | `chat.chat_type` 映射 | `"Dm"` / `"Group"` / `"Channel"` |
+| `text` | `text ?? caption` | `"/start 开启旅程"` |
+| `author.id` | `from.id` | `"5668266914"` |
+| `author.name` | `from.first_name` | `"joker"` |
+| `author.is_bot` | `from.is_bot` | `false` |
+| `timestamp` | `date * 1000`（毫秒） | `1781487534000` |
+| `command` | 检测 `/cmd args` 模式 | `{"name":"start","args":"开启旅程"}` |
+| `reply_to` | `reply_to_message` | `{"message_id":"9","text":"批量消息测试"}` |
+| `is_group` | `chat.chat_type != "private"` | `false` |
+
+#### 6.3 消息编辑和删除
+
+```bash
+# 发一条消息
+MSG_ID=$(curl -s -X POST http://127.0.0.1:8080/api/v1/messages/send \
+  -H "Content-Type: application/json" \
+  -d '{"target": "telegram:<chatId>", "text": "原始内容", "parse_mode": "none"}' | jq -r '.messageId')
+
+# 编辑
+curl -s -X PUT "http://127.0.0.1:8080/api/v1/messages/$MSG_ID" \
+  -H "Content-Type: application/json" \
+  -d '{"target": "telegram:<chatId>", "text": "编辑后的内容"}' | jq .
+
+# 删除
+curl -s -X DELETE "http://127.0.0.1:8080/api/v1/messages/$MSG_ID" \
+  -H "Content-Type: application/json" \
+  -d '{"target": "telegram:<chatId>"}' | jq .
+```
+
+#### 6.4 WebSocket 实时推送
+
+```bash
+# 安装 wscat
+npm install -g wscat
+
+# 连接 WebSocket（需要 Authorization header）
+wscat -c "ws://localhost:8080/api/v1/ws" \
+  -H "Authorization: Bearer <your-api-key>"
+```
+
+连接后，发送 auth token：
+```json
+{"token": "<your-api-key>"}
+```
+
+预期收到 `{"type": "auth_ok"}`。之后在 Telegram 中收发消息时，会实时推送事件：
+
+```json
+{"type": "event", "event": "message.inbound", "data": {...}, "seq": 1, "timestamp": ...}
+{"type": "event", "event": "message.sent",    "data": {...}, "seq": 2, "timestamp": ...}
+```
+
+#### 6.5 错误场景
+
+| 场景 | 请求 | 预期响应 |
+|------|------|---------|
+| 无效 target 格式 | `"target": "invalid"` | `INVALID_REQUEST` |
+| 不存在的 platform | `"target": "unknown:123"` | `ADAPTER_NOT_CONNECTED` |
+| 无效 chatId | `"target": "telegram:-1"` | `"chat not found"` |
+| 未认证 | 不传 Authorization header | 401 `AUTH_FAILED` |
+| 无效 API Key | `Authorization: Bearer wrong_key` | 401 `AUTH_FAILED` |
 
 ## 关键实现细节
 
@@ -175,7 +308,14 @@ curl -s -X POST http://127.0.0.1:8080/api/v1/adapters/telegram/start | jq .
 | 连接方式 | **长轮询（Long Polling）**，不支持 Webhook |
 | API 基础 URL | `https://api.telegram.org/bot`（硬编码，不可配置） |
 | 轮询超时 | 30 秒，HTTP 客户端超时 40 秒 |
-| 支持的 parse_mode | `MarkdownV2`、`HTML` |
+| getUpdates 参数 | `offset`, `timeout: 30`, `allowed_updates: ["message"]` |
+| 默认 parse_mode | `None`（纯文本，不触发 MarkdownV2 转义） |
+| API parse_mode 枚举值 | 小写：`"none"` / `"markdown"` / `"html"` |
+| Telegram parse_mode 映射 | `markdown` → `MarkdownV2`，`html` → `HTML` |
+| 出站消息持久化 | `message.sent` 事件 → MessagePersister → SQLite |
+| 入站消息持久化 | `message.inbound` 事件 → MessagePersister → SQLite |
+| WebSocket 事件推送 | 7 种事件类型，100ms 发送超时，50 次连续丢弃断开 |
+| 认证方式 | HTTP Header `Authorization: Bearer <api-key>` |
 | 能力声明 | Text、Image、Audio、Video、Document、Interactive、Markdown、HTML、Group、TypingIndicator、MessageEdit、MessageDelete |
 | 不支持的能力 | ChatList、Streaming、send_media()、send_interactive()、list_chats() |
 
@@ -188,3 +328,8 @@ curl -s -X POST http://127.0.0.1:8080/api/v1/adapters/telegram/start | jq .
 - [ ] 将 `TELEGRAM_API` 常量改为可配置项（通过 `AdapterConfig.extra`），方便测试时指向 mock server
 - [ ] 补充 `send_media()` 实现（当前返回默认错误）
 - [ ] 增加更多消息类型的 convert 测试（图片、视频、文档）
+- [ ] 为 AdapterManager 补充更多测试（start_all、stop_all、list_statuses 等）
+  - 已添加：`test_stop_updates_status_cache`、`test_start_passes_config_to_adapter`
+- [ ] API 路由层集成测试（启动 Server → HTTP 调用 adapter start/stop/消息接口）
+  - 已修复：`test_cli_short_flags` 端口冲突问题，`test_openapi_has_security_scheme` 随机端口
+- [ ] WebSocket 推送的集成测试（需要 Node.js `ws` 或 Python `websockets` 支持）

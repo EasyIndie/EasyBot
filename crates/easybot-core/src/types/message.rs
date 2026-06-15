@@ -234,11 +234,11 @@ pub struct MessageReference {
 #[serde(rename_all = "lowercase")]
 pub enum ParseMode {
     /// Markdown 格式
-    #[default]
     Markdown,
     /// HTML 格式
     Html,
     /// 纯文本（不解析）
+    #[default]
     None,
 }
 
@@ -288,4 +288,43 @@ pub struct ChatInfo {
 pub struct ChatFilter {
     pub chat_type: Option<ChatType>,
     pub query: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_mode_default_is_none() {
+        // ParseMode 默认应为 None，保证不传 parse_mode 时不触发 Markdown 转义
+        let mode = ParseMode::default();
+        assert_eq!(mode, ParseMode::None);
+    }
+
+    #[test]
+    fn test_parse_mode_serde_lowercase() {
+        // API JSON 使用小写枚举值
+        let json = r#""markdown""#;
+        let mode: ParseMode = serde_json::from_str(json).unwrap();
+        assert_eq!(mode, ParseMode::Markdown);
+
+        let json = r#""html""#;
+        let mode: ParseMode = serde_json::from_str(json).unwrap();
+        assert_eq!(mode, ParseMode::Html);
+
+        let json = r#""none""#;
+        let mode: ParseMode = serde_json::from_str(json).unwrap();
+        assert_eq!(mode, ParseMode::None);
+    }
+
+    #[test]
+    fn test_parse_mode_serde_roundtrip() {
+        let mode = ParseMode::Markdown;
+        let json = serde_json::to_string(&mode).unwrap();
+        assert_eq!(json, r#""markdown""#);
+
+        let mode = ParseMode::None;
+        let json = serde_json::to_string(&mode).unwrap();
+        assert_eq!(json, r#""none""#);
+    }
 }
