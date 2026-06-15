@@ -70,55 +70,58 @@ struct QrCodeStatusResponse {
     baseurl: Option<String>,
 }
 
-/// 长轮询消息响应
+/// 长轮询消息响应（实际 API 无 ret 字段，直接返回数据）
 #[derive(Debug, serde::Deserialize)]
 struct GetUpdatesResponse {
-    ret: i64,
-    errmsg: Option<String>,
     #[serde(default)]
     msgs: Vec<WeixinMessage>,
     #[serde(default)]
     get_updates_buf: Option<String>,
     #[serde(default)]
-    longpolling_timeout_ms: Option<u64>,
+    sync_buf: Option<String>,
 }
 
-/// 微信消息
+/// 微信消息（iLink Bot API 实际格式）
 #[derive(Debug, serde::Deserialize)]
 struct WeixinMessage {
     #[serde(default)]
-    msg_id: String,
-    #[serde(default)]
-    from_user: String,
+    message_id: Option<i64>,
     #[serde(default)]
     from_user_id: String,
     #[serde(default)]
     to_user_id: String,
     #[serde(default)]
-    context_token: String,
+    message_type: i64,
     #[serde(default)]
-    msg_type: i64,
+    create_time_ms: i64,
     #[serde(default)]
-    create_time: i64,
+    item_list: Vec<WeixinMessageItem>,
     #[serde(default)]
-    content: Option<WeixinTextContent>,
+    session_id: String,
     #[serde(default)]
-    image: Option<WeixinMediaContent>,
+    group_id: String,
+}
+
+/// 消息内容项
+#[derive(Debug, serde::Deserialize)]
+struct WeixinMessageItem {
+    #[serde(rename = "type")]
+    item_type: i64,
     #[serde(default)]
-    file: Option<WeixinFileContent>,
+    text_item: Option<WeixinTextItem>,
     #[serde(default)]
-    voice: Option<WeixinVoiceContent>,
+    image_item: Option<WeixinImageItem>,
     #[serde(default)]
-    video: Option<WeixinMediaContent>,
+    file_item: Option<WeixinFileItem>,
 }
 
 #[derive(Debug, serde::Deserialize)]
-struct WeixinTextContent {
+struct WeixinTextItem {
     text: String,
 }
 
 #[derive(Debug, serde::Deserialize)]
-struct WeixinMediaContent {
+struct WeixinImageItem {
     #[serde(default)]
     md5sum: Option<String>,
     #[serde(default)]
@@ -129,10 +132,14 @@ struct WeixinMediaContent {
     aes_key: Option<String>,
     #[serde(default)]
     file_url: Option<String>,
+    #[serde(default)]
+    height: Option<i64>,
+    #[serde(default)]
+    width: Option<i64>,
 }
 
 #[derive(Debug, serde::Deserialize)]
-struct WeixinFileContent {
+struct WeixinFileItem {
     #[serde(default)]
     md5sum: Option<String>,
     #[serde(default)]
@@ -145,33 +152,17 @@ struct WeixinFileContent {
     file_url: Option<String>,
 }
 
-#[derive(Debug, serde::Deserialize)]
-struct WeixinVoiceContent {
-    #[serde(default)]
-    md5sum: Option<String>,
-    #[serde(default)]
-    file_size: Option<i64>,
-    #[serde(default)]
-    file_name: Option<String>,
-    #[serde(default)]
-    aes_key: Option<String>,
-    #[serde(default)]
-    file_url: Option<String>,
-    #[serde(default)]
-    voice_seconds: Option<i64>,
-    #[serde(default)]
-    transcription: Option<String>,
-}
-
-/// 发送消息响应
+/// 发送消息响应（实际 API 无 ret 字段，直接返回结果）
 #[derive(Debug, serde::Deserialize)]
 struct SendMessageResponse {
-    ret: i64,
-    errmsg: Option<String>,
     #[serde(default)]
-    msg_id: Option<String>,
+    msg_id: Option<i64>,
     #[serde(default)]
     local_id: Option<String>,
+    #[serde(default)]
+    msg_id_str: Option<String>,
+    #[serde(default)]
+    seq: Option<i64>,
 }
 
 /// Upload URL 响应
@@ -502,7 +493,6 @@ impl PlatformAdapter for WeChatAdapter {
         let body = serde_json::json!({
             "msg": {
                 "to_user_id": params.chat_id,
-                "context_token": "",
                 "item_list": [
                     {
                         "type": 1,
@@ -514,31 +504,33 @@ impl PlatformAdapter for WeChatAdapter {
             }
         });
 
-        let resp: SendMessageResponse = client.post(&url)
+        let raw_resp = client.post(&url)
             .headers(self.auth_headers(&token))
             .json(&body)
             .send()
             .await
-            .map_err(|e| GatewayError::Internal(format!("WeChat send failed: {}", e)))?
-            .json()
-            .await
-            .map_err(|e| GatewayError::Internal(format!("WeChat send parse failed: {}", e)))?;
+            .map_err(|e| GatewayError::Internal(format!("WeChat send failed: {}", e)))?;
+
+        let resp_text = raw_resp.text().await
+            .map_err(|e| GatewayError::Internal(format!("WeChat send read failed: {}", e)))?;
+
+        tracing::debug!("WeChat send response: {}", &resp_text[..resp_text.len().min(300)]);
+
+        let resp: SendMessageResponse = serde_json::from_str(&resp_text)
+            .map_err(|e| GatewayError::Internal(format!("WeChat send parse failed: {} (body: {})", e, &resp_text[..resp_text.len().min(200)])))?;
 
         self.messages_out.fetch_add(1, Ordering::Relaxed);
 
-        if resp.ret == 0 {
-            Ok(SendResult {
-                success: true,
-                message_id: resp.msg_id.or(resp.local_id),
-                timestamp: Some(chrono::Utc::now().timestamp_millis()),
-                error: None, error_code: None, retryable: false,
-            })
-        } else {
-            Ok(SendResult::fail(
-                format!("WeChat send error: {} (ret {})", resp.errmsg.unwrap_or_default(), resp.ret),
-                true,
-            ))
-        }
+        let msg_id = resp.msg_id.map(|id| id.to_string())
+            .or(resp.msg_id_str)
+            .or(resp.local_id);
+
+        Ok(SendResult {
+            success: true,
+            message_id: msg_id,
+            timestamp: Some(chrono::Utc::now().timestamp_millis()),
+            error: None, error_code: None, retryable: false,
+        })
     }
 
     async fn send_media(&self, params: SendMediaParams) -> Result<SendResult, GatewayError> {
@@ -626,7 +618,7 @@ async fn poll_messages(
         "get_updates_buf": buf,
     });
 
-    let resp: GetUpdatesResponse = client.post(url)
+    let raw_resp = client.post(url)
         .header("Content-Type", "application/json")
         .header("Authorization", format!("Bearer {}", token))
         .header("AuthorizationType", "ilink_bot_token")
@@ -635,22 +627,17 @@ async fn poll_messages(
         .timeout(Duration::from_secs(LONGPOLL_TIMEOUT + 10))
         .send()
         .await
-        .map_err(|e| GatewayError::Internal(format!("Longpoll request failed: {}", e)))?
-        .json()
-        .await
-        .map_err(|e| GatewayError::Internal(format!("Longpoll parse failed: {}", e)))?;
+        .map_err(|e| GatewayError::Internal(format!("Longpoll request failed: {}", e)))?;
 
-    if resp.ret != 0 {
-        // -14 = session expired
-        if resp.ret == -14 {
-            tracing::warn!("个人微信 session 过期，需要重新登录");
-        }
-        return Err(GatewayError::Internal(format!(
-            "getupdates error: {} (ret {})", resp.errmsg.unwrap_or_default(), resp.ret
-        )));
-    }
+    let resp_text = raw_resp.text().await
+        .map_err(|e| GatewayError::Internal(format!("Longpoll read body failed: {}", e)))?;
 
-    let new_buf = resp.get_updates_buf.unwrap_or_else(|| buf.to_string());
+    tracing::debug!("QQ getupdates raw response: {}", &resp_text[..resp_text.len().min(500)]);
+
+    let resp: GetUpdatesResponse = serde_json::from_str(&resp_text)
+        .map_err(|e| GatewayError::Internal(format!("Longpoll parse failed: {} (body: {})", e, &resp_text[..resp_text.len().min(200)])))?;
+
+    let new_buf = resp.get_updates_buf.or(resp.sync_buf).unwrap_or_else(|| buf.to_string());
     if resp.msgs.is_empty() {
         Ok(None)
     } else {
@@ -660,91 +647,74 @@ async fn poll_messages(
 
 /// 将 iLink 消息转换为 InboundMessage
 fn convert_message(msg: WeixinMessage) -> Option<InboundMessage> {
-    let text = match msg.msg_type {
-        1 => msg.content.map(|c| c.text).unwrap_or_default(),
-        2 => "[图片]".to_string(),
-        3 => {
-            if let Some(ref v) = msg.voice {
-                v.transcription.clone().unwrap_or_else(|| "[语音]".to_string())
-            } else {
-                "[语音]".to_string()
+    let text = msg.item_list.first().and_then(|item| {
+        match item.item_type {
+            1 => item.text_item.as_ref().map(|t| t.text.clone()),
+            2 => Some("[图片]".to_string()),
+            3 => Some("[语音]".to_string()),
+            4 => {
+                item.file_item.as_ref()
+                    .and_then(|f| f.file_name.clone())
+                    .unwrap_or_else(|| "[文件]".to_string())
+                    .into()
             }
+            _ => Some("[未知消息类型]".to_string()),
         }
-        4 => {
-            if let Some(ref f) = msg.file {
-                f.file_name.clone().unwrap_or_else(|| "[文件]".to_string())
-            } else {
-                "[文件]".to_string()
-            }
+    }).unwrap_or_default();
+
+    let is_group = !msg.group_id.is_empty();
+
+    let media: Option<Vec<MediaAttachment>> = msg.item_list.first().and_then(|item| {
+        match item.item_type {
+            2 => item.image_item.as_ref().map(|img| vec![MediaAttachment {
+                media_type: MediaType::Image,
+                url: img.file_url.clone(),
+                data: None,
+                mime_type: "image/jpeg".to_string(),
+                filename: img.file_name.clone(),
+                caption: None,
+                thumbnail_url: None,
+                file_size: img.file_size.map(|s| s as u64),
+                duration: None,
+            }]),
+            4 => item.file_item.as_ref().map(|f| vec![MediaAttachment {
+                media_type: MediaType::Document,
+                url: f.file_url.clone(),
+                data: None,
+                mime_type: "application/octet-stream".to_string(),
+                filename: f.file_name.clone(),
+                caption: None,
+                thumbnail_url: None,
+                file_size: f.file_size.map(|s| s as u64),
+                duration: None,
+            }]),
+            _ => None,
         }
-        5 => "[视频]".to_string(),
-        _ => "[未知消息类型]".to_string(),
-    };
+    });
 
-    let media: Option<Vec<MediaAttachment>> = match msg.msg_type {
-        2 => msg.image.map(|img| vec![MediaAttachment {
-            media_type: MediaType::Image,
-            url: img.file_url,
-            data: None,
-            mime_type: "image/jpeg".to_string(),
-            filename: img.file_name,
-            caption: None,
-            thumbnail_url: None,
-            file_size: img.file_size.map(|s| s as u64),
-            duration: None,
-        }]),
-        4 => msg.file.map(|f| vec![MediaAttachment {
-            media_type: MediaType::Document,
-            url: f.file_url,
-            data: None,
-            mime_type: "application/octet-stream".to_string(),
-            filename: f.file_name,
-            caption: None,
-            thumbnail_url: None,
-            file_size: f.file_size.map(|s| s as u64),
-            duration: None,
-        }]),
-        5 => msg.video.map(|v| vec![MediaAttachment {
-            media_type: MediaType::Video,
-            url: v.file_url,
-            data: None,
-            mime_type: "video/mp4".to_string(),
-            filename: v.file_name,
-            caption: None,
-            thumbnail_url: None,
-            file_size: v.file_size.map(|s| s as u64),
-            duration: None,
-        }]),
-        _ => None,
-    };
-
-    let author_name = if msg.from_user.is_empty() {
-        msg.from_user_id.clone()
-    } else {
-        msg.from_user.clone()
-    };
+    let msg_id = msg.message_id.map(|id| id.to_string()).unwrap_or_default();
 
     Some(InboundMessage {
-        id: msg.msg_id,
+        id: msg_id,
         platform: "wechat".to_string(),
         chat_id: msg.from_user_id.clone(),
-        chat_type: ChatType::Dm,
+        chat_type: if is_group { ChatType::Group } else { ChatType::Dm },
         chat_name: None,
         text: Some(text),
         author: MessageAuthor {
-            id: msg.from_user_id,
-            name: Some(author_name),
+            id: msg.from_user_id.clone(),
+            name: Some(msg.from_user_id),
             is_bot: false,
         },
-        timestamp: msg.create_time * 1000, // iLink 是秒级时间戳，转为毫秒
+        timestamp: msg.create_time_ms,
         media,
         command: None,
         callback: None,
         reply_to: None,
         thread_id: None,
-        is_group: false,
+        is_group,
         metadata: Some(serde_json::json!({
-            "context_token": msg.context_token,
+            "session_id": msg.session_id,
         })),
     })
 }
@@ -823,92 +793,124 @@ mod tests {
     #[test]
     fn test_convert_text_message() {
         let msg = WeixinMessage {
-            msg_id: "msg_123".to_string(),
-            from_user: "好友A".to_string(),
+            message_id: Some(12345),
             from_user_id: "user@im.wechat".to_string(),
             to_user_id: "bot@im.wechat".to_string(),
-            context_token: "ctx_token_abc".to_string(),
-            msg_type: 1,
-            create_time: 1700000000,
-            content: Some(WeixinTextContent { text: "你好".to_string() }),
-            image: None,
-            file: None,
-            voice: None,
-            video: None,
+            message_type: 1,
+            create_time_ms: 1700000000000,
+            session_id: "session_abc".to_string(),
+            group_id: "".to_string(),
+            item_list: vec![WeixinMessageItem {
+                item_type: 1,
+                text_item: Some(WeixinTextItem { text: "你好".to_string() }),
+                image_item: None,
+                file_item: None,
+            }],
         };
 
         let inbound = convert_message(msg).unwrap();
-        assert_eq!(inbound.id, "msg_123");
+        assert_eq!(inbound.id, "12345");
         assert_eq!(inbound.text.as_deref(), Some("你好"));
         assert_eq!(inbound.chat_type, ChatType::Dm);
         assert!(!inbound.is_group);
-        assert_eq!(inbound.author.name.as_deref(), Some("好友A"));
         assert_eq!(inbound.author.id, "user@im.wechat");
+        assert_eq!(inbound.timestamp, 1700000000000);
         let meta = inbound.metadata.unwrap();
-        assert_eq!(meta.get("context_token").and_then(|v| v.as_str()), Some("ctx_token_abc"));
+        assert_eq!(meta.get("session_id").and_then(|v| v.as_str()), Some("session_abc"));
     }
 
     #[test]
     fn test_convert_image_message() {
         let msg = WeixinMessage {
-            msg_id: "msg_img".to_string(),
-            from_user: "".to_string(),
+            message_id: Some(67890),
             from_user_id: "user@im.wechat".to_string(),
             to_user_id: "bot@im.wechat".to_string(),
-            context_token: "ctx".to_string(),
-            msg_type: 2,
-            create_time: 1700000000,
-            content: None,
-            image: Some(WeixinMediaContent {
-                md5sum: Some("abc".to_string()),
-                file_size: Some(1024),
-                file_name: Some("photo.jpg".to_string()),
-                aes_key: None,
-                file_url: Some("https://cdn.url/img".to_string()),
-            }),
-            file: None,
-            voice: None,
-            video: None,
+            message_type: 2,
+            create_time_ms: 1700000000000,
+            session_id: "sess2".to_string(),
+            group_id: "".to_string(),
+            item_list: vec![WeixinMessageItem {
+                item_type: 2,
+                text_item: None,
+                image_item: Some(WeixinImageItem {
+                    md5sum: Some("abc".to_string()),
+                    file_size: Some(1024),
+                    file_name: Some("photo.jpg".to_string()),
+                    aes_key: None,
+                    file_url: Some("https://cdn.url/img".to_string()),
+                    height: None,
+                    width: None,
+                }),
+                file_item: None,
+            }],
         };
 
         let inbound = convert_message(msg).unwrap();
         assert_eq!(inbound.text.as_deref(), Some("[图片]"));
         assert!(inbound.media.is_some());
-        // MediaType 未实现 PartialEq，通过字符串对比
         let media_type = &inbound.media.as_ref().unwrap().first().unwrap().media_type;
         match media_type {
-            MediaType::Image => {} // expected
+            MediaType::Image => {}
             _ => panic!("expected Image media type, got {:?}", media_type),
         }
     }
 
     #[test]
-    fn test_convert_voice_with_transcription() {
+    fn test_convert_file_message() {
         let msg = WeixinMessage {
-            msg_id: "msg_voice".to_string(),
-            from_user: "".to_string(),
+            message_id: Some(111),
             from_user_id: "user@im.wechat".to_string(),
             to_user_id: "bot@im.wechat".to_string(),
-            context_token: "ctx".to_string(),
-            msg_type: 3,
-            create_time: 1700000000,
-            content: None,
-            image: None,
-            file: None,
-            voice: Some(WeixinVoiceContent {
-                md5sum: None,
-                file_size: None,
-                file_name: None,
-                aes_key: None,
-                file_url: None,
-                voice_seconds: Some(3),
-                transcription: Some("你好，这是语音".to_string()),
-            }),
-            video: None,
+            message_type: 4,
+            create_time_ms: 1700000000000,
+            session_id: "".to_string(),
+            group_id: "".to_string(),
+            item_list: vec![WeixinMessageItem {
+                item_type: 4,
+                text_item: None,
+                image_item: None,
+                file_item: Some(WeixinFileItem {
+                    md5sum: None,
+                    file_size: Some(2048),
+                    file_name: Some("report.pdf".to_string()),
+                    aes_key: None,
+                    file_url: Some("https://cdn.url/file".to_string()),
+                }),
+            }],
         };
 
         let inbound = convert_message(msg).unwrap();
-        assert_eq!(inbound.text.as_deref(), Some("你好，这是语音"));
+        assert_eq!(inbound.text.as_deref(), Some("report.pdf"));
+        assert!(inbound.media.is_some());
+        let media_type = &inbound.media.as_ref().unwrap().first().unwrap().media_type;
+        match media_type {
+            MediaType::Document => {}
+            _ => panic!("expected Document media type"),
+        }
+    }
+
+    #[test]
+    fn test_convert_group_message() {
+        let msg = WeixinMessage {
+            message_id: Some(222),
+            from_user_id: "member@im.wechat".to_string(),
+            to_user_id: "bot@im.wechat".to_string(),
+            message_type: 1,
+            create_time_ms: 1700000000000,
+            session_id: "".to_string(),
+            group_id: "group@im.wechat".to_string(),
+            item_list: vec![WeixinMessageItem {
+                item_type: 1,
+                text_item: Some(WeixinTextItem { text: "群聊消息".to_string() }),
+                image_item: None,
+                file_item: None,
+            }],
+        };
+
+        let inbound = convert_message(msg).unwrap();
+        assert_eq!(inbound.text.as_deref(), Some("群聊消息"));
+        assert!(inbound.is_group);
+        assert_eq!(inbound.chat_type, ChatType::Group);
     }
 
     #[tokio::test]
