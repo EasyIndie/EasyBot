@@ -62,11 +62,10 @@ EasyBot is an independent **IM Gateway** service connecting multiple instant mes
                           ↕
 ┌─────────── Adapter Layer (easybot-adapter-*) ────────────┐
 │  TelegramAdapter  (implements PlatformAdapter trait)      │
-│  DiscordAdapter   (Gateway WebSocket)                      │
-│  FeishuAdapter    (WebSocket 事件订阅)                           │
-│  QQAdapter        (统一 QQBot 鉴权 + Gateway WebSocket)         │
-│  WeChatAdapter (wecom)  (企业微信 REST API + 群机器人 Webhook) │
-│  WeChatAdapter (wechat) (个人微信 iLink Bot API 长轮询)         │
+│  DiscordAdapter   (Gateway WebSocket)                     │
+│  FeishuAdapter    (WebSocket 事件订阅)                    │
+│  QQAdapter        (统一 QQBot 鉴权 + Gateway WebSocket)   │
+│  WeChatAdapter    (个人微信 iLink Bot API 长轮询)         │
 └──────────────────────────────────────────────────────────┘
 ```
 
@@ -81,7 +80,7 @@ EasyBot is an independent **IM Gateway** service connecting multiple instant mes
 | `crates/easybot-adapter-discord` | Discord Bot API / Gateway adapter |
 | `crates/easybot-adapter-feishu` | 飞书/Lark 适配器（REST API + WebSocket 事件订阅） |
 | `crates/easybot-adapter-qq` | QQ 机器人适配器（统一 QQBot 鉴权 + Gateway WebSocket） |
-| `crates/easybot-adapter-wechat` | 企业微信 (WeCom) 适配器（应用消息推送 + 群机器人 Webhook） |
+| `crates/easybot-adapter-wechat` | 个人微信 (WeChat) 适配器（iLink Bot API 长轮询） |
 | `crates/easybot-plugin-sdk` | Re-exports core types for third-party plugin devs |
 
 ### Core Types (`easybot-core/src/types/`)
@@ -148,7 +147,7 @@ The `AdapterRegistry` holds factory functions keyed by platform name. `AdapterMa
 |-------|-------|--------|
 | **P1 MVP** | Core types, PlatformAdapter trait, Telegram adapter, REST API, config loading, cross-platform paths | ✅ Done |
 | **P2 Bidirectional** | Event bus, WebSocket push, webhooks, inbound message handling, session persistence, message edit/delete, adapter lifecycle events | 100% ✅ |
-| **P3 Multi-platform** | Telegram ✅, Discord ✅, **飞书/Lark** ✅, **QQ** ✅ (群消息已验证, C2C/频道 TODO), **企业微信(wecom)** ❌ (待验证), **个人微信(wechat)** ✅ (iLink Bot API 已验证) — 五个平台 + 媒体发送 | 85% ✅ |
+| **P3 Multi-platform** | Telegram ✅, Discord ✅, **飞书/Lark** ✅, **QQ** ✅ (群消息已验证, C2C/频道 TODO), **个人微信(wechat)** ✅ (iLink Bot API 已验证) — 五个平台 + 媒体发送 | 90% ✅ |
 | **P4 Production** | API key auth (Argon2), rate limiting, hot-reload, graceful shutdown, PostgreSQL, Prometheus, Docker, TTL retention | 80% ✅ (均已完成，仅剩生产环境打磨) |
 | **P5 Plugin System** | Plugin SDK, dynamic library loading, plugin registry | ❌ Not started |
 

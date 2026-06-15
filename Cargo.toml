@@ -8,7 +8,6 @@ members = [
     "crates/easybot-adapter-discord",
     "crates/easybot-adapter-feishu",
     "crates/easybot-adapter-qq",
-    "crates/easybot-adapter-wecom",
     "crates/easybot-adapter-wechat",
     "crates/easybot-plugin-sdk",
     "tests/plugins/mock-adapter",
