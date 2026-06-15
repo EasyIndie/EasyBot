@@ -279,10 +279,12 @@ impl WeChatAdapter {
             bot_info: None,
             capabilities: vec![
                 Capability { name: CapabilityName::Text, supported: true, limits: None },
-                Capability { name: CapabilityName::Image, supported: true, limits: None },
-                Capability { name: CapabilityName::Audio, supported: true, limits: None },
-                Capability { name: CapabilityName::Video, supported: true, limits: None },
-                Capability { name: CapabilityName::Document, supported: true, limits: None },
+                // Image/Audio/Video/Document 标记为 false，因为媒体发送依赖 AES-128-ECB
+                // 加密，第一阶段暂未实现
+                Capability { name: CapabilityName::Image, supported: false, limits: None },
+                Capability { name: CapabilityName::Audio, supported: false, limits: None },
+                Capability { name: CapabilityName::Video, supported: false, limits: None },
+                Capability { name: CapabilityName::Document, supported: false, limits: None },
             ],
             messages_in: AtomicU64::new(0),
             messages_out: AtomicU64::new(0),

@@ -6,7 +6,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use easybot_core::types::adapter::{AdapterConfig, AdapterState, PlatformAdapter};
-use easybot_core::types::message::{SendTextParams, OutboundMessage, ParseMode};
+use easybot_core::types::message::{
+    SendTextParams, SendMediaParams, SendInteractiveParams,
+    OutboundMessage, ParseMode, MediaAttachment, MediaType,
+    InlineKeyboard, KeyboardRow, Button,
+};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 use wiremock::matchers::{method, path};
 
@@ -354,4 +358,494 @@ async fn test_connect_no_token_returns_config_error() {
         "error should mention token/config, got: {}",
         err
     );
+}
+
+// ── send_media() 测试 ──
+
+fn send_media_params() -> SendMediaParams {
+    SendMediaParams {
+        chat_id: "12345".to_string(),
+        text: None,
+        media: MediaAttachment {
+            media_type: MediaType::Image,
+            url: Some("https://example.com/photo.jpg".to_string()),
+            data: None,
+            mime_type: "image/jpeg".to_string(),
+            filename: Some("photo.jpg".to_string()),
+            caption: Some("See this photo".to_string()),
+            thumbnail_url: None,
+            file_size: None,
+            duration: None,
+        },
+        reply_to: None,
+    }
+}
+
+fn send_media_success_body() -> serde_json::Value {
+    serde_json::json!({
+        "ok": true,
+        "result": {
+            "message_id": 67890,
+            "date": 1000001,
+            "chat": {"id": 12345, "type": "private"},
+            "from": {"id": 1, "is_bot": true, "first_name": "TestBot"},
+            "text": "See this photo"
+        }
+    })
+}
+
+#[tokio::test]
+async fn test_send_media_success() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/bottest-token/sendPhoto"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(send_media_success_body()))
+        .expect(1..)
+        .mount(&mock_server)
+        .await;
+
+    let adapter = make_adapter(mock_server.address().port()).await;
+    let result = adapter.send_media(send_media_params()).await.unwrap();
+
+    assert!(result.success, "send_media should succeed");
+    assert_eq!(result.message_id, Some("67890".to_string()));
+
+    mock_server.verify().await;
+}
+
+#[tokio::test]
+async fn test_send_media_sends_correct_fields() {
+    let mock_server = MockServer::start().await;
+
+    let captured_body = Arc::new(std::sync::Mutex::new(None::<serde_json::Value>));
+    let captured = captured_body.clone();
+
+    Mock::given(method("POST"))
+        .and(path("/bottest-token/sendPhoto"))
+        .and(move |req: &wiremock::Request| {
+            if let Ok(body) = serde_json::from_slice::<serde_json::Value>(&req.body) {
+                *captured.lock().unwrap() = Some(body);
+            }
+            true
+        })
+        .respond_with(ResponseTemplate::new(200).set_body_json(send_media_success_body()))
+        .expect(1..)
+        .mount(&mock_server)
+        .await;
+
+    let adapter = make_adapter(mock_server.address().port()).await;
+    let result = adapter.send_media(send_media_params()).await.unwrap();
+    assert!(result.success);
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let body = captured_body.lock().unwrap().take().unwrap();
+    assert_eq!(body["chat_id"], "12345");
+    assert_eq!(body["photo"], "https://example.com/photo.jpg");
+    assert_eq!(body["caption"], "See this photo");
+}
+
+#[tokio::test]
+async fn test_send_media_api_error() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/bottest-token/sendPhoto"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "ok": false,
+                "description": "Bad Request: wrong file identifier/HTTP URL specified",
+                "error_code": 400
+            }))
+        )
+        .expect(1..)
+        .mount(&mock_server)
+        .await;
+
+    let adapter = make_adapter(mock_server.address().port()).await;
+    let result = adapter.send_media(send_media_params()).await.unwrap();
+
+    assert!(!result.success, "send_media should fail with API error");
+}
+
+#[tokio::test]
+async fn test_send_media_http_error() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/bottest-token/sendPhoto"))
+        .respond_with(ResponseTemplate::new(500))
+        .expect(1..)
+        .mount(&mock_server)
+        .await;
+
+    let adapter = make_adapter(mock_server.address().port()).await;
+    let result = adapter.send_media(send_media_params()).await.unwrap();
+
+    assert!(!result.success, "send_media should fail with HTTP 500");
+}
+
+#[tokio::test]
+async fn test_send_media_no_url_or_data() {
+    let adapter = make_adapter(1).await; // port doesn't matter
+    let params = SendMediaParams {
+        chat_id: "12345".to_string(),
+        text: None,
+        media: MediaAttachment {
+            media_type: MediaType::Image,
+            url: None,
+            data: None,
+            mime_type: "image/jpeg".to_string(),
+            filename: None,
+            caption: None,
+            thumbnail_url: None,
+            file_size: None,
+            duration: None,
+        },
+        reply_to: None,
+    };
+    let result = adapter.send_media(params).await.unwrap();
+    assert!(!result.success, "should fail when no URL or data");
+}
+
+#[tokio::test]
+async fn test_send_media_audio_type() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/bottest-token/sendAudio"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(send_media_success_body()))
+        .expect(1..)
+        .mount(&mock_server)
+        .await;
+
+    let adapter = make_adapter(mock_server.address().port()).await;
+    let params = SendMediaParams {
+        chat_id: "12345".to_string(),
+        text: None,
+        media: MediaAttachment {
+            media_type: MediaType::Audio,
+            url: Some("https://example.com/audio.mp3".to_string()),
+            data: None,
+            mime_type: "audio/mpeg".to_string(),
+            filename: Some("audio.mp3".to_string()),
+            caption: None,
+            thumbnail_url: None,
+            file_size: None,
+            duration: None,
+        },
+        reply_to: None,
+    };
+    let result = adapter.send_media(params).await.unwrap();
+    assert!(result.success, "audio send_media should succeed");
+    mock_server.verify().await;
+}
+
+#[tokio::test]
+async fn test_send_media_video_type() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/bottest-token/sendVideo"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(send_media_success_body()))
+        .expect(1..)
+        .mount(&mock_server)
+        .await;
+
+    let adapter = make_adapter(mock_server.address().port()).await;
+    let params = SendMediaParams {
+        chat_id: "12345".to_string(),
+        text: None,
+        media: MediaAttachment {
+            media_type: MediaType::Video,
+            url: Some("https://example.com/video.mp4".to_string()),
+            data: None,
+            mime_type: "video/mp4".to_string(),
+            filename: Some("video.mp4".to_string()),
+            caption: None,
+            thumbnail_url: None,
+            file_size: None,
+            duration: None,
+        },
+        reply_to: None,
+    };
+    let result = adapter.send_media(params).await.unwrap();
+    assert!(result.success, "video send_media should succeed");
+    mock_server.verify().await;
+}
+
+#[tokio::test]
+async fn test_send_media_document_type() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/bottest-token/sendDocument"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(send_media_success_body()))
+        .expect(1..)
+        .mount(&mock_server)
+        .await;
+
+    let adapter = make_adapter(mock_server.address().port()).await;
+    let params = SendMediaParams {
+        chat_id: "12345".to_string(),
+        text: None,
+        media: MediaAttachment {
+            media_type: MediaType::Document,
+            url: Some("https://example.com/doc.pdf".to_string()),
+            data: None,
+            mime_type: "application/pdf".to_string(),
+            filename: Some("doc.pdf".to_string()),
+            caption: None,
+            thumbnail_url: None,
+            file_size: None,
+            duration: None,
+        },
+        reply_to: None,
+    };
+    let result = adapter.send_media(params).await.unwrap();
+    assert!(result.success, "document send_media should succeed");
+    mock_server.verify().await;
+}
+
+// ── send_interactive() 测试 ──
+
+fn interactive_params() -> SendInteractiveParams {
+    SendInteractiveParams {
+        chat_id: "12345".to_string(),
+        text: "Choose an option:".to_string(),
+        keyboard: InlineKeyboard {
+            rows: vec![
+                KeyboardRow {
+                    buttons: vec![
+                        Button {
+                            text: "Yes".to_string(),
+                            callback_data: Some("yes".to_string()),
+                            url: None,
+                        },
+                        Button {
+                            text: "No".to_string(),
+                            callback_data: Some("no".to_string()),
+                            url: None,
+                        },
+                    ],
+                },
+                KeyboardRow {
+                    buttons: vec![
+                        Button {
+                            text: "Cancel".to_string(),
+                            callback_data: Some("cancel".to_string()),
+                            url: None,
+                        },
+                    ],
+                },
+            ],
+        },
+        reply_to: None,
+    }
+}
+
+fn interactive_success_body() -> serde_json::Value {
+    serde_json::json!({
+        "ok": true,
+        "result": {
+            "message_id": 999,
+            "date": 1000002,
+            "chat": {"id": 12345, "type": "private"},
+            "from": {"id": 1, "is_bot": true, "first_name": "TestBot"},
+            "text": "Choose an option:"
+        }
+    })
+}
+
+#[tokio::test]
+async fn test_send_interactive_success() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/bottest-token/sendMessage"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(interactive_success_body()))
+        .expect(1..)
+        .mount(&mock_server)
+        .await;
+
+    let adapter = make_adapter(mock_server.address().port()).await;
+    let result = adapter.send_interactive(interactive_params()).await.unwrap();
+
+    assert!(result.success, "send_interactive should succeed");
+    assert_eq!(result.message_id, Some("999".to_string()));
+
+    mock_server.verify().await;
+}
+
+#[tokio::test]
+async fn test_send_interactive_inline_keyboard_format() {
+    let mock_server = MockServer::start().await;
+
+    let captured_body = Arc::new(std::sync::Mutex::new(None::<serde_json::Value>));
+    let captured = captured_body.clone();
+
+    Mock::given(method("POST"))
+        .and(path("/bottest-token/sendMessage"))
+        .and(move |req: &wiremock::Request| {
+            if let Ok(body) = serde_json::from_slice::<serde_json::Value>(&req.body) {
+                *captured.lock().unwrap() = Some(body);
+            }
+            true
+        })
+        .respond_with(ResponseTemplate::new(200).set_body_json(interactive_success_body()))
+        .expect(1..)
+        .mount(&mock_server)
+        .await;
+
+    let adapter = make_adapter(mock_server.address().port()).await;
+    let result = adapter.send_interactive(interactive_params()).await.unwrap();
+    assert!(result.success);
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let body = captured_body.lock().unwrap().take().unwrap();
+
+    // 验证消息内容
+    assert_eq!(body["chat_id"], "12345");
+    assert_eq!(body["text"], "Choose an option:");
+
+    // 验证键盘结构
+    let markup = &body["reply_markup"];
+    let keyboard = &markup["inline_keyboard"];
+    assert!(keyboard.is_array(), "inline_keyboard should be an array");
+    assert_eq!(keyboard.as_array().unwrap().len(), 2, "should have 2 rows");
+
+    // 第一行：Yes | No
+    assert_eq!(keyboard[0][0]["text"], "Yes");
+    assert_eq!(keyboard[0][0]["callback_data"], "yes");
+    assert_eq!(keyboard[0][1]["text"], "No");
+    assert_eq!(keyboard[0][1]["callback_data"], "no");
+
+    // 第二行：Cancel
+    assert_eq!(keyboard[1][0]["text"], "Cancel");
+    assert_eq!(keyboard[1][0]["callback_data"], "cancel");
+}
+
+#[tokio::test]
+async fn test_send_interactive_with_url_button() {
+    let mock_server = MockServer::start().await;
+
+    let captured_body = Arc::new(std::sync::Mutex::new(None::<serde_json::Value>));
+    let captured = captured_body.clone();
+
+    Mock::given(method("POST"))
+        .and(path("/bottest-token/sendMessage"))
+        .and(move |req: &wiremock::Request| {
+            if let Ok(body) = serde_json::from_slice::<serde_json::Value>(&req.body) {
+                *captured.lock().unwrap() = Some(body);
+            }
+            true
+        })
+        .respond_with(ResponseTemplate::new(200).set_body_json(interactive_success_body()))
+        .expect(1..)
+        .mount(&mock_server)
+        .await;
+
+    let adapter = make_adapter(mock_server.address().port()).await;
+    let params = SendInteractiveParams {
+        chat_id: "12345".to_string(),
+        text: "Visit our site:".to_string(),
+        keyboard: InlineKeyboard {
+            rows: vec![
+                KeyboardRow {
+                    buttons: vec![
+                        Button {
+                            text: "Open Website".to_string(),
+                            callback_data: None,
+                            url: Some("https://example.com".to_string()),
+                        },
+                    ],
+                },
+            ],
+        },
+        reply_to: None,
+    };
+    let result = adapter.send_interactive(params).await.unwrap();
+    assert!(result.success);
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let body = captured_body.lock().unwrap().take().unwrap();
+    let keyboard = &body["reply_markup"]["inline_keyboard"];
+    assert_eq!(keyboard[0][0]["text"], "Open Website");
+    assert_eq!(keyboard[0][0]["url"], "https://example.com");
+    assert!(keyboard[0][0].get("callback_data").is_none());
+}
+
+#[tokio::test]
+async fn test_send_interactive_api_error() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/bottest-token/sendMessage"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "ok": false,
+                "description": "Bad Request: can't parse reply keyboard markup",
+                "error_code": 400
+            }))
+        )
+        .expect(1..)
+        .mount(&mock_server)
+        .await;
+
+    let adapter = make_adapter(mock_server.address().port()).await;
+    let result = adapter.send_interactive(interactive_params()).await.unwrap();
+
+    assert!(!result.success, "send_interactive should fail with API error");
+}
+
+#[tokio::test]
+async fn test_send_interactive_http_error() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/bottest-token/sendMessage"))
+        .respond_with(ResponseTemplate::new(403))
+        .expect(1..)
+        .mount(&mock_server)
+        .await;
+
+    let adapter = make_adapter(mock_server.address().port()).await;
+    let result = adapter.send_interactive(interactive_params()).await.unwrap();
+
+    assert!(!result.success, "send_interactive should fail with HTTP 403");
+}
+
+#[tokio::test]
+async fn test_send_interactive_with_reply_to() {
+    let mock_server = MockServer::start().await;
+
+    let captured_body = Arc::new(std::sync::Mutex::new(None::<serde_json::Value>));
+    let captured = captured_body.clone();
+
+    Mock::given(method("POST"))
+        .and(path("/bottest-token/sendMessage"))
+        .and(move |req: &wiremock::Request| {
+            if let Ok(body) = serde_json::from_slice::<serde_json::Value>(&req.body) {
+                *captured.lock().unwrap() = Some(body);
+            }
+            true
+        })
+        .respond_with(ResponseTemplate::new(200).set_body_json(interactive_success_body()))
+        .expect(1..)
+        .mount(&mock_server)
+        .await;
+
+    let adapter = make_adapter(mock_server.address().port()).await;
+    let params = SendInteractiveParams {
+        chat_id: "12345".to_string(),
+        text: "Reply".to_string(),
+        keyboard: InlineKeyboard { rows: vec![] },
+        reply_to: Some("42".to_string()),
+    };
+    let result = adapter.send_interactive(params).await.unwrap();
+    assert!(result.success);
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let body = captured_body.lock().unwrap().take().unwrap();
+    assert_eq!(body["reply_to_message_id"], "42");
 }

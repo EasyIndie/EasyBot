@@ -449,6 +449,175 @@ impl PlatformAdapter for TelegramAdapter {
         })
     }
 
+    async fn send_media(&self, params: SendMediaParams) -> Result<SendResult, GatewayError> {
+        let client = self.http_client();
+        let token = self.config.as_ref()
+            .and_then(|c| c.token.clone())
+            .ok_or_else(|| GatewayError::ConfigError("Telegram token not configured".to_string()))?;
+        let base = self.config.as_ref()
+            .and_then(|c| c.base_url.clone())
+            .unwrap_or_else(|| TELEGRAM_API.to_string());
+        let _ = &base; // used via self.api_url below
+
+        // 映射 MediaType → Telegram API 方法名
+        let (method, field) = match params.media.media_type {
+            MediaType::Image => ("sendPhoto", "photo"),
+            MediaType::Audio => ("sendAudio", "audio"),
+            MediaType::Video => ("sendVideo", "video"),
+            MediaType::Document => ("sendDocument", "document"),
+            MediaType::Sticker => ("sendSticker", "sticker"),
+            MediaType::Animation => ("sendAnimation", "animation"),
+        };
+
+        if let Some(url) = &params.media.url {
+            // 通过 URL/file_id 发送 — 使用 JSON body
+            let mut body = serde_json::json!({
+                "chat_id": params.chat_id,
+                field: url,
+            });
+
+            if let Some(caption) = &params.media.caption {
+                body["caption"] = serde_json::json!(caption);
+            }
+
+            if let Some(reply_to) = &params.reply_to {
+                body["reply_to_message_id"] = serde_json::json!(reply_to);
+            }
+
+            let result: TelegramMessage = match self.api_call(method, Some(body)).await {
+                Ok(msg) => msg,
+                Err(e) => {
+                    self.errors.fetch_add(1, Ordering::Relaxed);
+                    return Ok(SendResult::fail(e.to_string(), true));
+                }
+            };
+
+            self.messages_out.fetch_add(1, Ordering::Relaxed);
+
+            Ok(SendResult {
+                success: true,
+                message_id: Some(result.message_id.to_string()),
+                timestamp: Some(result.date as i64 * 1000),
+                error: None,
+                error_code: None,
+                retryable: false,
+            })
+        } else if let Some(data_b64) = &params.media.data {
+            // Base64 数据 → multipart/form-data 上传
+            use base64::Engine;
+            let decoded = base64::engine::general_purpose::STANDARD
+                .decode(data_b64)
+                .map_err(|e| GatewayError::Internal(format!("Base64 decode failed: {}", e)))?;
+
+            let filename = params.media.filename.clone()
+                .unwrap_or_else(|| "file".to_string());
+
+            let mut part = reqwest::multipart::Part::bytes(decoded)
+                .file_name(filename);
+
+            // 设置 Content-Type（如果提供了 mime_type）
+            if !params.media.mime_type.is_empty() {
+                part = part.mime_str(&params.media.mime_type)
+                    .map_err(|e| GatewayError::Internal(format!("Invalid mime type: {}", e)))?;
+            }
+
+            let mut form = reqwest::multipart::Form::new()
+                .part(field, part)
+                .text("chat_id", params.chat_id.clone());
+
+            if let Some(caption) = &params.media.caption {
+                form = form.text("caption", caption.clone());
+            }
+
+            if let Some(reply_to) = &params.reply_to {
+                form = form.text("reply_to_message_id", reply_to.clone());
+            }
+
+            let url = format!("{}{}/{}", base, token, method);
+            let resp = client.post(&url)
+                .multipart(form)
+                .send()
+                .await
+                .map_err(|e| GatewayError::Internal(format!("HTTP upload failed: {}", e)))?;
+
+            let api_resp: TelegramApiResponse<TelegramMessage> = resp.json().await
+                .map_err(|e| GatewayError::Internal(format!("JSON parse failed: {}", e)))?;
+
+            if api_resp.ok {
+                if let Some(result) = api_resp.result {
+                    self.messages_out.fetch_add(1, Ordering::Relaxed);
+                    Ok(SendResult {
+                        success: true,
+                        message_id: Some(result.message_id.to_string()),
+                        timestamp: Some(result.date as i64 * 1000),
+                        error: None,
+                        error_code: None,
+                        retryable: false,
+                    })
+                } else {
+                    Err(GatewayError::Internal("Telegram API returned ok but no result".to_string()))
+                }
+            } else {
+                let desc = api_resp.description.unwrap_or_else(|| "Unknown error".to_string());
+                self.errors.fetch_add(1, Ordering::Relaxed);
+                Ok(SendResult::fail(format!("Telegram API upload error: {}", desc), true))
+            }
+        } else {
+            self.errors.fetch_add(1, Ordering::Relaxed);
+            Ok(SendResult::fail("No media URL or data provided".to_string(), false))
+        }
+    }
+
+    async fn send_interactive(&self, params: SendInteractiveParams) -> Result<SendResult, GatewayError> {
+        let mut body = serde_json::json!({
+            "chat_id": params.chat_id,
+            "text": params.text,
+        });
+
+        // 转换键盘格式
+        let inline_keyboard: Vec<Vec<serde_json::Value>> = params.keyboard.rows.iter().map(|row| {
+            row.buttons.iter().map(|btn| {
+                let mut btn_json = serde_json::json!({
+                    "text": btn.text,
+                });
+                if let Some(cb) = &btn.callback_data {
+                    btn_json["callback_data"] = serde_json::json!(cb);
+                }
+                if let Some(url) = &btn.url {
+                    btn_json["url"] = serde_json::json!(url);
+                }
+                btn_json
+            }).collect()
+        }).collect();
+
+        body["reply_markup"] = serde_json::json!({
+            "inline_keyboard": inline_keyboard,
+        });
+
+        if let Some(reply_to) = &params.reply_to {
+            body["reply_to_message_id"] = serde_json::json!(reply_to);
+        }
+
+        let result: TelegramMessage = match self.api_call("sendMessage", Some(body)).await {
+            Ok(msg) => msg,
+            Err(e) => {
+                self.errors.fetch_add(1, Ordering::Relaxed);
+                return Ok(SendResult::fail(e.to_string(), true));
+            }
+        };
+
+        self.messages_out.fetch_add(1, Ordering::Relaxed);
+
+        Ok(SendResult {
+            success: true,
+            message_id: Some(result.message_id.to_string()),
+            timestamp: Some(result.date as i64 * 1000),
+            error: None,
+            error_code: None,
+            retryable: false,
+        })
+    }
+
     async fn send_typing(&self, chat_id: &str) -> Result<(), GatewayError> {
         let body = serde_json::json!({
             "chat_id": chat_id,

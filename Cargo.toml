@@ -12,6 +12,7 @@ members = [
     "crates/easybot-plugin-sdk",
     "tests/plugins/mock-adapter",
     "tests/integration",
+    "tests/e2e",
 ]
 
 [workspace.package]

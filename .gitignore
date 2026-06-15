@@ -19,6 +19,9 @@ gateway.local.yaml
 /data/
 /logs/
 
+# Doc build artifacts
+/doc/
+
 # Environment
 .env
 *.env.local

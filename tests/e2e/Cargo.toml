@@ -1,0 +1,20 @@
+[package]
+name = "e2e-tests"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[dependencies]
+easybot-core = { path = "../../crates/easybot-core" }
+easybot-api = { path = "../../crates/easybot-api" }
+easybot-adapter-telegram = { path = "../../crates/easybot-adapter-telegram" }
+sqlx = { workspace = true }
+
+tokio.workspace = true
+tower.workspace = true
+axum.workspace = true
+http-body-util = "0.1"
+serde = { workspace = true, features = ["derive"] }
+serde_json.workspace = true
+wiremock = "0.6"
+futures = "0.3"

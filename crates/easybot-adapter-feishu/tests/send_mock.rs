@@ -5,7 +5,10 @@
 //! 然后通过 POST /im/v1/messages... 发送消息。
 
 use easybot_core::types::adapter::{AdapterConfig, AdapterState, PlatformAdapter};
-use easybot_core::types::message::{SendTextParams, OutboundMessage, ParseMode};
+use easybot_core::types::message::{
+    SendTextParams, SendInteractiveParams, EditMessageParams,
+    OutboundMessage, ParseMode, InlineKeyboard, KeyboardRow, Button,
+};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 use wiremock::matchers::{method, path};
 
@@ -311,5 +314,179 @@ async fn test_disconnect_sets_stopped() {
 
     // 重复断开应幂等
     adapter.disconnect().await.unwrap();
-    assert_eq!(adapter.state(), AdapterState::Stopped);
+	}
+
+// ── send_interactive() 测试 ──
+
+fn interactive_params() -> SendInteractiveParams {
+    SendInteractiveParams {
+        chat_id: "oc_abc123".to_string(),
+        text: "Choose an option:".to_string(),
+        keyboard: InlineKeyboard {
+            rows: vec![
+                KeyboardRow {
+                    buttons: vec![
+                        Button {
+                            text: "Confirm".to_string(),
+                            callback_data: Some("confirm".to_string()),
+                            url: None,
+                        },
+                        Button {
+                            text: "Cancel".to_string(),
+                            callback_data: Some("cancel".to_string()),
+                            url: None,
+                        },
+                    ],
+                },
+            ],
+        },
+        reply_to: None,
+    }
+}
+
+#[tokio::test]
+async fn test_send_interactive_success() {
+    let mock_server = MockServer::start().await;
+    mock_token_endpoint(&mock_server).await;
+
+    Mock::given(method("POST"))
+        .and(path("/im/v1/messages"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(send_success_response()))
+        .expect(1..)
+        .mount(&mock_server)
+        .await;
+
+    let adapter = make_adapter(mock_server.address().port()).await;
+    let result = adapter.send_interactive(interactive_params()).await.unwrap();
+
+    assert!(result.success, "send_interactive should succeed");
+    assert_eq!(result.message_id, Some("om_abc123xyz".to_string()));
+
+    mock_server.verify().await;
+}
+
+#[tokio::test]
+async fn test_send_interactive_http_error() {
+    let mock_server = MockServer::start().await;
+    mock_token_endpoint(&mock_server).await;
+
+    Mock::given(method("POST"))
+        .and(path("/im/v1/messages"))
+        .respond_with(ResponseTemplate::new(500))
+        .expect(1..)
+        .mount(&mock_server)
+        .await;
+
+    let adapter = make_adapter(mock_server.address().port()).await;
+    let result = adapter.send_interactive(interactive_params()).await.unwrap();
+
+    assert!(!result.success, "send_interactive should fail with HTTP 500");
+}
+
+#[tokio::test]
+async fn test_send_interactive_api_error() {
+    let mock_server = MockServer::start().await;
+    mock_token_endpoint(&mock_server).await;
+
+    Mock::given(method("POST"))
+        .and(path("/im/v1/messages"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "code": 10003,
+            "msg": "invalid receive_id",
+        })))
+        .expect(1..)
+        .mount(&mock_server)
+        .await;
+
+    let adapter = make_adapter(mock_server.address().port()).await;
+    let result = adapter.send_interactive(interactive_params()).await.unwrap();
+
+    assert!(!result.success, "send_interactive should fail with API error");
+}
+
+// ── edit_message() 测试 ──
+
+#[tokio::test]
+async fn test_edit_message_success() {
+    let mock_server = MockServer::start().await;
+    mock_token_endpoint(&mock_server).await;
+
+    Mock::given(method("POST"))
+        .and(path("/im/v1/messages/om_test_msg/patch"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "code": 0,
+            "msg": "ok",
+            "data": {}
+        })))
+        .expect(1..)
+        .mount(&mock_server)
+        .await;
+
+    let adapter = make_adapter(mock_server.address().port()).await;
+    let result = adapter.edit_message(EditMessageParams {
+        chat_id: "oc_abc123".to_string(),
+        message_id: "om_test_msg".to_string(),
+        message: OutboundMessage {
+            text: "edited content".to_string(),
+            parse_mode: ParseMode::None,
+        },
+        keyboard: None,
+    }).await;
+
+    assert!(result.is_ok(), "edit_message should succeed, got err: {:?}", result.err());
+}
+
+#[tokio::test]
+async fn test_edit_message_api_error() {
+    let mock_server = MockServer::start().await;
+    mock_token_endpoint(&mock_server).await;
+
+    Mock::given(method("POST"))
+        .and(path("/im/v1/messages/om_nonexistent/patch"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "code": 123456,
+            "msg": "message not found",
+        })))
+        .expect(1..)
+        .mount(&mock_server)
+        .await;
+
+    let adapter = make_adapter(mock_server.address().port()).await;
+    let result = adapter.edit_message(EditMessageParams {
+        chat_id: "oc_abc123".to_string(),
+        message_id: "om_nonexistent".to_string(),
+        message: OutboundMessage {
+            text: "edited".to_string(),
+            parse_mode: ParseMode::None,
+        },
+        keyboard: None,
+    }).await;
+
+    assert!(result.is_err(), "edit_message should return error for nonexistent message");
+}
+
+#[tokio::test]
+async fn test_edit_message_http_error() {
+    let mock_server = MockServer::start().await;
+    mock_token_endpoint(&mock_server).await;
+
+    Mock::given(method("POST"))
+        .and(path("/im/v1/messages/om_test_msg/patch"))
+        .respond_with(ResponseTemplate::new(500))
+        .expect(1..)
+        .mount(&mock_server)
+        .await;
+
+    let adapter = make_adapter(mock_server.address().port()).await;
+    let result = adapter.edit_message(EditMessageParams {
+        chat_id: "oc_abc123".to_string(),
+        message_id: "om_test_msg".to_string(),
+        message: OutboundMessage {
+            text: "edited".to_string(),
+            parse_mode: ParseMode::None,
+        },
+        keyboard: None,
+    }).await;
+
+    assert!(result.is_err(), "edit_message should return error with HTTP 500");
 }

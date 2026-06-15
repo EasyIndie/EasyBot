@@ -530,7 +530,8 @@ impl PlatformAdapter for FeishuAdapter {
             "content": content.to_string(),
         });
 
-        let _: FeishuApiResponse<serde_json::Value> = self.api_post(&path, &body).await?;
+        // api_post 已解包 FeishuApiResponse.data，此处只需 Value
+        let _: serde_json::Value = self.api_post(&path, &body).await?;
 
         Ok(EditResult {
             success: true,
