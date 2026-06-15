@@ -5,8 +5,10 @@
 //! 因此完整端到端模拟较为复杂。本文件测试 init + send 前置条件验证，
 //! 以及通过可配置的 base_url 实现 HTTP 行为验证。
 
-use easybot_core::types::adapter::{AdapterConfig, PlatformAdapter};
-use easybot_core::types::message::{SendTextParams, OutboundMessage, ParseMode};
+use easybot_core::types::adapter::{AdapterConfig, AdapterState, PlatformAdapter};
+use easybot_core::types::message::{
+    MediaAttachment, MediaType, OutboundMessage, ParseMode, SendMediaParams, SendTextParams,
+};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 use wiremock::matchers::{method, path};
 
@@ -121,4 +123,86 @@ async fn test_connect_uses_base_url_for_gateway() {
     // 由于 tokens.qq.com 的硬编码请求会失败，connect 很可能在 token refresh 阶段出错，
     // 但不影响我们验证 base_url 的可配置性。
     // 测试主要目的是验证编译通过且 base_url 被正确传递
+}
+
+// ── send_media() ──
+
+#[tokio::test]
+async fn test_send_media_before_connect_fails() {
+    let config = AdapterConfig {
+        enabled: true,
+        token: Some("test-secret".into()),
+        api_key: None,
+        base_url: None,
+        extra: serde_json::json!({"app_id": "test-app"}),
+    };
+    let mut adapter = easybot_adapter_qq::QqAdapter::new();
+    adapter.init(config).await.unwrap();
+
+    let result = adapter.send_media(SendMediaParams {
+        chat_id: "qq-chat-123".to_string(),
+        media: MediaAttachment {
+            media_type: MediaType::Image,
+            url: Some("https://example.com/image.png".to_string()),
+            data: None,
+            mime_type: "image/png".to_string(),
+            filename: None,
+            caption: None,
+            thumbnail_url: None,
+            file_size: None,
+            duration: None,
+        },
+        text: Some("image caption".to_string()),
+        reply_to: None,
+    }).await.unwrap();
+
+    assert!(!result.success, "send_media before connect should fail");
+    assert!(result.retryable, "should be retryable");
+}
+
+// ── connect() 状态测试 ──
+
+#[tokio::test]
+async fn test_connect_failure_state() {
+    // QQ connect() 需要 access token refresh（硬编码的 bots.qq.com 端点）
+    // 该请求必然失败，connect() 应该返回 ConnectResult{ok:false} 或 Err
+    let config = AdapterConfig {
+        enabled: true,
+        token: Some("test-secret".into()),
+        api_key: None,
+        base_url: None,
+        extra: serde_json::json!({"app_id": "test-app"}),
+    };
+    let mut adapter = easybot_adapter_qq::QqAdapter::new();
+    adapter.init(config).await.unwrap();
+
+    // 状态应为 Starting（QQ init 设置 Starting）
+    assert_eq!(adapter.state(), AdapterState::Starting);
+
+    let _result = adapter.connect().await;
+    // connect 可能返回 Ok(ConnectResult{ok:false}) 或 Err(GatewayError)
+    // 但无论如何状态不应为 Connected
+    assert_ne!(adapter.state(), AdapterState::Connected, "QQ should not be connected without real token");
+}
+
+#[tokio::test]
+async fn test_connect_disconnect_state_cycle() {
+    let config = AdapterConfig {
+        enabled: true,
+        token: Some("test-secret".into()),
+        api_key: None,
+        base_url: None,
+        extra: serde_json::json!({"app_id": "test-app"}),
+    };
+    let mut adapter = easybot_adapter_qq::QqAdapter::new();
+    adapter.init(config).await.unwrap();
+    assert_eq!(adapter.state(), AdapterState::Starting);
+
+    // disconnect from Starting should be valid
+    let _ = adapter.disconnect().await;
+    assert_eq!(adapter.state(), AdapterState::Stopped);
+
+    // 重复 disconnect 应幂等
+    let _ = adapter.disconnect().await;
+    assert_eq!(adapter.state(), AdapterState::Stopped);
 }

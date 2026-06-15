@@ -2,8 +2,11 @@
 //!
 //! 使用 wiremock 模拟 Discord REST API，验证 send() 方法正确构造请求并解析响应。
 
-use easybot_core::types::adapter::{AdapterConfig, PlatformAdapter};
-use easybot_core::types::message::{SendTextParams, OutboundMessage, ParseMode};
+use easybot_core::types::adapter::{AdapterConfig, AdapterState, PlatformAdapter};
+use easybot_core::types::message::{
+    EditMessageParams, OutboundMessage, ParseMode, SendTextParams,
+};
+use std::time::Duration;
 use wiremock::{Mock, MockServer, ResponseTemplate};
 use wiremock::matchers::{method, path};
 
@@ -186,4 +189,175 @@ async fn test_send_wrong_channel_returns_error() {
     // 请求被发送到 /channels/98765/messages，但 mock 不匹配
     // Discord adapter 的 api_call 会收到 HTTP 404（wiremock 默认响应 404）
     assert!(!result.success, "send should fail when endpoint not found");
+}
+
+// ── connect() 测试 ──
+
+#[tokio::test]
+async fn test_connect_success() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/users/@me"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": "12345",
+            "username": "TestBot",
+            "global_name": "Test Bot",
+            "bot": true
+        })))
+        .expect(1..)
+        .mount(&mock_server)
+        .await;
+
+    let mut adapter = make_adapter(mock_server.address().port()).await;
+    let result = adapter.connect().await.unwrap();
+
+    assert!(result.ok, "connect should succeed");
+    assert_eq!(adapter.state(), AdapterState::Connected);
+    assert!(adapter.is_connected());
+    let bot = result.bot_info.expect("bot_info expected");
+    assert_eq!(bot.name, "Test Bot", "global_name should be used as name");
+
+    mock_server.verify().await;
+}
+
+#[tokio::test]
+async fn test_connect_http_error() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/users/@me"))
+        .respond_with(ResponseTemplate::new(401))
+        .expect(1..)
+        .mount(&mock_server)
+        .await;
+
+    let mut adapter = make_adapter(mock_server.address().port()).await;
+    let result = adapter.connect().await.unwrap();
+
+    assert!(!result.ok, "connect should fail with HTTP error");
+    assert!(result.error.is_some(), "should contain error message");
+    assert_eq!(adapter.state(), AdapterState::Created, "state should remain Created");
+
+    mock_server.verify().await;
+}
+
+#[tokio::test]
+async fn test_connect_no_token_returns_config_error() {
+    let config = AdapterConfig {
+        enabled: true,
+        token: None,
+        api_key: None,
+        base_url: None,
+        extra: serde_json::json!({}),
+    };
+    let mut adapter = easybot_adapter_discord::DiscordAdapter::new();
+    // init without token should fail
+    let init = adapter.init(config).await.unwrap();
+    assert!(!init.ok, "init should fail without token");
+
+    let result = adapter.connect().await;
+    assert!(result.is_err(), "connect without init or token should error");
+}
+
+// ── edit_message() 测试 ──
+
+#[tokio::test]
+async fn test_edit_message_success() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("PATCH"))
+        .and(path("/channels/98765/messages/msg-001"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": "msg-001",
+            "channel_id": "98765",
+            "content": "edited",
+            "timestamp": "2024-01-15T10:30:00Z",
+            "author": {"id": "1", "username": "Bot", "bot": true}
+        })))
+        .expect(1..)
+        .mount(&mock_server)
+        .await;
+
+    let adapter = make_adapter(mock_server.address().port()).await;
+    let result = adapter.edit_message(EditMessageParams {
+        chat_id: "98765".to_string(),
+        message_id: "msg-001".to_string(),
+        message: OutboundMessage {
+            text: "edited content".to_string(),
+            parse_mode: ParseMode::None,
+        },
+        keyboard: None,
+    }).await.unwrap();
+
+    assert!(result.success, "edit should succeed");
+
+    mock_server.verify().await;
+}
+
+#[tokio::test]
+async fn test_edit_message_not_found() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("PATCH"))
+        .and(path("/channels/98765/messages/nonexistent"))
+        .respond_with(ResponseTemplate::new(404))
+        .expect(1..)
+        .mount(&mock_server)
+        .await;
+
+    let adapter = make_adapter(mock_server.address().port()).await;
+    let result = adapter.edit_message(EditMessageParams {
+        chat_id: "98765".to_string(),
+        message_id: "nonexistent".to_string(),
+        message: OutboundMessage {
+            text: "edited".to_string(),
+            parse_mode: ParseMode::None,
+        },
+        keyboard: None,
+    }).await.unwrap();
+
+    assert!(!result.success, "edit should fail for nonexistent message");
+
+    mock_server.verify().await;
+}
+
+// ── delete_message() 测试 ──
+
+#[tokio::test]
+async fn test_delete_message_success() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("DELETE"))
+        .and(path("/channels/98765/messages/msg-001"))
+        .respond_with(ResponseTemplate::new(204))
+        .expect(1..)
+        .mount(&mock_server)
+        .await;
+
+    let adapter = make_adapter(mock_server.address().port()).await;
+    let result = adapter.delete_message("98765", "msg-001").await.unwrap();
+
+    assert!(result.success, "delete should succeed");
+
+    mock_server.verify().await;
+}
+
+#[tokio::test]
+async fn test_delete_message_not_found() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("DELETE"))
+        .and(path("/channels/98765/messages/nonexistent"))
+        .respond_with(ResponseTemplate::new(404))
+        .expect(1..)
+        .mount(&mock_server)
+        .await;
+
+    let adapter = make_adapter(mock_server.address().port()).await;
+    let result = adapter.delete_message("98765", "nonexistent").await.unwrap();
+
+    assert!(!result.success, "delete should fail for nonexistent message");
+
+    mock_server.verify().await;
 }

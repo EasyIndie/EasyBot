@@ -90,6 +90,14 @@ impl FeishuAdapter {
         })
     }
 
+    /// 返回 API 基础 URL（支持通过 config.base_url 覆盖）
+    fn api_base_url(&self) -> &str {
+        self.config
+            .as_ref()
+            .and_then(|c| c.base_url.as_deref())
+            .unwrap_or(FEISHU_API)
+    }
+
     /// 确保 access token 有效，必要时自动刷新
     async fn ensure_token(&self) -> Result<String, GatewayError> {
         let expires_at = *self.token_expires_at.read().await;
@@ -119,7 +127,7 @@ impl FeishuAdapter {
             .ok_or_else(|| GatewayError::ConfigError("Missing 'token' (app_secret) for feishu".to_string()))?;
 
         let client = self.client()?;
-        let url = format!("{}/auth/v3/tenant_access_token/internal", FEISHU_API);
+        let url = format!("{}/auth/v3/tenant_access_token/internal", self.api_base_url());
 
         let resp: FeishuTokenResponse = client.post(&url)
             .json(&serde_json::json!({
@@ -156,7 +164,7 @@ impl FeishuAdapter {
     ) -> Result<T, GatewayError> {
         let token = self.ensure_token().await?;
         let client = self.client()?;
-        let url = format!("{}{}", FEISHU_API, path);
+        let url = format!("{}{}", self.api_base_url(), path);
 
         let resp = client.get(&url)
             .header("Authorization", format!("Bearer {}", token))
@@ -187,7 +195,7 @@ impl FeishuAdapter {
     ) -> Result<T, GatewayError> {
         let token = self.ensure_token().await?;
         let client = self.client()?;
-        let url = format!("{}{}", FEISHU_API, path);
+        let url = format!("{}{}", self.api_base_url(), path);
 
         let resp = client.post(&url)
             .header("Authorization", format!("Bearer {}", token))
@@ -574,7 +582,7 @@ impl FeishuAdapter {
     async fn upload_media(&self, media: &MediaAttachment) -> Result<String, GatewayError> {
         let token = self.ensure_token().await?;
         let client = self.client()?;
-        let url = format!("{}/im/v1/files", FEISHU_API);
+        let url = format!("{}/im/v1/files", self.api_base_url());
 
         // 确定文件类型
         let file_type = match media.media_type {

@@ -314,6 +314,14 @@ impl WeChatAdapter {
         })
     }
 
+    /// 返回 API 基础 URL（支持通过 config.base_url 覆盖）
+    fn api_base_url(&self) -> &str {
+        self.config
+            .as_ref()
+            .and_then(|c| c.base_url.as_deref())
+            .unwrap_or(ILINK_API)
+    }
+
     /// 构建 iLink API 请求的认证头
     fn auth_headers(&self, token: &str) -> reqwest::header::HeaderMap {
         use reqwest::header;
@@ -393,7 +401,7 @@ impl PlatformAdapter for WeChatAdapter {
             tracing::info!("个人微信适配器：需要扫码登录");
 
             // 获取 QR 码
-            let qr_url = format!("{}/ilink/bot/get_bot_qrcode?bot_type=3", ILINK_API);
+            let qr_url = format!("{}/ilink/bot/get_bot_qrcode?bot_type=3", self.api_base_url());
             let qr_resp: QrCodeResponse = client.get(&qr_url)
                 .send()
                 .await
@@ -420,7 +428,7 @@ impl PlatformAdapter for WeChatAdapter {
             }
 
             // 轮询扫码状态（最多 120 秒）
-            let status_url = format!("{}/ilink/bot/get_qrcode_status?qrcode={}", ILINK_API, qrcode);
+            let status_url = format!("{}/ilink/bot/get_qrcode_status?qrcode={}", self.api_base_url(), qrcode);
             let mut logged = false;
             let mut token: Option<String> = None;
             let mut bot_id: Option<String> = None;
@@ -514,9 +522,12 @@ impl PlatformAdapter for WeChatAdapter {
             let client = self.client()?.clone();
             let token = self.bot_token.read().await.clone().unwrap_or_default();
             let buf = self.updates_buf.read().await.clone().unwrap_or_default();
+            let base_url = self.config.as_ref()
+                .and_then(|c| c.base_url.clone())
+                .unwrap_or_else(|| ILINK_API.to_string());
 
             tokio::spawn(async move {
-                longpoll_loop(client, token, buf, eb, cancel_rx).await;
+                longpoll_loop(client, token, buf, base_url, eb, cancel_rx).await;
             });
         }
 
@@ -572,7 +583,7 @@ impl PlatformAdapter for WeChatAdapter {
             GatewayError::Internal("Not authenticated (no bot_token)".to_string())
         })?;
         let client = self.client()?;
-        let url = format!("{}/ilink/bot/sendmessage", ILINK_API);
+        let url = format!("{}/ilink/bot/sendmessage", self.api_base_url());
 
         let body = serde_json::json!({
             "msg": {
@@ -661,10 +672,11 @@ async fn longpoll_loop(
     client: reqwest::Client,
     token: String,
     initial_buf: String,
+    base_url: String,
     event_bus: Arc<EventBus>,
     mut cancel_rx: tokio::sync::broadcast::Receiver<()>,
 ) {
-    let url = format!("{}/ilink/bot/getupdates", ILINK_API);
+    let url = format!("{}/ilink/bot/getupdates", base_url);
     let mut buf = initial_buf;
     let mut consecutive_failures: u32 = 0;
 

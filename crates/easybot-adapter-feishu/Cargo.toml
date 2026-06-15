@@ -15,5 +15,8 @@ async-trait.workspace = true
 chrono.workspace = true
 larksuite-oapi-sdk-rs = { version = "0.1", features = ["ws"] }
 
+[dev-dependencies]
+wiremock = "0.6"
+
 [features]
 default = []

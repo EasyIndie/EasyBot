@@ -5,7 +5,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use easybot_core::types::adapter::{AdapterConfig, PlatformAdapter};
+use easybot_core::types::adapter::{AdapterConfig, AdapterState, PlatformAdapter};
 use easybot_core::types::message::{SendTextParams, OutboundMessage, ParseMode};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 use wiremock::matchers::{method, path};
@@ -220,4 +220,138 @@ async fn test_init_rejects_empty_token() {
     let result = adapter.init(config).await.unwrap();
     assert!(!result.ok, "init should fail with empty token");
     assert!(result.error.is_some(), "should provide error message");
+}
+
+// ── connect() 测试 ──
+
+fn bot_info_response() -> serde_json::Value {
+    serde_json::json!({
+        "ok": true,
+        "result": {
+            "id": 12345,
+            "is_bot": true,
+            "first_name": "TestBot",
+            "username": "my_test_bot"
+        }
+    })
+}
+
+#[tokio::test]
+async fn test_connect_success() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/bottest-token/getMe"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(bot_info_response()))
+        .expect(1..)
+        .mount(&mock_server)
+        .await;
+
+    let mut adapter = make_adapter(mock_server.address().port()).await;
+    let result = adapter.connect().await.unwrap();
+
+    assert!(result.ok, "connect should succeed");
+    assert!(result.error.is_none(), "no error expected");
+    let bot = result.bot_info.expect("bot_info should be present");
+    assert_eq!(bot.name, "TestBot");
+    assert_eq!(bot.id, "12345");
+    assert_eq!(adapter.state(), AdapterState::Connected);
+    assert!(adapter.is_connected());
+
+    mock_server.verify().await;
+}
+
+#[tokio::test]
+async fn test_connect_api_error() {
+    let mock_server = MockServer::start().await;
+
+    // Telegram API 返回 ok:false（如 token 不合法）
+    Mock::given(method("GET"))
+        .and(path("/bottest-token/getMe"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "ok": false,
+                "description": "Unauthorized: bot token is invalid",
+                "error_code": 401
+            }))
+        )
+        .expect(1..)
+        .mount(&mock_server)
+        .await;
+
+    let mut adapter = make_adapter(mock_server.address().port()).await;
+    let result = adapter.connect().await.unwrap();
+
+    assert!(!result.ok, "connect should fail");
+    assert!(result.error.is_some(), "should contain error message");
+    // 状态应为 Created（未切换）
+    assert_eq!(adapter.state(), AdapterState::Created);
+
+    mock_server.verify().await;
+}
+
+#[tokio::test]
+async fn test_connect_http_error() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/bottest-token/getMe"))
+        .respond_with(ResponseTemplate::new(500))
+        .expect(1..)
+        .mount(&mock_server)
+        .await;
+
+    let mut adapter = make_adapter(mock_server.address().port()).await;
+    let result = adapter.connect().await;
+
+    assert!(result.is_err(), "HTTP error should return Err");
+
+    mock_server.verify().await;
+}
+
+#[tokio::test]
+async fn test_connect_malformed_response() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/bottest-token/getMe"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string("not-json")
+                .insert_header("Content-Type", "text/plain"),
+        )
+        .expect(1..)
+        .mount(&mock_server)
+        .await;
+
+    let mut adapter = make_adapter(mock_server.address().port()).await;
+    let result = adapter.connect().await;
+
+    assert!(result.is_err(), "malformed response should return Err");
+
+    mock_server.verify().await;
+}
+
+#[tokio::test]
+async fn test_connect_no_token_returns_config_error() {
+    let config = AdapterConfig {
+        enabled: true,
+        token: None,
+        api_key: None,
+        base_url: None,
+        extra: serde_json::json!({}),
+    };
+    let mut adapter = easybot_adapter_telegram::TelegramAdapter::new();
+    // init with empty token returns ok:false, config NOT stored
+    adapter.init(config).await.unwrap();
+
+    // connect should fail because config is None
+    let result = adapter.connect().await;
+    assert!(result.is_err(), "connect without token should error");
+    let err = result.unwrap_err().to_string();
+    assert!(
+        err.contains("token") || err.contains("Config"),
+        "error should mention token/config, got: {}",
+        err
+    );
 }
