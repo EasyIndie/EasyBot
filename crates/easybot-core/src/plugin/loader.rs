@@ -400,4 +400,15 @@ mod tests {
         assert!(succeeded.is_empty());
         assert!(failed.is_empty());
     }
+
+    #[tokio::test]
+    async fn test_load_all_idempotent() {
+        // 第二次 load_all 不应 panic
+        let loader =
+            PluginLoader::new(PathBuf::from("/tmp/nonexistent-plugin-dir-12345"));
+        let (s1, f1) = loader.load_all().await;
+        let (s2, f2) = loader.load_all().await;
+        assert_eq!(s1.len(), s2.len(), "should return same number of succeeded");
+        assert_eq!(f1.len(), f2.len(), "should return same number of failed");
+    }
 }

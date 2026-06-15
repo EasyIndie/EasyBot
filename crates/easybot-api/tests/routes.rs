@@ -84,6 +84,13 @@ async fn test_health_returns_ok() {
 }
 
 #[tokio::test]
+async fn test_health_snapshot() {
+    let (state, _key) = common::test_app_state().await;
+    let (_, json) = get(state, "/api/v1/health", None).await;
+    insta::assert_json_snapshot!("health_response", json);
+}
+
+#[tokio::test]
 async fn test_health_no_auth_needed() {
     let (state, _key) = common::test_app_state().await;
     let (status, _) = get(state, "/api/v1/health", None).await;

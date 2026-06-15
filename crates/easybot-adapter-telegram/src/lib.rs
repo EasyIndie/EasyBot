@@ -765,4 +765,36 @@ mod tests {
         assert_eq!(cmd.name, "start");
         assert_eq!(cmd.args, "hello");
     }
+
+    // ── rstest 参数化测试 ──
+
+    use rstest::rstest;
+
+    #[rstest]
+    #[case("private", easybot_core::types::message::ChatType::Dm)]
+    #[case("group", easybot_core::types::message::ChatType::Group)]
+    #[case("supergroup", easybot_core::types::message::ChatType::Group)]
+    #[case("channel", easybot_core::types::message::ChatType::Channel)]
+    fn test_chat_type_mapping(#[case] tg_type: &str, #[case] expected: easybot_core::types::message::ChatType) {
+        let chat = TelegramChat {
+            id: 1,
+            chat_type: tg_type.to_string(),
+            title: None,
+            username: None,
+            first_name: None,
+            last_name: None,
+        };
+        let msg = TelegramMessage {
+            message_id: 1,
+            date: 1000000,
+            text: Some("hello".to_string()),
+            caption: None,
+            chat,
+            from: None,
+            reply_to_message: None,
+            entities: None,
+        };
+        let inbound = TelegramAdapter::convert_message(msg).unwrap();
+        assert_eq!(inbound.chat_type, expected, "chat_type mapping for '{}'", tg_type);
+    }
 }

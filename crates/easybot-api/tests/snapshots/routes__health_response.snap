@@ -1,0 +1,16 @@
+---
+source: crates/easybot-api/tests/routes.rs
+expression: json
+---
+{
+  "adapters": {
+    "connected": 0,
+    "total": 0
+  },
+  "sessions": {
+    "active": 0
+  },
+  "status": "degraded",
+  "uptime": 0,
+  "version": "0.1.0"
+}
