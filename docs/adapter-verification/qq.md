@@ -15,6 +15,15 @@
 | `test_token_store_clone` | 单元测试 | ❌ | ❌ |
 | `test_init_missing_config` | 单元测试 | ❌ | ❌ |
 | `test_init_valid_config` | 单元测试 | ❌ | ❌ |
+| `test_qq_user_deserialize_with_bot_field` | 类型反序列化 | ❌ | ❌ |
+| `test_qq_user_deserialize_without_bot_field` | 类型反序列化 | ❌ | ❌ |
+| `test_channel_message_event_deserialize` | 类型反序列化 | ❌ | ❌ |
+| `test_channel_message_event_without_guild_id` | 类型反序列化 | ❌ | ❌ |
+| `test_group_message_event_deserialize` | 类型反序列化 | ❌ | ❌ |
+| `test_c2c_message_event_deserialize` | 类型反序列化 | ❌ | ❌ |
+| `test_c2c_message_event_without_content` | 类型反序列化 | ❌ | ❌ |
+| `test_send_message_request_serialize` | 类型序列化 | ❌ | ❌ |
+| `test_send_message_response_deserialize` | 类型反序列化 | ❌ | ❌ |
 
 ## 前置条件
 

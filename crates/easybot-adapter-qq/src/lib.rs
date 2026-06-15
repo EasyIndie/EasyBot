@@ -135,7 +135,7 @@ pub struct QqAdapter {
     state: AdapterState,
     bot_info: Option<BotInfo>,
     capabilities: Vec<Capability>,
-    messages_in: AtomicU64,
+    messages_in: Arc<AtomicU64>,
     messages_out: AtomicU64,
     errors: AtomicU64,
     event_bus: Option<Arc<EventBus>>,
@@ -162,7 +162,7 @@ impl QqAdapter {
                 Capability { name: CapabilityName::MessageEdit, supported: true, limits: None },
                 Capability { name: CapabilityName::MessageDelete, supported: true, limits: None },
             ],
-            messages_in: AtomicU64::new(0),
+            messages_in: Arc::new(AtomicU64::new(0)),
             messages_out: AtomicU64::new(0),
             errors: AtomicU64::new(0),
             event_bus: None,
@@ -340,6 +340,7 @@ impl QqAdapter {
         event_bus: Arc<EventBus>,
         bot_id: String,
         mut cancel_rx: broadcast::Receiver<()>,
+        messages_in: Arc<AtomicU64>,
     ) {
         loop {
             // 每次重连前刷新 access token
@@ -475,7 +476,7 @@ impl QqAdapter {
                                             }
                                         if let Some(ref et) = payload.t {
                                             tracing::debug!("QQ dispatch event: {}", et);
-                                            Self::handle_dispatch(et, &payload, &event_bus, &bot_id).await;
+                                            Self::handle_dispatch(et, &payload, &event_bus, &bot_id, &messages_in).await;
                                         } else {
                                             tracing::debug!("QQ dispatch with no t field");
                                         }
@@ -505,11 +506,19 @@ impl QqAdapter {
         Some(data.url)
     }
 
+    /// 解析 QQ 时间戳字符串（ISO 8601）为毫秒时间戳
+    fn parse_timestamp(ts: &str) -> i64 {
+        chrono::DateTime::parse_from_rfc3339(ts)
+            .map(|dt| dt.timestamp_millis())
+            .unwrap_or_else(|_| chrono::Utc::now().timestamp_millis())
+    }
+
     async fn handle_dispatch(
         event_type: &str,
         payload: &GatewayPayload<serde_json::Value>,
         event_bus: &EventBus,
         bot_id: &str,
+        messages_in: &AtomicU64,
     ) {
         let data = match payload.d.as_ref() {
             Some(d) => d,
@@ -532,6 +541,9 @@ impl QqAdapter {
 
                 if msg_event.author.id == *bot_id { return; }
 
+                messages_in.fetch_add(1, Ordering::Relaxed);
+                let ts = Self::parse_timestamp(&msg_event.timestamp);
+
                 let inbound = InboundMessage {
                     id: msg_event.id,
                     platform: "qq".to_string(),
@@ -544,7 +556,7 @@ impl QqAdapter {
                         name: msg_event.author.username,
                         is_bot: msg_event.author.bot,
                     },
-                    timestamp: chrono::Utc::now().timestamp_millis(),
+                    timestamp: ts,
                     media: None,
                     command: None,
                     callback: None,
@@ -575,6 +587,8 @@ impl QqAdapter {
                 );
 
                 // 群消息没有 bot 字段，无法通过 id 过滤自身消息
+                messages_in.fetch_add(1, Ordering::Relaxed);
+                let ts = Self::parse_timestamp(&msg_event.timestamp);
                 let openid = msg_event.group_openid.clone();
                 let member_id = msg_event.author.member_openid.clone();
                 let inbound = InboundMessage {
@@ -589,7 +603,7 @@ impl QqAdapter {
                         name: Some(member_id),
                         is_bot: false,
                     },
-                    timestamp: chrono::Utc::now().timestamp_millis(),
+                    timestamp: ts,
                     media: None,
                     command: None,
                     callback: None,
@@ -619,6 +633,8 @@ impl QqAdapter {
                     event_type, msg_event.author.user_openid, msg_event.id
                 );
 
+                messages_in.fetch_add(1, Ordering::Relaxed);
+                let ts = Self::parse_timestamp(&msg_event.timestamp);
                 let user_openid = msg_event.author.user_openid.clone();
                 let inbound = InboundMessage {
                     id: msg_event.id,
@@ -632,7 +648,7 @@ impl QqAdapter {
                         name: None,
                         is_bot: false,
                     },
-                    timestamp: chrono::Utc::now().timestamp_millis(),
+                    timestamp: ts,
                     media: None,
                     command: None,
                     callback: None,
@@ -734,8 +750,9 @@ impl PlatformAdapter for QqAdapter {
             let (cancel_tx, cancel_rx) = broadcast::channel(1);
             self.cancel_tx = Some(cancel_tx);
             let eb = event_bus.clone();
+            let msg_in = self.messages_in.clone();
             tokio::spawn(async move {
-                Self::gateway_loop(ts_clone, eb, bot_id, cancel_rx).await;
+                Self::gateway_loop(ts_clone, eb, bot_id, cancel_rx, msg_in).await;
             });
         }
 
