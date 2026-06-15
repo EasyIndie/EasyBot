@@ -550,7 +550,7 @@ impl PlatformAdapter for WeChatAdapter {
     fn runtime_config(&self) -> AdapterRuntimeConfig {
         AdapterRuntimeConfig {
             enabled: self.config.as_ref().map(|c| c.enabled).unwrap_or(false),
-            token_configured: self.bot_token.blocking_read().is_some(),
+            token_configured: self.bot_token.try_read().map(|g| g.is_some()).unwrap_or(false),
             extra: self.config.as_ref().map(|c| c.extra.clone()).unwrap_or_default(),
         }
     }
@@ -1037,5 +1037,198 @@ mod tests {
         let mut adapter = WeChatAdapter::new();
         assert!(adapter.disconnect().await.is_ok());
         assert_eq!(adapter.state(), AdapterState::Stopped);
+    }
+
+    #[tokio::test]
+    async fn test_double_disconnect() {
+        let mut adapter = WeChatAdapter::new();
+        adapter.disconnect().await.unwrap();
+        adapter.disconnect().await.unwrap();
+        assert_eq!(adapter.state(), AdapterState::Stopped);
+    }
+
+    #[tokio::test]
+    async fn test_health_before_init() {
+        let adapter = WeChatAdapter::new();
+        let health = adapter.health().await;
+        assert_eq!(health.status, HealthStatus::Down);
+        assert!(!health.connected);
+    }
+
+    #[tokio::test]
+    async fn test_runtime_config_before_init() {
+        let adapter = WeChatAdapter::new();
+        let rc = adapter.runtime_config();
+        assert!(!rc.enabled);
+        assert!(!rc.token_configured);
+    }
+
+    #[tokio::test]
+    async fn test_runtime_config_after_init() {
+        let mut adapter = WeChatAdapter::new();
+        adapter.init(AdapterConfig {
+            enabled: true,
+            token: None,
+            api_key: None,
+            extra: serde_json::json!({"bot_token": "test"}),
+        }).await.unwrap();
+        let rc = adapter.runtime_config();
+        assert!(rc.enabled);
+        assert!(rc.token_configured);
+    }
+
+    #[tokio::test]
+    async fn test_get_chat_info_always_dm() {
+        let adapter = WeChatAdapter::new();
+        let info = adapter.get_chat_info("user@im.wechat").await.unwrap();
+        assert_eq!(info.chat_type, ChatType::Dm);
+        assert_eq!(info.chat_id, "user@im.wechat");
+    }
+
+    #[tokio::test]
+    async fn test_new_with_event_bus() {
+        let bus = Arc::new(EventBus::new());
+        let adapter = WeChatAdapter::new_with_event_bus(bus.clone());
+        assert_eq!(adapter.platform_name(), "wechat");
+    }
+
+    #[test]
+    fn test_convert_unknown_message_type() {
+        let msg = WeixinMessage {
+            message_id: Some(1),
+            from_user_id: "u@im.wx".to_string(),
+            to_user_id: "b@im.bot".to_string(),
+            message_type: 99,
+            create_time_ms: 1000,
+            session_id: "".to_string(),
+            group_id: "".to_string(),
+            item_list: vec![],
+        };
+        let inbound = convert_message(msg).unwrap();
+        assert_eq!(inbound.text.as_deref(), Some(""));
+    }
+
+    #[test]
+    fn test_convert_empty_item_list() {
+        let msg = WeixinMessage {
+            message_id: None,
+            from_user_id: "u@im.wx".to_string(),
+            to_user_id: "b@im.bot".to_string(),
+            message_type: 1,
+            create_time_ms: 2000,
+            session_id: "".to_string(),
+            group_id: "".to_string(),
+            item_list: vec![],
+        };
+        let inbound = convert_message(msg).unwrap();
+        assert_eq!(inbound.id, "");
+        assert_eq!(inbound.text.as_deref(), Some(""));
+    }
+
+    #[test]
+    fn test_deserialize_weixin_message_from_json() {
+        let json = r#"{
+            "message_id": 7472251148840494728,
+            "from_user_id": "user@im.wechat",
+            "to_user_id": "bot@im.bot",
+            "message_type": 1,
+            "create_time_ms": 1781523501518,
+            "item_list": [{
+                "type": 1,
+                "text_item": { "text": "你好" }
+            }]
+        }"#;
+        let msg: WeixinMessage = serde_json::from_str(json).unwrap();
+        assert_eq!(msg.from_user_id, "user@im.wechat");
+        assert_eq!(msg.message_type, 1);
+        assert_eq!(msg.item_list.len(), 1);
+    }
+
+    #[test]
+    fn test_deserialize_image_weixin_message() {
+        let json = r#"{
+            "message_id": 123,
+            "from_user_id": "user@im.wechat",
+            "to_user_id": "bot@im.bot",
+            "message_type": 2,
+            "create_time_ms": 1000,
+            "item_list": [{
+                "type": 2,
+                "image_item": {
+                    "md5sum": "abc123",
+                    "file_size": 2048,
+                    "file_name": "photo.jpg",
+                    "file_url": "https://cdn.url/photo"
+                }
+            }]
+        }"#;
+        let msg: WeixinMessage = serde_json::from_str(json).unwrap();
+        assert_eq!(msg.message_type, 2);
+        let item = &msg.item_list[0];
+        assert!(item.image_item.is_some());
+        let img = item.image_item.as_ref().unwrap();
+        assert_eq!(img.file_name.as_deref(), Some("photo.jpg"));
+        assert_eq!(img.file_size, Some(2048));
+    }
+
+    #[test]
+    fn test_deserialize_empty_getupdates_response() {
+        let json = r#"{"msgs":[],"sync_buf":"CAAY","get_updates_buf":"CgkI"}"#;
+        let resp: GetUpdatesResponse = serde_json::from_str(json).unwrap();
+        assert!(resp.msgs.is_empty());
+        assert_eq!(resp.get_updates_buf.as_deref(), Some("CgkI"));
+        assert_eq!(resp.sync_buf.as_deref(), Some("CAAY"));
+    }
+
+    #[test]
+    fn test_credentials_serialization_roundtrip() {
+        let creds = WeChatCredentials {
+            bot_token: "token123@im.bot:secret".to_string(),
+            ilink_bot_id: "bot123@im.bot".to_string(),
+            ilink_user_id: "user123@im.wechat".to_string(),
+            baseurl: "https://ilinkai.weixin.qq.com".to_string(),
+        };
+        let json = serde_json::to_string(&creds).unwrap();
+        let deserialized: WeChatCredentials = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.bot_token, creds.bot_token);
+        assert_eq!(deserialized.ilink_bot_id, creds.ilink_bot_id);
+        assert_eq!(deserialized.ilink_user_id, creds.ilink_user_id);
+        assert_eq!(deserialized.baseurl, creds.baseurl);
+    }
+
+    #[test]
+    fn test_base64_encode_uin_zero() {
+        let encoded = base64_encode_uin(0);
+        assert_eq!(encoded, "AAAAAA==");
+    }
+
+    #[test]
+    fn test_base64_encode_uin_max() {
+        let encoded = base64_encode_uin(u32::MAX);
+        assert!(!encoded.is_empty());
+        assert_eq!(encoded.len(), 8);
+    }
+
+    #[tokio::test]
+    async fn test_send_media_not_implemented() {
+        let adapter = WeChatAdapter::new();
+        let result = adapter.send_media(SendMediaParams {
+            chat_id: "user@im.wechat".to_string(),
+            media: MediaAttachment {
+                media_type: MediaType::Image,
+                url: Some("https://example.com/img.jpg".to_string()),
+                data: None,
+                mime_type: "image/jpeg".to_string(),
+                filename: Some("test.jpg".to_string()),
+                caption: None,
+                thumbnail_url: None,
+                file_size: Some(1024),
+                duration: None,
+            },
+            reply_to: None,
+            text: None,
+        }).await.unwrap();
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("not yet implemented"));
     }
 }
