@@ -72,6 +72,7 @@ pub struct EasyBotPaths {
     pub secrets_dir: PathBuf,
     pub config_file: PathBuf,
     pub local_config_file: PathBuf,
+    pub env_path: PathBuf,
     pub db_path: PathBuf,
 }
 
@@ -89,6 +90,7 @@ impl EasyBotPaths {
             secrets_dir: ensure_subdir(&home, "secrets")?,
             config_file: home.join("gateway.yaml"),
             local_config_file: home.join("gateway.local.yaml"),
+            env_path: home.join(".env"),
             db_path: home.join("data").join("gateway.db"),
             home,
         })
@@ -131,6 +133,14 @@ mod tests {
         let home = resolve_home(Some(PathBuf::from("/opt/easybot")));
         assert_eq!(home, PathBuf::from("/opt/easybot"));
         env::remove_var("EASYBOT_HOME");
+    }
+
+    #[test]
+    fn test_env_path_in_paths() {
+        let dir = std::env::temp_dir().join("easybot_paths_env_test");
+        let paths = EasyBotPaths::new(dir.clone()).unwrap();
+        assert_eq!(paths.env_path, dir.join(".env"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

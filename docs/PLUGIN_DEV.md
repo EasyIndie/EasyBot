@@ -242,19 +242,31 @@ cp plugin.yaml ~/.easybot/plugins/my-platform/
 
 ### 7. 配置
 
-在 `~/.easybot/gateway.yaml` 中添加适配器配置：
+在 `~/.easybot/gateway.yaml` 中添加适配器配置，敏感信息（token、密钥）建议通过 `.env` 文件管理：
 
 ```yaml
 adapters:
   my-platform:
     enabled: true
-    token: "your-api-token"
+    token: "${MY_PLATFORM_TOKEN}"   # 从 .env 或环境变量读取
     api_key: null
     base_url: "https://api.my-platform.com"
     extra:
       option1: "value1"
-      option2: 123
 ```
+
+然后在 `~/.easybot/.env` 中设置对应的值（`.env` 不会被提交到版本控制）：
+
+```bash
+# ~/.easybot/.env
+MY_PLATFORM_TOKEN=your-actual-token
+```
+
+环境变量优先级（从高到低）：
+1. `export MY_PLATFORM_TOKEN=xxx`（Shell / Docker environment:）
+2. `~/.easybot/.env` 文件中的值
+
+> **提示**: 运行 `easybot --init` 会自动创建 `.env.example` 模板文件，列出所有已知的环境变量。复制为 `.env` 后填入实际值即可。
 
 ---
 

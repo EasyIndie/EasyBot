@@ -21,6 +21,7 @@ tracing.workspace = true
 sqlx.workspace = true
 regex.workspace = true
 dirs.workspace = true
+dotenvy.workspace = true
 anyhow.workspace = true
 argon2.workspace = true
 rand_core = { version = "0.6", features = ["getrandom"] }

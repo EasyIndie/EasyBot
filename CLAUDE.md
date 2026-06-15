@@ -30,6 +30,9 @@ cargo test -p easybot-adapter-telegram
 # Run integration tests (compile mock-adapter first)
 cargo build -p mock-adapter && cargo test -p integration-tests
 
+# Run config/env tests
+cargo test -p easybot-core config::tests
+
 # Run a single test
 cargo test -p easybot-core test_get_or_create -- --exact
 
@@ -112,12 +115,14 @@ User-level config stored at `~/.easybot/` (macOS/Linux) or `%APPDATA%\easybot\` 
 ~/.easybot/
 ├── gateway.yaml              # Base config (version-controlled)
 ├── gateway.local.yaml        # Local overrides (.gitignore)
-├── .env                      # Secrets (chmod 600)
+├── .env                      # Secrets (chmod 600, loaded via dotenvy)
 ├── data/gateway.db           # SQLite database (auto-created)
 └── logs/                     # Log files
 ```
 
 Config supports `${VAR_NAME}` for environment variable substitution and merges `gateway.local.yaml` on top of `gateway.yaml`.
+Environment variable priority: `export` / Docker `environment:` > `.env` file (loaded via `dotenvy::from_path`, does not override existing vars).
+Run `easybot --init` to create `gateway.yaml` and `.env.example` (template with all known variables).
 
 ### Adapter Lifecycle
 
@@ -174,4 +179,5 @@ The `AdapterRegistry` holds factory functions keyed by platform name. `AdapterMa
 - **Event bus**: Publish via `EventBus::publish()`, subscribe via `EventBus::subscribe()` — tokio broadcast channels under the hood
 - **Session key format**: `"{platform}:{chatId}"` or `"{platform}:{chatId}:{threadId}"`
 - **Target format** (API): `"{platform}:{chatId}"` — parsed by `parse_target()` in messages route
-- **Config precedence**: YAML → `.local.yaml` merge → env var substitution (`${VAR_NAME}`)
+- **Config precedence**: YAML → `.local.yaml` merge → env var substitution (`${VAR_NAME}`); env vars sourced from `export` > Docker env > `.env` file (loaded via `dotenvy::from_path` before config loading)
+- **Env var loading**: Call `load_env(&EasyBotPaths)` at startup (in `bin/main.rs`) before `load_config()`; `.env` file lives at `{config_dir}/.env`; run `easybot --init` to generate `.env.example`

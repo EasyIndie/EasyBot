@@ -55,6 +55,10 @@ async fn main() -> anyhow::Result<()> {
     let paths = easybot_core::config::EasyBotPaths::new(home.clone())?;
     tracing::info!("EasyBot home: {}", home.display());
 
+    // 在加载任何配置之前，先从配置主目录加载 .env 文件。
+    // Shell export / Docker environment 优先于 .env（dotenvy 默认行为）。
+    easybot_core::config::load_env(&paths)?;
+
     // 加载配置
     let mut config = if let Some(config_path) = &cli.config {
         easybot_core::config::load_config(std::path::Path::new(config_path)).await?
@@ -372,12 +376,24 @@ async fn handle_init(cli: Cli) -> anyhow::Result<()> {
             paths.config_file.display()
         );
 
+        // 同时创建 .env.example（若不存在）
+        let env_example_path = home.join(".env.example");
+        if !env_example_path.exists() {
+            let env_example = easybot_core::config::generate_env_example();
+            tokio::fs::write(&env_example_path, &env_example).await?;
+            tracing::info!(
+                "Created .env.example: {}",
+                env_example_path.display()
+            );
+        }
+
         println!("\nEasyBot initialized at:");
         paths.print_tree();
-        println!(
-            "\nEdit {} to configure platforms, then run `easybot`.",
-            paths.config_file.display()
-        );
+        println!("\nNext steps:");
+        println!("  1. Edit {} to configure platforms", paths.config_file.display());
+        println!("  2. Edit {} to set tokens and secrets", env_example_path.display());
+        println!("     (or copy it to .env in the same directory)");
+        println!("  3. Run `easybot` to start");
     } else {
         tracing::info!(
             "Configuration already exists: {}",
