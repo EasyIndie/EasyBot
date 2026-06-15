@@ -269,6 +269,29 @@ impl QqAdapter {
 
 }
 
+// ── 消息发送（自动判断频道/群聊） ──
+
+impl QqAdapter {
+    /// 尝试发送消息，自动判断是频道消息还是群聊消息
+    async fn try_send(&self, chat_id: &str, body: &serde_json::Value) -> Result<QqSendMessageResponse, GatewayError> {
+        // 先尝试频道端点
+        let channel_path = format!("/channels/{}/messages", chat_id);
+        match self.api_post::<QqSendMessageResponse>(&channel_path, body).await {
+            Ok(resp) => return Ok(resp),
+            Err(e) => {
+                if e.to_string().contains("频道不存在") || e.to_string().contains("11263") {
+                    tracing::debug!("QQ chat_id {} is a group, using group endpoint", chat_id);
+                } else {
+                    return Err(e);
+                }
+            }
+        }
+        // 尝试群聊端点（v2 API）
+        let group_path = format!("/v2/groups/{}/messages", chat_id);
+        self.api_post::<QqSendMessageResponse>(&group_path, body).await
+    }
+}
+
 // ── Gateway WebSocket 事件循环 ──
 
 impl QqAdapter {
@@ -451,13 +474,16 @@ impl QqAdapter {
                                                 continue;
                                             }
                                         if let Some(ref et) = payload.t {
+                                            tracing::debug!("QQ dispatch event: {}", et);
                                             Self::handle_dispatch(et, &payload, &event_bus, &bot_id).await;
+                                        } else {
+                                            tracing::debug!("QQ dispatch with no t field");
                                         }
                                     }
                                     7 => { tracing::info!("QQ reconnect requested"); break; }
                                     9 => { tracing::error!("QQ invalid session"); break; }
-                                    11 => {} // Heartbeat ACK
-                                    _ => {}
+                                    11 => { tracing::trace!("QQ heartbeat ack"); }
+                                    _ => { tracing::debug!("QQ unknown op: {}", payload.op); }
                                 }
                             }
                             Some(Ok(Message::Close(_))) | None => { break; }
@@ -491,25 +517,26 @@ impl QqAdapter {
         };
 
         match event_type {
-            "AT_MESSAGE_CREATE" | "C2C_MESSAGE_CREATE" | "GROUP_AT_MESSAGE_CREATE" => {
-                let msg_event: QqMessageEvent = match serde_json::from_value(data.clone()) {
+            "AT_MESSAGE_CREATE" => {
+                let msg_event: QqChannelMessageEvent = match serde_json::from_value(data.clone()) {
                     Ok(m) => m,
-                    Err(_) => return,
+                    Err(e) => {
+                        tracing::warn!("QQ failed to parse {}: {}", event_type, e);
+                        return;
+                    }
                 };
+                tracing::info!(
+                    "QQ {} from user={} id={} channel={}",
+                    event_type, msg_event.author.id, msg_event.id, msg_event.channel_id
+                );
 
                 if msg_event.author.id == *bot_id { return; }
-
-                let chat_id = msg_event.channel_id;
-                let chat_type = match event_type {
-                    "C2C_MESSAGE_CREATE" => ChatType::Dm,
-                    _ => ChatType::Group,
-                };
 
                 let inbound = InboundMessage {
                     id: msg_event.id,
                     platform: "qq".to_string(),
-                    chat_id,
-                    chat_type: chat_type.clone(),
+                    chat_id: msg_event.channel_id,
+                    chat_type: ChatType::Group,
                     chat_name: None,
                     text: msg_event.content,
                     author: MessageAuthor {
@@ -523,7 +550,95 @@ impl QqAdapter {
                     callback: None,
                     reply_to: None,
                     thread_id: None,
-                    is_group: chat_type == ChatType::Group,
+                    is_group: true,
+                    metadata: None,
+                };
+
+                let event = GatewayEvent::new(
+                    easybot_core::types::event::event_types::MESSAGE_INBOUND,
+                    "qq",
+                    serde_json::to_value(&inbound).unwrap_or_default(),
+                );
+                event_bus.publish(event);
+            }
+            "GROUP_AT_MESSAGE_CREATE" => {
+                let msg_event: QqGroupMessageEvent = match serde_json::from_value(data.clone()) {
+                    Ok(m) => m,
+                    Err(e) => {
+                        tracing::warn!("QQ failed to parse {}: {}", event_type, e);
+                        return;
+                    }
+                };
+                tracing::info!(
+                    "QQ {} from member={} id={} group={}",
+                    event_type, msg_event.author.member_openid, msg_event.id, msg_event.group_openid
+                );
+
+                // 群消息没有 bot 字段，无法通过 id 过滤自身消息
+                let openid = msg_event.group_openid.clone();
+                let member_id = msg_event.author.member_openid.clone();
+                let inbound = InboundMessage {
+                    id: msg_event.id,
+                    platform: "qq".to_string(),
+                    chat_id: openid,
+                    chat_type: ChatType::Group,
+                    chat_name: None,
+                    text: msg_event.content,
+                    author: MessageAuthor {
+                        id: member_id.clone(),
+                        name: Some(member_id),
+                        is_bot: false,
+                    },
+                    timestamp: chrono::Utc::now().timestamp_millis(),
+                    media: None,
+                    command: None,
+                    callback: None,
+                    reply_to: None,
+                    thread_id: None,
+                    is_group: true,
+                    metadata: None,
+                };
+
+                let event = GatewayEvent::new(
+                    easybot_core::types::event::event_types::MESSAGE_INBOUND,
+                    "qq",
+                    serde_json::to_value(&inbound).unwrap_or_default(),
+                );
+                event_bus.publish(event);
+            }
+            "C2C_MESSAGE_CREATE" => {
+                let msg_event: QqC2cMessageEvent = match serde_json::from_value(data.clone()) {
+                    Ok(m) => m,
+                    Err(e) => {
+                        tracing::warn!("QQ failed to parse {}: {}", event_type, e);
+                        return;
+                    }
+                };
+                tracing::info!(
+                    "QQ {} from user={} id={}",
+                    event_type, msg_event.author.user_openid, msg_event.id
+                );
+
+                let user_openid = msg_event.author.user_openid.clone();
+                let inbound = InboundMessage {
+                    id: msg_event.id,
+                    platform: "qq".to_string(),
+                    chat_id: user_openid.clone(),
+                    chat_type: ChatType::Dm,
+                    chat_name: None,
+                    text: msg_event.content,
+                    author: MessageAuthor {
+                        id: user_openid.clone(),
+                        name: None,
+                        is_bot: false,
+                    },
+                    timestamp: chrono::Utc::now().timestamp_millis(),
+                    media: None,
+                    command: None,
+                    callback: None,
+                    reply_to: None,
+                    thread_id: None,
+                    is_group: false,
                     metadata: None,
                 };
 
@@ -670,9 +785,16 @@ impl PlatformAdapter for QqAdapter {
     }
 
     async fn send(&self, params: SendTextParams) -> Result<SendResult, GatewayError> {
-        let path = format!("/channels/{}/messages", params.chat_id);
-        let body = serde_json::json!({ "content": params.message.text, "msg_type": 0 });
-        match self.api_post::<QqSendMessageResponse>(&path, &body).await {
+        let body = if let Some(ref reply_to) = params.reply_to {
+            serde_json::json!({
+                "content": params.message.text,
+                "msg_type": 0,
+                "msg_id": reply_to,
+            })
+        } else {
+            serde_json::json!({ "content": params.message.text, "msg_type": 0 })
+        };
+        match self.try_send(&params.chat_id, &body).await {
             Ok(resp) => {
                 self.messages_out.fetch_add(1, Ordering::Relaxed);
                 Ok(SendResult {
@@ -690,14 +812,13 @@ impl PlatformAdapter for QqAdapter {
     }
 
     async fn send_media(&self, params: SendMediaParams) -> Result<SendResult, GatewayError> {
-        let path = format!("/channels/{}/messages", params.chat_id);
         let image_url = params.media.url.unwrap_or_default();
         let body = serde_json::json!({
             "content": params.text.unwrap_or_default(),
             "image": image_url,
             "msg_type": 2,
         });
-        match self.api_post::<QqSendMessageResponse>(&path, &body).await {
+        match self.try_send(&params.chat_id, &body).await {
             Ok(resp) => {
                 self.messages_out.fetch_add(1, Ordering::Relaxed);
                 Ok(SendResult {

@@ -91,23 +91,57 @@ pub struct QqUser {
 
 // ── 消息 ──
 
-/// 消息事件数据（AT_MESSAGE_CREATE / C2C_MESSAGE_CREATE / GROUP_AT_MESSAGE_CREATE）
+/// 频道消息事件数据（AT_MESSAGE_CREATE）
 #[derive(Debug, Deserialize)]
-pub struct QqMessageEvent {
+pub struct QqChannelMessageEvent {
     pub id: String,
     pub channel_id: String,
+    #[serde(default)]
     pub guild_id: Option<String>,
-    pub group_id: Option<String>,
+    #[serde(default)]
     pub content: Option<String>,
     pub author: QqMessageAuthor,
+    pub timestamp: String,
+}
+
+/// 群聊消息事件数据（GROUP_AT_MESSAGE_CREATE）
+#[derive(Debug, Deserialize)]
+pub struct QqGroupMessageEvent {
+    pub id: String,
+    pub group_openid: String,
+    #[serde(default)]
+    pub content: Option<String>,
+    pub author: QqGroupMessageAuthor,
+    pub timestamp: String,
+}
+
+/// 私聊消息事件数据（C2C_MESSAGE_CREATE）
+#[derive(Debug, Deserialize)]
+pub struct QqC2cMessageEvent {
+    pub id: String,
+    #[serde(default)]
+    pub content: Option<String>,
+    pub author: QqC2cMessageAuthor,
     pub timestamp: String,
 }
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct QqMessageAuthor {
     pub id: String,
+    #[serde(default)]
     pub username: Option<String>,
+    #[serde(default)]
     pub bot: bool,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct QqGroupMessageAuthor {
+    pub member_openid: String,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct QqC2cMessageAuthor {
+    pub user_openid: String,
 }
 
 /// 发送消息请求体

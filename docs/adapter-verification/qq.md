@@ -65,6 +65,12 @@ cargo run --features full -- --debug
 | 自动启动 | ✅ | REST API 认证 → Gateway WebSocket 连接 |
 | 停止适配器 | ✅ | `POST /adapters/qq/stop` → `Stopped`, `connected: false` |
 | 重启适配器 | ✅ | `POST /adapters/qq/start` → `Connected`, `connected: true` |
+| **出站消息** | | |
+| 群聊消息发送（被动回复） | ✅ | 通过 `reply_to` 传 `msg_id`，使用 `/v2/groups/{openid}/messages` |
+| 主动消息发送 | ❌ | QQ 限制（需特殊权限），需通过被动回复方式 |
+| **入站消息** | | |
+| 群聊 @消息接收 | ✅ | `GROUP_AT_MESSAGE_CREATE` 成功解析存储 |
+| 自身消息过滤 | ❌ | 群消息不含 `bot` 字段，需另寻方案 |
 | **连接方式** | | |
 | Gateway WebSocket | ✅ | 使用 native-tls (系统 CA) |
 
@@ -86,6 +92,9 @@ cargo run --features full -- --debug
 | `Bot {appid}.{token}` 鉴权 401 | 更换为 `getAppAccessToken` + `QQBot {access_token}` | `lib.rs` |
 | `/users/@me` JSON 不含 `bot` 字段反序列化失败 | `QqUser.bot` 改为 `Option<bool>` | `types.rs` |
 | Gateway rustls 证书验证失败 | 改用 `native-tls`（系统 CA，支持 GlobalSign Atlas R3 CA） | `Cargo.toml`, `lib.rs` |
+| `GROUP_AT_MESSAGE_CREATE` 缺少 `channel_id` 字段解析失败 | 拆分为 `QqChannelMessageEvent` / `QqGroupMessageEvent` / `QqC2cMessageEvent` 三种消息结构 | `types.rs` |
+| 群聊消息发送使用 `/channels/` 路由返回"频道不存在" | 新增 `try_send()` 自动降级到 `/v2/groups/{openid}/messages` | `lib.rs` |
+| 主动消息"无权限"错误 | `send()` 增加 `msg_id` 参数支持被动回复 | `lib.rs` |
 
 ## 测试方法
 
