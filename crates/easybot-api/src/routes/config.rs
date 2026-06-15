@@ -1,7 +1,7 @@
 //! 配置管理路由
 
-use axum::{Json, extract::State};
 use crate::AppState;
+use axum::{extract::State, Json};
 
 /// 获取当前配置
 #[utoipa::path(
@@ -12,9 +12,7 @@ use crate::AppState;
         (status = 200, description = "Current gateway configuration", body = serde_json::Value),
     )
 )]
-pub async fn get_config(
-    State(state): State<AppState>,
-) -> Json<serde_json::Value> {
+pub async fn get_config(State(state): State<AppState>) -> Json<serde_json::Value> {
     // 从 ConfigManager 获取最新配置
     async {
         let config = state.config_manager.get().await;
@@ -43,9 +41,9 @@ pub async fn update_config(
         .unwrap_or(serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
 
     // 将 JSON 请求体转换为 YAML 值（用于合并）
-    let update_val: serde_yaml::Value = serde_yaml::from_str(
-        &serde_json::to_string(&body).unwrap_or_default()
-    ).unwrap_or(serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
+    let update_val: serde_yaml::Value =
+        serde_yaml::from_str(&serde_json::to_string(&body).unwrap_or_default())
+            .unwrap_or(serde_yaml::Value::Mapping(serde_yaml::Mapping::new()));
 
     // 合并配置
     let mut merged = current_val.clone();
@@ -57,11 +55,13 @@ pub async fn update_config(
             let _old = state.config_manager.swap(new_config).await;
 
             // 发布配置变更事件
-            state.event_bus.publish(easybot_core::types::event::GatewayEvent::new(
-                easybot_core::types::event::event_types::CONFIG_CHANGED,
-                "config",
-                serde_json::json!({"reload_type": "api"}),
-            ));
+            state
+                .event_bus
+                .publish(easybot_core::types::event::GatewayEvent::new(
+                    easybot_core::types::event::event_types::CONFIG_CHANGED,
+                    "config",
+                    serde_json::json!({"reload_type": "api"}),
+                ));
 
             tracing::info!("Configuration hot-reloaded via API");
 

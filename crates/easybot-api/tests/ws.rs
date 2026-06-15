@@ -48,7 +48,7 @@ impl WsClient {
             match tokio::time::timeout(Duration::from_secs(3), self.read.next()).await {
                 Ok(Some(Ok(Message::Text(text)))) => return Some(text.to_string()),
                 Ok(Some(Ok(Message::Close(_)))) => return None,
-                Ok(Some(Ok(_))) => continue, // 非文本帧，忽略
+                Ok(Some(Ok(_))) => continue,     // 非文本帧，忽略
                 Ok(Some(Err(_))) => return None, // 连接错误/中断 = 已断开
                 Ok(None) => return None,
                 Err(_) => return None, // 超时
@@ -65,10 +65,7 @@ impl WsClient {
 
     /// 关闭连接
     async fn close(&mut self) {
-        let _ = self
-            .write
-            .send(Message::Close(None))
-            .await;
+        let _ = self.write.send(Message::Close(None)).await;
     }
 }
 
@@ -125,11 +122,7 @@ async fn auth_ws(client: &mut WsClient, api_key: &str) {
         "Expected auth_ok response, got None (timeout or disconnect)"
     );
     let resp = resp.unwrap();
-    assert_eq!(
-        resp["type"], "auth_ok",
-        "Expected auth_ok, got: {:?}",
-        resp
-    );
+    assert_eq!(resp["type"], "auth_ok", "Expected auth_ok, got: {:?}", resp);
 }
 
 // ── 测试用例 ──
@@ -182,7 +175,10 @@ async fn test_ws_auth_failed_with_invalid_token() {
 
     // 连接应已关闭，再次接收应返回 None
     let next = client.recv_json().await;
-    assert!(next.is_none(), "Connection should be closed after auth_failed");
+    assert!(
+        next.is_none(),
+        "Connection should be closed after auth_failed"
+    );
 }
 
 #[tokio::test]
@@ -196,17 +192,19 @@ async fn test_ws_event_streaming_after_auth() {
     // 发布事件到 EventBus（等待一小段时间确保 WS handler 已订阅在 select! 中）
     tokio::time::sleep(Duration::from_millis(100)).await;
 
-    state.event_bus.publish(easybot_core::types::event::GatewayEvent {
-        event_type: "message.inbound".to_string(),
-        source: "test".to_string(),
-        timestamp: 1234567890,
-        data: json!({
-            "platform": "telegram",
-            "chat_id": "42",
-            "text": "hello from ws test",
-        }),
-        metadata: None,
-    });
+    state
+        .event_bus
+        .publish(easybot_core::types::event::GatewayEvent {
+            event_type: "message.inbound".to_string(),
+            source: "test".to_string(),
+            timestamp: 1234567890,
+            data: json!({
+                "platform": "telegram",
+                "chat_id": "42",
+                "text": "hello from ws test",
+            }),
+            metadata: None,
+        });
 
     // 客户端应收到事件帧
     let event = client.recv_json().await;
@@ -230,23 +228,27 @@ async fn test_ws_multiple_events_sequential() {
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     // 发布两个事件
-    state.event_bus.publish(easybot_core::types::event::GatewayEvent {
-        event_type: "message.inbound".to_string(),
-        source: "test".to_string(),
-        timestamp: 1000,
-        data: json!({"text": "first"}),
-        metadata: None,
-    });
+    state
+        .event_bus
+        .publish(easybot_core::types::event::GatewayEvent {
+            event_type: "message.inbound".to_string(),
+            source: "test".to_string(),
+            timestamp: 1000,
+            data: json!({"text": "first"}),
+            metadata: None,
+        });
 
     tokio::time::sleep(Duration::from_millis(50)).await;
 
-    state.event_bus.publish(easybot_core::types::event::GatewayEvent {
-        event_type: "adapter.connected".to_string(),
-        source: "test".to_string(),
-        timestamp: 2000,
-        data: json!({"platform": "telegram"}),
-        metadata: None,
-    });
+    state
+        .event_bus
+        .publish(easybot_core::types::event::GatewayEvent {
+            event_type: "adapter.connected".to_string(),
+            source: "test".to_string(),
+            timestamp: 2000,
+            data: json!({"platform": "telegram"}),
+            metadata: None,
+        });
 
     // 接收第一个事件
     let e1 = client.recv_json().await;
@@ -277,13 +279,15 @@ async fn test_ws_multiple_clients_receive_events() {
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     // 发布事件
-    state.event_bus.publish(easybot_core::types::event::GatewayEvent {
-        event_type: "message.inbound".to_string(),
-        source: "test".to_string(),
-        timestamp: 9999,
-        data: json!({"text": "broadcast test"}),
-        metadata: None,
-    });
+    state
+        .event_bus
+        .publish(easybot_core::types::event::GatewayEvent {
+            event_type: "message.inbound".to_string(),
+            source: "test".to_string(),
+            timestamp: 9999,
+            data: json!({"text": "broadcast test"}),
+            metadata: None,
+        });
 
     // 两个客户端都应收到
     let e1 = client1.recv_json().await;
@@ -335,13 +339,15 @@ async fn test_ws_client_clean_disconnect() {
     let mut client2 = connect_ws(addr, &key).await;
     auth_ws(&mut client2, &key).await;
 
-    state.event_bus.publish(easybot_core::types::event::GatewayEvent {
-        event_type: "message.inbound".to_string(),
-        source: "test".to_string(),
-        timestamp: 12345,
-        data: json!({"text": "after disconnect"}),
-        metadata: None,
-    });
+    state
+        .event_bus
+        .publish(easybot_core::types::event::GatewayEvent {
+            event_type: "message.inbound".to_string(),
+            source: "test".to_string(),
+            timestamp: 12345,
+            data: json!({"text": "after disconnect"}),
+            metadata: None,
+        });
 
     let event = client2.recv_json().await;
     assert!(event.is_some(), "New client should still receive events");

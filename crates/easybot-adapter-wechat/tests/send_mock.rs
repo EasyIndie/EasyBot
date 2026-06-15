@@ -4,9 +4,9 @@
 //! WeChat send() 从 config.extra 中读取 bot_token，无 token 刷新流程。
 
 use easybot_core::types::adapter::{AdapterConfig, AdapterState, PlatformAdapter};
-use easybot_core::types::message::{SendTextParams, OutboundMessage, ParseMode};
-use wiremock::{Mock, MockServer, ResponseTemplate};
+use easybot_core::types::message::{OutboundMessage, ParseMode, SendTextParams};
 use wiremock::matchers::{method, path};
+use wiremock::{Mock, MockServer, ResponseTemplate};
 
 /// 构建测试用的微信适配器
 async fn make_adapter(mock_port: u16) -> impl PlatformAdapter {
@@ -93,8 +93,11 @@ async fn test_send_uses_msg_id_str_fallback() {
     let result = adapter.send(send_text_params()).await.unwrap();
 
     assert!(result.success);
-    assert_eq!(result.message_id, Some("str-msg-001".to_string()),
-        "should prefer msg_id_str when msg_id is absent");
+    assert_eq!(
+        result.message_id,
+        Some("str-msg-001".to_string()),
+        "should prefer msg_id_str when msg_id is absent"
+    );
 
     mock_server.verify().await;
 }
@@ -224,7 +227,10 @@ async fn test_connect_success_with_credentials() {
     assert_eq!(adapter.state(), AdapterState::Starting);
 
     let result = adapter.connect().await.unwrap();
-    assert!(result.ok, "connect should succeed with credentials in config");
+    assert!(
+        result.ok,
+        "connect should succeed with credentials in config"
+    );
     assert_eq!(adapter.state(), AdapterState::Connected);
 }
 

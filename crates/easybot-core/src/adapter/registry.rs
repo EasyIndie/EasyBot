@@ -13,8 +13,11 @@ use crate::types::BoxFuture;
 /// 适配器工厂
 ///
 /// 接收配置，返回适配器实例。
-pub type AdapterFactory =
-    Arc<dyn Fn(AdapterConfig) -> BoxFuture<'static, Result<Box<dyn PlatformAdapter>, String>> + Send + Sync>;
+pub type AdapterFactory = Arc<
+    dyn Fn(AdapterConfig) -> BoxFuture<'static, Result<Box<dyn PlatformAdapter>, String>>
+        + Send
+        + Sync,
+>;
 
 /// 适配器注册表
 ///
@@ -37,12 +40,7 @@ impl AdapterRegistry {
     }
 
     /// 注册适配器工厂
-    pub async fn register(
-        &self,
-        platform: &str,
-        display_name: &str,
-        factory: AdapterFactory,
-    ) {
+    pub async fn register(&self, platform: &str, display_name: &str, factory: AdapterFactory) {
         let mut factories = self.factories.write().await;
         factories.insert(
             platform.to_string(),

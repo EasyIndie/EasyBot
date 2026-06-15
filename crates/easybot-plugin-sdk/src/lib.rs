@@ -8,20 +8,15 @@ pub use ffi::EASYBOT_PLUGIN_ABI_VERSION;
 
 // 重新导出核心类型
 pub use easybot_core::types::adapter::{
-    PlatformAdapter, AdapterConfig, AdapterRuntimeConfig,
-    Capability, CapabilityName, CapabilityLimits,
-    AdapterState, HealthStatus, HealthReport,
-    ConnectResult, InitResult, BotInfo,
-    AdapterStatusSummary,
+    AdapterConfig, AdapterRuntimeConfig, AdapterState, AdapterStatusSummary, BotInfo, Capability,
+    CapabilityLimits, CapabilityName, ConnectResult, HealthReport, HealthStatus, InitResult,
+    PlatformAdapter,
 };
 
 pub use easybot_core::types::message::{
-    InboundMessage, OutboundMessage,
-    SendTextParams, SendMediaParams, SendInteractiveParams,
-    EditMessageParams, SendResult, EditResult, DeleteResult,
-    ChatInfo, ChatFilter,
-    ChatType, MessageAuthor, MediaAttachment, MediaType,
-    ParseMode, CallbackEvent,
+    CallbackEvent, ChatFilter, ChatInfo, ChatType, DeleteResult, EditMessageParams, EditResult,
+    InboundMessage, MediaAttachment, MediaType, MessageAuthor, OutboundMessage, ParseMode,
+    SendInteractiveParams, SendMediaParams, SendResult, SendTextParams,
 };
 
 pub use easybot_core::types::error::GatewayError;
@@ -32,18 +27,12 @@ pub use async_trait::async_trait;
 /// 插件开发者一站式导入
 pub mod prelude {
     pub use crate::{
-        declare_plugin, EASYBOT_PLUGIN_ABI_VERSION,
-        PlatformAdapter, AdapterConfig, AdapterRuntimeConfig,
-        Capability, CapabilityName, CapabilityLimits,
-        AdapterState, HealthStatus, HealthReport,
-        ConnectResult, InitResult, BotInfo,
-        AdapterStatusSummary,
-        InboundMessage, OutboundMessage,
-        SendTextParams, SendMediaParams, SendInteractiveParams,
-        EditMessageParams, SendResult, EditResult, DeleteResult,
-        ChatInfo, ChatFilter, ChatType, MessageAuthor,
-        MediaAttachment, MediaType, ParseMode, CallbackEvent,
-        GatewayError, SessionSource,
+        declare_plugin, AdapterConfig, AdapterRuntimeConfig, AdapterState, AdapterStatusSummary,
+        BotInfo, CallbackEvent, Capability, CapabilityLimits, CapabilityName, ChatFilter, ChatInfo,
+        ChatType, ConnectResult, DeleteResult, EditMessageParams, EditResult, GatewayError,
+        HealthReport, HealthStatus, InboundMessage, InitResult, MediaAttachment, MediaType,
+        MessageAuthor, OutboundMessage, ParseMode, PlatformAdapter, SendInteractiveParams,
+        SendMediaParams, SendResult, SendTextParams, SessionSource, EASYBOT_PLUGIN_ABI_VERSION,
     };
     pub use async_trait::async_trait;
 }

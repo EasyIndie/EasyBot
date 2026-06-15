@@ -3,9 +3,9 @@
 //! 定义会话（Session）的数据结构，用于持久化对话上下文。
 //! 会话以 session_key（platform:chatId[:threadId]）作为唯一标识。
 
+use crate::types::message::ChatType;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
-use crate::types::message::ChatType;
 
 /// 会话
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]

@@ -10,12 +10,12 @@
 //! - 所有裸指针操作限制在 `create_adapter()` 方法内
 //! - ABI 版本号在创建适配器前校验
 
+use libloading::{Library, Symbol};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{info, warn};
-use libloading::{Library, Symbol};
 
 use super::manifest::PluginManifest;
 use crate::adapter::{AdapterFactory, AdapterRegistry};
@@ -89,12 +89,8 @@ impl PluginLibrary {
     ///
     /// 返回的 `Box<dyn PlatformAdapter>` 包含指向本库代码段的函数指针。
     /// 本 `PluginLibrary` 实例必须比所有适配器存活得更久。
-    pub unsafe fn create_adapter(
-        &self,
-    ) -> Result<Box<dyn PlatformAdapter>, PluginError> {
-        let create: Symbol<
-            unsafe extern "C" fn() -> *mut std::ffi::c_void,
-        > = self
+    pub unsafe fn create_adapter(&self) -> Result<Box<dyn PlatformAdapter>, PluginError> {
+        let create: Symbol<unsafe extern "C" fn() -> *mut std::ffi::c_void> = self
             .inner
             .get(b"easybot_plugin_create")
             .map_err(|e| PluginError::SymbolNotFound {
@@ -171,9 +167,7 @@ impl PluginLoader {
     /// 扫描并加载所有有效插件
     ///
     /// 返回成功列表和失败列表。单插件失败不影响其他插件。
-    pub async fn load_all(
-        &self,
-    ) -> (Vec<PluginLoadResult>, Vec<(PathBuf, PluginError)>) {
+    pub async fn load_all(&self) -> (Vec<PluginLoadResult>, Vec<(PathBuf, PluginError)>) {
         let mut succeeded = Vec::new();
         let mut failed = Vec::new();
 
@@ -206,11 +200,7 @@ impl PluginLoader {
                     succeeded.push(result);
                 }
                 Err(e) => {
-                    warn!(
-                        "Failed to load plugin from {}: {}",
-                        path.display(),
-                        e
-                    );
+                    warn!("Failed to load plugin from {}: {}", path.display(), e);
                     failed.push((path, e));
                 }
             }
@@ -220,10 +210,7 @@ impl PluginLoader {
     }
 
     /// 加载单个插件目录
-    async fn load_single(
-        &self,
-        dir: &Path,
-    ) -> Result<PluginLoadResult, PluginError> {
+    async fn load_single(&self, dir: &Path) -> Result<PluginLoadResult, PluginError> {
         // 1. 解析 plugin.yaml
         let manifest_path = dir.join("plugin.yaml");
         if !manifest_path.exists() {
@@ -236,11 +223,9 @@ impl PluginLoader {
             }
         })?;
         let manifest: PluginManifest =
-            serde_yaml::from_str(&content).map_err(|e| {
-                PluginError::ManifestParseError {
-                    path: manifest_path,
-                    detail: e.to_string(),
-                }
+            serde_yaml::from_str(&content).map_err(|e| PluginError::ManifestParseError {
+                path: manifest_path,
+                detail: e.to_string(),
             })?;
 
         // 2. 定位动态库
@@ -253,11 +238,9 @@ impl PluginLoader {
         // SAFETY: dlopen/dlsym 是 unsafe 操作，因为动态库中的代码
         // 在执行构造函数时立即运行。我们已经验证了文件存在性。
         let library = unsafe {
-            Library::new(&lib_path).map_err(|e| {
-                PluginError::LibraryLoadError {
-                    path: lib_path.clone(),
-                    detail: e.to_string(),
-                }
+            Library::new(&lib_path).map_err(|e| PluginError::LibraryLoadError {
+                path: lib_path.clone(),
+                detail: e.to_string(),
             })?
         };
 
@@ -293,7 +276,10 @@ impl PluginLoader {
         let arc_lib = Arc::new(plugin_lib);
         {
             let mut loaded = self.loaded.write().await;
-            loaded.insert(platform_name.clone(), (arc_lib.clone(), display_name.clone()));
+            loaded.insert(
+                platform_name.clone(),
+                (arc_lib.clone(), display_name.clone()),
+            );
         }
 
         Ok(PluginLoadResult {
@@ -329,15 +315,14 @@ impl PluginLoader {
 
                     adapter.set_event_bus(eb);
 
-                    let init_result = adapter.init(config).await.map_err(|e| {
-                        format!("plugin '{}' init failed: {}", p, e)
-                    })?;
+                    let init_result = adapter
+                        .init(config)
+                        .await
+                        .map_err(|e| format!("plugin '{}' init failed: {}", p, e))?;
                     if !init_result.ok {
                         return Err(init_result
                             .error
-                            .unwrap_or_else(|| {
-                                format!("plugin '{}' init returned error", p)
-                            }));
+                            .unwrap_or_else(|| format!("plugin '{}' init returned error", p)));
                     }
                     Ok(adapter)
                 }
@@ -346,23 +331,18 @@ impl PluginLoader {
     }
 
     /// 注册所有已加载插件到适配器注册表
-    pub async fn register_all(
-        &self,
-        registry: &AdapterRegistry,
-        event_bus: Arc<EventBus>,
-    ) {
+    pub async fn register_all(&self, registry: &AdapterRegistry, event_bus: Arc<EventBus>) {
         let platforms: Vec<(String, String)> = {
             let loaded = self.loaded.read().await;
-            loaded.iter()
+            loaded
+                .iter()
                 .map(|(name, (_, display))| (name.clone(), display.clone()))
                 .collect()
         };
 
         for (platform, display_name) in platforms {
             if let Some(factory) = self.get_factory(&platform, event_bus.clone()).await {
-                registry
-                    .register(&platform, &display_name, factory)
-                    .await;
+                registry.register(&platform, &display_name, factory).await;
             }
         }
     }
@@ -411,8 +391,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_load_from_nonexistent_dir() {
-        let loader =
-            PluginLoader::new(PathBuf::from("/tmp/nonexistent-plugin-dir-12345"));
+        let loader = PluginLoader::new(PathBuf::from("/tmp/nonexistent-plugin-dir-12345"));
         let (succeeded, failed) = loader.load_all().await;
         assert!(succeeded.is_empty());
         assert!(failed.is_empty());
@@ -420,8 +399,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_load_all_idempotent() {
-        let loader =
-            PluginLoader::new(PathBuf::from("/tmp/nonexistent-plugin-dir-12345"));
+        let loader = PluginLoader::new(PathBuf::from("/tmp/nonexistent-plugin-dir-12345"));
         let (s1, f1) = loader.load_all().await;
         let (s2, f2) = loader.load_all().await;
         assert_eq!(s1.len(), s2.len(), "should return same number of succeeded");
@@ -431,7 +409,8 @@ mod tests {
     #[tokio::test]
     async fn test_load_all_skips_files() {
         // 顶层有文件而非目录时，应跳过
-        let dir = std::env::temp_dir().join(format!("plugin-test-skips-files-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("plugin-test-skips-files-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         // 创建一个文件（非目录）
@@ -447,7 +426,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_load_single_missing_manifest() {
-        let dir = std::env::temp_dir().join(format!("plugin-test-missing-manifest-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!(
+            "plugin-test-missing-manifest-{}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
 
@@ -460,20 +442,30 @@ mod tests {
 
     #[tokio::test]
     async fn test_load_single_invalid_yaml() {
-        let dir = std::env::temp_dir().join(format!("plugin-test-invalid-yaml-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("plugin-test-invalid-yaml-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        create_plugin_subdir(dir.parent().unwrap(), dir.file_name().unwrap().to_str().unwrap(), "invalid_yaml: [", false);
+        create_plugin_subdir(
+            dir.parent().unwrap(),
+            dir.file_name().unwrap().to_str().unwrap(),
+            "invalid_yaml: [",
+            false,
+        );
 
         let loader = PluginLoader::new(dir.parent().unwrap().to_path_buf());
         let result = loader.load_single(&dir).await;
-        assert!(matches!(result, Err(PluginError::ManifestParseError { .. })));
+        assert!(matches!(
+            result,
+            Err(PluginError::ManifestParseError { .. })
+        ));
 
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[tokio::test]
     async fn test_load_single_missing_library() {
-        let dir = std::env::temp_dir().join(format!("plugin-test-missing-lib-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("plugin-test-missing-lib-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         create_plugin_subdir(
             dir.parent().unwrap(),
@@ -534,14 +526,22 @@ library: "libmissing.so"
 
     #[tokio::test]
     async fn test_get_factory_for_unknown_plugin() {
-        let dir = std::env::temp_dir().join(format!("plugin-test-unknown-factory-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!(
+            "plugin-test-unknown-factory-{}",
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
 
         let loader = PluginLoader::new(dir.clone());
         // 没有加载任何插件时，get_factory 应返回 None
-        let factory = loader.get_factory("unknown", Arc::new(crate::bus::EventBus::new())).await;
-        assert!(factory.is_none(), "factory for unknown plugin should be None");
+        let factory = loader
+            .get_factory("unknown", Arc::new(crate::bus::EventBus::new()))
+            .await;
+        assert!(
+            factory.is_none(),
+            "factory for unknown plugin should be None"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -562,7 +562,8 @@ library: "libmissing.so"
 
     #[tokio::test]
     async fn test_register_all_empty_registry() {
-        let dir = std::env::temp_dir().join(format!("plugin-test-empty-reg-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("plugin-test-empty-reg-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
 

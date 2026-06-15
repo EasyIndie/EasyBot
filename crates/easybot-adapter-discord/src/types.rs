@@ -144,7 +144,8 @@ mod tests {
 
     #[test]
     fn test_discord_user_deserialize_with_bot_field() {
-        let json = r#"{"id":"123","username":"test","global_name":"Test","bot":true,"avatar":null}"#;
+        let json =
+            r#"{"id":"123","username":"test","global_name":"Test","bot":true,"avatar":null}"#;
         let user: DiscordUser = serde_json::from_str(json).unwrap();
         assert_eq!(user.id, "123");
         assert_eq!(user.bot, Some(true));
@@ -162,7 +163,8 @@ mod tests {
 
     #[test]
     fn test_discord_user_deserialize_bot_false() {
-        let json = r#"{"id":"789","username":"human","global_name":null,"bot":false,"avatar":"abc"}"#;
+        let json =
+            r#"{"id":"789","username":"human","global_name":null,"bot":false,"avatar":"abc"}"#;
         let user: DiscordUser = serde_json::from_str(json).unwrap();
         assert_eq!(user.bot, Some(false));
     }

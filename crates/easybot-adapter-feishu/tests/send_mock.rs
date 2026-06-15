@@ -6,11 +6,11 @@
 
 use easybot_core::types::adapter::{AdapterConfig, AdapterState, PlatformAdapter};
 use easybot_core::types::message::{
-    SendTextParams, SendInteractiveParams, EditMessageParams,
-    OutboundMessage, ParseMode, InlineKeyboard, KeyboardRow, Button,
+    Button, EditMessageParams, InlineKeyboard, KeyboardRow, OutboundMessage, ParseMode,
+    SendInteractiveParams, SendTextParams,
 };
-use wiremock::{Mock, MockServer, ResponseTemplate};
 use wiremock::matchers::{method, path};
+use wiremock::{Mock, MockServer, ResponseTemplate};
 
 /// 构建测试用的飞书适配器
 async fn make_adapter(mock_port: u16) -> impl PlatformAdapter {
@@ -278,7 +278,10 @@ async fn test_connect_fails_without_mock() {
     adapter.init(config).await.unwrap();
 
     let result = adapter.connect().await;
-    assert!(result.is_err(), "connect should fail without reachable auth endpoint");
+    assert!(
+        result.is_err(),
+        "connect should fail without reachable auth endpoint"
+    );
 }
 
 #[tokio::test]
@@ -314,7 +317,7 @@ async fn test_disconnect_sets_stopped() {
 
     // 重复断开应幂等
     adapter.disconnect().await.unwrap();
-	}
+}
 
 // ── send_interactive() 测试 ──
 
@@ -323,22 +326,20 @@ fn interactive_params() -> SendInteractiveParams {
         chat_id: "oc_abc123".to_string(),
         text: "Choose an option:".to_string(),
         keyboard: InlineKeyboard {
-            rows: vec![
-                KeyboardRow {
-                    buttons: vec![
-                        Button {
-                            text: "Confirm".to_string(),
-                            callback_data: Some("confirm".to_string()),
-                            url: None,
-                        },
-                        Button {
-                            text: "Cancel".to_string(),
-                            callback_data: Some("cancel".to_string()),
-                            url: None,
-                        },
-                    ],
-                },
-            ],
+            rows: vec![KeyboardRow {
+                buttons: vec![
+                    Button {
+                        text: "Confirm".to_string(),
+                        callback_data: Some("confirm".to_string()),
+                        url: None,
+                    },
+                    Button {
+                        text: "Cancel".to_string(),
+                        callback_data: Some("cancel".to_string()),
+                        url: None,
+                    },
+                ],
+            }],
         },
         reply_to: None,
     }
@@ -357,7 +358,10 @@ async fn test_send_interactive_success() {
         .await;
 
     let adapter = make_adapter(mock_server.address().port()).await;
-    let result = adapter.send_interactive(interactive_params()).await.unwrap();
+    let result = adapter
+        .send_interactive(interactive_params())
+        .await
+        .unwrap();
 
     assert!(result.success, "send_interactive should succeed");
     assert_eq!(result.message_id, Some("om_abc123xyz".to_string()));
@@ -378,9 +382,15 @@ async fn test_send_interactive_http_error() {
         .await;
 
     let adapter = make_adapter(mock_server.address().port()).await;
-    let result = adapter.send_interactive(interactive_params()).await.unwrap();
+    let result = adapter
+        .send_interactive(interactive_params())
+        .await
+        .unwrap();
 
-    assert!(!result.success, "send_interactive should fail with HTTP 500");
+    assert!(
+        !result.success,
+        "send_interactive should fail with HTTP 500"
+    );
 }
 
 #[tokio::test]
@@ -399,9 +409,15 @@ async fn test_send_interactive_api_error() {
         .await;
 
     let adapter = make_adapter(mock_server.address().port()).await;
-    let result = adapter.send_interactive(interactive_params()).await.unwrap();
+    let result = adapter
+        .send_interactive(interactive_params())
+        .await
+        .unwrap();
 
-    assert!(!result.success, "send_interactive should fail with API error");
+    assert!(
+        !result.success,
+        "send_interactive should fail with API error"
+    );
 }
 
 // ── edit_message() 测试 ──
@@ -423,17 +439,23 @@ async fn test_edit_message_success() {
         .await;
 
     let adapter = make_adapter(mock_server.address().port()).await;
-    let result = adapter.edit_message(EditMessageParams {
-        chat_id: "oc_abc123".to_string(),
-        message_id: "om_test_msg".to_string(),
-        message: OutboundMessage {
-            text: "edited content".to_string(),
-            parse_mode: ParseMode::None,
-        },
-        keyboard: None,
-    }).await;
+    let result = adapter
+        .edit_message(EditMessageParams {
+            chat_id: "oc_abc123".to_string(),
+            message_id: "om_test_msg".to_string(),
+            message: OutboundMessage {
+                text: "edited content".to_string(),
+                parse_mode: ParseMode::None,
+            },
+            keyboard: None,
+        })
+        .await;
 
-    assert!(result.is_ok(), "edit_message should succeed, got err: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "edit_message should succeed, got err: {:?}",
+        result.err()
+    );
 }
 
 #[tokio::test]
@@ -452,17 +474,22 @@ async fn test_edit_message_api_error() {
         .await;
 
     let adapter = make_adapter(mock_server.address().port()).await;
-    let result = adapter.edit_message(EditMessageParams {
-        chat_id: "oc_abc123".to_string(),
-        message_id: "om_nonexistent".to_string(),
-        message: OutboundMessage {
-            text: "edited".to_string(),
-            parse_mode: ParseMode::None,
-        },
-        keyboard: None,
-    }).await;
+    let result = adapter
+        .edit_message(EditMessageParams {
+            chat_id: "oc_abc123".to_string(),
+            message_id: "om_nonexistent".to_string(),
+            message: OutboundMessage {
+                text: "edited".to_string(),
+                parse_mode: ParseMode::None,
+            },
+            keyboard: None,
+        })
+        .await;
 
-    assert!(result.is_err(), "edit_message should return error for nonexistent message");
+    assert!(
+        result.is_err(),
+        "edit_message should return error for nonexistent message"
+    );
 }
 
 #[tokio::test]
@@ -478,15 +505,20 @@ async fn test_edit_message_http_error() {
         .await;
 
     let adapter = make_adapter(mock_server.address().port()).await;
-    let result = adapter.edit_message(EditMessageParams {
-        chat_id: "oc_abc123".to_string(),
-        message_id: "om_test_msg".to_string(),
-        message: OutboundMessage {
-            text: "edited".to_string(),
-            parse_mode: ParseMode::None,
-        },
-        keyboard: None,
-    }).await;
+    let result = adapter
+        .edit_message(EditMessageParams {
+            chat_id: "oc_abc123".to_string(),
+            message_id: "om_test_msg".to_string(),
+            message: OutboundMessage {
+                text: "edited".to_string(),
+                parse_mode: ParseMode::None,
+            },
+            keyboard: None,
+        })
+        .await;
 
-    assert!(result.is_err(), "edit_message should return error with HTTP 500");
+    assert!(
+        result.is_err(),
+        "edit_message should return error with HTTP 500"
+    );
 }

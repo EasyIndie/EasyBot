@@ -14,12 +14,7 @@ use tower::ServiceExt;
 mod common;
 
 /// 辅助：构造 HTTP 请求
-fn build_req(
-    method: &str,
-    path: &str,
-    api_key: Option<&str>,
-    body: Option<&str>,
-) -> Request<Body> {
+fn build_req(method: &str, path: &str, api_key: Option<&str>, body: Option<&str>) -> Request<Body> {
     let mut builder = Request::builder()
         .method(method)
         .uri(path)
@@ -104,7 +99,9 @@ async fn test_protected_route_returns_401_without_key() {
     let (status, json) = get(state, "/api/v1/adapters", None).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
     assert!(
-        json["error"]["message"].is_string() || json["message"].is_string() || json["error_code"].is_string(),
+        json["error"]["message"].is_string()
+            || json["message"].is_string()
+            || json["error_code"].is_string(),
         "Expected error message in response, got: {:#?}",
         json
     );
@@ -113,7 +110,8 @@ async fn test_protected_route_returns_401_without_key() {
 #[tokio::test]
 async fn test_protected_route_returns_401_with_invalid_key() {
     let (state, _) = common::test_app_state().await;
-    let (status, _) = send_request(state, "GET", "/api/v1/adapters", Some("invalid-key"), None).await;
+    let (status, _) =
+        send_request(state, "GET", "/api/v1/adapters", Some("invalid-key"), None).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 }
 
@@ -166,7 +164,11 @@ async fn test_send_message_with_invalid_target() {
     let body = r#"{"target": "", "text": "hello"}"#;
     let (status, _) = post(state, "/api/v1/messages/send", Some(&key), Some(body)).await;
     // 空 target 应该返回客户端错误
-    assert!(status.is_client_error(), "expected client error, got {}", status);
+    assert!(
+        status.is_client_error(),
+        "expected client error, got {}",
+        status
+    );
 }
 
 #[tokio::test]

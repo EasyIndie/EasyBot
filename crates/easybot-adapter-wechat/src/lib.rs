@@ -26,15 +26,15 @@
 //! - 不支持 Markdown、贴纸、小程序消息
 //! - 媒体文件需要 AES-128-ECB 加解密（当前仅支持文本消息）
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
 use easybot_core::bus::EventBus;
 use easybot_core::types::adapter::*;
-use easybot_core::types::message::*;
 use easybot_core::types::error::GatewayError;
+use easybot_core::types::message::*;
 
 /// iLink Bot API 基础 URL
 const ILINK_API: &str = "https://ilinkai.weixin.qq.com";
@@ -89,7 +89,8 @@ fn save_credentials_to_disk(creds: &WeChatCredentials) {
                     #[cfg(unix)]
                     {
                         use std::os::unix::fs::PermissionsExt;
-                        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+                        let _ =
+                            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
                     }
                     tracing::info!("个人微信凭据已保存到 {:?}", path);
                 }
@@ -285,13 +286,33 @@ impl WeChatAdapter {
             state: AdapterState::Created,
             bot_info: None,
             capabilities: vec![
-                Capability { name: CapabilityName::Text, supported: true, limits: None },
+                Capability {
+                    name: CapabilityName::Text,
+                    supported: true,
+                    limits: None,
+                },
                 // Image/Audio/Video/Document 标记为 false，因为媒体发送依赖 AES-128-ECB
                 // 加密，第一阶段暂未实现
-                Capability { name: CapabilityName::Image, supported: false, limits: None },
-                Capability { name: CapabilityName::Audio, supported: false, limits: None },
-                Capability { name: CapabilityName::Video, supported: false, limits: None },
-                Capability { name: CapabilityName::Document, supported: false, limits: None },
+                Capability {
+                    name: CapabilityName::Image,
+                    supported: false,
+                    limits: None,
+                },
+                Capability {
+                    name: CapabilityName::Audio,
+                    supported: false,
+                    limits: None,
+                },
+                Capability {
+                    name: CapabilityName::Video,
+                    supported: false,
+                    limits: None,
+                },
+                Capability {
+                    name: CapabilityName::Document,
+                    supported: false,
+                    limits: None,
+                },
             ],
             messages_in: AtomicU64::new(0),
             messages_out: AtomicU64::new(0),
@@ -318,9 +339,9 @@ impl WeChatAdapter {
     }
 
     fn client(&self) -> Result<&reqwest::Client, GatewayError> {
-        self.http_client.as_ref().ok_or_else(|| {
-            GatewayError::Internal("HTTP client not initialized".to_string())
-        })
+        self.http_client
+            .as_ref()
+            .ok_or_else(|| GatewayError::Internal("HTTP client not initialized".to_string()))
     }
 
     /// 返回 API 基础 URL（支持通过 config.base_url 覆盖）
@@ -365,16 +386,26 @@ fn base64_encode_uin(uin: u32) -> String {
 
 #[async_trait]
 impl PlatformAdapter for WeChatAdapter {
-    fn platform_name(&self) -> &str { &self.platform_name }
-    fn display_name(&self) -> &str { &self.display_name }
-    fn capabilities(&self) -> &[Capability] { &self.capabilities }
+    fn platform_name(&self) -> &str {
+        &self.platform_name
+    }
+    fn display_name(&self) -> &str {
+        &self.display_name
+    }
+    fn capabilities(&self) -> &[Capability] {
+        &self.capabilities
+    }
 
     async fn init(&mut self, config: AdapterConfig) -> Result<InitResult, GatewayError> {
         self.config = Some(config);
-        self.http_client = Some(reqwest::Client::builder()
-            .timeout(Duration::from_secs(60)) // 长轮询需要较长超时
-            .build()
-            .map_err(|e| GatewayError::Internal(format!("Failed to create HTTP client: {}", e)))?);
+        self.http_client = Some(
+            reqwest::Client::builder()
+                .timeout(Duration::from_secs(60)) // 长轮询需要较长超时
+                .build()
+                .map_err(|e| {
+                    GatewayError::Internal(format!("Failed to create HTTP client: {}", e))
+                })?,
+        );
 
         // 尝试从配置中恢复凭据
         let extra = self.config.as_ref().unwrap().extra.clone();
@@ -399,7 +430,10 @@ impl PlatformAdapter for WeChatAdapter {
         }
 
         self.state = AdapterState::Starting;
-        Ok(InitResult { ok: true, error: None })
+        Ok(InitResult {
+            ok: true,
+            error: None,
+        })
     }
 
     async fn connect(&mut self) -> Result<ConnectResult, GatewayError> {
@@ -410,24 +444,32 @@ impl PlatformAdapter for WeChatAdapter {
             tracing::info!("个人微信适配器：需要扫码登录");
 
             // 获取 QR 码
-            let qr_url = format!("{}/ilink/bot/get_bot_qrcode?bot_type=3", self.api_base_url());
-            let qr_resp: QrCodeResponse = client.get(&qr_url)
+            let qr_url = format!(
+                "{}/ilink/bot/get_bot_qrcode?bot_type=3",
+                self.api_base_url()
+            );
+            let qr_resp: QrCodeResponse = client
+                .get(&qr_url)
                 .send()
                 .await
                 .map_err(|e| GatewayError::Internal(format!("Failed to get QR code: {}", e)))?
                 .json()
                 .await
-                .map_err(|e| GatewayError::Internal(format!("Failed to parse QR response: {}", e)))?;
+                .map_err(|e| {
+                    GatewayError::Internal(format!("Failed to parse QR response: {}", e))
+                })?;
 
             if qr_resp.ret != 0 {
                 return Err(GatewayError::Internal(format!(
-                    "Get QR code failed: {} (ret {})", qr_resp.errmsg.unwrap_or_default(), qr_resp.ret
+                    "Get QR code failed: {} (ret {})",
+                    qr_resp.errmsg.unwrap_or_default(),
+                    qr_resp.ret
                 )));
             }
 
-            let qrcode = qr_resp.qrcode.ok_or_else(|| {
-                GatewayError::Internal("No qrcode in response".to_string())
-            })?;
+            let qrcode = qr_resp
+                .qrcode
+                .ok_or_else(|| GatewayError::Internal("No qrcode in response".to_string()))?;
 
             // 打印 QR 码（终端 ASCII + URL 备用）
             if let Some(img) = &qr_resp.qrcode_img {
@@ -437,7 +479,11 @@ impl PlatformAdapter for WeChatAdapter {
             }
 
             // 轮询扫码状态（最多 120 秒）
-            let status_url = format!("{}/ilink/bot/get_qrcode_status?qrcode={}", self.api_base_url(), qrcode);
+            let status_url = format!(
+                "{}/ilink/bot/get_qrcode_status?qrcode={}",
+                self.api_base_url(),
+                qrcode
+            );
             let mut logged = false;
             let mut token: Option<String> = None;
             let mut bot_id: Option<String> = None;
@@ -446,13 +492,16 @@ impl PlatformAdapter for WeChatAdapter {
 
             for _ in 0..120 {
                 tokio::time::sleep(Duration::from_secs(1)).await;
-                let status_resp: QrCodeStatusResponse = client.get(&status_url)
+                let status_resp: QrCodeStatusResponse = client
+                    .get(&status_url)
                     .send()
                     .await
                     .map_err(|e| GatewayError::Internal(format!("QR status poll failed: {}", e)))?
                     .json()
                     .await
-                    .map_err(|e| GatewayError::Internal(format!("QR status parse failed: {}", e)))?;
+                    .map_err(|e| {
+                        GatewayError::Internal(format!("QR status parse failed: {}", e))
+                    })?;
 
                 match status_resp.status.as_deref() {
                     Some("confirmed") => {
@@ -481,9 +530,8 @@ impl PlatformAdapter for WeChatAdapter {
                 }
             }
 
-            let bot_token = token.ok_or_else(|| {
-                GatewayError::Internal("QR login timeout or failed".to_string())
-            })?;
+            let bot_token = token
+                .ok_or_else(|| GatewayError::Internal("QR login timeout or failed".to_string()))?;
 
             // 保存凭据（内存）
             *self.bot_token.write().await = Some(bot_token.clone());
@@ -512,7 +560,12 @@ impl PlatformAdapter for WeChatAdapter {
         }
 
         // 设置 bot_info
-        let bot_id = self.ilink_bot_id.read().await.clone().unwrap_or_else(|| "wechat_bot".to_string());
+        let bot_id = self
+            .ilink_bot_id
+            .read()
+            .await
+            .clone()
+            .unwrap_or_else(|| "wechat_bot".to_string());
         self.bot_info = Some(BotInfo {
             name: "个人微信".to_string(),
             username: Some(bot_id.clone()),
@@ -531,7 +584,9 @@ impl PlatformAdapter for WeChatAdapter {
             let client = self.client()?.clone();
             let token = self.bot_token.read().await.clone().unwrap_or_default();
             let buf = self.updates_buf.read().await.clone().unwrap_or_default();
-            let base_url = self.config.as_ref()
+            let base_url = self
+                .config
+                .as_ref()
                 .and_then(|c| c.base_url.clone())
                 .unwrap_or_else(|| ILINK_API.to_string());
 
@@ -540,7 +595,11 @@ impl PlatformAdapter for WeChatAdapter {
             });
         }
 
-        Ok(ConnectResult { ok: true, error: None, bot_info: self.bot_info.clone() })
+        Ok(ConnectResult {
+            ok: true,
+            error: None,
+            bot_info: self.bot_info.clone(),
+        })
     }
 
     async fn disconnect(&mut self) -> Result<(), GatewayError> {
@@ -553,13 +612,21 @@ impl PlatformAdapter for WeChatAdapter {
         Ok(())
     }
 
-    fn state(&self) -> AdapterState { self.state.clone() }
+    fn state(&self) -> AdapterState {
+        self.state.clone()
+    }
 
     async fn health(&self) -> HealthReport {
         HealthReport {
-            status: if self.state == AdapterState::Connected { HealthStatus::Healthy } else { HealthStatus::Down },
+            status: if self.state == AdapterState::Connected {
+                HealthStatus::Healthy
+            } else {
+                HealthStatus::Down
+            },
             connected: self.state == AdapterState::Connected,
-            last_connected_at: None, last_error_at: None, last_error: None,
+            last_connected_at: None,
+            last_error_at: None,
+            last_error: None,
             messages_in: self.messages_in.load(Ordering::Relaxed),
             messages_out: self.messages_out.load(Ordering::Relaxed),
             errors: self.errors.load(Ordering::Relaxed),
@@ -570,8 +637,16 @@ impl PlatformAdapter for WeChatAdapter {
     fn runtime_config(&self) -> AdapterRuntimeConfig {
         AdapterRuntimeConfig {
             enabled: self.config.as_ref().map(|c| c.enabled).unwrap_or(false),
-            token_configured: self.bot_token.try_read().map(|g| g.is_some()).unwrap_or(false),
-            extra: self.config.as_ref().map(|c| c.extra.clone()).unwrap_or_default(),
+            token_configured: self
+                .bot_token
+                .try_read()
+                .map(|g| g.is_some())
+                .unwrap_or(false),
+            extra: self
+                .config
+                .as_ref()
+                .map(|c| c.extra.clone())
+                .unwrap_or_default(),
         }
     }
 
@@ -581,7 +656,9 @@ impl PlatformAdapter for WeChatAdapter {
             display_name: self.display_name.clone(),
             state: self.state.clone(),
             connected: self.state == AdapterState::Connected,
-            health: None, last_error: None, uptime: None,
+            health: None,
+            last_error: None,
+            uptime: None,
             messages_in: self.messages_in.load(Ordering::Relaxed),
             messages_out: self.messages_out.load(Ordering::Relaxed),
         }
@@ -608,24 +685,37 @@ impl PlatformAdapter for WeChatAdapter {
             }
         });
 
-        let raw_resp = client.post(&url)
+        let raw_resp = client
+            .post(&url)
             .headers(self.auth_headers(&token))
             .json(&body)
             .send()
             .await
             .map_err(|e| GatewayError::Internal(format!("WeChat send failed: {}", e)))?;
 
-        let resp_text = raw_resp.text().await
+        let resp_text = raw_resp
+            .text()
+            .await
             .map_err(|e| GatewayError::Internal(format!("WeChat send read failed: {}", e)))?;
 
-        tracing::debug!("WeChat send response: {}", &resp_text[..resp_text.len().min(300)]);
+        tracing::debug!(
+            "WeChat send response: {}",
+            &resp_text[..resp_text.len().min(300)]
+        );
 
-        let resp: SendMessageResponse = serde_json::from_str(&resp_text)
-            .map_err(|e| GatewayError::Internal(format!("WeChat send parse failed: {} (body: {})", e, &resp_text[..resp_text.len().min(200)])))?;
+        let resp: SendMessageResponse = serde_json::from_str(&resp_text).map_err(|e| {
+            GatewayError::Internal(format!(
+                "WeChat send parse failed: {} (body: {})",
+                e,
+                &resp_text[..resp_text.len().min(200)]
+            ))
+        })?;
 
         self.messages_out.fetch_add(1, Ordering::Relaxed);
 
-        let msg_id = resp.msg_id.map(|id| id.to_string())
+        let msg_id = resp
+            .msg_id
+            .map(|id| id.to_string())
             .or(resp.msg_id_str)
             .or(resp.local_id);
 
@@ -633,7 +723,9 @@ impl PlatformAdapter for WeChatAdapter {
             success: true,
             message_id: msg_id,
             timestamp: Some(chrono::Utc::now().timestamp_millis()),
-            error: None, error_code: None, retryable: false,
+            error: None,
+            error_code: None,
+            retryable: false,
         })
     }
 
@@ -642,7 +734,10 @@ impl PlatformAdapter for WeChatAdapter {
         // 为简化第一阶段实现，媒体发送暂返回不支持
         self.errors.fetch_add(1, Ordering::Relaxed);
         Ok(SendResult::fail(
-            format!("WeChat media send not yet implemented (type={:?})", params.media.media_type),
+            format!(
+                "WeChat media send not yet implemented (type={:?})",
+                params.media.media_type
+            ),
             false,
         ))
     }
@@ -662,7 +757,9 @@ impl PlatformAdapter for WeChatAdapter {
 }
 
 impl Default for WeChatAdapter {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 // ── 长轮询后台任务 ──
@@ -745,26 +842,43 @@ async fn poll_messages(
         "get_updates_buf": buf,
     });
 
-    let raw_resp = client.post(url)
+    let raw_resp = client
+        .post(url)
         .header("Content-Type", "application/json")
         .header("Authorization", format!("Bearer {}", token))
         .header("AuthorizationType", "ilink_bot_token")
-        .header("X-Wechat-Uin", base64_encode_uin(uuid::Uuid::new_v4().as_u64_pair().0 as u32))
+        .header(
+            "X-Wechat-Uin",
+            base64_encode_uin(uuid::Uuid::new_v4().as_u64_pair().0 as u32),
+        )
         .json(&body)
         .timeout(Duration::from_secs(LONGPOLL_TIMEOUT + 10))
         .send()
         .await
         .map_err(|e| GatewayError::Internal(format!("Longpoll request failed: {}", e)))?;
 
-    let resp_text = raw_resp.text().await
+    let resp_text = raw_resp
+        .text()
+        .await
         .map_err(|e| GatewayError::Internal(format!("Longpoll read body failed: {}", e)))?;
 
-    tracing::debug!("QQ getupdates raw response: {}", &resp_text[..resp_text.len().min(500)]);
+    tracing::debug!(
+        "QQ getupdates raw response: {}",
+        &resp_text[..resp_text.len().min(500)]
+    );
 
-    let resp: GetUpdatesResponse = serde_json::from_str(&resp_text)
-        .map_err(|e| GatewayError::Internal(format!("Longpoll parse failed: {} (body: {})", e, &resp_text[..resp_text.len().min(200)])))?;
+    let resp: GetUpdatesResponse = serde_json::from_str(&resp_text).map_err(|e| {
+        GatewayError::Internal(format!(
+            "Longpoll parse failed: {} (body: {})",
+            e,
+            &resp_text[..resp_text.len().min(200)]
+        ))
+    })?;
 
-    let new_buf = resp.get_updates_buf.or(resp.sync_buf).unwrap_or_else(|| buf.to_string());
+    let new_buf = resp
+        .get_updates_buf
+        .or(resp.sync_buf)
+        .unwrap_or_else(|| buf.to_string());
     if resp.msgs.is_empty() {
         Ok(None)
     } else {
@@ -774,50 +888,55 @@ async fn poll_messages(
 
 /// 将 iLink 消息转换为 InboundMessage
 fn convert_message(msg: WeixinMessage) -> Option<InboundMessage> {
-    let text = msg.item_list.first().and_then(|item| {
-        match item.item_type {
+    let text = msg
+        .item_list
+        .first()
+        .and_then(|item| match item.item_type {
             1 => item.text_item.as_ref().map(|t| t.text.clone()),
             2 => Some("[图片]".to_string()),
             3 => Some("[语音]".to_string()),
-            4 => {
-                item.file_item.as_ref()
-                    .and_then(|f| f.file_name.clone())
-                    .unwrap_or_else(|| "[文件]".to_string())
-                    .into()
-            }
+            4 => item
+                .file_item
+                .as_ref()
+                .and_then(|f| f.file_name.clone())
+                .unwrap_or_else(|| "[文件]".to_string())
+                .into(),
             _ => Some("[未知消息类型]".to_string()),
-        }
-    }).unwrap_or_default();
+        })
+        .unwrap_or_default();
 
     let is_group = !msg.group_id.is_empty();
 
-    let media: Option<Vec<MediaAttachment>> = msg.item_list.first().and_then(|item| {
-        match item.item_type {
-            2 => item.image_item.as_ref().map(|img| vec![MediaAttachment {
-                media_type: MediaType::Image,
-                url: img.file_url.clone(),
-                data: None,
-                mime_type: "image/jpeg".to_string(),
-                filename: img.file_name.clone(),
-                caption: None,
-                thumbnail_url: None,
-                file_size: img.file_size.map(|s| s as u64),
-                duration: None,
-            }]),
-            4 => item.file_item.as_ref().map(|f| vec![MediaAttachment {
-                media_type: MediaType::Document,
-                url: f.file_url.clone(),
-                data: None,
-                mime_type: "application/octet-stream".to_string(),
-                filename: f.file_name.clone(),
-                caption: None,
-                thumbnail_url: None,
-                file_size: f.file_size.map(|s| s as u64),
-                duration: None,
-            }]),
+    let media: Option<Vec<MediaAttachment>> =
+        msg.item_list.first().and_then(|item| match item.item_type {
+            2 => item.image_item.as_ref().map(|img| {
+                vec![MediaAttachment {
+                    media_type: MediaType::Image,
+                    url: img.file_url.clone(),
+                    data: None,
+                    mime_type: "image/jpeg".to_string(),
+                    filename: img.file_name.clone(),
+                    caption: None,
+                    thumbnail_url: None,
+                    file_size: img.file_size.map(|s| s as u64),
+                    duration: None,
+                }]
+            }),
+            4 => item.file_item.as_ref().map(|f| {
+                vec![MediaAttachment {
+                    media_type: MediaType::Document,
+                    url: f.file_url.clone(),
+                    data: None,
+                    mime_type: "application/octet-stream".to_string(),
+                    filename: f.file_name.clone(),
+                    caption: None,
+                    thumbnail_url: None,
+                    file_size: f.file_size.map(|s| s as u64),
+                    duration: None,
+                }]
+            }),
             _ => None,
-        }
-    });
+        });
 
     let msg_id = msg.message_id.map(|id| id.to_string()).unwrap_or_default();
 
@@ -825,7 +944,11 @@ fn convert_message(msg: WeixinMessage) -> Option<InboundMessage> {
         id: msg_id,
         platform: "wechat".to_string(),
         chat_id: msg.from_user_id.clone(),
-        chat_type: if is_group { ChatType::Group } else { ChatType::Dm },
+        chat_type: if is_group {
+            ChatType::Group
+        } else {
+            ChatType::Dm
+        },
         chat_name: None,
         text: Some(text),
         author: MessageAuthor {
@@ -871,32 +994,41 @@ mod tests {
     #[tokio::test]
     async fn test_init() {
         let mut adapter = WeChatAdapter::new();
-        let result = adapter.init(AdapterConfig {
-            enabled: true,
-            token: None,
-            api_key: None,
-            base_url: None,
-            extra: serde_json::json!({}),
-        }).await.unwrap();
+        let result = adapter
+            .init(AdapterConfig {
+                enabled: true,
+                token: None,
+                api_key: None,
+                base_url: None,
+                extra: serde_json::json!({}),
+            })
+            .await
+            .unwrap();
         assert!(result.ok);
     }
 
     #[tokio::test]
     async fn test_init_with_saved_credentials() {
         let mut adapter = WeChatAdapter::new();
-        let result = adapter.init(AdapterConfig {
-            enabled: true,
-            token: None,
-            api_key: None,
-            base_url: None,
-            extra: serde_json::json!({
-                "bot_token": "saved_token",
-                "ilink_bot_id": "saved_bot",
-                "ilink_user_id": "saved_user",
-            }),
-        }).await.unwrap();
+        let result = adapter
+            .init(AdapterConfig {
+                enabled: true,
+                token: None,
+                api_key: None,
+                base_url: None,
+                extra: serde_json::json!({
+                    "bot_token": "saved_token",
+                    "ilink_bot_id": "saved_bot",
+                    "ilink_user_id": "saved_user",
+                }),
+            })
+            .await
+            .unwrap();
         assert!(result.ok);
-        assert_eq!(adapter.bot_token.read().await.clone(), Some("saved_token".to_string()));
+        assert_eq!(
+            adapter.bot_token.read().await.clone(),
+            Some("saved_token".to_string())
+        );
     }
 
     #[test]
@@ -931,7 +1063,9 @@ mod tests {
             group_id: "".to_string(),
             item_list: vec![WeixinMessageItem {
                 item_type: 1,
-                text_item: Some(WeixinTextItem { text: "你好".to_string() }),
+                text_item: Some(WeixinTextItem {
+                    text: "你好".to_string(),
+                }),
                 image_item: None,
                 file_item: None,
             }],
@@ -945,7 +1079,10 @@ mod tests {
         assert_eq!(inbound.author.id, "user@im.wechat");
         assert_eq!(inbound.timestamp, 1700000000000);
         let meta = inbound.metadata.unwrap();
-        assert_eq!(meta.get("session_id").and_then(|v| v.as_str()), Some("session_abc"));
+        assert_eq!(
+            meta.get("session_id").and_then(|v| v.as_str()),
+            Some("session_abc")
+        );
     }
 
     #[test]
@@ -1030,7 +1167,9 @@ mod tests {
             group_id: "group@im.wechat".to_string(),
             item_list: vec![WeixinMessageItem {
                 item_type: 1,
-                text_item: Some(WeixinTextItem { text: "群聊消息".to_string() }),
+                text_item: Some(WeixinTextItem {
+                    text: "群聊消息".to_string(),
+                }),
                 image_item: None,
                 file_item: None,
             }],
@@ -1045,14 +1184,22 @@ mod tests {
     #[tokio::test]
     async fn test_send_before_connect_errors() {
         let adapter = WeChatAdapter::new();
-        let result = adapter.send(SendTextParams {
-            chat_id: "user@im.wechat".to_string(),
-            message: OutboundMessage { text: "hi".to_string(), parse_mode: ParseMode::None },
-            reply_to: None,
-            metadata: None,
-        }).await;
+        let result = adapter
+            .send(SendTextParams {
+                chat_id: "user@im.wechat".to_string(),
+                message: OutboundMessage {
+                    text: "hi".to_string(),
+                    parse_mode: ParseMode::None,
+                },
+                reply_to: None,
+                metadata: None,
+            })
+            .await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Not authenticated"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Not authenticated"));
     }
 
     #[tokio::test]
@@ -1089,13 +1236,16 @@ mod tests {
     #[tokio::test]
     async fn test_runtime_config_after_init() {
         let mut adapter = WeChatAdapter::new();
-        adapter.init(AdapterConfig {
-            enabled: true,
-            token: None,
-            api_key: None,
-            base_url: None,
-            extra: serde_json::json!({"bot_token": "test"}),
-        }).await.unwrap();
+        adapter
+            .init(AdapterConfig {
+                enabled: true,
+                token: None,
+                api_key: None,
+                base_url: None,
+                extra: serde_json::json!({"bot_token": "test"}),
+            })
+            .await
+            .unwrap();
         let rc = adapter.runtime_config();
         assert!(rc.enabled);
         assert!(rc.token_configured);
@@ -1236,22 +1386,25 @@ mod tests {
     #[tokio::test]
     async fn test_send_media_not_implemented() {
         let adapter = WeChatAdapter::new();
-        let result = adapter.send_media(SendMediaParams {
-            chat_id: "user@im.wechat".to_string(),
-            media: MediaAttachment {
-                media_type: MediaType::Image,
-                url: Some("https://example.com/img.jpg".to_string()),
-                data: None,
-                mime_type: "image/jpeg".to_string(),
-                filename: Some("test.jpg".to_string()),
-                caption: None,
-                thumbnail_url: None,
-                file_size: Some(1024),
-                duration: None,
-            },
-            reply_to: None,
-            text: None,
-        }).await.unwrap();
+        let result = adapter
+            .send_media(SendMediaParams {
+                chat_id: "user@im.wechat".to_string(),
+                media: MediaAttachment {
+                    media_type: MediaType::Image,
+                    url: Some("https://example.com/img.jpg".to_string()),
+                    data: None,
+                    mime_type: "image/jpeg".to_string(),
+                    filename: Some("test.jpg".to_string()),
+                    caption: None,
+                    thumbnail_url: None,
+                    file_size: Some(1024),
+                    duration: None,
+                },
+                reply_to: None,
+                text: None,
+            })
+            .await
+            .unwrap();
         assert!(!result.success);
         assert!(result.error.unwrap().contains("not yet implemented"));
     }

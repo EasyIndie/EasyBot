@@ -6,7 +6,7 @@
 use async_trait::async_trait;
 use sqlx::PgPool;
 
-use super::{MessageFilter, MessageRole, MessageStore, SessionStore, StoredMessage, StoreError};
+use super::{MessageFilter, MessageRole, MessageStore, SessionStore, StoreError, StoredMessage};
 use crate::types::session::{ResetPolicy, Session, SessionFilter, SessionSource};
 
 // ── Schema ──
@@ -62,9 +62,7 @@ pub async fn create_pool(
 
 /// 运行数据库迁移（幂等）
 pub async fn run_migrations(pool: &PgPool) -> Result<(), StoreError> {
-    sqlx::query(SCHEMA_SQL)
-        .execute(pool)
-        .await?;
+    sqlx::query(SCHEMA_SQL).execute(pool).await?;
     Ok(())
 }
 
@@ -231,7 +229,8 @@ impl SessionStore for PgSessionStore {
         rows.iter()
             .map(|row| {
                 let s = row_to_session(row)?;
-                s.into_session().map_err(|e| sqlx::Error::Protocol(e.to_string()))
+                s.into_session()
+                    .map_err(|e| sqlx::Error::Protocol(e.to_string()))
             })
             .collect::<Result<Vec<_>, _>>()
             .map_err(StoreError::from)
@@ -255,7 +254,8 @@ impl SessionStore for PgSessionStore {
         rows.iter()
             .map(|row| {
                 let s = row_to_session(row)?;
-                s.into_session().map_err(|e| sqlx::Error::Protocol(e.to_string()))
+                s.into_session()
+                    .map_err(|e| sqlx::Error::Protocol(e.to_string()))
             })
             .collect::<Result<Vec<_>, _>>()
             .map_err(StoreError::from)
@@ -363,10 +363,13 @@ impl MessageStore for PgMessageStore {
         Ok(())
     }
 
-    async fn list_messages(&self, filter: &MessageFilter) -> Result<Vec<StoredMessage>, StoreError> {
+    async fn list_messages(
+        &self,
+        filter: &MessageFilter,
+    ) -> Result<Vec<StoredMessage>, StoreError> {
         let mut sql = String::from(
             "SELECT id, session_key, platform, chat_id, role, text, raw_data, timestamp, created_at
-             FROM messages WHERE 1=1"
+             FROM messages WHERE 1=1",
         );
 
         // Build SQL with parameter placeholders
@@ -415,7 +418,8 @@ impl MessageStore for PgMessageStore {
         rows.iter()
             .map(|row| {
                 let r = row_to_stored_message(row)?;
-                r.into_stored().map_err(|e| sqlx::Error::Protocol(e.to_string()))
+                r.into_stored()
+                    .map_err(|e| sqlx::Error::Protocol(e.to_string()))
             })
             .collect::<Result<Vec<_>, _>>()
             .map_err(StoreError::from)
@@ -449,8 +453,9 @@ mod tests {
     /// 这些测试需要运行中的 PostgreSQL 实例：
     ///   docker run -d --name easybot-pg-test -e POSTGRES_DB=easybot_test -e POSTGRES_PASSWORD=easybot -p 5432:5432 postgres:16-alpine
     async fn create_test_pool() -> PgPool {
-        let conn_str = std::env::var("DATABASE_URL")
-            .unwrap_or_else(|_| "postgresql://postgres:easybot@localhost:5432/easybot_test".to_string());
+        let conn_str = std::env::var("DATABASE_URL").unwrap_or_else(|_| {
+            "postgresql://postgres:easybot@localhost:5432/easybot_test".to_string()
+        });
         let pool = create_pool(&conn_str, 2).await.unwrap();
         run_migrations(&pool).await.unwrap();
         pool

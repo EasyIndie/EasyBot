@@ -3,10 +3,10 @@
 //! 提供内存中的会话管理功能，可选支持 SQLite 持久化。
 //! DashMap 提供快速读取，持久化写入委托给 SessionStore。
 
-use std::sync::Arc;
-use dashmap::DashMap;
 use crate::storage::SessionStore;
-use crate::types::session::{Session, SessionFilter, SessionSource, ResetPolicy};
+use crate::types::session::{ResetPolicy, Session, SessionFilter, SessionSource};
+use dashmap::DashMap;
+use std::sync::Arc;
 
 /// 默认构造会话使用的重置策略
 const DEFAULT_RESET_POLICY: ResetPolicy = ResetPolicy::Never;
@@ -58,11 +58,7 @@ impl SessionManager {
     ///
     /// 根据 session_key 查找已有会话，不存在则创建新的。
     /// 如果配置了持久化存储，创建/更新操作会同步写入。
-    pub async fn get_or_create(
-        &self,
-        key: &str,
-        source: SessionSource,
-    ) -> Session {
+    pub async fn get_or_create(&self, key: &str, source: SessionSource) -> Session {
         if let Some(entry) = self.sessions.get(key) {
             let session = entry.value().clone();
             drop(entry);
@@ -117,11 +113,7 @@ impl SessionManager {
 
     /// 列出会话（同步，仅读 DashMap）
     pub fn list(&self, filter: Option<SessionFilter>) -> Vec<Session> {
-        let mut results: Vec<Session> = self
-            .sessions
-            .iter()
-            .map(|e| e.value().clone())
-            .collect();
+        let mut results: Vec<Session> = self.sessions.iter().map(|e| e.value().clone()).collect();
 
         // 按更新时间降序排列（最近活跃的在前）
         results.sort_by_key(|b| std::cmp::Reverse(b.updated_at));
@@ -132,8 +124,8 @@ impl SessionManager {
                 results.retain(|s| s.platform == platform);
             }
             if let Some(active_mins) = f.active_within_minutes {
-                let cutoff = chrono::Utc::now().timestamp_millis()
-                    - (active_mins as i64 * 60 * 1000);
+                let cutoff =
+                    chrono::Utc::now().timestamp_millis() - (active_mins as i64 * 60 * 1000);
                 results.retain(|s| s.updated_at >= cutoff);
             }
             if let Some(limit) = f.limit {
@@ -243,7 +235,9 @@ mod tests {
         assert_eq!(session.platform, "telegram");
 
         // 再次获取应返回同一会话
-        let session2 = mgr.get_or_create(key, make_source("telegram", "12345")).await;
+        let session2 = mgr
+            .get_or_create(key, make_source("telegram", "12345"))
+            .await;
         assert_eq!(session2.created_at, session.created_at);
     }
 
@@ -258,8 +252,10 @@ mod tests {
     #[tokio::test]
     async fn test_list_filter_by_platform() {
         let mgr = SessionManager::new();
-        mgr.get_or_create("telegram:1", make_source("telegram", "1")).await;
-        mgr.get_or_create("discord:2", make_source("discord", "2")).await;
+        mgr.get_or_create("telegram:1", make_source("telegram", "1"))
+            .await;
+        mgr.get_or_create("discord:2", make_source("discord", "2"))
+            .await;
 
         let filter = SessionFilter {
             platform: Some("telegram".to_string()),
@@ -278,7 +274,9 @@ mod tests {
         for _ in 0..50 {
             let mgr = mgr.clone();
             handles.push(tokio::spawn(async move {
-                let s = mgr.get_or_create("concurrent:1", make_source("test", "1")).await;
+                let s = mgr
+                    .get_or_create("concurrent:1", make_source("test", "1"))
+                    .await;
                 assert_eq!(s.key, "concurrent:1");
             }));
         }
@@ -288,7 +286,10 @@ mod tests {
         }
 
         assert_eq!(mgr.count(), 1, "single session should exist");
-        assert!(mgr.get("concurrent:1").is_some(), "session should be findable");
+        assert!(
+            mgr.get("concurrent:1").is_some(),
+            "session should be findable"
+        );
     }
 
     #[tokio::test]

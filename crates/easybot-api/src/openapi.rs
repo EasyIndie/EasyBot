@@ -3,10 +3,10 @@
 //! 定义 EasyBot API 的 OpenAPI 3.1 规范，自动从路由处理函数和数据结构生成。
 //! 通过 utoipa 的宏标注自动收集所有端点和类型定义。
 
-use utoipa::{OpenApi, Modify};
-use utoipa::openapi::security::{HttpBuilder, HttpAuthScheme, SecurityScheme};
-use utoipa::openapi::SecurityRequirement;
 use crate::routes;
+use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
+use utoipa::openapi::SecurityRequirement;
+use utoipa::{Modify, OpenApi};
 
 /// OpenAPI 修改器：添加 Bearer Token 安全方案
 struct SecurityAddon;
@@ -20,7 +20,9 @@ impl Modify for SecurityAddon {
                     HttpBuilder::new()
                         .scheme(HttpAuthScheme::Bearer)
                         .bearer_format("eb_xxxx")
-                        .description(Some(String::from("输入完整的 Bearer token，例如 `Bearer eb_xxxxxxxxxxxx`")))
+                        .description(Some(String::from(
+                            "输入完整的 Bearer token，例如 `Bearer eb_xxxxxxxxxxxx`",
+                        )))
                         .build(),
                 ),
             );

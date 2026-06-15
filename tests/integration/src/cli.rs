@@ -3,11 +3,11 @@
 //! 验证 easybot 二进制的基本 CLI 行为。
 //! 使用 std::process::Command 直接调用二进制。
 
+use std::io::Read;
 use std::io::Write;
 use std::net::TcpListener;
 use std::path::PathBuf;
 use std::process::Command;
-use std::io::Read;
 
 /// 获取 easybot 二进制路径
 fn easybot_bin() -> PathBuf {
@@ -15,9 +15,9 @@ fn easybot_bin() -> PathBuf {
     // 需要上三层到 workspace root: tests/integration → tests → . → target
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let workspace_root = manifest_dir
-        .parent()   // tests/
+        .parent() // tests/
         .unwrap()
-        .parent()   // workspace root
+        .parent() // workspace root
         .unwrap();
     workspace_root.join("target").join("debug").join("easybot")
 }
@@ -46,7 +46,10 @@ fn test_cli_version() {
         .expect("failed to run easybot --version");
     assert!(output.status.success(), "--version should exit 0");
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("easybot"), "output should contain 'easybot'");
+    assert!(
+        stdout.contains("easybot"),
+        "output should contain 'easybot'"
+    );
     assert!(stdout.contains("0.1.0"), "output should contain version");
 }
 
@@ -139,7 +142,10 @@ fn test_cli_unknown_flag() {
         .arg("--nonexistent-flag")
         .output()
         .expect("failed to run easybot with unknown flag");
-    assert!(!output.status.success(), "unknown flag should exit non-zero");
+    assert!(
+        !output.status.success(),
+        "unknown flag should exit non-zero"
+    );
 }
 
 #[test]
@@ -167,8 +173,16 @@ fn test_cli_short_flags() {
         Ok(Some(status)) => {
             // Process already exited — read stderr to see why
             let mut stderr = String::new();
-            child.stderr.take().unwrap().read_to_string(&mut stderr).unwrap();
-            panic!("easybot exited prematurely with status {}: {}", status, stderr);
+            child
+                .stderr
+                .take()
+                .unwrap()
+                .read_to_string(&mut stderr)
+                .unwrap();
+            panic!(
+                "easybot exited prematurely with status {}: {}",
+                status, stderr
+            );
         }
         Ok(None) => {
             // Still running — expected

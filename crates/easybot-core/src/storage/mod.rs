@@ -4,14 +4,14 @@
 //! SessionManager 使用 SessionStore 做持久化写入；
 //! MessageStore 用于消息历史存储。
 
-pub mod sqlite;
 pub mod postgres;
 pub mod retention;
+pub mod sqlite;
 
-use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
 use crate::types::message::{InboundMessage, SendResult};
 use crate::types::session::{Session, SessionFilter};
+use async_trait::async_trait;
+use serde::{Deserialize, Serialize};
 
 // ── StoreError ──
 
@@ -82,7 +82,8 @@ pub trait MessageStore: Send + Sync {
     async fn store_messages(&self, msgs: &[StoredMessage]) -> Result<(), StoreError>;
 
     /// 列出消息（支持过滤/分页）
-    async fn list_messages(&self, filter: &MessageFilter) -> Result<Vec<StoredMessage>, StoreError>;
+    async fn list_messages(&self, filter: &MessageFilter)
+        -> Result<Vec<StoredMessage>, StoreError>;
 
     /// 删除单条消息
     async fn delete_message(&self, id: &str) -> Result<bool, StoreError>;
@@ -158,12 +159,10 @@ impl StoredMessage {
         text: &str,
         result: &SendResult,
     ) -> Self {
-        let session_key = crate::types::session::Session::build_key(
-            platform,
-            chat_id,
-            thread_id,
-        );
-        let msg_id = result.message_id.clone()
+        let session_key = crate::types::session::Session::build_key(platform, chat_id, thread_id);
+        let msg_id = result
+            .message_id
+            .clone()
             .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
         let raw = serde_json::json!({
             "text": text,
@@ -179,7 +178,9 @@ impl StoredMessage {
             role: MessageRole::Assistant,
             text: Some(text.to_string()),
             raw_data: raw,
-            timestamp: result.timestamp.unwrap_or_else(|| chrono::Utc::now().timestamp_millis()),
+            timestamp: result
+                .timestamp
+                .unwrap_or_else(|| chrono::Utc::now().timestamp_millis()),
             created_at: chrono::Utc::now().timestamp_millis(),
         }
     }

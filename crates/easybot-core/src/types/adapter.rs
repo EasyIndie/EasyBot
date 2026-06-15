@@ -3,10 +3,10 @@
 //! 定义 PlatformAdapter trait，所有 IM 平台连接器必须实现此接口。
 //! 包含适配器生命周期、能力声明、消息发送、健康检查等。
 
+use crate::types::error::GatewayError;
+use crate::types::message::*;
 use async_trait::async_trait;
 use utoipa::ToSchema;
-use crate::types::message::*;
-use crate::types::error::GatewayError;
 
 /// 适配器能力名称
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, ToSchema, PartialEq)]
@@ -208,10 +208,7 @@ pub trait PlatformAdapter: Send + Sync {
     // ── 消息管理 ──
 
     /// 编辑消息（可选）
-    async fn edit_message(
-        &self,
-        _params: EditMessageParams,
-    ) -> Result<EditResult, GatewayError> {
+    async fn edit_message(&self, _params: EditMessageParams) -> Result<EditResult, GatewayError> {
         Err(GatewayError::capability_not_supported("edit_message"))
     }
 
@@ -230,10 +227,7 @@ pub trait PlatformAdapter: Send + Sync {
     async fn get_chat_info(&self, chat_id: &str) -> Result<ChatInfo, GatewayError>;
 
     /// 列出聊天列表（可选）
-    async fn list_chats(
-        &self,
-        _filter: Option<ChatFilter>,
-    ) -> Result<Vec<ChatInfo>, GatewayError> {
+    async fn list_chats(&self, _filter: Option<ChatFilter>) -> Result<Vec<ChatInfo>, GatewayError> {
         Err(GatewayError::capability_not_supported("list_chats"))
     }
 

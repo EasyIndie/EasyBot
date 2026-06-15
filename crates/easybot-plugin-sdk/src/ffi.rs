@@ -41,17 +41,14 @@ macro_rules! declare_plugin {
 
         #[no_mangle]
         pub extern "C" fn easybot_plugin_create() -> *mut std::ffi::c_void {
-            let adapter: Box<dyn $crate::PlatformAdapter> =
-                Box::new($constructor());
+            let adapter: Box<dyn $crate::PlatformAdapter> = Box::new($constructor());
             // Box<dyn PlatformAdapter> 是胖指针，包装一层 Box 变成瘦指针
             let boxed: Box<Box<dyn $crate::PlatformAdapter>> = Box::new(adapter);
             Box::into_raw(boxed) as *mut std::ffi::c_void
         }
 
         #[no_mangle]
-        pub unsafe extern "C" fn easybot_plugin_destroy(
-            ptr: *mut std::ffi::c_void,
-        ) {
+        pub unsafe extern "C" fn easybot_plugin_destroy(ptr: *mut std::ffi::c_void) {
             if !ptr.is_null() {
                 let inner: Box<Box<dyn $crate::PlatformAdapter>> =
                     Box::from_raw(ptr as *mut Box<dyn $crate::PlatformAdapter>);
@@ -83,18 +80,31 @@ mod tests {
 
     #[async_trait]
     impl PlatformAdapter for TestAdapter {
-        fn platform_name(&self) -> &str { &self.name }
-        fn display_name(&self) -> &str { "Test Adapter" }
-        fn capabilities(&self) -> &[Capability] { &[] }
+        fn platform_name(&self) -> &str {
+            &self.name
+        }
+        fn display_name(&self) -> &str {
+            "Test Adapter"
+        }
+        fn capabilities(&self) -> &[Capability] {
+            &[]
+        }
 
         async fn init(&mut self, _config: AdapterConfig) -> Result<InitResult, GatewayError> {
             self.state = AdapterState::Starting;
-            Ok(InitResult { ok: true, error: None })
+            Ok(InitResult {
+                ok: true,
+                error: None,
+            })
         }
 
         async fn connect(&mut self) -> Result<ConnectResult, GatewayError> {
             self.state = AdapterState::Connected;
-            Ok(ConnectResult { ok: true, error: None, bot_info: None })
+            Ok(ConnectResult {
+                ok: true,
+                error: None,
+                bot_info: None,
+            })
         }
 
         async fn disconnect(&mut self) -> Result<(), GatewayError> {
@@ -102,7 +112,9 @@ mod tests {
             Ok(())
         }
 
-        fn state(&self) -> AdapterState { self.state.clone() }
+        fn state(&self) -> AdapterState {
+            self.state.clone()
+        }
 
         async fn health(&self) -> HealthReport {
             HealthReport {
@@ -134,7 +146,11 @@ mod tests {
         }
 
         fn runtime_config(&self) -> AdapterRuntimeConfig {
-            AdapterRuntimeConfig { enabled: true, token_configured: false, extra: serde_json::Value::Null }
+            AdapterRuntimeConfig {
+                enabled: true,
+                token_configured: false,
+                extra: serde_json::Value::Null,
+            }
         }
 
         fn status_summary(&self) -> AdapterStatusSummary {
@@ -171,20 +187,26 @@ mod tests {
     fn test_plugin_create_returns_non_null() {
         let ptr = easybot_plugin_create();
         assert!(!ptr.is_null(), "create 必须返回非空指针");
-        unsafe { easybot_plugin_destroy(ptr); }
+        unsafe {
+            easybot_plugin_destroy(ptr);
+        }
     }
 
     /// easybot_plugin_create → destroy 不崩溃
     #[test]
     fn test_plugin_create_destroy_roundtrip() {
         let ptr = easybot_plugin_create();
-        unsafe { easybot_plugin_destroy(ptr); }
+        unsafe {
+            easybot_plugin_destroy(ptr);
+        }
     }
 
     /// 空指针 destroy 不崩溃
     #[test]
     fn test_plugin_destroy_null_pointer() {
-        unsafe { easybot_plugin_destroy(std::ptr::null_mut()); }
+        unsafe {
+            easybot_plugin_destroy(std::ptr::null_mut());
+        }
     }
 
     /// 通过胖指针检查创建的对象可调用 trait 方法
@@ -194,12 +216,13 @@ mod tests {
         assert!(!ptr.is_null());
 
         unsafe {
-            let inner: &dyn PlatformAdapter =
-                &**(ptr as *const Box<dyn PlatformAdapter>);
+            let inner: &dyn PlatformAdapter = &**(ptr as *const Box<dyn PlatformAdapter>);
             assert_eq!(inner.platform_name(), "test-adapter");
             assert_eq!(inner.state(), AdapterState::Created);
         }
 
-        unsafe { easybot_plugin_destroy(ptr); }
+        unsafe {
+            easybot_plugin_destroy(ptr);
+        }
     }
 }

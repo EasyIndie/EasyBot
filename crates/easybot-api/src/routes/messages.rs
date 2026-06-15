@@ -1,18 +1,18 @@
 //! 消息收发路由
 
-use std::sync::Arc;
-use axum::{
-    Json,
-    extract::{State, Path, Query},
-};
-use serde::{Deserialize, Serialize};
-use utoipa::{IntoParams, ToSchema};
+use crate::response::{api_error, ApiError};
 use crate::AppState;
-use crate::response::{ApiError, api_error};
+use axum::{
+    extract::{Path, Query, State},
+    Json,
+};
 use easybot_core::storage::{MessageFilter, StoredMessage};
-use easybot_core::types::message::*;
 use easybot_core::types::error::GatewayError;
 use easybot_core::types::event::GatewayEvent;
+use easybot_core::types::message::*;
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+use utoipa::{IntoParams, ToSchema};
 
 /// 发送消息请求
 #[derive(Deserialize, ToSchema)]
@@ -74,25 +74,31 @@ pub async fn send_message(
     State(state): State<AppState>,
     Json(req): Json<SendMessageRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let (platform, chat_id) = parse_target(&req.target)
-        .ok_or_else(|| api_error(easybot_core::types::error::GatewayError::InvalidRequest(
-            "Invalid target format. Expected 'platform:chatId'".to_string()
-        )))?;
+    let (platform, chat_id) = parse_target(&req.target).ok_or_else(|| {
+        api_error(easybot_core::types::error::GatewayError::InvalidRequest(
+            "Invalid target format. Expected 'platform:chatId'".to_string(),
+        ))
+    })?;
 
-    let result = state.adapter_manager.send_message(&platform, SendTextParams {
-        chat_id: chat_id.clone(),
-        message: OutboundMessage {
-            text: req.text.clone(),
-            parse_mode: req.parse_mode.unwrap_or_default(),
-        },
-        reply_to: req.reply_to,
-        metadata: req.metadata,
-    }).await.map_err(api_error)?;
+    let result = state
+        .adapter_manager
+        .send_message(
+            &platform,
+            SendTextParams {
+                chat_id: chat_id.clone(),
+                message: OutboundMessage {
+                    text: req.text.clone(),
+                    parse_mode: req.parse_mode.unwrap_or_default(),
+                },
+                reply_to: req.reply_to,
+                metadata: req.metadata,
+            },
+        )
+        .await
+        .map_err(api_error)?;
 
     // 持久化出站消息
-    let stored = StoredMessage::from_outbound(
-        &platform, &chat_id, None, &req.text, &result,
-    );
+    let stored = StoredMessage::from_outbound(&platform, &chat_id, None, &req.text, &result);
     if let Err(e) = state.message_store.store_message(&stored).await {
         tracing::warn!("Failed to persist outbound message: {}", e);
     }
@@ -158,43 +164,56 @@ pub async fn batch_send(
                 Some((platform, chat_id)) => {
                     let send_result = tokio::time::timeout(
                         std::time::Duration::from_secs(15),
-                        state.adapter_manager.send_message(&platform, SendTextParams {
-                            chat_id,
-                            message: OutboundMessage {
-                                text,
-                                parse_mode,
+                        state.adapter_manager.send_message(
+                            &platform,
+                            SendTextParams {
+                                chat_id,
+                                message: OutboundMessage { text, parse_mode },
+                                reply_to: None,
+                                metadata: None,
                             },
-                            reply_to: None,
-                            metadata: None,
-                        }),
-                    ).await;
+                        ),
+                    )
+                    .await;
 
                     match send_result {
                         Ok(Ok(r)) => {
-                            results.lock().await.insert(target.clone(), serde_json::json!({
-                                "status": "sent",
-                                "messageId": r.message_id,
-                            }));
+                            results.lock().await.insert(
+                                target.clone(),
+                                serde_json::json!({
+                                    "status": "sent",
+                                    "messageId": r.message_id,
+                                }),
+                            );
                         }
                         Ok(Err(e)) => {
-                            results.lock().await.insert(target.clone(), serde_json::json!({
-                                "status": "failed",
-                                "error": e.to_string(),
-                            }));
+                            results.lock().await.insert(
+                                target.clone(),
+                                serde_json::json!({
+                                    "status": "failed",
+                                    "error": e.to_string(),
+                                }),
+                            );
                         }
                         Err(_) => {
-                            results.lock().await.insert(target.clone(), serde_json::json!({
-                                "status": "failed",
-                                "error": "Request timed out (15s)",
-                            }));
+                            results.lock().await.insert(
+                                target.clone(),
+                                serde_json::json!({
+                                    "status": "failed",
+                                    "error": "Request timed out (15s)",
+                                }),
+                            );
                         }
                     }
                 }
                 None => {
-                    results.lock().await.insert(target.clone(), serde_json::json!({
-                        "status": "failed",
-                        "error": format!("Invalid target: {}", target),
-                    }));
+                    results.lock().await.insert(
+                        target.clone(),
+                        serde_json::json!({
+                            "status": "failed",
+                            "error": format!("Invalid target: {}", target),
+                        }),
+                    );
                 }
             };
         });
@@ -260,10 +279,11 @@ pub async fn edit_message(
     Path(message_id): Path<String>,
     Json(req): Json<EditMessageRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let (platform, chat_id) = parse_target(&req.target)
-        .ok_or_else(|| api_error(GatewayError::InvalidRequest(
-            "Invalid target format. Expected 'platform:chatId'".to_string()
-        )))?;
+    let (platform, chat_id) = parse_target(&req.target).ok_or_else(|| {
+        api_error(GatewayError::InvalidRequest(
+            "Invalid target format. Expected 'platform:chatId'".to_string(),
+        ))
+    })?;
 
     let params = EditMessageParams {
         chat_id,
@@ -275,7 +295,10 @@ pub async fn edit_message(
         keyboard: req.keyboard,
     };
 
-    let result = state.adapter_manager.edit_message(&platform, params).await
+    let result = state
+        .adapter_manager
+        .edit_message(&platform, params)
+        .await
         .map_err(api_error)?;
 
     // 发布事件
@@ -319,12 +342,16 @@ pub async fn delete_message(
     Path(message_id): Path<String>,
     Json(req): Json<DeleteMessageRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let (platform, chat_id) = parse_target(&req.target)
-        .ok_or_else(|| api_error(GatewayError::InvalidRequest(
-            "Invalid target format. Expected 'platform:chatId'".to_string()
-        )))?;
+    let (platform, chat_id) = parse_target(&req.target).ok_or_else(|| {
+        api_error(GatewayError::InvalidRequest(
+            "Invalid target format. Expected 'platform:chatId'".to_string(),
+        ))
+    })?;
 
-    let result = state.adapter_manager.delete_message(&platform, &chat_id, &message_id).await
+    let result = state
+        .adapter_manager
+        .delete_message(&platform, &chat_id, &message_id)
+        .await
         .map_err(api_error)?;
 
     // 发布事件
@@ -381,7 +408,10 @@ pub async fn message_history(
         before: params.before,
     };
 
-    let messages = state.message_store.list_messages(&filter).await
+    let messages = state
+        .message_store
+        .list_messages(&filter)
+        .await
         .unwrap_or_default();
 
     let has_more = messages.len() > limit;
@@ -391,10 +421,7 @@ pub async fn message_history(
         .map(|m| serde_json::to_value(&m).unwrap_or_default())
         .collect();
 
-    Json(MessageHistoryResponse {
-        messages,
-        has_more,
-    })
+    Json(MessageHistoryResponse { messages, has_more })
 }
 
 /// 解析 "platform:chatId" 格式

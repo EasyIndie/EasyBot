@@ -2,26 +2,26 @@
 //!
 //! 基于 axum 构建的 HTTP 服务器，提供 REST API 和 WebSocket 端点。
 
-use std::future::Future;
-use std::sync::Arc;
 use axum::{
-    Router,
     extract::State,
     http::Request,
     middleware::{self, Next},
     response::{IntoResponse, Response},
-    routing::{get, post, put, delete},
+    routing::{delete, get, post, put},
+    Router,
 };
+use std::future::Future;
+use std::sync::Arc;
 use tower_http::cors::CorsLayer;
 use tower_http::trace::TraceLayer;
 use tracing::info;
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
-use crate::AppState;
-use crate::routes;
 use crate::openapi::ApiDoc;
 use crate::response::ApiError;
+use crate::routes;
+use crate::AppState;
 use easybot_core::types::error::GatewayError;
 
 /// API 服务器
@@ -32,10 +32,7 @@ pub struct Server {
 
 impl Server {
     /// 创建服务器实例
-    pub fn new(
-        state: AppState,
-        config: easybot_core::types::config::ServerConfig,
-    ) -> Self {
+    pub fn new(state: AppState, config: easybot_core::types::config::ServerConfig) -> Self {
         Self {
             state,
             config: Arc::new(config),
@@ -70,7 +67,9 @@ impl Server {
                     req.extensions_mut().insert(auth_info);
                     next.run(req).await
                 }
-                Err(_) => ApiError(GatewayError::AuthFailed("Invalid API key".into())).into_response(),
+                Err(_) => {
+                    ApiError(GatewayError::AuthFailed("Invalid API key".into())).into_response()
+                }
             },
             None => ApiError(GatewayError::AuthFailed(
                 "Missing or invalid Authorization header. Expected: Bearer <api-key>".into(),
@@ -99,7 +98,10 @@ impl Server {
 
         if self.config.tls.enabled {
             info!("TLS enabled in config. TLS termination should be handled by reverse proxy (nginx/caddy/traefik).");
-            info!("Cert: {}, Key: {}", self.config.tls.cert_file, self.config.tls.key_file);
+            info!(
+                "Cert: {}, Key: {}",
+                self.config.tls.cert_file, self.config.tls.key_file
+            );
         }
 
         let listener = tokio::net::TcpListener::bind(&addr).await?;
@@ -126,8 +128,7 @@ pub fn create_router(state: AppState) -> Router {
     // ── 公共路由（无需认证）──
 
     // 健康检查
-    let mut public_routes = Router::new()
-        .route("/health", get(routes::health::health_check));
+    let mut public_routes = Router::new().route("/health", get(routes::health::health_check));
 
     // ── 指标端点（从 AppState 提取 MetricsRegistry）──
     if state.metrics.is_some() {
@@ -156,14 +157,29 @@ pub fn create_router(state: AppState) -> Router {
     let protected_routes = Router::new()
         // 适配器管理
         .route("/adapters", get(routes::adapters::list_adapters))
-        .route("/adapters/{platform}/start", post(routes::adapters::start_adapter))
-        .route("/adapters/{platform}/stop", post(routes::adapters::stop_adapter))
-        .route("/adapters/{platform}/status", get(routes::adapters::adapter_status))
+        .route(
+            "/adapters/{platform}/start",
+            post(routes::adapters::start_adapter),
+        )
+        .route(
+            "/adapters/{platform}/stop",
+            post(routes::adapters::stop_adapter),
+        )
+        .route(
+            "/adapters/{platform}/status",
+            get(routes::adapters::adapter_status),
+        )
         // 消息
         .route("/messages/send", post(routes::messages::send_message))
         .route("/messages/batch-send", post(routes::messages::batch_send))
-        .route("/messages/{message_id}", put(routes::messages::edit_message))
-        .route("/messages/{message_id}", delete(routes::messages::delete_message))
+        .route(
+            "/messages/{message_id}",
+            put(routes::messages::edit_message),
+        )
+        .route(
+            "/messages/{message_id}",
+            delete(routes::messages::delete_message),
+        )
         .route("/messages", get(routes::messages::message_history))
         // 会话
         .route("/sessions", get(routes::sessions::list_sessions))
@@ -189,13 +205,10 @@ pub fn create_router(state: AppState) -> Router {
         ));
 
     // 合并公共 + 受保护路由
-    let api_routes = Router::new()
-        .merge(public_routes)
-        .merge(protected_routes);
+    let api_routes = Router::new().merge(public_routes).merge(protected_routes);
 
     // OpenAPI 文档路径（Swagger UI，无需认证）
-    let swagger = SwaggerUi::new("/swagger")
-        .url("/openapi.json", ApiDoc::openapi());
+    let swagger = SwaggerUi::new("/swagger").url("/openapi.json", ApiDoc::openapi());
 
     // 基础路径
     let base_path = &state.config.api.base_path;

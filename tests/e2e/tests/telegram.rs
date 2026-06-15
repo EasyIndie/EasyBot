@@ -25,8 +25,8 @@ use http_body_util::BodyExt;
 use serde_json::Value;
 use sqlx::SqlitePool;
 use tower::ServiceExt;
-use wiremock::{Mock, MockServer, ResponseTemplate};
 use wiremock::matchers::{method, path};
+use wiremock::{Mock, MockServer, ResponseTemplate};
 
 // ══════════════════════════════════════════════════════════════
 // 辅助：构建 HTTP 请求
@@ -47,7 +47,10 @@ async fn auth_get(router: &Router, path: &str, key: &str) -> (axum::http::Status
 }
 
 async fn auth_post(
-    router: &Router, path: &str, key: &str, body: Option<Value>,
+    router: &Router,
+    path: &str,
+    key: &str,
+    body: Option<Value>,
 ) -> (axum::http::StatusCode, Value) {
     let req = axum::http::Request::builder()
         .method("POST")
@@ -149,12 +152,23 @@ async fn setup() -> (Router, String, MockServer) {
     );
 
     let config = GatewayConfig {
-        server: ServerConfig { host: "127.0.0.1".into(), port: 0, tls: TlsConfig::default() },
+        server: ServerConfig {
+            host: "127.0.0.1".into(),
+            port: 0,
+            tls: TlsConfig::default(),
+        },
         api: ApiConfig {
             base_path: "/api/v1".into(),
             websocket: WebSocketConfig::default(),
-            rate_limit: RateLimitConfig { enabled: false, requests_per_minute: 60, burst_size: 10 },
-            metrics: MetricsConfig { enabled: false, path: "/metrics".into() },
+            rate_limit: RateLimitConfig {
+                enabled: false,
+                requests_per_minute: 60,
+                burst_size: 10,
+            },
+            metrics: MetricsConfig {
+                enabled: false,
+                path: "/metrics".into(),
+            },
         },
         adapters: adapter_configs,
         ..GatewayConfig::default()
@@ -163,8 +177,14 @@ async fn setup() -> (Router, String, MockServer) {
         easybot_api::config_manager::ConfigManager::new_shared(Arc::new(config.clone()));
 
     let state = AppState::new(
-        event_bus, adapter_manager, session_manager, message_store,
-        auth_manager, config, config_manager, None,
+        event_bus,
+        adapter_manager,
+        session_manager,
+        message_store,
+        auth_manager,
+        config,
+        config_manager,
+        None,
     );
     let router = easybot_api::server::create_router(state);
 
@@ -185,14 +205,18 @@ async fn test_e2e_health() {
 async fn test_e2e_auth_required() {
     let (router, ..) = setup().await;
     let req = axum::http::Request::builder()
-        .method("GET").uri("/api/v1/adapters")
-        .body(axum::body::Body::empty()).unwrap();
+        .method("GET")
+        .uri("/api/v1/adapters")
+        .body(axum::body::Body::empty())
+        .unwrap();
     assert_eq!(router.clone().oneshot(req).await.unwrap().status(), 401);
 
     let req2 = axum::http::Request::builder()
-        .method("GET").uri("/api/v1/adapters")
+        .method("GET")
+        .uri("/api/v1/adapters")
         .header("Authorization", "Bearer bad-key")
-        .body(axum::body::Body::empty()).unwrap();
+        .body(axum::body::Body::empty())
+        .unwrap();
     assert_eq!(router.clone().oneshot(req2).await.unwrap().status(), 401);
 }
 
@@ -271,9 +295,12 @@ async fn test_e2e_send_message() {
 
     // 发送消息
     let (status, json) = auth_post(
-        &router, "/api/v1/messages/send", &key,
+        &router,
+        "/api/v1/messages/send",
+        &key,
         Some(serde_json::json!({"target": "telegram:12345", "text": "Hello"})),
-    ).await;
+    )
+    .await;
     assert_eq!(status, 200, "send msg: {:?}", json);
     assert_eq!(json["status"], "sent", "should succeed: {:?}", json);
 

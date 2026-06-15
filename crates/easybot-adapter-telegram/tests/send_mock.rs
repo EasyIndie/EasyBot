@@ -7,12 +7,11 @@ use std::time::Duration;
 
 use easybot_core::types::adapter::{AdapterConfig, AdapterState, PlatformAdapter};
 use easybot_core::types::message::{
-    SendTextParams, SendMediaParams, SendInteractiveParams,
-    OutboundMessage, ParseMode, MediaAttachment, MediaType,
-    InlineKeyboard, KeyboardRow, Button,
+    Button, InlineKeyboard, KeyboardRow, MediaAttachment, MediaType, OutboundMessage, ParseMode,
+    SendInteractiveParams, SendMediaParams, SendTextParams,
 };
-use wiremock::{Mock, MockServer, ResponseTemplate};
 use wiremock::matchers::{method, path};
+use wiremock::{Mock, MockServer, ResponseTemplate};
 
 /// 构建测试用的 Telegram 适配器
 async fn make_adapter(mock_port: u16) -> impl PlatformAdapter {
@@ -73,7 +72,11 @@ async fn test_send_success() {
     let result = adapter.send(send_text_params()).await.unwrap();
 
     assert!(result.success, "send should succeed");
-    assert_eq!(result.message_id, Some("12345".to_string()), "message_id should match");
+    assert_eq!(
+        result.message_id,
+        Some("12345".to_string()),
+        "message_id should match"
+    );
     assert!(result.timestamp.is_some(), "timestamp should be present");
 
     mock_server.verify().await;
@@ -119,13 +122,11 @@ async fn test_send_telegram_api_error() {
     // Telegram API 返回 ok: false（如 bot 被 stop）
     Mock::given(method("POST"))
         .and(path("/bottest-token/sendMessage"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "ok": false,
-                "description": "Forbidden: bot was blocked by the user",
-                "error_code": 403
-            }))
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "ok": false,
+            "description": "Forbidden: bot was blocked by the user",
+            "error_code": 403
+        })))
         .expect(1..)
         .mount(&mock_server)
         .await;
@@ -272,13 +273,11 @@ async fn test_connect_api_error() {
     // Telegram API 返回 ok:false（如 token 不合法）
     Mock::given(method("GET"))
         .and(path("/bottest-token/getMe"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "ok": false,
-                "description": "Unauthorized: bot token is invalid",
-                "error_code": 401
-            }))
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "ok": false,
+            "description": "Unauthorized: bot token is invalid",
+            "error_code": 401
+        })))
         .expect(1..)
         .mount(&mock_server)
         .await;
@@ -451,13 +450,11 @@ async fn test_send_media_api_error() {
 
     Mock::given(method("POST"))
         .and(path("/bottest-token/sendPhoto"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "ok": false,
-                "description": "Bad Request: wrong file identifier/HTTP URL specified",
-                "error_code": 400
-            }))
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "ok": false,
+            "description": "Bad Request: wrong file identifier/HTTP URL specified",
+            "error_code": 400
+        })))
         .expect(1..)
         .mount(&mock_server)
         .await;
@@ -630,13 +627,11 @@ fn interactive_params() -> SendInteractiveParams {
                     ],
                 },
                 KeyboardRow {
-                    buttons: vec![
-                        Button {
-                            text: "Cancel".to_string(),
-                            callback_data: Some("cancel".to_string()),
-                            url: None,
-                        },
-                    ],
+                    buttons: vec![Button {
+                        text: "Cancel".to_string(),
+                        callback_data: Some("cancel".to_string()),
+                        url: None,
+                    }],
                 },
             ],
         },
@@ -669,7 +664,10 @@ async fn test_send_interactive_success() {
         .await;
 
     let adapter = make_adapter(mock_server.address().port()).await;
-    let result = adapter.send_interactive(interactive_params()).await.unwrap();
+    let result = adapter
+        .send_interactive(interactive_params())
+        .await
+        .unwrap();
 
     assert!(result.success, "send_interactive should succeed");
     assert_eq!(result.message_id, Some("999".to_string()));
@@ -698,7 +696,10 @@ async fn test_send_interactive_inline_keyboard_format() {
         .await;
 
     let adapter = make_adapter(mock_server.address().port()).await;
-    let result = adapter.send_interactive(interactive_params()).await.unwrap();
+    let result = adapter
+        .send_interactive(interactive_params())
+        .await
+        .unwrap();
     assert!(result.success);
 
     tokio::time::sleep(Duration::from_millis(100)).await;
@@ -750,17 +751,13 @@ async fn test_send_interactive_with_url_button() {
         chat_id: "12345".to_string(),
         text: "Visit our site:".to_string(),
         keyboard: InlineKeyboard {
-            rows: vec![
-                KeyboardRow {
-                    buttons: vec![
-                        Button {
-                            text: "Open Website".to_string(),
-                            callback_data: None,
-                            url: Some("https://example.com".to_string()),
-                        },
-                    ],
-                },
-            ],
+            rows: vec![KeyboardRow {
+                buttons: vec![Button {
+                    text: "Open Website".to_string(),
+                    callback_data: None,
+                    url: Some("https://example.com".to_string()),
+                }],
+            }],
         },
         reply_to: None,
     };
@@ -781,21 +778,25 @@ async fn test_send_interactive_api_error() {
 
     Mock::given(method("POST"))
         .and(path("/bottest-token/sendMessage"))
-        .respond_with(
-            ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "ok": false,
-                "description": "Bad Request: can't parse reply keyboard markup",
-                "error_code": 400
-            }))
-        )
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "ok": false,
+            "description": "Bad Request: can't parse reply keyboard markup",
+            "error_code": 400
+        })))
         .expect(1..)
         .mount(&mock_server)
         .await;
 
     let adapter = make_adapter(mock_server.address().port()).await;
-    let result = adapter.send_interactive(interactive_params()).await.unwrap();
+    let result = adapter
+        .send_interactive(interactive_params())
+        .await
+        .unwrap();
 
-    assert!(!result.success, "send_interactive should fail with API error");
+    assert!(
+        !result.success,
+        "send_interactive should fail with API error"
+    );
 }
 
 #[tokio::test]
@@ -810,9 +811,15 @@ async fn test_send_interactive_http_error() {
         .await;
 
     let adapter = make_adapter(mock_server.address().port()).await;
-    let result = adapter.send_interactive(interactive_params()).await.unwrap();
+    let result = adapter
+        .send_interactive(interactive_params())
+        .await
+        .unwrap();
 
-    assert!(!result.success, "send_interactive should fail with HTTP 403");
+    assert!(
+        !result.success,
+        "send_interactive should fail with HTTP 403"
+    );
 }
 
 #[tokio::test]

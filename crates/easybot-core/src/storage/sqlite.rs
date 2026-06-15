@@ -6,7 +6,7 @@
 use async_trait::async_trait;
 use sqlx::SqlitePool;
 
-use super::{MessageFilter, MessageRole, MessageStore, SessionStore, StoredMessage, StoreError};
+use super::{MessageFilter, MessageRole, MessageStore, SessionStore, StoreError, StoredMessage};
 use crate::types::message::{InboundMessage, SendResult};
 use crate::types::session::{ResetPolicy, Session, SessionFilter, SessionSource};
 
@@ -54,7 +54,8 @@ CREATE INDEX IF NOT EXISTS idx_messages_ct ON messages(created_at);
 pub async fn create_pool(db_path: &std::path::Path) -> Result<SqlitePool, StoreError> {
     // 确保父目录存在
     if let Some(parent) = db_path.parent() {
-        tokio::fs::create_dir_all(parent).await
+        tokio::fs::create_dir_all(parent)
+            .await
             .map_err(|e| StoreError::Database(format!("Failed to create db directory: {}", e)))?;
     }
 
@@ -80,22 +81,28 @@ pub async fn create_pool(db_path: &std::path::Path) -> Result<SqlitePool, StoreE
 
     // 优化 SQLite 性能
     sqlx::query("PRAGMA journal_mode=WAL")
-        .execute(&pool).await.ok();
+        .execute(&pool)
+        .await
+        .ok();
     sqlx::query("PRAGMA busy_timeout=5000")
-        .execute(&pool).await.ok();
+        .execute(&pool)
+        .await
+        .ok();
     sqlx::query("PRAGMA synchronous=NORMAL")
-        .execute(&pool).await.ok();
+        .execute(&pool)
+        .await
+        .ok();
     sqlx::query("PRAGMA foreign_keys=ON")
-        .execute(&pool).await.ok();
+        .execute(&pool)
+        .await
+        .ok();
 
     Ok(pool)
 }
 
 /// 运行数据库迁移（幂等）
 pub async fn run_migrations(pool: &SqlitePool) -> Result<(), StoreError> {
-    sqlx::query(SCHEMA_SQL)
-        .execute(pool)
-        .await?;
+    sqlx::query(SCHEMA_SQL).execute(pool).await?;
     Ok(())
 }
 
@@ -117,8 +124,8 @@ struct SessionRow {
 impl SessionRow {
     fn into_session(self) -> Result<Session, StoreError> {
         let source: SessionSource = serde_json::from_str(&self.source_json)?;
-        let metadata: serde_json::Value = serde_json::from_str(&self.metadata)
-            .unwrap_or(serde_json::json!({}));
+        let metadata: serde_json::Value =
+            serde_json::from_str(&self.metadata).unwrap_or(serde_json::json!({}));
         let reset_policy = match self.reset_policy.as_str() {
             "Never" => ResetPolicy::Never,
             "After1h" => ResetPolicy::After1h,
@@ -256,7 +263,8 @@ impl SessionStore for SqliteSessionStore {
         rows.iter()
             .map(|row| {
                 let s = row_to_session(row)?;
-                s.into_session().map_err(|e| sqlx::Error::Protocol(e.to_string()))
+                s.into_session()
+                    .map_err(|e| sqlx::Error::Protocol(e.to_string()))
             })
             .collect::<Result<Vec<_>, _>>()
             .map_err(StoreError::from)
@@ -288,7 +296,8 @@ impl SessionStore for SqliteSessionStore {
         rows.iter()
             .map(|row| {
                 let s = row_to_session(row)?;
-                s.into_session().map_err(|e| sqlx::Error::Protocol(e.to_string()))
+                s.into_session()
+                    .map_err(|e| sqlx::Error::Protocol(e.to_string()))
             })
             .collect::<Result<Vec<_>, _>>()
             .map_err(StoreError::from)
@@ -396,10 +405,13 @@ impl MessageStore for SqliteMessageStore {
         Ok(())
     }
 
-    async fn list_messages(&self, filter: &MessageFilter) -> Result<Vec<StoredMessage>, StoreError> {
+    async fn list_messages(
+        &self,
+        filter: &MessageFilter,
+    ) -> Result<Vec<StoredMessage>, StoreError> {
         let mut sql = String::from(
             "SELECT id, session_key, platform, chat_id, role, text, raw_data, timestamp, created_at
-             FROM messages WHERE 1=1"
+             FROM messages WHERE 1=1",
         );
         let mut params: Vec<String> = vec![];
 
@@ -439,7 +451,8 @@ impl MessageStore for SqliteMessageStore {
         rows.iter()
             .map(|row| {
                 let r = row_to_stored_message(row)?;
-                r.into_stored().map_err(|e| sqlx::Error::Protocol(e.to_string()))
+                r.into_stored()
+                    .map_err(|e| sqlx::Error::Protocol(e.to_string()))
             })
             .collect::<Result<Vec<_>, _>>()
             .map_err(StoreError::from)
@@ -549,7 +562,10 @@ mod tests {
         let pool = create_test_pool().await;
         let store = SqliteSessionStore::new(pool);
 
-        store.upsert_session(&make_test_session("tg:1", "telegram", "1")).await.unwrap();
+        store
+            .upsert_session(&make_test_session("tg:1", "telegram", "1"))
+            .await
+            .unwrap();
         assert!(store.delete_session("tg:1").await.unwrap());
         assert!(!store.delete_session("nonexistent").await.unwrap());
     }
@@ -559,8 +575,14 @@ mod tests {
         let pool = create_test_pool().await;
         let store = SqliteSessionStore::new(pool);
 
-        store.upsert_session(&make_test_session("a:1", "telegram", "1")).await.unwrap();
-        store.upsert_session(&make_test_session("b:2", "discord", "2")).await.unwrap();
+        store
+            .upsert_session(&make_test_session("a:1", "telegram", "1"))
+            .await
+            .unwrap();
+        store
+            .upsert_session(&make_test_session("b:2", "discord", "2"))
+            .await
+            .unwrap();
 
         let all = store.load_all_sessions().await.unwrap();
         assert_eq!(all.len(), 2);
@@ -571,8 +593,14 @@ mod tests {
         let pool = create_test_pool().await;
         let store = SqliteSessionStore::new(pool);
 
-        store.upsert_session(&make_test_session("tg:1", "telegram", "1")).await.unwrap();
-        store.upsert_session(&make_test_session("dc:2", "discord", "2")).await.unwrap();
+        store
+            .upsert_session(&make_test_session("tg:1", "telegram", "1"))
+            .await
+            .unwrap();
+        store
+            .upsert_session(&make_test_session("dc:2", "discord", "2"))
+            .await
+            .unwrap();
 
         let filter = SessionFilter {
             platform: Some("telegram".to_string()),
@@ -709,9 +737,7 @@ mod tests {
     #[tokio::test]
     async fn test_outbound_to_stored_message() {
         let result = SendResult::ok("out_msg_1".to_string());
-        let stored = StoredMessage::from_outbound(
-            "telegram", "123", None, "Reply", &result,
-        );
+        let stored = StoredMessage::from_outbound("telegram", "123", None, "Reply", &result);
 
         assert_eq!(stored.role, MessageRole::Assistant);
         assert_eq!(stored.session_key, "telegram:123");
@@ -728,12 +754,18 @@ mod tests {
         let mut msg1 = make_test_inbound();
         msg1.chat_id = "111".to_string();
         msg1.text = Some("Chat 111 msg".to_string());
-        store.store_message(&StoredMessage::from_inbound(&msg1)).await.unwrap();
+        store
+            .store_message(&StoredMessage::from_inbound(&msg1))
+            .await
+            .unwrap();
 
         let mut msg2 = make_test_inbound();
         msg2.chat_id = "222".to_string();
         msg2.text = Some("Chat 222 msg".to_string());
-        store.store_message(&StoredMessage::from_inbound(&msg2)).await.unwrap();
+        store
+            .store_message(&StoredMessage::from_inbound(&msg2))
+            .await
+            .unwrap();
 
         // Filter by chat_id
         let filter = MessageFilter {

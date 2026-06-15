@@ -19,13 +19,9 @@ pub struct MessagePersister;
 
 impl MessagePersister {
     /// 启动消息持久化后台任务
-    pub fn start(
-        event_bus: Arc<EventBus>,
-        message_store: Arc<dyn MessageStore>,
-    ) {
-        let mut event_rx = event_bus.subscribe_many(&[
-            crate::types::event::event_types::MESSAGE_INBOUND,
-        ]);
+    pub fn start(event_bus: Arc<EventBus>, message_store: Arc<dyn MessageStore>) {
+        let mut event_rx =
+            event_bus.subscribe_many(&[crate::types::event::event_types::MESSAGE_INBOUND]);
 
         tokio::spawn(async move {
             info!("Message persister started");
@@ -55,18 +51,18 @@ impl MessagePersister {
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
     use std::sync::Arc;
     use std::time::Duration;
-    use serde_json::json;
 
     use crate::bus::EventBus;
-    use crate::session::SessionManager;
     use crate::session::bridge::SessionBridge;
     use crate::session::message_persister::MessagePersister;
-    use crate::storage::sqlite::{SqliteMessageStore, run_migrations};
+    use crate::session::SessionManager;
+    use crate::storage::sqlite::{run_migrations, SqliteMessageStore};
     use crate::storage::{MessageFilter, MessageStore};
-    use crate::types::message::{InboundMessage, MessageAuthor, ChatType};
     use crate::types::event::event_types::MESSAGE_INBOUND;
+    use crate::types::message::{ChatType, InboundMessage, MessageAuthor};
 
     /// 创建测试用的入站消息
     fn test_inbound_message() -> InboundMessage {
@@ -173,7 +169,10 @@ mod tests {
             })
             .await
             .unwrap();
-        assert!(stored_messages.is_empty(), "Should not store non-message events");
+        assert!(
+            stored_messages.is_empty(),
+            "Should not store non-message events"
+        );
     }
 
     #[tokio::test]
@@ -217,8 +216,7 @@ mod tests {
         let event_bus = Arc::new(EventBus::new());
         let pool = sqlx::SqlitePool::connect(":memory:").await.unwrap();
         run_migrations(&pool).await.unwrap();
-        let message_store: Arc<dyn MessageStore> =
-            Arc::new(SqliteMessageStore::new(pool.clone()));
+        let message_store: Arc<dyn MessageStore> = Arc::new(SqliteMessageStore::new(pool.clone()));
         let session_manager = Arc::new(SessionManager::new());
 
         // 启动管线组件
@@ -263,7 +261,10 @@ mod tests {
         // 验证会话已创建
         let session = session_manager.get("test:pipeline-chat");
         assert!(session.is_some(), "SessionBridge should create session");
-        assert_eq!(session.unwrap().source.chat_name, Some("Pipe Test".to_string()));
+        assert_eq!(
+            session.unwrap().source.chat_name,
+            Some("Pipe Test".to_string())
+        );
 
         // 验证消息已持久化
         let stored = SqliteMessageStore::new(pool)
@@ -286,8 +287,7 @@ mod tests {
         let event_bus = Arc::new(EventBus::new());
         let pool = sqlx::SqlitePool::connect(":memory:").await.unwrap();
         run_migrations(&pool).await.unwrap();
-        let message_store: Arc<dyn MessageStore> =
-            Arc::new(SqliteMessageStore::new(pool.clone()));
+        let message_store: Arc<dyn MessageStore> = Arc::new(SqliteMessageStore::new(pool.clone()));
         let session_manager = Arc::new(SessionManager::new());
 
         SessionBridge::start(event_bus.clone(), session_manager.clone());

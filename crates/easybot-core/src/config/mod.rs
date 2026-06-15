@@ -5,29 +5,30 @@
 mod home;
 pub use home::*;
 
-use std::path::Path;
-use regex::Regex;
-use tracing::info;
 use crate::types::config::GatewayConfig;
+use regex::Regex;
+use std::path::Path;
+use tracing::info;
 
 /// 加载配置文件
 ///
 /// 从指定路径加载 YAML 配置，解析环境变量引用。
 /// 支持递归的 ${VAR_NAME} 和 $VAR_NAME 语法。
 pub async fn load_config(path: &Path) -> Result<GatewayConfig, crate::types::error::GatewayError> {
-    let content = tokio::fs::read_to_string(path)
-        .await
-        .map_err(|e| crate::types::error::GatewayError::ConfigError(
-            format!("failed to read config file {}: {}", path.display(), e)
-        ))?;
+    let content = tokio::fs::read_to_string(path).await.map_err(|e| {
+        crate::types::error::GatewayError::ConfigError(format!(
+            "failed to read config file {}: {}",
+            path.display(),
+            e
+        ))
+    })?;
 
     // 解析环境变量引用
     let resolved = resolve_env_vars(&content);
 
-    let config: GatewayConfig = serde_yaml::from_str(&resolved)
-        .map_err(|e| crate::types::error::GatewayError::ConfigError(
-            format!("failed to parse config: {}", e)
-        ))?;
+    let config: GatewayConfig = serde_yaml::from_str(&resolved).map_err(|e| {
+        crate::types::error::GatewayError::ConfigError(format!("failed to parse config: {}", e))
+    })?;
 
     info!("Loaded config from {}", path.display());
     Ok(config)
@@ -41,15 +42,10 @@ pub fn merge_configs(base: &mut serde_yaml::Value, local: serde_yaml::Value) {
         (base @ serde_yaml::Value::Mapping(_), serde_yaml::Value::Mapping(local_map)) => {
             let base_map = base.as_mapping_mut().unwrap();
             for (key, value) in local_map {
-                if base_map.contains_key(&key)
-                    && base_map[&key].is_mapping()
-                    && value.is_mapping()
+                if base_map.contains_key(&key) && base_map[&key].is_mapping() && value.is_mapping()
                 {
                     // 递归合并嵌套对象
-                    merge_configs(
-                        &mut base_map[&key],
-                        value,
-                    );
+                    merge_configs(&mut base_map[&key], value);
                 } else {
                     base_map.insert(key, value);
                 }
@@ -67,12 +63,16 @@ pub fn merge_configs(base: &mut serde_yaml::Value, local: serde_yaml::Value) {
 fn resolve_env_vars(content: &str) -> String {
     let re = Regex::new(r"\$\{([^}]+)\}|\$([A-Za-z_][A-Za-z0-9_]*)").unwrap();
     re.replace_all(content, |caps: &regex::Captures| {
-        let var_name = caps.get(1)
+        let var_name = caps
+            .get(1)
             .or_else(|| caps.get(2))
             .map(|m| m.as_str())
             .unwrap_or("");
         std::env::var(var_name).unwrap_or_else(|_| {
-            tracing::warn!("Environment variable '{}' not set, using empty string", var_name);
+            tracing::warn!(
+                "Environment variable '{}' not set, using empty string",
+                var_name
+            );
             String::new()
         })
     })
@@ -146,23 +146,29 @@ mod tests {
 
     #[test]
     fn test_merge_configs() {
-        let mut base: serde_yaml::Value = serde_yaml::from_str(r#"
+        let mut base: serde_yaml::Value = serde_yaml::from_str(
+            r#"
 server:
   port: 8080
   host: "0.0.0.0"
 adapters:
   telegram:
     enabled: false
-"#).unwrap();
+"#,
+        )
+        .unwrap();
 
-        let local: serde_yaml::Value = serde_yaml::from_str(r#"
+        let local: serde_yaml::Value = serde_yaml::from_str(
+            r#"
 server:
   port: 9090
 adapters:
   telegram:
     enabled: true
     token: "test-token"
-"#).unwrap();
+"#,
+        )
+        .unwrap();
 
         merge_configs(&mut base, local);
 

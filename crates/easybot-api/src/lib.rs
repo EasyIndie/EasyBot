@@ -3,22 +3,22 @@
 //! 提供 HTTP REST API 和 WebSocket 实时推送。
 //! 基于 axum 框架实现。
 
-use std::sync::Arc;
-use easybot_core::bus::EventBus;
+use crate::config_manager::ConfigManager;
 use easybot_core::adapter::AdapterManager;
-use easybot_core::session::SessionManager;
 use easybot_core::auth::ApiKeyManager;
+use easybot_core::bus::EventBus;
+use easybot_core::session::SessionManager;
 use easybot_core::storage::MessageStore;
 use easybot_core::types::config::GatewayConfig;
-use crate::config_manager::ConfigManager;
+use std::sync::Arc;
 
 pub mod config_manager;
 pub mod metrics;
 pub mod middleware;
-pub mod server;
-pub mod routes;
-pub mod response;
 pub mod openapi;
+pub mod response;
+pub mod routes;
+pub mod server;
 
 /// 应用共享状态
 #[derive(Clone)]

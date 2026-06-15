@@ -7,12 +7,12 @@
 //!   easybot --dir ~/.easybot
 //!   easybot init
 
-use std::sync::Arc;
 use clap::Parser;
-use tracing_subscriber::EnvFilter;
+use easybot_core::types::event::{event_types, GatewayEvent};
 #[allow(unused_imports)]
 use easybot_core::PlatformAdapter;
-use easybot_core::types::event::{GatewayEvent, event_types};
+use std::sync::Arc;
+use tracing_subscriber::EnvFilter;
 
 /// EasyBot 命令行参数
 #[derive(Parser)]
@@ -80,16 +80,26 @@ async fn main() -> anyhow::Result<()> {
                 easybot_core::config::merge_configs(&mut merged, local_val);
                 match serde_yaml::from_value::<easybot_core::types::config::GatewayConfig>(merged) {
                     Ok(c) => {
-                        tracing::info!("Merged local overrides from {}", paths.local_config_file.display());
+                        tracing::info!(
+                            "Merged local overrides from {}",
+                            paths.local_config_file.display()
+                        );
                         config = c;
                     }
                     Err(e) => {
-                        tracing::warn!("Failed to merge local config: {}. Using base config only.", e);
+                        tracing::warn!(
+                            "Failed to merge local config: {}. Using base config only.",
+                            e
+                        );
                     }
                 }
             }
             Err(e) => {
-                tracing::warn!("Failed to load local config {}: {}", paths.local_config_file.display(), e);
+                tracing::warn!(
+                    "Failed to load local config {}: {}",
+                    paths.local_config_file.display(),
+                    e
+                );
             }
         }
     }
@@ -110,19 +120,25 @@ async fn main() -> anyhow::Result<()> {
             } else {
                 "postgresql://localhost:5432/easybot".to_string()
             };
-            match easybot_core::storage::postgres::create_pool(&conn_str, config.storage.pool_size).await {
+            match easybot_core::storage::postgres::create_pool(&conn_str, config.storage.pool_size)
+                .await
+            {
                 Ok(pool) => {
-                    easybot_core::storage::postgres::run_migrations(&pool).await
+                    easybot_core::storage::postgres::run_migrations(&pool)
+                        .await
                         .map_err(|e| anyhow::anyhow!("PostgreSQL migration failed: {}", e))?;
                     tracing::info!("PostgreSQL storage initialized: {}", conn_str);
 
-                    let store: Arc<dyn easybot_core::storage::SessionStore> =
-                        Arc::new(easybot_core::storage::postgres::PgSessionStore::new(pool.clone()));
+                    let store: Arc<dyn easybot_core::storage::SessionStore> = Arc::new(
+                        easybot_core::storage::postgres::PgSessionStore::new(pool.clone()),
+                    );
                     let msg_store: Arc<dyn easybot_core::storage::MessageStore> =
                         Arc::new(easybot_core::storage::postgres::PgMessageStore::new(pool));
 
                     let sm = Arc::new(easybot_core::session::SessionManager::with_store(store));
-                    let loaded = sm.load_from_store().await
+                    let loaded = sm
+                        .load_from_store()
+                        .await
                         .map_err(|e| anyhow::anyhow!("Failed to load sessions: {}", e))?;
                     tracing::info!("Loaded {} sessions from database", loaded);
 
@@ -136,47 +152,66 @@ async fn main() -> anyhow::Result<()> {
         "sqlite" => {
             match easybot_core::storage::sqlite::create_pool(&db_path).await {
                 Ok(pool) => {
-                    easybot_core::storage::sqlite::run_migrations(&pool).await
+                    easybot_core::storage::sqlite::run_migrations(&pool)
+                        .await
                         .map_err(|e| anyhow::anyhow!("Migration failed: {}", e))?;
                     tracing::info!("SQLite storage initialized: {}", db_path.display());
 
-                    let store: Arc<dyn easybot_core::storage::SessionStore> =
-                        Arc::new(easybot_core::storage::sqlite::SqliteSessionStore::new(pool.clone()));
+                    let store: Arc<dyn easybot_core::storage::SessionStore> = Arc::new(
+                        easybot_core::storage::sqlite::SqliteSessionStore::new(pool.clone()),
+                    );
                     let msg_store: Arc<dyn easybot_core::storage::MessageStore> =
                         Arc::new(easybot_core::storage::sqlite::SqliteMessageStore::new(pool));
 
                     let sm = Arc::new(easybot_core::session::SessionManager::with_store(store));
-                    let loaded = sm.load_from_store().await
+                    let loaded = sm
+                        .load_from_store()
+                        .await
                         .map_err(|e| anyhow::anyhow!("Failed to load sessions: {}", e))?;
                     tracing::info!("Loaded {} sessions from database", loaded);
 
                     (msg_store, sm)
                 }
                 Err(e) => {
-                    tracing::warn!("Failed to initialize SQLite ({}), falling back to in-memory: {}", db_path.display(), e);
+                    tracing::warn!(
+                        "Failed to initialize SQLite ({}), falling back to in-memory: {}",
+                        db_path.display(),
+                        e
+                    );
                     // 使用内存数据库作为回退
-                    let pool = easybot_core::storage::sqlite::create_pool(
-                        std::path::Path::new(":memory:")
-                    ).await.expect("In-memory SQLite should always work");
+                    let pool = easybot_core::storage::sqlite::create_pool(std::path::Path::new(
+                        ":memory:",
+                    ))
+                    .await
+                    .expect("In-memory SQLite should always work");
                     let msg_store: Arc<dyn easybot_core::storage::MessageStore> =
                         Arc::new(easybot_core::storage::sqlite::SqliteMessageStore::new(pool));
-                    (msg_store, Arc::new(easybot_core::session::SessionManager::new()))
+                    (
+                        msg_store,
+                        Arc::new(easybot_core::session::SessionManager::new()),
+                    )
                 }
             }
         }
         _ => {
-            tracing::warn!("Unknown storage type '{}', falling back to in-memory", config.storage.storage_type);
-            let pool = easybot_core::storage::sqlite::create_pool(
-                std::path::Path::new(":memory:")
-            ).await.expect("In-memory SQLite should always work");
+            tracing::warn!(
+                "Unknown storage type '{}', falling back to in-memory",
+                config.storage.storage_type
+            );
+            let pool = easybot_core::storage::sqlite::create_pool(std::path::Path::new(":memory:"))
+                .await
+                .expect("In-memory SQLite should always work");
             let msg_store: Arc<dyn easybot_core::storage::MessageStore> =
                 Arc::new(easybot_core::storage::sqlite::SqliteMessageStore::new(pool));
-            (msg_store, Arc::new(easybot_core::session::SessionManager::new()))
+            (
+                msg_store,
+                Arc::new(easybot_core::session::SessionManager::new()),
+            )
         }
     };
 
-    let adapter_manager = Arc::new(easybot_core::adapter::AdapterManager::new()
-        .with_event_bus(event_bus.clone()));
+    let adapter_manager =
+        Arc::new(easybot_core::adapter::AdapterManager::new().with_event_bus(event_bus.clone()));
     let auth_manager = Arc::new(easybot_core::auth::ApiKeyManager::new());
 
     // 注册内置适配器
@@ -187,7 +222,10 @@ async fn main() -> anyhow::Result<()> {
 
     // 创建默认 API Key（仅开发环境）
     if cli.debug {
-        match auth_manager.create_key("dev", vec!["*".to_string()], None).await {
+        match auth_manager
+            .create_key("dev", vec!["*".to_string()], None)
+            .await
+        {
             Ok((id, key)) => tracing::info!("Dev API Key created: id={}, key={}", id, key),
             Err(e) => tracing::warn!("Failed to create dev API key: {}", e),
         }
@@ -203,22 +241,13 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // 启动会话桥接器（入站消息 → 自动创建会话）
-    easybot_core::session::SessionBridge::start(
-        event_bus.clone(),
-        session_manager.clone(),
-    );
+    easybot_core::session::SessionBridge::start(event_bus.clone(), session_manager.clone());
 
     // 启动消息持久化器（入站消息 → SQLite）
-    easybot_core::session::MessagePersister::start(
-        event_bus.clone(),
-        message_store.clone(),
-    );
+    easybot_core::session::MessagePersister::start(event_bus.clone(), message_store.clone());
 
     // 启动 Webhook 事件转发器
-    easybot_core::webhook::WebhookDispatcher::start(
-        event_bus.clone(),
-        config.webhooks.clone(),
-    );
+    easybot_core::webhook::WebhookDispatcher::start(event_bus.clone(), config.webhooks.clone());
 
     // 提取 TTL 清理所需数据（后续 config/session_manager 将被消费）
     let ttl_session_store = session_manager.store_ref();
@@ -240,7 +269,9 @@ async fn main() -> anyhow::Result<()> {
 
     // 创建配置管理器（用于热重载）
     // 优先使用 --config 指定的路径，否则使用默认配置路径
-    let config_file_for_watch = cli.config.as_ref()
+    let config_file_for_watch = cli
+        .config
+        .as_ref()
         .map(std::path::PathBuf::from)
         .or_else(|| {
             if paths.config_file.exists() {
@@ -269,16 +300,15 @@ async fn main() -> anyhow::Result<()> {
     );
 
     // 启动 API 服务器（支持优雅关闭）
-    let server = easybot_api::server::Server::new(
-        app_state.clone(),
-        server_config,
-    );
+    let server = easybot_api::server::Server::new(app_state.clone(), server_config);
 
     let shutdown = Arc::new(tokio::sync::Notify::new());
     let sig = shutdown.clone();
-    let server_handle = server.start(async move {
-        sig.notified().await;
-    }).await?;
+    let server_handle = server
+        .start(async move {
+            sig.notified().await;
+        })
+        .await?;
 
     // 启动配置文件轮询监听器（每 60 秒检查一次变更）
     easybot_api::config_manager::start_config_watcher(
@@ -337,16 +367,28 @@ async fn handle_init(cli: Cli) -> anyhow::Result<()> {
     if !paths.config_file.exists() {
         let default_config = easybot_core::config::generate_default_config();
         tokio::fs::write(&paths.config_file, &default_config).await?;
-        tracing::info!("Created default configuration: {}", paths.config_file.display());
+        tracing::info!(
+            "Created default configuration: {}",
+            paths.config_file.display()
+        );
 
         println!("\nEasyBot initialized at:");
         paths.print_tree();
-        println!("\nEdit {} to configure platforms, then run `easybot`.", paths.config_file.display());
+        println!(
+            "\nEdit {} to configure platforms, then run `easybot`.",
+            paths.config_file.display()
+        );
     } else {
-        tracing::info!("Configuration already exists: {}", paths.config_file.display());
+        tracing::info!(
+            "Configuration already exists: {}",
+            paths.config_file.display()
+        );
         println!("\nEasyBot is already initialized at:");
         println!("  {}", home.display());
-        println!("\nEdit {} to update configuration.", paths.config_file.display());
+        println!(
+            "\nEdit {} to update configuration.",
+            paths.config_file.display()
+        );
     }
 
     Ok(())
@@ -380,11 +422,7 @@ async fn load_plugin_adapters(
         {
             adapter_manager
                 .registry()
-                .register(
-                    &result.platform_name,
-                    &result.display_name,
-                    factory,
-                )
+                .register(&result.platform_name, &result.display_name, factory)
                 .await;
             tracing::info!(
                 "Registered plugin adapter: {} ({})",
@@ -395,11 +433,7 @@ async fn load_plugin_adapters(
     }
 
     for (path, error) in &failed {
-        tracing::warn!(
-            "Failed to load plugin from {}: {}",
-            path.display(),
-            error
-        );
+        tracing::warn!("Failed to load plugin from {}: {}", path.display(), error);
     }
 }
 
@@ -410,9 +444,7 @@ async fn load_plugin_adapters(
     _paths: &easybot_core::config::EasyBotPaths,
     _event_bus: std::sync::Arc<easybot_core::bus::EventBus>,
 ) {
-    tracing::info!(
-        "Plugin system not enabled (compile with --features plugin-system to enable)"
-    );
+    tracing::info!("Plugin system not enabled (compile with --features plugin-system to enable)");
 }
 
 /// 注册内置适配器工厂
@@ -425,20 +457,23 @@ async fn register_builtin_adapters(
     {
         let registry = adapter_manager.registry();
         let eb = event_bus.clone();
-        let factory: easybot_core::adapter::AdapterFactory =
-            std::sync::Arc::new(move |config| {
-                let eb = eb.clone();
-                Box::pin(async move {
-                    let mut adapter = easybot_adapter_telegram::TelegramAdapter::new();
-                    adapter.set_event_bus(eb);
-                    let init_result = adapter.init(config).await
-                        .map_err(|e| format!("telegram init failed: {}", e))?;
-                    if !init_result.ok {
-                        return Err(init_result.error.unwrap_or_else(|| "unknown init error".to_string()));
-                    }
-                    Ok(Box::new(adapter) as Box<dyn easybot_core::PlatformAdapter>)
-                })
-            });
+        let factory: easybot_core::adapter::AdapterFactory = std::sync::Arc::new(move |config| {
+            let eb = eb.clone();
+            Box::pin(async move {
+                let mut adapter = easybot_adapter_telegram::TelegramAdapter::new();
+                adapter.set_event_bus(eb);
+                let init_result = adapter
+                    .init(config)
+                    .await
+                    .map_err(|e| format!("telegram init failed: {}", e))?;
+                if !init_result.ok {
+                    return Err(init_result
+                        .error
+                        .unwrap_or_else(|| "unknown init error".to_string()));
+                }
+                Ok(Box::new(adapter) as Box<dyn easybot_core::PlatformAdapter>)
+            })
+        });
         registry.register("telegram", "Telegram", factory).await;
         tracing::info!("Registered built-in adapter: telegram");
     }
@@ -447,20 +482,23 @@ async fn register_builtin_adapters(
     {
         let registry = adapter_manager.registry();
         let eb = event_bus.clone();
-        let factory: easybot_core::adapter::AdapterFactory =
-            std::sync::Arc::new(move |config| {
-                let eb = eb.clone();
-                Box::pin(async move {
-                    let mut adapter = easybot_adapter_discord::DiscordAdapter::new();
-                    adapter.set_event_bus(eb);
-                    let init_result = adapter.init(config).await
-                        .map_err(|e| format!("discord init failed: {}", e))?;
-                    if !init_result.ok {
-                        return Err(init_result.error.unwrap_or_else(|| "unknown init error".to_string()));
-                    }
-                    Ok(Box::new(adapter) as Box<dyn easybot_core::PlatformAdapter>)
-                })
-            });
+        let factory: easybot_core::adapter::AdapterFactory = std::sync::Arc::new(move |config| {
+            let eb = eb.clone();
+            Box::pin(async move {
+                let mut adapter = easybot_adapter_discord::DiscordAdapter::new();
+                adapter.set_event_bus(eb);
+                let init_result = adapter
+                    .init(config)
+                    .await
+                    .map_err(|e| format!("discord init failed: {}", e))?;
+                if !init_result.ok {
+                    return Err(init_result
+                        .error
+                        .unwrap_or_else(|| "unknown init error".to_string()));
+                }
+                Ok(Box::new(adapter) as Box<dyn easybot_core::PlatformAdapter>)
+            })
+        });
         registry.register("discord", "Discord", factory).await;
         tracing::info!("Registered built-in adapter: discord");
     }
@@ -469,20 +507,23 @@ async fn register_builtin_adapters(
     {
         let registry = adapter_manager.registry();
         let eb = event_bus.clone();
-        let factory: easybot_core::adapter::AdapterFactory =
-            std::sync::Arc::new(move |config| {
-                let eb = eb.clone();
-                Box::pin(async move {
-                    let mut adapter = easybot_adapter_feishu::FeishuAdapter::new();
-                    adapter.set_event_bus(eb);
-                    let init_result = adapter.init(config).await
-                        .map_err(|e| format!("feishu init failed: {}", e))?;
-                    if !init_result.ok {
-                        return Err(init_result.error.unwrap_or_else(|| "unknown init error".to_string()));
-                    }
-                    Ok(Box::new(adapter) as Box<dyn easybot_core::PlatformAdapter>)
-                })
-            });
+        let factory: easybot_core::adapter::AdapterFactory = std::sync::Arc::new(move |config| {
+            let eb = eb.clone();
+            Box::pin(async move {
+                let mut adapter = easybot_adapter_feishu::FeishuAdapter::new();
+                adapter.set_event_bus(eb);
+                let init_result = adapter
+                    .init(config)
+                    .await
+                    .map_err(|e| format!("feishu init failed: {}", e))?;
+                if !init_result.ok {
+                    return Err(init_result
+                        .error
+                        .unwrap_or_else(|| "unknown init error".to_string()));
+                }
+                Ok(Box::new(adapter) as Box<dyn easybot_core::PlatformAdapter>)
+            })
+        });
         registry.register("feishu", "飞书", factory).await;
         tracing::info!("Registered built-in adapter: feishu");
     }
@@ -491,20 +532,23 @@ async fn register_builtin_adapters(
     {
         let registry = adapter_manager.registry();
         let eb = event_bus.clone();
-        let factory: easybot_core::adapter::AdapterFactory =
-            std::sync::Arc::new(move |config| {
-                let eb = eb.clone();
-                Box::pin(async move {
-                    let mut adapter = easybot_adapter_qq::QqAdapter::new();
-                    adapter.set_event_bus(eb);
-                    let init_result = adapter.init(config).await
-                        .map_err(|e| format!("qq init failed: {}", e))?;
-                    if !init_result.ok {
-                        return Err(init_result.error.unwrap_or_else(|| "unknown init error".to_string()));
-                    }
-                    Ok(Box::new(adapter) as Box<dyn easybot_core::PlatformAdapter>)
-                })
-            });
+        let factory: easybot_core::adapter::AdapterFactory = std::sync::Arc::new(move |config| {
+            let eb = eb.clone();
+            Box::pin(async move {
+                let mut adapter = easybot_adapter_qq::QqAdapter::new();
+                adapter.set_event_bus(eb);
+                let init_result = adapter
+                    .init(config)
+                    .await
+                    .map_err(|e| format!("qq init failed: {}", e))?;
+                if !init_result.ok {
+                    return Err(init_result
+                        .error
+                        .unwrap_or_else(|| "unknown init error".to_string()));
+                }
+                Ok(Box::new(adapter) as Box<dyn easybot_core::PlatformAdapter>)
+            })
+        });
         registry.register("qq", "QQ", factory).await;
         tracing::info!("Registered built-in adapter: qq");
     }
@@ -513,24 +557,33 @@ async fn register_builtin_adapters(
     {
         let registry = adapter_manager.registry();
         let eb = event_bus.clone();
-        let factory: easybot_core::adapter::AdapterFactory =
-            std::sync::Arc::new(move |config| {
-                let eb = eb.clone();
-                Box::pin(async move {
-                    let mut adapter = easybot_adapter_wechat::WeChatAdapter::new_with_event_bus(eb);
-                    let init_result = adapter.init(config).await
-                        .map_err(|e| format!("wechat init failed: {}", e))?;
-                    if !init_result.ok {
-                        return Err(init_result.error.unwrap_or_else(|| "unknown init error".to_string()));
-                    }
-                    Ok(Box::new(adapter) as Box<dyn easybot_core::PlatformAdapter>)
-                })
-            });
+        let factory: easybot_core::adapter::AdapterFactory = std::sync::Arc::new(move |config| {
+            let eb = eb.clone();
+            Box::pin(async move {
+                let mut adapter = easybot_adapter_wechat::WeChatAdapter::new_with_event_bus(eb);
+                let init_result = adapter
+                    .init(config)
+                    .await
+                    .map_err(|e| format!("wechat init failed: {}", e))?;
+                if !init_result.ok {
+                    return Err(init_result
+                        .error
+                        .unwrap_or_else(|| "unknown init error".to_string()));
+                }
+                Ok(Box::new(adapter) as Box<dyn easybot_core::PlatformAdapter>)
+            })
+        });
         registry.register("wechat", "个人微信", factory).await;
         tracing::info!("Registered built-in adapter: wechat");
     }
 
-    #[cfg(not(any(feature = "adapter-telegram", feature = "adapter-discord", feature = "adapter-feishu", feature = "adapter-qq", feature = "adapter-wechat")))]
+    #[cfg(not(any(
+        feature = "adapter-telegram",
+        feature = "adapter-discord",
+        feature = "adapter-feishu",
+        feature = "adapter-qq",
+        feature = "adapter-wechat"
+    )))]
     {
         let _ = event_bus;
         tracing::warn!("No adapters enabled (compile with features to enable: adapter-telegram, adapter-discord, adapter-feishu, adapter-qq, adapter-wechat)");

@@ -4,20 +4,20 @@
 //! - 发送: HTTP REST API (im/v1/messages)
 //! - 接收: 事件订阅 (WebSocket 长连接 / Webhook)
 
-mod types;
 mod event;
+mod types;
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use larksuite_oapi_sdk_rs::{Client, EventDispatcher};
-use tokio::sync::broadcast;
 use easybot_core::bus::EventBus;
 use easybot_core::types::adapter::*;
-use easybot_core::types::message::*;
 use easybot_core::types::error::GatewayError;
+use easybot_core::types::message::*;
+use larksuite_oapi_sdk_rs::{Client, EventDispatcher};
+use tokio::sync::broadcast;
 use types::*;
 
 /// 飞书开放平台 API 基础 URL
@@ -56,16 +56,56 @@ impl FeishuAdapter {
             state: AdapterState::Created,
             bot_info: None,
             capabilities: vec![
-                Capability { name: CapabilityName::Text, supported: true, limits: None },
-                Capability { name: CapabilityName::Image, supported: true, limits: None },
-                Capability { name: CapabilityName::Audio, supported: true, limits: None },
-                Capability { name: CapabilityName::Video, supported: true, limits: None },
-                Capability { name: CapabilityName::Document, supported: true, limits: None },
-                Capability { name: CapabilityName::Interactive, supported: true, limits: None },
-                Capability { name: CapabilityName::Markdown, supported: true, limits: None },
-                Capability { name: CapabilityName::Group, supported: true, limits: None },
-                Capability { name: CapabilityName::MessageEdit, supported: true, limits: None },
-                Capability { name: CapabilityName::MessageDelete, supported: true, limits: None },
+                Capability {
+                    name: CapabilityName::Text,
+                    supported: true,
+                    limits: None,
+                },
+                Capability {
+                    name: CapabilityName::Image,
+                    supported: true,
+                    limits: None,
+                },
+                Capability {
+                    name: CapabilityName::Audio,
+                    supported: true,
+                    limits: None,
+                },
+                Capability {
+                    name: CapabilityName::Video,
+                    supported: true,
+                    limits: None,
+                },
+                Capability {
+                    name: CapabilityName::Document,
+                    supported: true,
+                    limits: None,
+                },
+                Capability {
+                    name: CapabilityName::Interactive,
+                    supported: true,
+                    limits: None,
+                },
+                Capability {
+                    name: CapabilityName::Markdown,
+                    supported: true,
+                    limits: None,
+                },
+                Capability {
+                    name: CapabilityName::Group,
+                    supported: true,
+                    limits: None,
+                },
+                Capability {
+                    name: CapabilityName::MessageEdit,
+                    supported: true,
+                    limits: None,
+                },
+                Capability {
+                    name: CapabilityName::MessageDelete,
+                    supported: true,
+                    limits: None,
+                },
             ],
             messages_in: AtomicU64::new(0),
             messages_out: AtomicU64::new(0),
@@ -85,9 +125,9 @@ impl FeishuAdapter {
 
     /// 获取或创建 HTTP 客户端
     fn client(&self) -> Result<&reqwest::Client, GatewayError> {
-        self.http_client.as_ref().ok_or_else(|| {
-            GatewayError::Internal("HTTP client not initialized".to_string())
-        })
+        self.http_client
+            .as_ref()
+            .ok_or_else(|| GatewayError::Internal("HTTP client not initialized".to_string()))
     }
 
     /// 返回 API 基础 URL（支持通过 config.base_url 覆盖）
@@ -116,20 +156,30 @@ impl FeishuAdapter {
 
     /// 获取 tenant_access_token
     async fn refresh_token(&self) -> Result<String, GatewayError> {
-        let config = self.config.as_ref()
+        let config = self
+            .config
+            .as_ref()
             .ok_or_else(|| GatewayError::ConfigError("Adapter not initialized".to_string()))?;
 
         let extra = &config.extra;
-        let app_id = extra.get("app_id")
+        let app_id = extra
+            .get("app_id")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| GatewayError::ConfigError("Missing 'app_id' in feishu config.extra".to_string()))?;
-        let app_secret = config.token.as_deref()
-            .ok_or_else(|| GatewayError::ConfigError("Missing 'token' (app_secret) for feishu".to_string()))?;
+            .ok_or_else(|| {
+                GatewayError::ConfigError("Missing 'app_id' in feishu config.extra".to_string())
+            })?;
+        let app_secret = config.token.as_deref().ok_or_else(|| {
+            GatewayError::ConfigError("Missing 'token' (app_secret) for feishu".to_string())
+        })?;
 
         let client = self.client()?;
-        let url = format!("{}/auth/v3/tenant_access_token/internal", self.api_base_url());
+        let url = format!(
+            "{}/auth/v3/tenant_access_token/internal",
+            self.api_base_url()
+        );
 
-        let resp: FeishuTokenResponse = client.post(&url)
+        let resp: FeishuTokenResponse = client
+            .post(&url)
             .json(&serde_json::json!({
                 "app_id": app_id,
                 "app_secret": app_secret,
@@ -139,52 +189,60 @@ impl FeishuAdapter {
             .map_err(|e| GatewayError::Internal(format!("Failed to get feishu token: {}", e)))?
             .json()
             .await
-            .map_err(|e| GatewayError::Internal(format!("Failed to parse feishu token response: {}", e)))?;
+            .map_err(|e| {
+                GatewayError::Internal(format!("Failed to parse feishu token response: {}", e))
+            })?;
 
         if resp.code != 0 {
             return Err(GatewayError::Internal(format!(
-                "Feishu auth failed: {} (code {})", resp.msg.unwrap_or_default(), resp.code
+                "Feishu auth failed: {} (code {})",
+                resp.msg.unwrap_or_default(),
+                resp.code
             )));
         }
 
-        let token = resp.tenant_access_token
+        let token = resp
+            .tenant_access_token
             .ok_or_else(|| GatewayError::Internal("No token in feishu response".to_string()))?;
         let expire = resp.expire.unwrap_or(7200) as i64;
 
         *self.access_token.write().await = Some(token.clone());
-        *self.token_expires_at.write().await = chrono::Utc::now().timestamp_millis() + (expire * 1000);
+        *self.token_expires_at.write().await =
+            chrono::Utc::now().timestamp_millis() + (expire * 1000);
 
         Ok(token)
     }
 
     /// 飞书 API GET 请求
-    async fn api_get<T: serde::de::DeserializeOwned>(
-        &self,
-        path: &str,
-    ) -> Result<T, GatewayError> {
+    async fn api_get<T: serde::de::DeserializeOwned>(&self, path: &str) -> Result<T, GatewayError> {
         let token = self.ensure_token().await?;
         let client = self.client()?;
         let url = format!("{}{}", self.api_base_url(), path);
 
-        let resp = client.get(&url)
+        let resp = client
+            .get(&url)
             .header("Authorization", format!("Bearer {}", token))
             .send()
             .await
             .map_err(|e| GatewayError::Internal(format!("Feishu GET failed: {}", e)))?;
 
-        let result: FeishuApiResponse<T> = resp.json().await
+        let result: FeishuApiResponse<T> = resp
+            .json()
+            .await
             .map_err(|e| GatewayError::Internal(format!("Feishu GET parse failed: {}", e)))?;
 
         if result.code != 0 {
             return Err(GatewayError::Internal(format!(
-                "Feishu API error (GET {}): {} (code {})", path,
-                result.msg.unwrap_or_default(), result.code
+                "Feishu API error (GET {}): {} (code {})",
+                path,
+                result.msg.unwrap_or_default(),
+                result.code
             )));
         }
 
-        result.data.ok_or_else(|| GatewayError::Internal(format!(
-            "Feishu API returned no data for GET {}", path
-        )))
+        result.data.ok_or_else(|| {
+            GatewayError::Internal(format!("Feishu API returned no data for GET {}", path))
+        })
     }
 
     /// 飞书 API POST 请求
@@ -197,26 +255,31 @@ impl FeishuAdapter {
         let client = self.client()?;
         let url = format!("{}{}", self.api_base_url(), path);
 
-        let resp = client.post(&url)
+        let resp = client
+            .post(&url)
             .header("Authorization", format!("Bearer {}", token))
             .json(body)
             .send()
             .await
             .map_err(|e| GatewayError::Internal(format!("Feishu POST failed: {}", e)))?;
 
-        let result: FeishuApiResponse<T> = resp.json().await
+        let result: FeishuApiResponse<T> = resp
+            .json()
+            .await
             .map_err(|e| GatewayError::Internal(format!("Feishu POST parse failed: {}", e)))?;
 
         if result.code != 0 {
             return Err(GatewayError::Internal(format!(
-                "Feishu API error (POST {}): {} (code {})", path,
-                result.msg.unwrap_or_default(), result.code
+                "Feishu API error (POST {}): {} (code {})",
+                path,
+                result.msg.unwrap_or_default(),
+                result.code
             )));
         }
 
-        result.data.ok_or_else(|| GatewayError::Internal(format!(
-            "Feishu API returned no data for POST {}", path
-        )))
+        result.data.ok_or_else(|| {
+            GatewayError::Internal(format!("Feishu API returned no data for POST {}", path))
+        })
     }
 }
 
@@ -247,13 +310,20 @@ impl PlatformAdapter for FeishuAdapter {
         }
 
         self.config = Some(config);
-        self.http_client = Some(reqwest::Client::builder()
-            .timeout(Duration::from_secs(15))
-            .build()
-            .map_err(|e| GatewayError::Internal(format!("Failed to create HTTP client: {}", e)))?);
+        self.http_client = Some(
+            reqwest::Client::builder()
+                .timeout(Duration::from_secs(15))
+                .build()
+                .map_err(|e| {
+                    GatewayError::Internal(format!("Failed to create HTTP client: {}", e))
+                })?,
+        );
         self.state = AdapterState::Starting;
 
-        Ok(InitResult { ok: true, error: None })
+        Ok(InitResult {
+            ok: true,
+            error: None,
+        })
     }
 
     async fn connect(&mut self) -> Result<ConnectResult, GatewayError> {
@@ -262,7 +332,9 @@ impl PlatformAdapter for FeishuAdapter {
 
         // 2. 获取配置
         let config = self.config.as_ref().unwrap();
-        let app_id = config.extra.get("app_id")
+        let app_id = config
+            .extra
+            .get("app_id")
             .and_then(|v| v.as_str())
             .unwrap_or("unknown");
 
@@ -297,16 +369,17 @@ impl PlatformAdapter for FeishuAdapter {
                 }
             };
 
-            let dispatcher = EventDispatcher::new("", "")
-                .skip_sign_verify()
-                .on_event(types::EVENT_MESSAGE_RECEIVE_V1, move |event_data| {
+            let dispatcher = EventDispatcher::new("", "").skip_sign_verify().on_event(
+                types::EVENT_MESSAGE_RECEIVE_V1,
+                move |event_data| {
                     let eb = eb.clone();
                     let bot_id = app_id_owned.clone();
                     async move {
                         event::handle_message_receive(event_data, &eb, &bot_id).await;
                         Ok(())
                     }
-                });
+                },
+            );
 
             let ws_client = sdk_client.ws_client(dispatcher);
             let log_level = tracing::Level::DEBUG;
@@ -354,8 +427,16 @@ impl PlatformAdapter for FeishuAdapter {
     fn runtime_config(&self) -> AdapterRuntimeConfig {
         AdapterRuntimeConfig {
             enabled: self.config.as_ref().map(|c| c.enabled).unwrap_or(false),
-            token_configured: self.config.as_ref().and_then(|c| c.token.as_ref()).is_some(),
-            extra: self.config.as_ref().map(|c| c.extra.clone()).unwrap_or_default(),
+            token_configured: self
+                .config
+                .as_ref()
+                .and_then(|c| c.token.as_ref())
+                .is_some(),
+            extra: self
+                .config
+                .as_ref()
+                .map(|c| c.extra.clone())
+                .unwrap_or_default(),
         }
     }
 
@@ -468,7 +549,10 @@ impl PlatformAdapter for FeishuAdapter {
         }
     }
 
-    async fn send_interactive(&self, params: SendInteractiveParams) -> Result<SendResult, GatewayError> {
+    async fn send_interactive(
+        &self,
+        params: SendInteractiveParams,
+    ) -> Result<SendResult, GatewayError> {
         let content = serde_json::json!({
             "elements": params.keyboard.rows.iter().map(|row| {
                 let buttons: Vec<serde_json::Value> = row.buttons.iter().map(|b| {
@@ -540,7 +624,11 @@ impl PlatformAdapter for FeishuAdapter {
         })
     }
 
-    async fn delete_message(&self, _chat_id: &str, _message_id: &str) -> Result<DeleteResult, GatewayError> {
+    async fn delete_message(
+        &self,
+        _chat_id: &str,
+        _message_id: &str,
+    ) -> Result<DeleteResult, GatewayError> {
         // 飞书没有真正的删除消息 API，直接返回不支持
         Ok(DeleteResult {
             success: false,
@@ -567,12 +655,20 @@ impl PlatformAdapter for FeishuAdapter {
     async fn list_chats(&self, _filter: Option<ChatFilter>) -> Result<Vec<ChatInfo>, GatewayError> {
         let data: FeishuListChatData = self.api_get("/im/v1/chats?page_size=50").await?;
 
-        Ok(data.items.into_iter().map(|item| ChatInfo {
-            chat_id: item.chat_id,
-            name: Some(item.name),
-            chat_type: if item.chat_type == "group" { ChatType::Group } else { ChatType::Dm },
-            member_count: Some(item.member_count as u32),
-        }).collect())
+        Ok(data
+            .items
+            .into_iter()
+            .map(|item| ChatInfo {
+                chat_id: item.chat_id,
+                name: Some(item.name),
+                chat_type: if item.chat_type == "group" {
+                    ChatType::Group
+                } else {
+                    ChatType::Dm
+                },
+                member_count: Some(item.member_count as u32),
+            })
+            .collect())
     }
 }
 
@@ -597,18 +693,22 @@ impl FeishuAdapter {
 
         // 如果有 URL，先下载
         let file_data = if let Some(ref url) = media.url {
-            let resp = client.get(url)
+            let resp = client
+                .get(url)
                 .send()
                 .await
                 .map_err(|e| GatewayError::Internal(format!("Download media failed: {}", e)))?;
-            resp.bytes().await
+            resp.bytes()
+                .await
                 .map_err(|e| GatewayError::Internal(format!("Read media bytes failed: {}", e)))?
                 .to_vec()
         } else if let Some(ref base64_data) = media.data {
             // 使用 base64 数据作为文件内容
             base64_data.as_bytes().to_vec()
         } else {
-            return Err(GatewayError::InvalidRequest("No media data or URL provided".to_string()));
+            return Err(GatewayError::InvalidRequest(
+                "No media data or URL provided".to_string(),
+            ));
         };
 
         // 使用 multipart 上传
@@ -620,25 +720,34 @@ impl FeishuAdapter {
         let form = reqwest::multipart::Form::new()
             .part("file", file_part)
             .text("file_type", file_type.to_string())
-            .text("file_name", media.filename.clone().unwrap_or_else(|| "file".to_string()));
+            .text(
+                "file_name",
+                media.filename.clone().unwrap_or_else(|| "file".to_string()),
+            );
 
-        let resp = client.post(&url)
+        let resp = client
+            .post(&url)
             .header("Authorization", format!("Bearer {}", token))
             .multipart(form)
             .send()
             .await
             .map_err(|e| GatewayError::Internal(format!("Feishu upload failed: {}", e)))?;
 
-        let result: FeishuApiResponse<FeishuUploadData> = resp.json().await
+        let result: FeishuApiResponse<FeishuUploadData> = resp
+            .json()
+            .await
             .map_err(|e| GatewayError::Internal(format!("Feishu upload parse failed: {}", e)))?;
 
         if result.code != 0 {
             return Err(GatewayError::Internal(format!(
-                "Feishu upload error: {} (code {})", result.msg.unwrap_or_default(), result.code
+                "Feishu upload error: {} (code {})",
+                result.msg.unwrap_or_default(),
+                result.code
             )));
         }
 
-        result.data
+        result
+            .data
             .and_then(|d| d.file_key)
             .ok_or_else(|| GatewayError::Internal("No file_key in upload response".to_string()))
     }
@@ -667,39 +776,48 @@ mod tests {
     #[tokio::test]
     async fn test_init_missing_config() {
         let mut adapter = FeishuAdapter::new();
-        let result = adapter.init(AdapterConfig {
-            enabled: true,
-            token: None,
-            api_key: None,
-            base_url: None,
-            extra: serde_json::json!({}),
-        }).await.unwrap();
+        let result = adapter
+            .init(AdapterConfig {
+                enabled: true,
+                token: None,
+                api_key: None,
+                base_url: None,
+                extra: serde_json::json!({}),
+            })
+            .await
+            .unwrap();
         assert!(!result.ok); // 应该失败，缺少配置
     }
 
     #[tokio::test]
     async fn test_init_missing_app_id() {
         let mut adapter = FeishuAdapter::new();
-        let result = adapter.init(AdapterConfig {
-            enabled: true,
-            token: Some("test_secret".to_string()),
-            api_key: None,
-            base_url: None,
-            extra: serde_json::json!({}),
-        }).await.unwrap();
+        let result = adapter
+            .init(AdapterConfig {
+                enabled: true,
+                token: Some("test_secret".to_string()),
+                api_key: None,
+                base_url: None,
+                extra: serde_json::json!({}),
+            })
+            .await
+            .unwrap();
         assert!(!result.ok); // 缺少 app_id
     }
 
     #[tokio::test]
     async fn test_init_valid_config() {
         let mut adapter = FeishuAdapter::new();
-        let result = adapter.init(AdapterConfig {
-            enabled: true,
-            token: Some("test_secret".to_string()),
-            api_key: None,
-            base_url: None,
-            extra: serde_json::json!({"app_id": "cli_xxxxx"}),
-        }).await.unwrap();
+        let result = adapter
+            .init(AdapterConfig {
+                enabled: true,
+                token: Some("test_secret".to_string()),
+                api_key: None,
+                base_url: None,
+                extra: serde_json::json!({"app_id": "cli_xxxxx"}),
+            })
+            .await
+            .unwrap();
         assert!(result.ok);
     }
 
@@ -707,9 +825,15 @@ mod tests {
     fn test_capabilities() {
         let adapter = FeishuAdapter::new();
         let caps = adapter.capabilities();
-        assert!(caps.iter().any(|c| c.name == CapabilityName::Text && c.supported));
-        assert!(caps.iter().any(|c| c.name == CapabilityName::Group && c.supported));
-        assert!(caps.iter().any(|c| c.name == CapabilityName::MessageEdit && c.supported));
+        assert!(caps
+            .iter()
+            .any(|c| c.name == CapabilityName::Text && c.supported));
+        assert!(caps
+            .iter()
+            .any(|c| c.name == CapabilityName::Group && c.supported));
+        assert!(caps
+            .iter()
+            .any(|c| c.name == CapabilityName::MessageEdit && c.supported));
     }
 
     #[test]
@@ -734,17 +858,23 @@ mod tests {
     #[tokio::test]
     async fn test_runtime_config_after_init() {
         let mut adapter = FeishuAdapter::new();
-        adapter.init(AdapterConfig {
-            enabled: true,
-            token: Some("secret".to_string()),
-            api_key: None,
-            base_url: None,
-            extra: serde_json::json!({"app_id": "cli_xxx"}),
-        }).await.unwrap();
+        adapter
+            .init(AdapterConfig {
+                enabled: true,
+                token: Some("secret".to_string()),
+                api_key: None,
+                base_url: None,
+                extra: serde_json::json!({"app_id": "cli_xxx"}),
+            })
+            .await
+            .unwrap();
         let rc = adapter.runtime_config();
         assert!(rc.enabled);
         assert!(rc.token_configured);
-        assert_eq!(rc.extra.get("app_id").and_then(|v| v.as_str()), Some("cli_xxx"));
+        assert_eq!(
+            rc.extra.get("app_id").and_then(|v| v.as_str()),
+            Some("cli_xxx")
+        );
     }
 
     #[tokio::test]
@@ -789,12 +919,17 @@ mod tests {
     #[tokio::test]
     async fn test_send_before_connect() {
         let adapter = FeishuAdapter::new();
-        let result = adapter.send(SendTextParams {
-            chat_id: "oc_test".to_string(),
-            message: OutboundMessage { text: "hello".to_string(), parse_mode: ParseMode::None },
-            reply_to: None,
-            metadata: None,
-        }).await;
+        let result = adapter
+            .send(SendTextParams {
+                chat_id: "oc_test".to_string(),
+                message: OutboundMessage {
+                    text: "hello".to_string(),
+                    parse_mode: ParseMode::None,
+                },
+                reply_to: None,
+                metadata: None,
+            })
+            .await;
         // 未初始化时发送应返回错误
         assert!(result.unwrap().error.is_some());
     }
@@ -824,8 +959,11 @@ mod tests {
             CapabilityName::MessageDelete,
         ];
         for name in expected {
-            assert!(caps.iter().any(|c| c.name == name && c.supported),
-                "capability {:?} should be supported", name);
+            assert!(
+                caps.iter().any(|c| c.name == name && c.supported),
+                "capability {:?} should be supported",
+                name
+            );
         }
     }
 }

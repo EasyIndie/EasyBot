@@ -1,11 +1,11 @@
 //! 会话管理路由
 
-use axum::{
-    Json,
-    extract::{State, Path},
-    http::StatusCode,
-};
 use crate::AppState;
+use axum::{
+    extract::{Path, State},
+    http::StatusCode,
+    Json,
+};
 use easybot_core::types::session::SessionFilter;
 
 /// 获取会话列表
@@ -17,9 +17,7 @@ use easybot_core::types::session::SessionFilter;
         (status = 200, description = "List of active sessions", body = serde_json::Value),
     )
 )]
-pub async fn list_sessions(
-    State(state): State<AppState>,
-) -> Json<serde_json::Value> {
+pub async fn list_sessions(State(state): State<AppState>) -> Json<serde_json::Value> {
     let sessions = state.session_manager.list(Some(SessionFilter {
         platform: None,
         active_within_minutes: None,
@@ -51,11 +49,17 @@ pub async fn get_session(
     Path(key): Path<String>,
 ) -> (StatusCode, Json<serde_json::Value>) {
     match state.session_manager.get(&key) {
-        Some(session) => (StatusCode::OK, Json(serde_json::to_value(session).unwrap_or_default())),
-        None => (StatusCode::NOT_FOUND, Json(serde_json::json!({
-            "error": "NOT_FOUND",
-            "message": format!("Session '{}' not found", key),
-        }))),
+        Some(session) => (
+            StatusCode::OK,
+            Json(serde_json::to_value(session).unwrap_or_default()),
+        ),
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "error": "NOT_FOUND",
+                "message": format!("Session '{}' not found", key),
+            })),
+        ),
     }
 }
 
@@ -79,8 +83,11 @@ pub async fn delete_session(
     if state.session_manager.delete(&key).await {
         (StatusCode::OK, Json(serde_json::json!({ "ok": true })))
     } else {
-        (StatusCode::NOT_FOUND, Json(serde_json::json!({
-            "error": format!("Session '{}' not found", key),
-        })))
+        (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "error": format!("Session '{}' not found", key),
+            })),
+        )
     }
 }

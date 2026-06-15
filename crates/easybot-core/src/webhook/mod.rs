@@ -3,16 +3,16 @@
 //! 订阅 EventBus 事件，根据配置将事件通过 HTTP POST 转发到外部 URL。
 //! 支持 HMAC-SHA256 签名验证，按事件类型和平台过滤。
 
+use hmac::{Hmac, Mac};
+use reqwest::Client;
+use sha2::Sha256;
 use std::sync::Arc;
 use std::time::Duration;
-use hmac::{Hmac, Mac};
-use sha2::Sha256;
-use tracing::{info, warn, error, trace};
-use reqwest::Client;
+use tracing::{error, info, trace, warn};
 
 use crate::bus::EventBus;
-use crate::types::event::GatewayEvent;
 use crate::types::config::WebhookConfig;
+use crate::types::event::GatewayEvent;
 
 /// HMAC-SHA256 类型别名
 type HmacSha256 = Hmac<Sha256>;
@@ -44,10 +44,7 @@ impl WebhookDispatcher {
     }
 
     async fn run(event_bus: Arc<EventBus>, webhooks: Vec<WebhookConfig>) {
-        let client = match Client::builder()
-            .timeout(Duration::from_secs(10))
-            .build()
-        {
+        let client = match Client::builder().timeout(Duration::from_secs(10)).build() {
             Ok(c) => Arc::new(c),
             Err(e) => {
                 error!("Failed to create HTTP client for webhook dispatcher: {}", e);
@@ -88,7 +85,9 @@ impl WebhookDispatcher {
             match rx.recv().await {
                 Ok(event) => {
                     let event_type = event.event_type.clone();
-                    let platform = event.data.get("platform")
+                    let platform = event
+                        .data
+                        .get("platform")
                         .and_then(|v| v.as_str())
                         .unwrap_or("unknown")
                         .to_string();
@@ -169,7 +168,8 @@ impl WebhookDispatcher {
             // 发送 POST 请求
             let payload_json: serde_json::Value =
                 serde_json::from_slice(&payload_bytes).unwrap_or_default();
-            let mut req = client.post(&wh.url)
+            let mut req = client
+                .post(&wh.url)
                 .header("Content-Type", "application/json")
                 .json(&payload_json);
 
@@ -183,7 +183,10 @@ impl WebhookDispatcher {
                     if status.is_success() {
                         trace!(
                             "Webhook '{}' delivered event '{}' to {} (status {})",
-                            wh.name, event_type, wh.url, status,
+                            wh.name,
+                            event_type,
+                            wh.url,
+                            status,
                         );
                     } else {
                         warn!(
@@ -205,15 +208,15 @@ impl WebhookDispatcher {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
     use serde_json::json;
+    use std::sync::Arc;
+    use wiremock::matchers::{header, method};
     use wiremock::{Mock, MockServer, ResponseTemplate};
-    use wiremock::matchers::{method, header};
 
-    use super::{WebhookDispatcher, hex_encode};
+    use super::{hex_encode, WebhookDispatcher};
     use crate::types::config::WebhookConfig;
-    use crate::types::event::GatewayEvent;
     use crate::types::event::event_types::MESSAGE_INBOUND;
+    use crate::types::event::GatewayEvent;
 
     /// 辅助：创建测试事件
     fn test_event() -> GatewayEvent {
@@ -256,7 +259,8 @@ mod tests {
             .and_then(|v| v.as_str())
             .unwrap_or("unknown")
             .to_string();
-        WebhookDispatcher::dispatch_with_client(&client, &webhooks, &event, &event_type, &platform).await;
+        WebhookDispatcher::dispatch_with_client(&client, &webhooks, &event, &event_type, &platform)
+            .await;
     }
 
     // ── hex_encode 单元测试 ──
@@ -281,7 +285,12 @@ mod tests {
             .mount(&mock_server)
             .await;
 
-        let webhooks = vec![webhook_config(&mock_server.uri(), vec![MESSAGE_INBOUND], None, None)];
+        let webhooks = vec![webhook_config(
+            &mock_server.uri(),
+            vec![MESSAGE_INBOUND],
+            None,
+            None,
+        )];
         dispatch_direct(webhooks, test_event()).await;
 
         mock_server.verify().await;
@@ -334,8 +343,12 @@ mod tests {
             .mount(&mock_server)
             .await;
 
-        let webhooks =
-            vec![webhook_config(&mock_server.uri(), vec!["adapter.connected"], None, None)];
+        let webhooks = vec![webhook_config(
+            &mock_server.uri(),
+            vec!["adapter.connected"],
+            None,
+            None,
+        )];
         dispatch_direct(webhooks, test_event()).await;
 
         mock_server.verify().await;
@@ -388,7 +401,12 @@ mod tests {
             .mount(&mock_server)
             .await;
 
-        let webhooks = vec![webhook_config(&mock_server.uri(), vec![MESSAGE_INBOUND], None, None)];
+        let webhooks = vec![webhook_config(
+            &mock_server.uri(),
+            vec![MESSAGE_INBOUND],
+            None,
+            None,
+        )];
         dispatch_direct(webhooks, test_event()).await;
 
         let reqs = mock_server.received_requests().await.unwrap_or_default();
@@ -438,7 +456,12 @@ mod tests {
             .await;
 
         let event_bus = Arc::new(crate::bus::EventBus::new());
-        let webhooks = vec![webhook_config(&mock_server.uri(), vec![MESSAGE_INBOUND], None, None)];
+        let webhooks = vec![webhook_config(
+            &mock_server.uri(),
+            vec![MESSAGE_INBOUND],
+            None,
+            None,
+        )];
 
         WebhookDispatcher::start(event_bus.clone(), webhooks);
 

@@ -8,21 +8,21 @@
 
 mod types;
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::sync::OnceLock;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use tokio::sync::broadcast;
-use tokio_tungstenite::tungstenite::Message as WsMessage;
-use tokio_tungstenite::tungstenite::client::IntoClientRequest;
-use futures::{SinkExt, StreamExt};
 use easybot_core::bus::EventBus;
 use easybot_core::types::adapter::*;
-use easybot_core::types::message::*;
 use easybot_core::types::error::GatewayError;
 use easybot_core::types::event::GatewayEvent;
+use easybot_core::types::message::*;
+use futures::{SinkExt, StreamExt};
+use tokio::sync::broadcast;
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+use tokio_tungstenite::tungstenite::Message as WsMessage;
 use types::*;
 
 /// Discord REST API 基础 URL (v10)
@@ -63,22 +63,78 @@ impl DiscordAdapter {
             state: AdapterState::Created,
             bot_info: None,
             capabilities: vec![
-                Capability { name: CapabilityName::Text, supported: true, limits: None },
-                Capability { name: CapabilityName::Markdown, supported: true, limits: None },
-                Capability { name: CapabilityName::Group, supported: true, limits: None },
-                Capability { name: CapabilityName::TypingIndicator, supported: true, limits: None },
-                Capability { name: CapabilityName::MessageEdit, supported: true, limits: None },
-                Capability { name: CapabilityName::MessageDelete, supported: true, limits: None },
+                Capability {
+                    name: CapabilityName::Text,
+                    supported: true,
+                    limits: None,
+                },
+                Capability {
+                    name: CapabilityName::Markdown,
+                    supported: true,
+                    limits: None,
+                },
+                Capability {
+                    name: CapabilityName::Group,
+                    supported: true,
+                    limits: None,
+                },
+                Capability {
+                    name: CapabilityName::TypingIndicator,
+                    supported: true,
+                    limits: None,
+                },
+                Capability {
+                    name: CapabilityName::MessageEdit,
+                    supported: true,
+                    limits: None,
+                },
+                Capability {
+                    name: CapabilityName::MessageDelete,
+                    supported: true,
+                    limits: None,
+                },
                 // Discord 不支持 HTML 格式
-                Capability { name: CapabilityName::Html, supported: false, limits: None },
+                Capability {
+                    name: CapabilityName::Html,
+                    supported: false,
+                    limits: None,
+                },
                 // Discord 没有内置交互式按钮（需要组件）
-                Capability { name: CapabilityName::Interactive, supported: false, limits: None },
-                Capability { name: CapabilityName::Image, supported: false, limits: None },
-                Capability { name: CapabilityName::Audio, supported: false, limits: None },
-                Capability { name: CapabilityName::Video, supported: false, limits: None },
-                Capability { name: CapabilityName::Document, supported: false, limits: None },
-                Capability { name: CapabilityName::ChatList, supported: false, limits: None },
-                Capability { name: CapabilityName::Streaming, supported: false, limits: None },
+                Capability {
+                    name: CapabilityName::Interactive,
+                    supported: false,
+                    limits: None,
+                },
+                Capability {
+                    name: CapabilityName::Image,
+                    supported: false,
+                    limits: None,
+                },
+                Capability {
+                    name: CapabilityName::Audio,
+                    supported: false,
+                    limits: None,
+                },
+                Capability {
+                    name: CapabilityName::Video,
+                    supported: false,
+                    limits: None,
+                },
+                Capability {
+                    name: CapabilityName::Document,
+                    supported: false,
+                    limits: None,
+                },
+                Capability {
+                    name: CapabilityName::ChatList,
+                    supported: false,
+                    limits: None,
+                },
+                Capability {
+                    name: CapabilityName::Streaming,
+                    supported: false,
+                    limits: None,
+                },
             ],
             messages_in: AtomicU64::new(0),
             messages_out: AtomicU64::new(0),
@@ -110,7 +166,9 @@ impl DiscordAdapter {
 
     /// 构造 Authorization 头值
     fn auth_header(&self) -> String {
-        let token = self.config.as_ref()
+        let token = self
+            .config
+            .as_ref()
             .and_then(|c| c.token.clone())
             .unwrap_or_default();
         format!("Bot {}", token)
@@ -134,21 +192,29 @@ impl DiscordAdapter {
             req = req.json(&json);
         }
 
-        let resp = req.send().await
+        let resp = req
+            .send()
+            .await
             .map_err(|e| GatewayError::Internal(format!("Discord API request failed: {}", e)))?;
 
         let status = resp.status();
         if !status.is_success() {
             let error_text = resp.text().await.unwrap_or_default();
             if status.as_u16() == 429 {
-                return Err(GatewayError::RateLimited { retry_after_ms: 1000 });
+                return Err(GatewayError::RateLimited {
+                    retry_after_ms: 1000,
+                });
             }
-            return Err(GatewayError::Internal(
-                format!("Discord API {} {}: {}", status.as_u16(), endpoint, error_text),
-            ));
+            return Err(GatewayError::Internal(format!(
+                "Discord API {} {}: {}",
+                status.as_u16(),
+                endpoint,
+                error_text
+            )));
         }
 
-        resp.json().await
+        resp.json()
+            .await
             .map_err(|e| GatewayError::Internal(format!("Discord API JSON parse failed: {}", e)))
     }
 
@@ -202,23 +268,21 @@ impl DiscordAdapter {
         bot_user_id: &str,
     ) {
         match event_type {
-            "MESSAGE_CREATE" => {
-                match serde_json::from_value::<DiscordMessage>(data) {
-                    Ok(msg) => {
-                        if let Some(inbound) = Self::convert_message(msg, bot_user_id) {
-                            let event = GatewayEvent::new(
-                                easybot_core::types::event::event_types::MESSAGE_INBOUND,
-                                "discord",
-                                serde_json::to_value(&inbound).unwrap_or_default(),
-                            );
-                            event_bus.publish(event);
-                        }
-                    }
-                    Err(e) => {
-                        tracing::warn!("Failed to parse MESSAGE_CREATE: {}", e);
+            "MESSAGE_CREATE" => match serde_json::from_value::<DiscordMessage>(data) {
+                Ok(msg) => {
+                    if let Some(inbound) = Self::convert_message(msg, bot_user_id) {
+                        let event = GatewayEvent::new(
+                            easybot_core::types::event::event_types::MESSAGE_INBOUND,
+                            "discord",
+                            serde_json::to_value(&inbound).unwrap_or_default(),
+                        );
+                        event_bus.publish(event);
                     }
                 }
-            }
+                Err(e) => {
+                    tracing::warn!("Failed to parse MESSAGE_CREATE: {}", e);
+                }
+            },
             _ => {
                 tracing::debug!("Unhandled Discord Gateway event: {}", event_type);
             }
@@ -227,7 +291,12 @@ impl DiscordAdapter {
 
     /// 建立到 Discord Gateway 的 WebSocket 连接（使用 webpki-roots 验证 TLS）
     async fn connect_gateway() -> Result<
-        (tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>, tokio_tungstenite::tungstenite::http::Response<Option<Vec<u8>>>),
+        (
+            tokio_tungstenite::WebSocketStream<
+                tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+            >,
+            tokio_tungstenite::tungstenite::http::Response<Option<Vec<u8>>>,
+        ),
         Box<dyn std::error::Error + Send + Sync>,
     > {
         use rustls::pki_types::ServerName;
@@ -292,7 +361,10 @@ impl DiscordAdapter {
         };
 
         let hb_interval = Duration::from_millis(hello_data.heartbeat_interval);
-        tracing::debug!("Discord Gateway Hello received, heartbeat interval: {:?}", hb_interval);
+        tracing::debug!(
+            "Discord Gateway Hello received, heartbeat interval: {:?}",
+            hb_interval
+        );
 
         // Step 2: 发送 Identify
         let identify_msg = serde_json::json!({
@@ -322,15 +394,24 @@ impl DiscordAdapter {
         tracing::info!("Discord Gateway connected");
 
         // Step 4: 主循环（事件接收 + 心跳发送）
-        Self::event_loop(&mut read, &mut write, &mut seq, hb_interval, &event_bus,
-            &bot_user_id, &cancel_rx).await;
+        Self::event_loop(
+            &mut read,
+            &mut write,
+            &mut seq,
+            hb_interval,
+            &event_bus,
+            &bot_user_id,
+            &cancel_rx,
+        )
+        .await;
 
         tracing::info!("Discord Gateway loop ended");
     }
 
     /// 接收 Hello 并返回 HeartbeatInterval
     async fn recv_hello(
-        read: &mut (impl StreamExt<Item = Result<WsMessage, tokio_tungstenite::tungstenite::Error>> + Unpin),
+        read: &mut (impl StreamExt<Item = Result<WsMessage, tokio_tungstenite::tungstenite::Error>>
+                  + Unpin),
     ) -> Option<HelloData> {
         match read.next().await? {
             Ok(WsMessage::Text(text)) => {
@@ -358,7 +439,8 @@ impl DiscordAdapter {
 
     /// 等待 Ready 事件（验证 Identify 成功）
     async fn wait_for_ready(
-        read: &mut (impl StreamExt<Item = Result<WsMessage, tokio_tungstenite::tungstenite::Error>> + Unpin),
+        read: &mut (impl StreamExt<Item = Result<WsMessage, tokio_tungstenite::tungstenite::Error>>
+                  + Unpin),
         _write: &mut (impl SinkExt<WsMessage, Error = tokio_tungstenite::tungstenite::Error> + Unpin),
         seq: &mut Option<u64>,
         cancel_rx: &broadcast::Receiver<()>,
@@ -405,7 +487,8 @@ impl DiscordAdapter {
 
     /// 主事件循环：接收 Dispatch 事件 + 定时发送 Heartbeat
     async fn event_loop(
-        read: &mut (impl StreamExt<Item = Result<WsMessage, tokio_tungstenite::tungstenite::Error>> + Unpin),
+        read: &mut (impl StreamExt<Item = Result<WsMessage, tokio_tungstenite::tungstenite::Error>>
+                  + Unpin),
         write: &mut (impl SinkExt<WsMessage, Error = tokio_tungstenite::tungstenite::Error> + Unpin),
         seq: &mut Option<u64>,
         hb_interval: Duration,
@@ -522,20 +605,24 @@ impl PlatformAdapter for DiscordAdapter {
         }
         self.config = Some(config);
         self.state = AdapterState::Created;
-        Ok(InitResult { ok: true, error: None })
+        Ok(InitResult {
+            ok: true,
+            error: None,
+        })
     }
 
     async fn connect(&mut self) -> Result<ConnectResult, GatewayError> {
-        let token = self.config.as_ref()
+        let token = self
+            .config
+            .as_ref()
             .and_then(|c| c.token.clone())
             .ok_or_else(|| GatewayError::ConfigError("Discord token not configured".to_string()))?;
 
         // Step 1: 通过 REST API 验证 Token 并获取 Bot 用户信息
-        let bot_user: DiscordUser = match self.api_call(
-            reqwest::Method::GET,
-            "/users/@me",
-            None,
-        ).await {
+        let bot_user: DiscordUser = match self
+            .api_call(reqwest::Method::GET, "/users/@me", None)
+            .await
+        {
             Ok(u) => u,
             Err(e) => {
                 return Ok(ConnectResult {
@@ -572,12 +659,7 @@ impl PlatformAdapter for DiscordAdapter {
             let eb = event_bus.clone();
 
             tokio::spawn(async move {
-                Self::gateway_loop(
-                    token_clone,
-                    eb,
-                    bot_id,
-                    cancel_rx,
-                ).await;
+                Self::gateway_loop(token_clone, eb, bot_id, cancel_rx).await;
             });
         }
 
@@ -627,7 +709,10 @@ impl PlatformAdapter for DiscordAdapter {
 
         let endpoint = format!("/channels/{}/messages", params.chat_id);
 
-        match self.api_call::<DiscordMessage>(reqwest::Method::POST, &endpoint, Some(body)).await {
+        match self
+            .api_call::<DiscordMessage>(reqwest::Method::POST, &endpoint, Some(body))
+            .await
+        {
             Ok(msg) => {
                 self.messages_out.fetch_add(1, Ordering::Relaxed);
                 Ok(SendResult::ok(msg.id))
@@ -641,7 +726,12 @@ impl PlatformAdapter for DiscordAdapter {
 
     async fn send_typing(&self, chat_id: &str) -> Result<(), GatewayError> {
         let endpoint = format!("/channels/{}/typing", chat_id);
-        self.api_call::<serde_json::Value>(reqwest::Method::POST, &endpoint, Some(serde_json::json!({}))).await?;
+        self.api_call::<serde_json::Value>(
+            reqwest::Method::POST,
+            &endpoint,
+            Some(serde_json::json!({})),
+        )
+        .await?;
         Ok(())
     }
 
@@ -667,9 +757,15 @@ impl PlatformAdapter for DiscordAdapter {
             "content": params.message.text,
         });
 
-        let endpoint = format!("/channels/{}/messages/{}", params.chat_id, params.message_id);
+        let endpoint = format!(
+            "/channels/{}/messages/{}",
+            params.chat_id, params.message_id
+        );
 
-        match self.api_call::<DiscordMessage>(reqwest::Method::PATCH, &endpoint, Some(body)).await {
+        match self
+            .api_call::<DiscordMessage>(reqwest::Method::PATCH, &endpoint, Some(body))
+            .await
+        {
             Ok(_) => Ok(EditResult {
                 success: true,
                 updated_at: Some(chrono::Utc::now().timestamp_millis()),
@@ -689,7 +785,12 @@ impl PlatformAdapter for DiscordAdapter {
         message_id: &str,
     ) -> Result<DeleteResult, GatewayError> {
         let client = self.http_client();
-        let url = format!("{}/channels/{}/messages/{}", self.api_base_url(), chat_id, message_id);
+        let url = format!(
+            "{}/channels/{}/messages/{}",
+            self.api_base_url(),
+            chat_id,
+            message_id
+        );
 
         let resp = client
             .delete(&url)
@@ -700,7 +801,10 @@ impl PlatformAdapter for DiscordAdapter {
 
         let status = resp.status();
         if status.is_success() {
-            Ok(DeleteResult { success: true, error: None })
+            Ok(DeleteResult {
+                success: true,
+                error: None,
+            })
         } else {
             let error_text = resp.text().await.unwrap_or_default();
             Ok(DeleteResult {
@@ -713,7 +817,11 @@ impl PlatformAdapter for DiscordAdapter {
     fn runtime_config(&self) -> AdapterRuntimeConfig {
         AdapterRuntimeConfig {
             enabled: self.config.as_ref().is_some_and(|c| c.enabled),
-            token_configured: self.config.as_ref().and_then(|c| c.token.as_ref()).is_some_and(|t| !t.is_empty()),
+            token_configured: self
+                .config
+                .as_ref()
+                .and_then(|c| c.token.as_ref())
+                .is_some_and(|t| !t.is_empty()),
             extra: serde_json::json!({}),
         }
     }
@@ -753,7 +861,10 @@ mod tests {
     #[test]
     fn test_capabilities() {
         let adapter = DiscordAdapter::new();
-        assert!(adapter.capabilities().iter().any(|c| c.name == CapabilityName::Text));
+        assert!(adapter
+            .capabilities()
+            .iter()
+            .any(|c| c.name == CapabilityName::Text));
     }
 
     #[test]
@@ -811,13 +922,16 @@ mod tests {
     #[tokio::test]
     async fn test_runtime_config_after_init() {
         let mut adapter = DiscordAdapter::new();
-        adapter.init(AdapterConfig {
-            enabled: true,
-            token: Some("token".to_string()),
-            api_key: None,
-            base_url: None,
-            extra: serde_json::json!({}),
-        }).await.unwrap();
+        adapter
+            .init(AdapterConfig {
+                enabled: true,
+                token: Some("token".to_string()),
+                api_key: None,
+                base_url: None,
+                extra: serde_json::json!({}),
+            })
+            .await
+            .unwrap();
         let r = adapter.runtime_config();
         assert!(r.enabled);
         assert!(r.token_configured);
@@ -833,26 +947,32 @@ mod tests {
     #[tokio::test]
     async fn test_init_without_token() {
         let mut adapter = DiscordAdapter::new();
-        let result = adapter.init(AdapterConfig {
-            enabled: true,
-            token: None,
-            api_key: None,
-            base_url: None,
-            extra: serde_json::json!({}),
-        }).await.unwrap();
+        let result = adapter
+            .init(AdapterConfig {
+                enabled: true,
+                token: None,
+                api_key: None,
+                base_url: None,
+                extra: serde_json::json!({}),
+            })
+            .await
+            .unwrap();
         assert!(!result.ok);
     }
 
     #[tokio::test]
     async fn test_init_and_connect_without_real_token() {
         let mut adapter = DiscordAdapter::new();
-        let init_result = adapter.init(AdapterConfig {
-            enabled: true,
-            token: Some("fake_discord_token".to_string()),
-            api_key: None,
-            base_url: None,
-            extra: serde_json::json!({}),
-        }).await.unwrap();
+        let init_result = adapter
+            .init(AdapterConfig {
+                enabled: true,
+                token: Some("fake_discord_token".to_string()),
+                api_key: None,
+                base_url: None,
+                extra: serde_json::json!({}),
+            })
+            .await
+            .unwrap();
         assert!(init_result.ok);
 
         // Without a real token, /users/@me fails → returns ok:false
@@ -865,23 +985,29 @@ mod tests {
     #[tokio::test]
     async fn test_send_message_mocked() {
         let mut adapter = DiscordAdapter::new();
-        adapter.init(AdapterConfig {
-            enabled: true,
-            token: Some("fake_discord_token".to_string()),
-            api_key: None,
-            base_url: None,
-            extra: serde_json::json!({}),
-        }).await.unwrap();
+        adapter
+            .init(AdapterConfig {
+                enabled: true,
+                token: Some("fake_discord_token".to_string()),
+                api_key: None,
+                base_url: None,
+                extra: serde_json::json!({}),
+            })
+            .await
+            .unwrap();
 
-        let result = adapter.send(SendTextParams {
-            chat_id: "123456789".to_string(),
-            message: OutboundMessage {
-                text: "Hello, Discord!".to_string(),
-                parse_mode: ParseMode::Markdown,
-            },
-            reply_to: None,
-            metadata: None,
-        }).await.unwrap();
+        let result = adapter
+            .send(SendTextParams {
+                chat_id: "123456789".to_string(),
+                message: OutboundMessage {
+                    text: "Hello, Discord!".to_string(),
+                    parse_mode: ParseMode::Markdown,
+                },
+                reply_to: None,
+                metadata: None,
+            })
+            .await
+            .unwrap();
 
         assert!(!result.success);
         assert!(result.error.is_some());

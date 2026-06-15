@@ -86,10 +86,7 @@ impl PlatformAdapter for MockAdapter {
         })
     }
 
-    async fn get_chat_info(
-        &self,
-        _chat_id: &str,
-    ) -> Result<ChatInfo, GatewayError> {
+    async fn get_chat_info(&self, _chat_id: &str) -> Result<ChatInfo, GatewayError> {
         Err(GatewayError::capability_not_supported("get_chat_info"))
     }
 

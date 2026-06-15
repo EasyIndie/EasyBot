@@ -9,8 +9,8 @@ use easybot_core::types::adapter::{AdapterConfig, AdapterState, PlatformAdapter}
 use easybot_core::types::message::{
     MediaAttachment, MediaType, OutboundMessage, ParseMode, SendMediaParams, SendTextParams,
 };
-use wiremock::{Mock, MockServer, ResponseTemplate};
 use wiremock::matchers::{method, path};
+use wiremock::{Mock, MockServer, ResponseTemplate};
 
 fn qq_config(mock_port: u16) -> AdapterConfig {
     AdapterConfig {
@@ -55,7 +55,10 @@ async fn test_send_before_connect_returns_error() {
 
     let result = adapter.send(send_text_params()).await.unwrap();
     assert!(!result.success, "send before connect should fail");
-    assert!(result.retryable, "should be retryable as token store is missing");
+    assert!(
+        result.retryable,
+        "should be retryable as token store is missing"
+    );
     if let Some(ref err) = result.error {
         assert!(
             err.contains("token") || err.contains("init") || err.contains("connect"),
@@ -139,22 +142,25 @@ async fn test_send_media_before_connect_fails() {
     let mut adapter = easybot_adapter_qq::QqAdapter::new();
     adapter.init(config).await.unwrap();
 
-    let result = adapter.send_media(SendMediaParams {
-        chat_id: "qq-chat-123".to_string(),
-        media: MediaAttachment {
-            media_type: MediaType::Image,
-            url: Some("https://example.com/image.png".to_string()),
-            data: None,
-            mime_type: "image/png".to_string(),
-            filename: None,
-            caption: None,
-            thumbnail_url: None,
-            file_size: None,
-            duration: None,
-        },
-        text: Some("image caption".to_string()),
-        reply_to: None,
-    }).await.unwrap();
+    let result = adapter
+        .send_media(SendMediaParams {
+            chat_id: "qq-chat-123".to_string(),
+            media: MediaAttachment {
+                media_type: MediaType::Image,
+                url: Some("https://example.com/image.png".to_string()),
+                data: None,
+                mime_type: "image/png".to_string(),
+                filename: None,
+                caption: None,
+                thumbnail_url: None,
+                file_size: None,
+                duration: None,
+            },
+            text: Some("image caption".to_string()),
+            reply_to: None,
+        })
+        .await
+        .unwrap();
 
     assert!(!result.success, "send_media before connect should fail");
     assert!(result.retryable, "should be retryable");
@@ -182,7 +188,11 @@ async fn test_connect_failure_state() {
     let _result = adapter.connect().await;
     // connect 可能返回 Ok(ConnectResult{ok:false}) 或 Err(GatewayError)
     // 但无论如何状态不应为 Connected
-    assert_ne!(adapter.state(), AdapterState::Connected, "QQ should not be connected without real token");
+    assert_ne!(
+        adapter.state(),
+        AdapterState::Connected,
+        "QQ should not be connected without real token"
+    );
 }
 
 #[tokio::test]

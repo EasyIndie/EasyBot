@@ -100,7 +100,8 @@ impl RetentionWorker {
                 }
 
                 // 等待下一个清理周期
-                tokio::time::sleep(std::time::Duration::from_secs(config.cleanup_interval_secs)).await;
+                tokio::time::sleep(std::time::Duration::from_secs(config.cleanup_interval_secs))
+                    .await;
             }
         });
     }
@@ -108,17 +109,22 @@ impl RetentionWorker {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-    use crate::storage::sqlite::{create_pool, run_migrations, SqliteMessageStore, SqliteSessionStore};
-    use crate::storage::{MessageFilter, MessageRole, MessageStore, SessionStore, StoredMessage};
     use crate::storage::retention::{RetentionConfig, RetentionWorker};
+    use crate::storage::sqlite::{
+        create_pool, run_migrations, SqliteMessageStore, SqliteSessionStore,
+    };
+    use crate::storage::{MessageFilter, MessageRole, MessageStore, SessionStore, StoredMessage};
     use crate::types::message::ChatType;
     use crate::types::session::{ResetPolicy, Session, SessionSource};
+    use std::sync::Arc;
 
     async fn create_test_stores() -> (SqliteMessageStore, SqliteSessionStore) {
         let pool = create_pool(std::path::Path::new(":memory:")).await.unwrap();
         run_migrations(&pool).await.unwrap();
-        (SqliteMessageStore::new(pool.clone()), SqliteSessionStore::new(pool))
+        (
+            SqliteMessageStore::new(pool.clone()),
+            SqliteSessionStore::new(pool),
+        )
     }
 
     fn make_old_session(key: &str, days_old: i64) -> Session {
@@ -177,15 +183,27 @@ mod tests {
     async fn test_delete_expired_messages() {
         let (msg_store, _) = create_test_stores().await;
 
-        msg_store.store_message(&make_old_message("old1", 100)).await.unwrap();
-        msg_store.store_message(&make_old_message("old2", 200)).await.unwrap();
-        msg_store.store_message(&make_recent_message("recent1")).await.unwrap();
+        msg_store
+            .store_message(&make_old_message("old1", 100))
+            .await
+            .unwrap();
+        msg_store
+            .store_message(&make_old_message("old2", 200))
+            .await
+            .unwrap();
+        msg_store
+            .store_message(&make_recent_message("recent1"))
+            .await
+            .unwrap();
 
         let cutoff = chrono::Utc::now().timestamp_millis() - (50 * 86_400_000);
         let deleted = msg_store.delete_expired_messages(cutoff).await.unwrap();
         assert_eq!(deleted, 2, "should delete 2 old messages");
 
-        let remaining = msg_store.list_messages(&MessageFilter::default()).await.unwrap();
+        let remaining = msg_store
+            .list_messages(&MessageFilter::default())
+            .await
+            .unwrap();
         assert_eq!(remaining.len(), 1, "should keep 1 recent message");
         assert_eq!(remaining[0].id, "recent1");
     }
@@ -194,9 +212,18 @@ mod tests {
     async fn test_delete_expired_sessions() {
         let (_, sess_store) = create_test_stores().await;
 
-        sess_store.upsert_session(&make_old_session("old1", 400)).await.unwrap();
-        sess_store.upsert_session(&make_old_session("old2", 500)).await.unwrap();
-        sess_store.upsert_session(&make_old_session("recent1", 1)).await.unwrap();
+        sess_store
+            .upsert_session(&make_old_session("old1", 400))
+            .await
+            .unwrap();
+        sess_store
+            .upsert_session(&make_old_session("old2", 500))
+            .await
+            .unwrap();
+        sess_store
+            .upsert_session(&make_old_session("recent1", 1))
+            .await
+            .unwrap();
 
         let cutoff = chrono::Utc::now().timestamp_millis() - (365 * 86_400_000);
         let deleted = sess_store.delete_expired_sessions(cutoff).await.unwrap();
@@ -214,11 +241,7 @@ mod tests {
             cleanup_interval_secs: 0,
             ..Default::default()
         };
-        RetentionWorker::start(
-            Arc::new(msg_store),
-            Arc::new(sess_store),
-            config,
-        );
+        RetentionWorker::start(Arc::new(msg_store), Arc::new(sess_store), config);
         // Just verify no crash
     }
 }

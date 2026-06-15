@@ -80,9 +80,9 @@ impl GatewayError {
             GatewayError::PlatformNotFound(_) | GatewayError::ChatNotFound(_) => 404,
             GatewayError::RateLimited { .. } => 429,
             GatewayError::AdapterNotConnected(_) => 503,
-            GatewayError::ConfigError(_) | GatewayError::StorageError(_) | GatewayError::Internal(_) => {
-                500
-            }
+            GatewayError::ConfigError(_)
+            | GatewayError::StorageError(_)
+            | GatewayError::Internal(_) => 500,
         }
     }
 

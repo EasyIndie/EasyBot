@@ -7,21 +7,21 @@
 
 mod types;
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::sync::Mutex;
 use std::time::Duration;
 
 use async_trait::async_trait;
+use easybot_core::bus::EventBus;
+use easybot_core::types::adapter::*;
+use easybot_core::types::error::GatewayError;
+use easybot_core::types::event::GatewayEvent;
+use easybot_core::types::message::*;
 use futures::{SinkExt, StreamExt};
 use tokio::sync::broadcast;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::MaybeTlsStream;
-use easybot_core::bus::EventBus;
-use easybot_core::types::adapter::*;
-use easybot_core::types::message::*;
-use easybot_core::types::error::GatewayError;
-use easybot_core::types::event::GatewayEvent;
 use types::*;
 
 /// QQ API 基础 URL（正式环境）
@@ -83,27 +83,26 @@ impl QqTokenStore {
         let expires_at =
             tokio::time::Instant::now() + Duration::from_secs(expires_in) - Duration::from_secs(60);
 
-        let mut guard = self.state.lock().map_err(|e| {
-            GatewayError::Internal(format!("Token mutex poisoned: {}", e))
-        })?;
+        let mut guard = self
+            .state
+            .lock()
+            .map_err(|e| GatewayError::Internal(format!("Token mutex poisoned: {}", e)))?;
         *guard = Some((access_token.to_string(), expires_at));
 
-        tracing::info!(
-            "QQ access token refreshed, expires in {}s",
-            expires_in
-        );
+        tracing::info!("QQ access token refreshed, expires in {}s", expires_in);
 
         Ok(())
     }
 
     /// 获取 `QQBot {access_token}` 格式的鉴权字符串
     fn get(&self) -> Result<String, GatewayError> {
-        let guard = self.state.lock().map_err(|e| {
-            GatewayError::Internal(format!("Token mutex poisoned: {}", e))
-        })?;
-        let (token, expires_at) = guard.as_ref().ok_or_else(|| {
-            GatewayError::Internal("QQ access token not initialized".to_string())
-        })?;
+        let guard = self
+            .state
+            .lock()
+            .map_err(|e| GatewayError::Internal(format!("Token mutex poisoned: {}", e)))?;
+        let (token, expires_at) = guard
+            .as_ref()
+            .ok_or_else(|| GatewayError::Internal("QQ access token not initialized".to_string()))?;
 
         if tokio::time::Instant::now() >= *expires_at {
             // 过期了但尚未刷新 — 返回当前 token 并记录警告
@@ -124,7 +123,6 @@ impl QqTokenStore {
             Err(_) => true,
         }
     }
-
 }
 
 /// QQ 频道机器人适配器
@@ -154,13 +152,41 @@ impl QqAdapter {
             state: AdapterState::Created,
             bot_info: None,
             capabilities: vec![
-                Capability { name: CapabilityName::Text, supported: true, limits: None },
-                Capability { name: CapabilityName::Image, supported: true, limits: None },
-                Capability { name: CapabilityName::Markdown, supported: true, limits: None },
-                Capability { name: CapabilityName::Group, supported: true, limits: None },
-                Capability { name: CapabilityName::Thread, supported: true, limits: None },
-                Capability { name: CapabilityName::MessageEdit, supported: true, limits: None },
-                Capability { name: CapabilityName::MessageDelete, supported: true, limits: None },
+                Capability {
+                    name: CapabilityName::Text,
+                    supported: true,
+                    limits: None,
+                },
+                Capability {
+                    name: CapabilityName::Image,
+                    supported: true,
+                    limits: None,
+                },
+                Capability {
+                    name: CapabilityName::Markdown,
+                    supported: true,
+                    limits: None,
+                },
+                Capability {
+                    name: CapabilityName::Group,
+                    supported: true,
+                    limits: None,
+                },
+                Capability {
+                    name: CapabilityName::Thread,
+                    supported: true,
+                    limits: None,
+                },
+                Capability {
+                    name: CapabilityName::MessageEdit,
+                    supported: true,
+                    limits: None,
+                },
+                Capability {
+                    name: CapabilityName::MessageDelete,
+                    supported: true,
+                    limits: None,
+                },
             ],
             messages_in: Arc::new(AtomicU64::new(0)),
             messages_out: AtomicU64::new(0),
@@ -186,15 +212,20 @@ impl QqAdapter {
     }
 
     fn client(&self) -> Result<&reqwest::Client, GatewayError> {
-        self.http_client.as_ref().ok_or_else(|| {
-            GatewayError::Internal("HTTP client not initialized".to_string())
-        })
+        self.http_client
+            .as_ref()
+            .ok_or_else(|| GatewayError::Internal("HTTP client not initialized".to_string()))
     }
 
     /// 获取鉴权头字符串：`QQBot {access_token}`
     fn bot_token(&self) -> Result<String, GatewayError> {
-        self.token_store.as_ref()
-            .ok_or_else(|| GatewayError::ConfigError("Token store not initialized (call connect() first)".to_string()))?
+        self.token_store
+            .as_ref()
+            .ok_or_else(|| {
+                GatewayError::ConfigError(
+                    "Token store not initialized (call connect() first)".to_string(),
+                )
+            })?
             .get()
     }
 
@@ -203,58 +234,80 @@ impl QqAdapter {
         let token = self.bot_token()?;
         let client = self.client()?;
         let url = format!("{}{}", self.api_base_url(), path);
-        let resp = client.get(&url)
+        let resp = client
+            .get(&url)
             .header("Authorization", &token)
-            .send().await
+            .send()
+            .await
             .map_err(|e| GatewayError::Internal(format!("QQ GET {} failed: {}", path, e)))?;
         if !resp.status().is_success() {
             let s = resp.status();
             let b = resp.text().await.unwrap_or_default();
-            return Err(GatewayError::Internal(format!("QQ API error (GET {}): {} - {}", path, s, b)));
+            return Err(GatewayError::Internal(format!(
+                "QQ API error (GET {}): {} - {}",
+                path, s, b
+            )));
         }
-        resp.json().await
+        resp.json()
+            .await
             .map_err(|e| GatewayError::Internal(format!("QQ GET {} parse failed: {}", path, e)))
     }
 
     /// QQ API POST
     async fn api_post<T: serde::de::DeserializeOwned>(
-        &self, path: &str, body: &serde_json::Value,
+        &self,
+        path: &str,
+        body: &serde_json::Value,
     ) -> Result<T, GatewayError> {
         let token = self.bot_token()?;
         let client = self.client()?;
         let url = format!("{}{}", self.api_base_url(), path);
-        let resp = client.post(&url)
+        let resp = client
+            .post(&url)
             .header("Authorization", &token)
             .json(body)
-            .send().await
+            .send()
+            .await
             .map_err(|e| GatewayError::Internal(format!("QQ POST {} failed: {}", path, e)))?;
         if !resp.status().is_success() {
             let s = resp.status();
             let b = resp.text().await.unwrap_or_default();
-            return Err(GatewayError::Internal(format!("QQ API error (POST {}): {} - {}", path, s, b)));
+            return Err(GatewayError::Internal(format!(
+                "QQ API error (POST {}): {} - {}",
+                path, s, b
+            )));
         }
-        resp.json().await
+        resp.json()
+            .await
             .map_err(|e| GatewayError::Internal(format!("QQ POST {} parse failed: {}", path, e)))
     }
 
     /// QQ API PATCH
     async fn api_patch<T: serde::de::DeserializeOwned>(
-        &self, path: &str, body: &serde_json::Value,
+        &self,
+        path: &str,
+        body: &serde_json::Value,
     ) -> Result<T, GatewayError> {
         let token = self.bot_token()?;
         let client = self.client()?;
         let url = format!("{}{}", self.api_base_url(), path);
-        let resp = client.patch(&url)
+        let resp = client
+            .patch(&url)
             .header("Authorization", &token)
             .json(body)
-            .send().await
+            .send()
+            .await
             .map_err(|e| GatewayError::Internal(format!("QQ PATCH {} failed: {}", path, e)))?;
         if !resp.status().is_success() {
             let s = resp.status();
             let b = resp.text().await.unwrap_or_default();
-            return Err(GatewayError::Internal(format!("QQ API error (PATCH {}): {} - {}", path, s, b)));
+            return Err(GatewayError::Internal(format!(
+                "QQ API error (PATCH {}): {} - {}",
+                path, s, b
+            )));
         }
-        resp.json().await
+        resp.json()
+            .await
             .map_err(|e| GatewayError::Internal(format!("QQ PATCH {} parse failed: {}", path, e)))
     }
 
@@ -263,32 +316,46 @@ impl QqAdapter {
         let token = self.bot_token()?;
         let client = self.client()?;
         let url = format!("{}{}", self.api_base_url(), path);
-        let resp = client.delete(&url)
+        let resp = client
+            .delete(&url)
             .header("Authorization", &token)
-            .send().await
+            .send()
+            .await
             .map_err(|e| GatewayError::Internal(format!("QQ DELETE {} failed: {}", path, e)))?;
         if !resp.status().is_success() {
             let s = resp.status();
             let b = resp.text().await.unwrap_or_default();
-            return Err(GatewayError::Internal(format!("QQ API error (DELETE {}): {} - {}", path, s, b)));
+            return Err(GatewayError::Internal(format!(
+                "QQ API error (DELETE {}): {} - {}",
+                path, s, b
+            )));
         }
         Ok(())
     }
-
 }
 
 // ── 消息发送（自动判断频道/群聊） ──
 
 impl QqAdapter {
     /// 尝试发送消息，自动判断是频道消息还是群聊消息
-    async fn try_send(&self, chat_id: &str, body: &serde_json::Value) -> Result<QqSendMessageResponse, GatewayError> {
+    async fn try_send(
+        &self,
+        chat_id: &str,
+        body: &serde_json::Value,
+    ) -> Result<QqSendMessageResponse, GatewayError> {
         // 先尝试频道端点
         let channel_path = format!("/channels/{}/messages", chat_id);
-        match self.api_post::<QqSendMessageResponse>(&channel_path, body).await {
+        match self
+            .api_post::<QqSendMessageResponse>(&channel_path, body)
+            .await
+        {
             Ok(resp) => return Ok(resp),
             Err(e) => {
                 if e.to_string().contains("频道不存在") || e.to_string().contains("11263") {
-                    tracing::debug!("QQ chat_id {} is not a channel, trying other endpoints", chat_id);
+                    tracing::debug!(
+                        "QQ chat_id {} is not a channel, trying other endpoints",
+                        chat_id
+                    );
                 } else {
                     return Err(e);
                 }
@@ -296,10 +363,16 @@ impl QqAdapter {
         }
         // 尝试群聊端点（v2 API）
         let group_path = format!("/v2/groups/{}/messages", chat_id);
-        match self.api_post::<QqSendMessageResponse>(&group_path, body).await {
+        match self
+            .api_post::<QqSendMessageResponse>(&group_path, body)
+            .await
+        {
             Ok(resp) => return Ok(resp),
             Err(e) => {
-                if e.to_string().contains("群") || e.to_string().contains("group") || e.to_string().contains("11263") {
+                if e.to_string().contains("群")
+                    || e.to_string().contains("group")
+                    || e.to_string().contains("11263")
+                {
                     tracing::debug!("QQ chat_id {} is not a group, trying C2C endpoint", chat_id);
                 } else {
                     return Err(e);
@@ -308,7 +381,8 @@ impl QqAdapter {
         }
         // 尝试 C2C 私聊端点（v2 API）
         let c2c_path = format!("/v2/users/{}/messages", chat_id);
-        self.api_post::<QqSendMessageResponse>(&c2c_path, body).await
+        self.api_post::<QqSendMessageResponse>(&c2c_path, body)
+            .await
     }
 }
 
@@ -322,9 +396,9 @@ impl QqAdapter {
         tokio_tungstenite::WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>,
         Box<dyn std::error::Error + Send + Sync>,
     > {
+        use native_tls::TlsConnector as NativeTlsBuilder;
         use tokio::net::TcpStream;
         use tokio_native_tls::TlsConnector;
-        use native_tls::TlsConnector as NativeTlsBuilder;
 
         // 解析 URL 获取 hostname
         let uri = ws_url.parse::<tokio_tungstenite::tungstenite::http::Uri>()?;
@@ -415,13 +489,15 @@ impl QqAdapter {
                             }
                         }
                     }
-                    _ => { tokio::time::sleep(Duration::from_secs(1)).await; continue; }
+                    _ => {
+                        tokio::time::sleep(Duration::from_secs(1)).await;
+                        continue;
+                    }
                 }
             };
 
-            let hb_interval = Duration::from_millis(
-                (hello.heartbeat_interval as f64 * 0.75) as u64
-            );
+            let hb_interval =
+                Duration::from_millis((hello.heartbeat_interval as f64 * 0.75) as u64);
             tracing::info!("QQ Gateway connected");
 
             // 发送 Identify（使用 QQBot {access_token} 格式）
@@ -440,7 +516,11 @@ impl QqAdapter {
                     "shard": [0, 1],
                 }
             });
-            if write.send(Message::Text(identify.to_string())).await.is_err() {
+            if write
+                .send(Message::Text(identify.to_string()))
+                .await
+                .is_err()
+            {
                 tracing::error!("QQ identify send failed");
                 continue;
             }
@@ -520,9 +600,12 @@ impl QqAdapter {
     async fn fetch_gateway_url(token_store: &QqTokenStore, base_url: &str) -> Option<String> {
         let token = token_store.get().ok()?;
         let client = reqwest::Client::new();
-        let resp = client.get(format!("{}/gateway/bot", base_url))
+        let resp = client
+            .get(format!("{}/gateway/bot", base_url))
             .header("Authorization", &token)
-            .send().await.ok()?;
+            .send()
+            .await
+            .ok()?;
         let data: GatewayResponse = resp.json().await.ok()?;
         Some(data.url)
     }
@@ -557,10 +640,15 @@ impl QqAdapter {
                 };
                 tracing::info!(
                     "QQ {} from user={} id={} channel={}",
-                    event_type, msg_event.author.id, msg_event.id, msg_event.channel_id
+                    event_type,
+                    msg_event.author.id,
+                    msg_event.id,
+                    msg_event.channel_id
                 );
 
-                if msg_event.author.id == *bot_id { return; }
+                if msg_event.author.id == *bot_id {
+                    return;
+                }
 
                 messages_in.fetch_add(1, Ordering::Relaxed);
                 let ts = Self::parse_timestamp(&msg_event.timestamp);
@@ -604,7 +692,10 @@ impl QqAdapter {
                 };
                 tracing::info!(
                     "QQ {} from member={} id={} group={}",
-                    event_type, msg_event.author.member_openid, msg_event.id, msg_event.group_openid
+                    event_type,
+                    msg_event.author.member_openid,
+                    msg_event.id,
+                    msg_event.group_openid
                 );
 
                 // 群消息没有 bot 字段，无法通过 id 过滤自身消息
@@ -651,7 +742,9 @@ impl QqAdapter {
                 };
                 tracing::info!(
                     "QQ {} from user={} id={}",
-                    event_type, msg_event.author.user_openid, msg_event.id
+                    event_type,
+                    msg_event.author.user_openid,
+                    msg_event.id
                 );
 
                 messages_in.fetch_add(1, Ordering::Relaxed);
@@ -693,12 +786,22 @@ impl QqAdapter {
 
 #[async_trait]
 impl PlatformAdapter for QqAdapter {
-    fn platform_name(&self) -> &str { &self.platform_name }
-    fn display_name(&self) -> &str { &self.display_name }
-    fn capabilities(&self) -> &[Capability] { &self.capabilities }
+    fn platform_name(&self) -> &str {
+        &self.platform_name
+    }
+    fn display_name(&self) -> &str {
+        &self.display_name
+    }
+    fn capabilities(&self) -> &[Capability] {
+        &self.capabilities
+    }
 
     async fn init(&mut self, config: AdapterConfig) -> Result<InitResult, GatewayError> {
-        let has_app_id = config.extra.get("app_id").and_then(|v| v.as_str()).is_some();
+        let has_app_id = config
+            .extra
+            .get("app_id")
+            .and_then(|v| v.as_str())
+            .is_some();
         let has_token = config.token.is_some();
 
         if !has_app_id || !has_token {
@@ -709,28 +812,39 @@ impl PlatformAdapter for QqAdapter {
         }
 
         self.config = Some(config);
-        self.http_client = Some(reqwest::Client::builder()
-            .timeout(Duration::from_secs(15))
-            .build()
-            .map_err(|e| GatewayError::Internal(format!("Failed to create HTTP client: {}", e)))?);
+        self.http_client = Some(
+            reqwest::Client::builder()
+                .timeout(Duration::from_secs(15))
+                .build()
+                .map_err(|e| {
+                    GatewayError::Internal(format!("Failed to create HTTP client: {}", e))
+                })?,
+        );
         self.state = AdapterState::Starting;
-        Ok(InitResult { ok: true, error: None })
+        Ok(InitResult {
+            ok: true,
+            error: None,
+        })
     }
 
     async fn connect(&mut self) -> Result<ConnectResult, GatewayError> {
-        let config = self.config.as_ref()
+        let config = self
+            .config
+            .as_ref()
             .ok_or_else(|| GatewayError::ConfigError("Adapter not initialized".to_string()))?;
-        let app_id = config.extra.get("app_id")
+        let app_id = config
+            .extra
+            .get("app_id")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| GatewayError::ConfigError("Missing 'app_id' in qq config.extra".to_string()))?;
-        let client_secret = config.token.as_deref()
-            .ok_or_else(|| GatewayError::ConfigError("Missing 'token' (client_secret) for qq".to_string()))?;
+            .ok_or_else(|| {
+                GatewayError::ConfigError("Missing 'app_id' in qq config.extra".to_string())
+            })?;
+        let client_secret = config.token.as_deref().ok_or_else(|| {
+            GatewayError::ConfigError("Missing 'token' (client_secret) for qq".to_string())
+        })?;
 
         // 创建 TokenStore 并获取 access token
-        let token_store = QqTokenStore::new(
-            app_id.to_string(),
-            client_secret.to_string(),
-        );
+        let token_store = QqTokenStore::new(app_id.to_string(), client_secret.to_string());
         if let Err(e) = token_store.refresh().await {
             return Ok(ConnectResult {
                 ok: false,
@@ -765,14 +879,20 @@ impl PlatformAdapter for QqAdapter {
         self.state = AdapterState::Connected;
         self.bot_info = Some(bot_info.clone());
         self.bot_user_id = Some(bot_id.clone());
-        tracing::info!("QQ adapter connected: {} (id={})", bot_info.name, bot_info.id);
+        tracing::info!(
+            "QQ adapter connected: {} (id={})",
+            bot_info.name,
+            bot_info.id
+        );
 
         if let Some(ref event_bus) = self.event_bus {
             let (cancel_tx, cancel_rx) = broadcast::channel(1);
             self.cancel_tx = Some(cancel_tx);
             let eb = event_bus.clone();
             let msg_in = self.messages_in.clone();
-            let base_url = self.config.as_ref()
+            let base_url = self
+                .config
+                .as_ref()
                 .and_then(|c| c.base_url.clone())
                 .unwrap_or_else(|| QQ_API.to_string());
             tokio::spawn(async move {
@@ -780,24 +900,38 @@ impl PlatformAdapter for QqAdapter {
             });
         }
 
-        Ok(ConnectResult { ok: true, error: None, bot_info: Some(bot_info) })
+        Ok(ConnectResult {
+            ok: true,
+            error: None,
+            bot_info: Some(bot_info),
+        })
     }
 
     async fn disconnect(&mut self) -> Result<(), GatewayError> {
-        if let Some(cancel_tx) = &self.cancel_tx { let _ = cancel_tx.send(()); }
+        if let Some(cancel_tx) = &self.cancel_tx {
+            let _ = cancel_tx.send(());
+        }
         self.cancel_tx = None;
         self.state = AdapterState::Stopped;
         tracing::info!("QQ adapter disconnected");
         Ok(())
     }
 
-    fn state(&self) -> AdapterState { self.state.clone() }
+    fn state(&self) -> AdapterState {
+        self.state.clone()
+    }
 
     async fn health(&self) -> HealthReport {
         HealthReport {
-            status: if self.state == AdapterState::Connected { HealthStatus::Healthy } else { HealthStatus::Down },
+            status: if self.state == AdapterState::Connected {
+                HealthStatus::Healthy
+            } else {
+                HealthStatus::Down
+            },
             connected: self.state == AdapterState::Connected,
-            last_connected_at: None, last_error_at: None, last_error: None,
+            last_connected_at: None,
+            last_error_at: None,
+            last_error: None,
             messages_in: self.messages_in.load(Ordering::Relaxed),
             messages_out: self.messages_out.load(Ordering::Relaxed),
             errors: self.errors.load(Ordering::Relaxed),
@@ -808,8 +942,16 @@ impl PlatformAdapter for QqAdapter {
     fn runtime_config(&self) -> AdapterRuntimeConfig {
         AdapterRuntimeConfig {
             enabled: self.config.as_ref().map(|c| c.enabled).unwrap_or(false),
-            token_configured: self.config.as_ref().and_then(|c| c.token.as_ref()).is_some(),
-            extra: self.config.as_ref().map(|c| c.extra.clone()).unwrap_or_default(),
+            token_configured: self
+                .config
+                .as_ref()
+                .and_then(|c| c.token.as_ref())
+                .is_some(),
+            extra: self
+                .config
+                .as_ref()
+                .map(|c| c.extra.clone())
+                .unwrap_or_default(),
         }
     }
 
@@ -819,7 +961,9 @@ impl PlatformAdapter for QqAdapter {
             display_name: self.display_name.clone(),
             state: self.state.clone(),
             connected: self.state == AdapterState::Connected,
-            health: None, last_error: None, uptime: None,
+            health: None,
+            last_error: None,
+            uptime: None,
             messages_in: self.messages_in.load(Ordering::Relaxed),
             messages_out: self.messages_out.load(Ordering::Relaxed),
         }
@@ -842,7 +986,9 @@ impl PlatformAdapter for QqAdapter {
                     success: true,
                     message_id: Some(resp.id),
                     timestamp: resp.timestamp.and_then(|t| t.parse::<i64>().ok()),
-                    error: None, error_code: None, retryable: false,
+                    error: None,
+                    error_code: None,
+                    retryable: false,
                 })
             }
             Err(e) => {
@@ -866,7 +1012,9 @@ impl PlatformAdapter for QqAdapter {
                     success: true,
                     message_id: Some(resp.id),
                     timestamp: resp.timestamp.and_then(|t| t.parse::<i64>().ok()),
-                    error: None, error_code: None, retryable: false,
+                    error: None,
+                    error_code: None,
+                    retryable: false,
                 })
             }
             Err(e) => {
@@ -877,19 +1025,40 @@ impl PlatformAdapter for QqAdapter {
     }
 
     async fn edit_message(&self, params: EditMessageParams) -> Result<EditResult, GatewayError> {
-        let path = format!("/channels/{}/messages/{}", params.chat_id, params.message_id);
+        let path = format!(
+            "/channels/{}/messages/{}",
+            params.chat_id, params.message_id
+        );
         let body = serde_json::json!({ "content": params.message.text });
         match self.api_patch::<QqSendMessageResponse>(&path, &body).await {
-            Ok(_) => Ok(EditResult { success: true, updated_at: Some(chrono::Utc::now().timestamp_millis()), error: None }),
-            Err(e) => Ok(EditResult { success: false, updated_at: None, error: Some(e.to_string()) }),
+            Ok(_) => Ok(EditResult {
+                success: true,
+                updated_at: Some(chrono::Utc::now().timestamp_millis()),
+                error: None,
+            }),
+            Err(e) => Ok(EditResult {
+                success: false,
+                updated_at: None,
+                error: Some(e.to_string()),
+            }),
         }
     }
 
-    async fn delete_message(&self, chat_id: &str, message_id: &str) -> Result<DeleteResult, GatewayError> {
+    async fn delete_message(
+        &self,
+        chat_id: &str,
+        message_id: &str,
+    ) -> Result<DeleteResult, GatewayError> {
         let path = format!("/channels/{}/messages/{}", chat_id, message_id);
         match self.api_delete(&path).await {
-            Ok(_) => Ok(DeleteResult { success: true, error: None }),
-            Err(e) => Ok(DeleteResult { success: false, error: Some(e.to_string()) }),
+            Ok(_) => Ok(DeleteResult {
+                success: true,
+                error: None,
+            }),
+            Err(e) => Ok(DeleteResult {
+                success: false,
+                error: Some(e.to_string()),
+            }),
         }
     }
 
@@ -909,7 +1078,9 @@ impl PlatformAdapter for QqAdapter {
 }
 
 impl Default for QqAdapter {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 // ── 单元测试 ──
@@ -977,13 +1148,16 @@ mod tests {
     #[tokio::test]
     async fn test_runtime_config_after_init() {
         let mut adapter = QqAdapter::new();
-        adapter.init(AdapterConfig {
-            enabled: true,
-            token: Some("secret".to_string()),
-            api_key: None,
-            base_url: None,
-            extra: serde_json::json!({"app_id": "123"}),
-        }).await.unwrap();
+        adapter
+            .init(AdapterConfig {
+                enabled: true,
+                token: Some("secret".to_string()),
+                api_key: None,
+                base_url: None,
+                extra: serde_json::json!({"app_id": "123"}),
+            })
+            .await
+            .unwrap();
         let r = adapter.runtime_config();
         assert!(r.enabled);
         assert!(r.token_configured);
@@ -992,15 +1166,18 @@ mod tests {
     #[tokio::test]
     async fn test_send_before_connect() {
         let adapter = QqAdapter::new();
-        let result = adapter.send(SendTextParams {
-            chat_id: "123".to_string(),
-            message: OutboundMessage {
-                text: "hello".to_string(),
-                parse_mode: ParseMode::None,
-            },
-            reply_to: None,
-            metadata: None,
-        }).await.unwrap();
+        let result = adapter
+            .send(SendTextParams {
+                chat_id: "123".to_string(),
+                message: OutboundMessage {
+                    text: "hello".to_string(),
+                    parse_mode: ParseMode::None,
+                },
+                reply_to: None,
+                metadata: None,
+            })
+            .await
+            .unwrap();
         assert!(!result.success);
     }
 
@@ -1014,27 +1191,41 @@ mod tests {
     #[test]
     fn test_capabilities() {
         let adapter = QqAdapter::new();
-        assert!(adapter.capabilities().iter().any(|c| c.name == CapabilityName::Text && c.supported));
+        assert!(adapter
+            .capabilities()
+            .iter()
+            .any(|c| c.name == CapabilityName::Text && c.supported));
     }
 
     #[tokio::test]
     async fn test_init_missing_config() {
         let mut adapter = QqAdapter::new();
-        let r = adapter.init(AdapterConfig {
-            enabled: true, token: None, api_key: None, extra: serde_json::json!({}),
-            base_url: None,
-        }).await.unwrap();
+        let r = adapter
+            .init(AdapterConfig {
+                enabled: true,
+                token: None,
+                api_key: None,
+                extra: serde_json::json!({}),
+                base_url: None,
+            })
+            .await
+            .unwrap();
         assert!(!r.ok);
     }
 
     #[tokio::test]
     async fn test_init_valid_config() {
         let mut adapter = QqAdapter::new();
-        let r = adapter.init(AdapterConfig {
-            enabled: true, token: Some("tk".into()), api_key: None,
-            base_url: None,
-            extra: serde_json::json!({"app_id": "123"}),
-        }).await.unwrap();
+        let r = adapter
+            .init(AdapterConfig {
+                enabled: true,
+                token: Some("tk".into()),
+                api_key: None,
+                base_url: None,
+                extra: serde_json::json!({"app_id": "123"}),
+            })
+            .await
+            .unwrap();
         assert!(r.ok);
     }
 
@@ -1100,11 +1291,19 @@ mod tests {
         };
 
         QqAdapter::handle_dispatch(
-            "AT_MESSAGE_CREATE", &payload, &event_bus, "bot_id_001", &messages_in,
-        ).await;
+            "AT_MESSAGE_CREATE",
+            &payload,
+            &event_bus,
+            "bot_id_001",
+            &messages_in,
+        )
+        .await;
 
         let event = rx.try_recv().ok();
-        assert!(event.is_some(), "Expected MESSAGE_INBOUND event for AT_MESSAGE_CREATE");
+        assert!(
+            event.is_some(),
+            "Expected MESSAGE_INBOUND event for AT_MESSAGE_CREATE"
+        );
         if let Some(e) = event {
             assert_eq!(e.event_type, "message.inbound");
             assert_eq!(e.source, "qq");
@@ -1133,11 +1332,19 @@ mod tests {
         };
 
         QqAdapter::handle_dispatch(
-            "GROUP_AT_MESSAGE_CREATE", &payload, &event_bus, "bot_id", &messages_in,
-        ).await;
+            "GROUP_AT_MESSAGE_CREATE",
+            &payload,
+            &event_bus,
+            "bot_id",
+            &messages_in,
+        )
+        .await;
 
         let event = rx.try_recv().ok();
-        assert!(event.is_some(), "Expected MESSAGE_INBOUND for group message");
+        assert!(
+            event.is_some(),
+            "Expected MESSAGE_INBOUND for group message"
+        );
         if let Some(e) = event {
             assert_eq!(e.data["is_group"], true);
             assert_eq!(e.data["chat_type"], "Group");
@@ -1166,8 +1373,13 @@ mod tests {
         };
 
         QqAdapter::handle_dispatch(
-            "C2C_MESSAGE_CREATE", &payload, &event_bus, "bot_id", &messages_in,
-        ).await;
+            "C2C_MESSAGE_CREATE",
+            &payload,
+            &event_bus,
+            "bot_id",
+            &messages_in,
+        )
+        .await;
 
         let event = rx.try_recv().ok();
         assert!(event.is_some(), "Expected MESSAGE_INBOUND for C2C message");
@@ -1200,8 +1412,13 @@ mod tests {
         };
 
         QqAdapter::handle_dispatch(
-            "AT_MESSAGE_CREATE", &payload, &event_bus, "bot_self", &messages_in,
-        ).await;
+            "AT_MESSAGE_CREATE",
+            &payload,
+            &event_bus,
+            "bot_self",
+            &messages_in,
+        )
+        .await;
 
         let event = rx.try_recv().ok();
         assert!(event.is_none(), "Self messages should be filtered out");
@@ -1223,8 +1440,13 @@ mod tests {
         };
 
         QqAdapter::handle_dispatch(
-            "MESSAGE_REACTION_UPDATE", &payload, &event_bus, "bot_id", &messages_in,
-        ).await;
+            "MESSAGE_REACTION_UPDATE",
+            &payload,
+            &event_bus,
+            "bot_id",
+            &messages_in,
+        )
+        .await;
 
         let event = rx.try_recv().ok();
         assert!(event.is_none(), "Unknown event type should not publish");
@@ -1245,8 +1467,13 @@ mod tests {
         };
 
         QqAdapter::handle_dispatch(
-            "AT_MESSAGE_CREATE", &payload, &event_bus, "bot_id", &messages_in,
-        ).await;
+            "AT_MESSAGE_CREATE",
+            &payload,
+            &event_bus,
+            "bot_id",
+            &messages_in,
+        )
+        .await;
 
         let event = rx.try_recv().ok();
         assert!(event.is_none(), "Missing data should not publish event");
@@ -1272,8 +1499,13 @@ mod tests {
         };
 
         QqAdapter::handle_dispatch(
-            "AT_MESSAGE_CREATE", &payload, &event_bus, "bot_id", &messages_in,
-        ).await;
+            "AT_MESSAGE_CREATE",
+            &payload,
+            &event_bus,
+            "bot_id",
+            &messages_in,
+        )
+        .await;
 
         let event = rx.try_recv().ok();
         assert!(event.is_none(), "Malformed data should not publish event");
@@ -1302,8 +1534,13 @@ mod tests {
         };
 
         QqAdapter::handle_dispatch(
-            "C2C_MESSAGE_CREATE", &payload, &event_bus, "bot_self", &messages_in,
-        ).await;
+            "C2C_MESSAGE_CREATE",
+            &payload,
+            &event_bus,
+            "bot_self",
+            &messages_in,
+        )
+        .await;
 
         let event = rx.try_recv().ok();
         // C2C 没有 bot 字段，不会被过滤

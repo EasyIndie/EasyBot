@@ -6,13 +6,13 @@
 //! - 文件变更轮询监听
 //! - PUT /config 端点更新
 
+use easybot_core::bus::EventBus;
+use easybot_core::types::config::GatewayConfig;
+use easybot_core::types::event::{event_types, GatewayEvent};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::SystemTime;
 use tokio::sync::RwLock;
-use easybot_core::types::config::GatewayConfig;
-use easybot_core::bus::EventBus;
-use easybot_core::types::event::{GatewayEvent, event_types};
 
 /// 配置管理器
 ///
@@ -46,7 +46,8 @@ impl ConfigManager {
 
     /// 创建带文件路径的配置管理器（启用文件轮询）
     pub fn with_path(config: GatewayConfig, path: PathBuf) -> Self {
-        let mtime = std::fs::metadata(&path).ok()
+        let mtime = std::fs::metadata(&path)
+            .ok()
             .and_then(|m| m.modified().ok());
         Self {
             current: Arc::new(RwLock::new(Arc::new(config))),
@@ -65,7 +66,7 @@ impl ConfigManager {
     /// 返回旧配置。
     pub async fn swap(&self, new_config: GatewayConfig) -> Arc<GatewayConfig> {
         let mut current = self.current.write().await;
-        
+
         std::mem::replace(&mut *current, Arc::new(new_config))
     }
 
@@ -78,7 +79,8 @@ impl ConfigManager {
             None => return false,
         };
 
-        let current_mtime = match std::fs::metadata(&path).ok()
+        let current_mtime = match std::fs::metadata(&path)
+            .ok()
             .and_then(|m| m.modified().ok())
         {
             Some(m) => m,
@@ -132,4 +134,3 @@ pub fn start_config_watcher(
         }
     });
 }
-

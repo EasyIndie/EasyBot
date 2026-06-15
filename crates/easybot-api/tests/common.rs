@@ -2,20 +2,20 @@
 //!
 //! 提供创建测试用 AppState 的通用函数。
 
-use std::sync::Arc;
+use easybot_api::{config_manager::ConfigManager, AppState};
 use easybot_core::{
     adapter::AdapterManager,
     auth::ApiKeyManager,
     bus::EventBus,
     session::SessionManager,
-    storage::sqlite::{SqliteMessageStore, run_migrations},
+    storage::sqlite::{run_migrations, SqliteMessageStore},
     types::config::{
-        ApiConfig, GatewayConfig, RateLimitConfig, ServerConfig,
-        MetricsConfig, WebSocketConfig, TlsConfig,
+        ApiConfig, GatewayConfig, MetricsConfig, RateLimitConfig, ServerConfig, TlsConfig,
+        WebSocketConfig,
     },
 };
 use sqlx::SqlitePool;
-use easybot_api::{AppState, config_manager::ConfigManager};
+use std::sync::Arc;
 
 /// 构建测试用的完整 AppState
 ///
@@ -41,7 +41,10 @@ pub async fn test_app_state() -> (AppState, String) {
 
     // API Key 管理
     let auth_manager = Arc::new(ApiKeyManager::new());
-    let (_, raw_key) = auth_manager.create_key("test-key", vec![], None).await.unwrap();
+    let (_, raw_key) = auth_manager
+        .create_key("test-key", vec![], None)
+        .await
+        .unwrap();
 
     // 测试配置（限流禁用，指标禁用）
     let config = GatewayConfig {

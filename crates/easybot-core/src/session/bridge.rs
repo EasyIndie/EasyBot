@@ -22,13 +22,9 @@ impl SessionBridge {
     ///
     /// 订阅事件总线上的入站消息事件，持续处理入站消息并创建/更新会话。
     /// 运行时不会退出（除非 EventBus 关闭），随 tokio 运行时一起停止。
-    pub fn start(
-        event_bus: Arc<EventBus>,
-        session_manager: Arc<SessionManager>,
-    ) {
-        let mut event_rx = event_bus.subscribe_many(&[
-            crate::types::event::event_types::MESSAGE_INBOUND,
-        ]);
+    pub fn start(event_bus: Arc<EventBus>, session_manager: Arc<SessionManager>) {
+        let mut event_rx =
+            event_bus.subscribe_many(&[crate::types::event::event_types::MESSAGE_INBOUND]);
 
         tokio::spawn(async move {
             info!("Session bridge started");
@@ -78,11 +74,11 @@ impl SessionBridge {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Duration;
     use crate::bus::EventBus;
     use crate::session::SessionManager;
     use crate::types::event::GatewayEvent;
     use crate::types::message::{ChatType, MessageAuthor};
+    use std::time::Duration;
 
     #[tokio::test]
     async fn test_bridge_creates_session() {

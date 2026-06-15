@@ -1,10 +1,10 @@
 //! 聊天信息路由
 
-use axum::{
-    Json,
-    extract::{State, Path},
-};
 use crate::AppState;
+use axum::{
+    extract::{Path, State},
+    Json,
+};
 
 /// 获取指定平台的聊天列表
 #[utoipa::path(
@@ -27,11 +27,13 @@ pub async fn list_chats(
     let chats: Vec<serde_json::Value> = sessions
         .iter()
         .filter(|s| s.platform == platform)
-        .map(|s| serde_json::json!({
-            "chatId": s.chat_id,
-            "name": s.source.chat_name,
-            "type": format!("{:?}", s.source.chat_type),
-        }))
+        .map(|s| {
+            serde_json::json!({
+                "chatId": s.chat_id,
+                "name": s.source.chat_name,
+                "type": format!("{:?}", s.source.chat_type),
+            })
+        })
         .collect();
 
     Json(serde_json::json!({ "chats": chats }))

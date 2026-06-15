@@ -1,13 +1,13 @@
 //! 适配器管理路由
 
+use crate::AppState;
 use axum::{
-    Json,
-    extract::{State, Path},
+    extract::{Path, State},
     http::StatusCode,
+    Json,
 };
 use serde::Serialize;
 use utoipa::ToSchema;
-use crate::AppState;
 
 /// 适配器列表响应
 #[derive(Serialize, ToSchema)]
@@ -36,9 +36,7 @@ pub struct AdapterItem {
         (status = 200, description = "List of all registered adapters", body = AdapterListResponse)
     )
 )]
-pub async fn list_adapters(
-    State(state): State<AppState>,
-) -> Json<AdapterListResponse> {
+pub async fn list_adapters(State(state): State<AppState>) -> Json<AdapterListResponse> {
     let adapters = state.adapter_manager.list_statuses().await;
     let items: Vec<AdapterItem> = adapters
         .into_iter()
@@ -71,7 +69,10 @@ pub async fn start_adapter(
     Path(platform): Path<String>,
 ) -> Json<serde_json::Value> {
     // 从当前配置中读取该平台的 AdapterConfig（包含 token 等凭证）
-    let adapter_config = state.config.adapters.get(&platform)
+    let adapter_config = state
+        .config
+        .adapters
+        .get(&platform)
         .cloned()
         .unwrap_or_else(|| easybot_core::types::adapter::AdapterConfig {
             enabled: true,
@@ -134,10 +135,16 @@ pub async fn adapter_status(
 ) -> (StatusCode, Json<serde_json::Value>) {
     // 使用新的 O(1) get_status 方法，绕过 Vec 遍历
     match state.adapter_manager.get_status(&platform).await {
-        Some(s) => (StatusCode::OK, Json(serde_json::to_value(s).unwrap_or_default())),
-        None => (StatusCode::NOT_FOUND, Json(serde_json::json!({
-            "error": "PLATFORM_NOT_FOUND",
-            "message": format!("Platform '{}' not found", platform),
-        }))),
+        Some(s) => (
+            StatusCode::OK,
+            Json(serde_json::to_value(s).unwrap_or_default()),
+        ),
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "error": "PLATFORM_NOT_FOUND",
+                "message": format!("Platform '{}' not found", platform),
+            })),
+        ),
     }
 }

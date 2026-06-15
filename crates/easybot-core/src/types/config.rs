@@ -3,10 +3,10 @@
 //! 定义网关配置的结构体，与 YAML 配置文件对应。
 //! 支持环境变量引用（${VAR_NAME}）和分层配置合并。
 
-use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
-use std::collections::HashMap;
 use crate::types::adapter::AdapterConfig;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use utoipa::ToSchema;
 
 /// 网关主配置
 #[derive(Debug, Clone, Default, Serialize, Deserialize, ToSchema)]
@@ -83,8 +83,12 @@ pub struct MetricsConfig {
     pub path: String,
 }
 
-fn default_metrics_enabled() -> bool { true }
-fn default_metrics_path() -> String { "/metrics".to_string() }
+fn default_metrics_enabled() -> bool {
+    true
+}
+fn default_metrics_path() -> String {
+    "/metrics".to_string()
+}
 
 impl Default for MetricsConfig {
     fn default() -> Self {
@@ -109,9 +113,15 @@ pub struct RateLimitConfig {
     pub burst_size: u32,
 }
 
-fn default_rl_enabled() -> bool { true }
-fn default_rl_requests() -> u64 { 60 }
-fn default_rl_burst() -> u32 { 10 }
+fn default_rl_enabled() -> bool {
+    true
+}
+fn default_rl_requests() -> u64 {
+    60
+}
+fn default_rl_burst() -> u32 {
+    10
+}
 
 impl Default for RateLimitConfig {
     fn default() -> Self {
@@ -204,9 +214,15 @@ pub struct RetentionConfig {
     pub cleanup_interval_secs: u64,
 }
 
-fn default_message_ttl_days() -> u64 { 90 }
-fn default_session_ttl_days() -> u64 { 365 }
-fn default_cleanup_interval_secs() -> u64 { 3600 }
+fn default_message_ttl_days() -> u64 {
+    90
+}
+fn default_session_ttl_days() -> u64 {
+    365
+}
+fn default_cleanup_interval_secs() -> u64 {
+    3600
+}
 
 impl Default for RetentionConfig {
     fn default() -> Self {
@@ -320,4 +336,3 @@ impl Default for ServerConfig {
         }
     }
 }
-

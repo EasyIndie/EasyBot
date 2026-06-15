@@ -2,6 +2,7 @@
 //!
 //! 外部客户端通过 WebSocket 连接接收实时事件推送。
 
+use crate::AppState;
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
@@ -11,7 +12,6 @@ use axum::{
 };
 use futures::{SinkExt, StreamExt};
 use tracing::{info, warn};
-use crate::AppState;
 
 /// WebSocket 实时事件流
 ///
@@ -27,10 +27,7 @@ use crate::AppState;
         (status = 400, description = "WebSocket upgrade failed"),
     )
 )]
-pub async fn ws_handler(
-    ws: WebSocketUpgrade,
-    State(state): State<AppState>,
-) -> impl IntoResponse {
+pub async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> impl IntoResponse {
     ws.on_upgrade(move |socket| handle_ws(socket, state))
 }
 

@@ -12,7 +12,11 @@ use crate::types::*;
 /// 处理 `im.message.receive_v1` 事件
 ///
 /// 解析消息内容、发送者、聊天信息，构建 `InboundMessage` 并发布到 EventBus。
-pub async fn handle_message_receive(event_data: serde_json::Value, event_bus: &EventBus, _bot_id: &str) {
+pub async fn handle_message_receive(
+    event_data: serde_json::Value,
+    event_bus: &EventBus,
+    _bot_id: &str,
+) {
     let receive_event: FeishuMessageReceiveEvent = match serde_json::from_value(event_data) {
         Ok(e) => e,
         Err(e) => {
@@ -48,9 +52,10 @@ pub async fn handle_message_receive(event_data: serde_json::Value, event_bus: &E
     };
 
     // 解析时间戳（飞书 create_time 是毫秒时间戳字符串）
-    let timestamp: i64 = message.create_time.parse().unwrap_or_else(|_| {
-        chrono::Utc::now().timestamp_millis()
-    });
+    let timestamp: i64 = message
+        .create_time
+        .parse()
+        .unwrap_or_else(|_| chrono::Utc::now().timestamp_millis());
 
     let inbound = InboundMessage {
         id: message.message_id,
@@ -81,7 +86,11 @@ pub async fn handle_message_receive(event_data: serde_json::Value, event_bus: &E
     );
 
     event_bus.publish(event);
-    tracing::info!("飞书消息已处理: chat={}, type={}", inbound.chat_id, message.msg_type);
+    tracing::info!(
+        "飞书消息已处理: chat={}, type={}",
+        inbound.chat_id,
+        message.msg_type
+    );
 }
 
 #[cfg(test)]
@@ -178,7 +187,10 @@ mod tests {
 
         // 不应该有事件被发布
         let result = tokio::time::timeout(std::time::Duration::from_millis(200), rx.recv()).await;
-        assert!(result.is_err(), "should not publish event for unknown chat type");
+        assert!(
+            result.is_err(),
+            "should not publish event for unknown chat type"
+        );
     }
 
     #[tokio::test]
@@ -238,7 +250,10 @@ mod tests {
 
         // 使用旧字段名 msg_type 会导致解析失败，不应发布事件
         let result = tokio::time::timeout(std::time::Duration::from_millis(200), rx.recv()).await;
-        assert!(result.is_err(), "should not publish event when message_type field is missing");
+        assert!(
+            result.is_err(),
+            "should not publish event when message_type field is missing"
+        );
     }
 
     #[tokio::test]

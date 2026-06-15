@@ -3,11 +3,11 @@
 //! 使用 DashMap 存储按事件类型区分的 broadcast channel。
 //! 支持 publish/subscribe 模式，事件发布后所有活跃订阅者收到副本。
 
-use std::time::Duration;
+use crate::types::event::GatewayEvent;
 use dashmap::DashMap;
+use std::time::Duration;
 use tokio::sync::broadcast;
 use tracing::warn;
-use crate::types::event::GatewayEvent;
 
 /// 默认广播通道容量
 const DEFAULT_CHANNEL_CAPACITY: usize = 256;
@@ -61,10 +61,7 @@ impl EventBus {
     }
 
     /// 获取或创建 broadcast channel
-    fn get_or_create_channel(
-        &self,
-        event_type: &str,
-    ) -> broadcast::Sender<GatewayEvent> {
+    fn get_or_create_channel(&self, event_type: &str) -> broadcast::Sender<GatewayEvent> {
         let cap = self.capacity;
         self.channels
             .entry(event_type.to_string())
@@ -83,10 +80,8 @@ impl EventBus {
     pub fn subscribe_many(&self, event_types: &[&str]) -> broadcast::Receiver<GatewayEvent> {
         let (global_tx, global_rx) = broadcast::channel(self.capacity);
 
-        let mut receivers: Vec<broadcast::Receiver<GatewayEvent>> = event_types
-            .iter()
-            .map(|et| self.subscribe(et))
-            .collect();
+        let mut receivers: Vec<broadcast::Receiver<GatewayEvent>> =
+            event_types.iter().map(|et| self.subscribe(et)).collect();
 
         tokio::spawn(async move {
             loop {
@@ -146,13 +141,10 @@ mod tests {
         let event = GatewayEvent::new("test.event", "test", serde_json::json!({"key": "value"}));
         bus.publish(event);
 
-        let received = tokio::time::timeout(
-            tokio::time::Duration::from_secs(1),
-            rx.recv(),
-        )
-        .await
-        .expect("should receive event")
-        .expect("event should be valid");
+        let received = tokio::time::timeout(tokio::time::Duration::from_secs(1), rx.recv())
+            .await
+            .expect("should receive event")
+            .expect("event should be valid");
 
         assert_eq!(received.event_type, "test.event");
         assert_eq!(received.data["key"], "value");
@@ -189,8 +181,16 @@ mod tests {
 
         tokio::time::sleep(Duration::from_millis(100)).await;
 
-        bus.publish(GatewayEvent::new("event.a", "test", serde_json::json!({"n": 1})));
-        bus.publish(GatewayEvent::new("event.b", "test", serde_json::json!({"n": 2})));
+        bus.publish(GatewayEvent::new(
+            "event.a",
+            "test",
+            serde_json::json!({"n": 1}),
+        ));
+        bus.publish(GatewayEvent::new(
+            "event.b",
+            "test",
+            serde_json::json!({"n": 2}),
+        ));
 
         // 两个事件都应收到
         let e1 = tokio::time::timeout(Duration::from_secs(1), rx.recv()).await;
@@ -209,7 +209,11 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(200)).await;
 
         // 后台任务已退出，此发布仅用于验证无 panic
-        bus.publish(GatewayEvent::new("test.event", "test", serde_json::json!({})));
+        bus.publish(GatewayEvent::new(
+            "test.event",
+            "test",
+            serde_json::json!({}),
+        ));
     }
 
     #[tokio::test]
@@ -219,9 +223,21 @@ mod tests {
         let mut rx = bus.subscribe("test.event");
 
         // 发送 3 个事件，容量仅 2，第 1 个被覆盖
-        bus.publish(GatewayEvent::new("test.event", "test", serde_json::json!({"seq": 1})));
-        bus.publish(GatewayEvent::new("test.event", "test", serde_json::json!({"seq": 2})));
-        bus.publish(GatewayEvent::new("test.event", "test", serde_json::json!({"seq": 3})));
+        bus.publish(GatewayEvent::new(
+            "test.event",
+            "test",
+            serde_json::json!({"seq": 1}),
+        ));
+        bus.publish(GatewayEvent::new(
+            "test.event",
+            "test",
+            serde_json::json!({"seq": 2}),
+        ));
+        bus.publish(GatewayEvent::new(
+            "test.event",
+            "test",
+            serde_json::json!({"seq": 3}),
+        ));
 
         // 慢消费者 recv 会先收到 Lagged(1)，然后读到最新消息
         let first = rx.recv().await;
@@ -231,7 +247,10 @@ mod tests {
             }
             Ok(e) => {
                 // 在某些执行顺序下可能直接收到 seq=3（如果 seq=1 在 write 之前就被覆盖）
-                panic!("expected Lagged error but got event seq={:?}", e.data["seq"]);
+                panic!(
+                    "expected Lagged error but got event seq={:?}",
+                    e.data["seq"]
+                );
             }
             Err(e) => {
                 panic!("unexpected error: {:?}", e);

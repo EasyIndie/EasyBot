@@ -7,12 +7,12 @@ mod cli;
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
-    use std::sync::Arc;
-    use easybot_core::plugin::*;
     use easybot_core::bus::EventBus;
+    use easybot_core::plugin::*;
     use easybot_core::AdapterConfig;
     use easybot_core::AdapterState;
+    use std::path::PathBuf;
+    use std::sync::Arc;
 
     /// 查找 mock-adapter 编译产物的路径
     fn find_mock_lib() -> Option<PathBuf> {
@@ -25,14 +25,24 @@ mod tests {
                 p.join("target")
             });
 
-        let profile = if cfg!(debug_assertions) { "debug" } else { "release" };
+        let profile = if cfg!(debug_assertions) {
+            "debug"
+        } else {
+            "release"
+        };
 
         let candidates = [
             target_dir.join(profile).join("libmock_adapter.dylib"),
             target_dir.join(profile).join("libmock_adapter.so"),
             target_dir.join(profile).join("mock_adapter.dll"),
-            target_dir.join(profile).join("deps").join("libmock_adapter.dylib"),
-            target_dir.join(profile).join("deps").join("libmock_adapter.so"),
+            target_dir
+                .join(profile)
+                .join("deps")
+                .join("libmock_adapter.dylib"),
+            target_dir
+                .join(profile)
+                .join("deps")
+                .join("libmock_adapter.so"),
         ];
 
         for c in &candidates {
@@ -46,9 +56,7 @@ mod tests {
             for entry in entries.flatten() {
                 let name = entry.file_name().to_string_lossy().to_string();
                 if name.contains("mock_adapter")
-                    && (name.ends_with(".so")
-                        || name.ends_with(".dylib")
-                        || name.ends_with(".dll"))
+                    && (name.ends_with(".so") || name.ends_with(".dylib") || name.ends_with(".dll"))
                 {
                     return Some(entry.path());
                 }
@@ -100,7 +108,7 @@ library: "{}"
             .try_init();
 
         let lib_path = find_mock_lib().expect(
-            "mock-adapter library not found. Build it first with: cargo build -p mock-adapter"
+            "mock-adapter library not found. Build it first with: cargo build -p mock-adapter",
         );
         eprintln!("Found mock adapter at: {}", lib_path.display());
 

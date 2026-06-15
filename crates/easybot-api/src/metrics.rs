@@ -3,14 +3,8 @@
 //! 提供 HTTP 请求指标、业务指标和 `/metrics` 端点。
 //! 通过 Tower 中间件自动记录请求数量、持续时间和状态码。
 
-use axum::{
-    extract::State,
-    response::IntoResponse,
-};
-use prometheus::{
-    Counter, Gauge, Histogram, HistogramOpts, Registry,
-    TextEncoder, Encoder,
-};
+use axum::{extract::State, response::IntoResponse};
+use prometheus::{Counter, Encoder, Gauge, Histogram, HistogramOpts, Registry, TextEncoder};
 use tracing::warn;
 
 use crate::AppState;
@@ -46,38 +40,46 @@ impl MetricsRegistry {
     pub fn new() -> Self {
         let registry = Registry::new();
 
-        let http_requests_total = Counter::new(
-            "http_requests_total",
-            "Total number of HTTP requests",
-        ).unwrap();
-        let http_request_duration_seconds = Histogram::with_opts(
-            HistogramOpts::new(
-                "http_request_duration_seconds",
-                "HTTP request duration in seconds",
-            ),
-        ).unwrap();
+        let http_requests_total =
+            Counter::new("http_requests_total", "Total number of HTTP requests").unwrap();
+        let http_request_duration_seconds = Histogram::with_opts(HistogramOpts::new(
+            "http_request_duration_seconds",
+            "HTTP request duration in seconds",
+        ))
+        .unwrap();
         let active_websocket_connections = Gauge::new(
             "active_websocket_connections",
             "Number of active WebSocket connections",
-        ).unwrap();
-        let messages_inbound_total = Counter::new(
-            "messages_inbound_total",
-            "Total number of inbound messages",
-        ).unwrap();
+        )
+        .unwrap();
+        let messages_inbound_total =
+            Counter::new("messages_inbound_total", "Total number of inbound messages").unwrap();
         let messages_outbound_total = Counter::new(
             "messages_outbound_total",
             "Total number of outbound messages",
-        ).unwrap();
+        )
+        .unwrap();
         let adapter_status = Gauge::new(
             "adapter_status",
             "Adapter status (1=connected, 0=disconnected)",
-        ).unwrap();
+        )
+        .unwrap();
 
-        registry.register(Box::new(http_requests_total.clone())).unwrap();
-        registry.register(Box::new(http_request_duration_seconds.clone())).unwrap();
-        registry.register(Box::new(active_websocket_connections.clone())).unwrap();
-        registry.register(Box::new(messages_inbound_total.clone())).unwrap();
-        registry.register(Box::new(messages_outbound_total.clone())).unwrap();
+        registry
+            .register(Box::new(http_requests_total.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(http_request_duration_seconds.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(active_websocket_connections.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(messages_inbound_total.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(messages_outbound_total.clone()))
+            .unwrap();
         registry.register(Box::new(adapter_status.clone())).unwrap();
 
         Self {
@@ -102,15 +104,12 @@ impl MetricsRegistry {
         }
         String::from_utf8(buffer).unwrap_or_default()
     }
-
 }
 
 /// `/metrics` 端点处理器
 ///
 /// 从 AppState 中提取 MetricsRegistry 并渲染 Prometheus 格式。
-pub async fn metrics_handler(
-    State(state): State<AppState>,
-) -> impl IntoResponse {
+pub async fn metrics_handler(State(state): State<AppState>) -> impl IntoResponse {
     match state.metrics {
         Some(ref registry) => registry.render(),
         None => "Metrics disabled".to_string(),

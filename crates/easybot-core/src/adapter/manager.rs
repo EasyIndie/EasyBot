@@ -5,14 +5,14 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{info, warn, error};
+use tracing::{error, info, warn};
 
+use crate::adapter::registry::AdapterRegistry;
 use crate::bus::EventBus;
 use crate::types::adapter::*;
 use crate::types::error::GatewayError;
-use crate::types::event::GatewayEvent;
 use crate::types::event::event_types;
-use crate::adapter::registry::AdapterRegistry;
+use crate::types::event::GatewayEvent;
 
 /// 适配器管理器
 ///
@@ -113,10 +113,13 @@ impl AdapterManager {
 
         // 发布生命周期事件
         if connected {
-            self.publish_event(event_types::ADAPTER_CONNECTED, serde_json::json!({
-                "platform": &platform_name,
-                "connected": true,
-            }));
+            self.publish_event(
+                event_types::ADAPTER_CONNECTED,
+                serde_json::json!({
+                    "platform": &platform_name,
+                    "connected": true,
+                }),
+            );
             info!("Adapter '{}' started (connected: true)", platform_name);
         } else {
             let error_msg = connect_result.error.clone().unwrap_or_default();
@@ -152,10 +155,13 @@ impl AdapterManager {
                     status.connected = false;
                 }
             }
-            self.publish_event(event_types::ADAPTER_DISCONNECTED, serde_json::json!({
-                "platform": platform,
-                "connected": false,
-            }));
+            self.publish_event(
+                event_types::ADAPTER_DISCONNECTED,
+                serde_json::json!({
+                    "platform": platform,
+                    "connected": false,
+                }),
+            );
             info!("Adapter '{}' stopped", platform);
         }
         Ok(())
@@ -224,10 +230,7 @@ impl AdapterManager {
     }
 
     /// 启动所有已配置的适配器
-    pub async fn start_all(
-        &self,
-        configs: HashMap<String, AdapterConfig>,
-    ) -> StartAllResult {
+    pub async fn start_all(&self, configs: HashMap<String, AdapterConfig>) -> StartAllResult {
         let mut succeeded = Vec::new();
         let mut failed = Vec::new();
 
@@ -258,10 +261,13 @@ impl AdapterManager {
             if let Err(e) = adapter.disconnect().await {
                 warn!("Error disconnecting adapter '{}': {}", name, e);
             }
-            self.publish_event(event_types::ADAPTER_DISCONNECTED, serde_json::json!({
-                "platform": &name,
-                "connected": false,
-            }));
+            self.publish_event(
+                event_types::ADAPTER_DISCONNECTED,
+                serde_json::json!({
+                    "platform": &name,
+                    "connected": false,
+                }),
+            );
             info!("Adapter '{}' disconnected", name);
         }
     }
@@ -282,10 +288,13 @@ impl AdapterManager {
     /// 发布适配器错误事件
     fn publish_adapter_error(&self, platform: &str, error: &str) {
         error!("Adapter '{}' error: {}", platform, error);
-        self.publish_event(event_types::ADAPTER_ERROR, serde_json::json!({
-            "platform": platform,
-            "error": error,
-        }));
+        self.publish_event(
+            event_types::ADAPTER_ERROR,
+            serde_json::json!({
+                "platform": platform,
+                "error": error,
+            }),
+        );
     }
 }
 
@@ -298,9 +307,9 @@ impl Default for AdapterManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use async_trait::async_trait;
     use crate::adapter::AdapterFactory;
-    use crate::types::message::{SendTextParams, SendResult, ChatInfo};
+    use crate::types::message::{ChatInfo, SendResult, SendTextParams};
+    use async_trait::async_trait;
 
     // ── Mock 适配器 ──────────────────────────────────────────
 
@@ -322,19 +331,32 @@ mod tests {
 
     #[async_trait]
     impl PlatformAdapter for MockTestAdapter {
-        fn platform_name(&self) -> &str { &self.platform }
-        fn display_name(&self) -> &str { &self.display }
-        fn capabilities(&self) -> &[Capability] { &[] }
+        fn platform_name(&self) -> &str {
+            &self.platform
+        }
+        fn display_name(&self) -> &str {
+            &self.display
+        }
+        fn capabilities(&self) -> &[Capability] {
+            &[]
+        }
 
         async fn init(&mut self, config: AdapterConfig) -> Result<InitResult, GatewayError> {
             let _ = config;
             self.state = AdapterState::Starting;
-            Ok(InitResult { ok: true, error: None })
+            Ok(InitResult {
+                ok: true,
+                error: None,
+            })
         }
 
         async fn connect(&mut self) -> Result<ConnectResult, GatewayError> {
             self.state = AdapterState::Connected;
-            Ok(ConnectResult { ok: true, error: None, bot_info: None })
+            Ok(ConnectResult {
+                ok: true,
+                error: None,
+                bot_info: None,
+            })
         }
 
         async fn disconnect(&mut self) -> Result<(), GatewayError> {
@@ -342,20 +364,37 @@ mod tests {
             Ok(())
         }
 
-        fn state(&self) -> AdapterState { self.state.clone() }
+        fn state(&self) -> AdapterState {
+            self.state.clone()
+        }
 
         async fn health(&self) -> HealthReport {
             HealthReport {
-                status: if self.state == AdapterState::Connected { HealthStatus::Healthy } else { HealthStatus::Down },
+                status: if self.state == AdapterState::Connected {
+                    HealthStatus::Healthy
+                } else {
+                    HealthStatus::Down
+                },
                 connected: self.state == AdapterState::Connected,
-                last_connected_at: None, last_error_at: None,
-                last_error: None, messages_in: 0, messages_out: 0,
-                errors: 0, uptime: None,
+                last_connected_at: None,
+                last_error_at: None,
+                last_error: None,
+                messages_in: 0,
+                messages_out: 0,
+                errors: 0,
+                uptime: None,
             }
         }
 
         async fn send(&self, _p: SendTextParams) -> Result<SendResult, GatewayError> {
-            Ok(SendResult { success: true, message_id: None, timestamp: None, error: None, error_code: None, retryable: false })
+            Ok(SendResult {
+                success: true,
+                message_id: None,
+                timestamp: None,
+                error: None,
+                error_code: None,
+                retryable: false,
+            })
         }
 
         async fn get_chat_info(&self, _id: &str) -> Result<ChatInfo, GatewayError> {
@@ -363,7 +402,11 @@ mod tests {
         }
 
         fn runtime_config(&self) -> AdapterRuntimeConfig {
-            AdapterRuntimeConfig { enabled: true, token_configured: false, extra: serde_json::json!({}) }
+            AdapterRuntimeConfig {
+                enabled: true,
+                token_configured: false,
+                extra: serde_json::json!({}),
+            }
         }
 
         fn status_summary(&self) -> AdapterStatusSummary {
@@ -372,8 +415,11 @@ mod tests {
                 display_name: self.display.clone(),
                 state: self.state.clone(),
                 connected: self.state == AdapterState::Connected,
-                health: None, last_error: None, uptime: None,
-                messages_in: 0, messages_out: 0,
+                health: None,
+                last_error: None,
+                uptime: None,
+                messages_in: 0,
+                messages_out: 0,
             }
         }
     }
@@ -520,17 +566,26 @@ mod tests {
         register_mock_adapter(&manager).await;
 
         let mut configs = std::collections::HashMap::new();
-        configs.insert("test-mock".to_string(), AdapterConfig {
-            enabled: false,
-            token: None,
-            api_key: None,
-            base_url: None,
-            extra: serde_json::json!({}),
-        });
+        configs.insert(
+            "test-mock".to_string(),
+            AdapterConfig {
+                enabled: false,
+                token: None,
+                api_key: None,
+                base_url: None,
+                extra: serde_json::json!({}),
+            },
+        );
 
         let result = manager.start_all(configs).await;
-        assert!(result.succeeded.is_empty(), "disabled adapter should not start");
-        assert!(result.failed.is_empty(), "disabled adapter should not fail either");
+        assert!(
+            result.succeeded.is_empty(),
+            "disabled adapter should not start"
+        );
+        assert!(
+            result.failed.is_empty(),
+            "disabled adapter should not fail either"
+        );
     }
 
     #[tokio::test]
@@ -549,13 +604,10 @@ mod tests {
         };
         manager.start("test-mock", config).await.unwrap();
 
-        let event = tokio::time::timeout(
-            tokio::time::Duration::from_secs(1),
-            rx.recv(),
-        )
-        .await
-        .expect("should receive ADAPTER_CONNECTED")
-        .expect("event should be valid");
+        let event = tokio::time::timeout(tokio::time::Duration::from_secs(1), rx.recv())
+            .await
+            .expect("should receive ADAPTER_CONNECTED")
+            .expect("event should be valid");
 
         assert_eq!(event.event_type, event_types::ADAPTER_CONNECTED);
         assert_eq!(event.source, "adapter_manager");
@@ -579,13 +631,10 @@ mod tests {
 
         manager.stop("test-mock").await.unwrap();
 
-        let event = tokio::time::timeout(
-            tokio::time::Duration::from_secs(1),
-            rx.recv(),
-        )
-        .await
-        .expect("should receive ADAPTER_DISCONNECTED")
-        .expect("event should be valid");
+        let event = tokio::time::timeout(tokio::time::Duration::from_secs(1), rx.recv())
+            .await
+            .expect("should receive ADAPTER_DISCONNECTED")
+            .expect("event should be valid");
 
         assert_eq!(event.event_type, event_types::ADAPTER_DISCONNECTED);
         assert_eq!(event.source, "adapter_manager");

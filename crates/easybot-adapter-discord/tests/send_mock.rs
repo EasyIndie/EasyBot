@@ -3,11 +3,9 @@
 //! 使用 wiremock 模拟 Discord REST API，验证 send() 方法正确构造请求并解析响应。
 
 use easybot_core::types::adapter::{AdapterConfig, AdapterState, PlatformAdapter};
-use easybot_core::types::message::{
-    EditMessageParams, OutboundMessage, ParseMode, SendTextParams,
-};
-use wiremock::{Mock, MockServer, ResponseTemplate};
+use easybot_core::types::message::{EditMessageParams, OutboundMessage, ParseMode, SendTextParams};
 use wiremock::matchers::{method, path};
+use wiremock::{Mock, MockServer, ResponseTemplate};
 
 /// 构建测试用的 Discord 适配器
 async fn make_adapter(mock_port: u16) -> impl PlatformAdapter {
@@ -236,7 +234,11 @@ async fn test_connect_http_error() {
 
     assert!(!result.ok, "connect should fail with HTTP error");
     assert!(result.error.is_some(), "should contain error message");
-    assert_eq!(adapter.state(), AdapterState::Created, "state should remain Created");
+    assert_eq!(
+        adapter.state(),
+        AdapterState::Created,
+        "state should remain Created"
+    );
 
     mock_server.verify().await;
 }
@@ -256,7 +258,10 @@ async fn test_connect_no_token_returns_config_error() {
     assert!(!init.ok, "init should fail without token");
 
     let result = adapter.connect().await;
-    assert!(result.is_err(), "connect without init or token should error");
+    assert!(
+        result.is_err(),
+        "connect without init or token should error"
+    );
 }
 
 // ── edit_message() 测试 ──
@@ -279,15 +284,18 @@ async fn test_edit_message_success() {
         .await;
 
     let adapter = make_adapter(mock_server.address().port()).await;
-    let result = adapter.edit_message(EditMessageParams {
-        chat_id: "98765".to_string(),
-        message_id: "msg-001".to_string(),
-        message: OutboundMessage {
-            text: "edited content".to_string(),
-            parse_mode: ParseMode::None,
-        },
-        keyboard: None,
-    }).await.unwrap();
+    let result = adapter
+        .edit_message(EditMessageParams {
+            chat_id: "98765".to_string(),
+            message_id: "msg-001".to_string(),
+            message: OutboundMessage {
+                text: "edited content".to_string(),
+                parse_mode: ParseMode::None,
+            },
+            keyboard: None,
+        })
+        .await
+        .unwrap();
 
     assert!(result.success, "edit should succeed");
 
@@ -306,15 +314,18 @@ async fn test_edit_message_not_found() {
         .await;
 
     let adapter = make_adapter(mock_server.address().port()).await;
-    let result = adapter.edit_message(EditMessageParams {
-        chat_id: "98765".to_string(),
-        message_id: "nonexistent".to_string(),
-        message: OutboundMessage {
-            text: "edited".to_string(),
-            parse_mode: ParseMode::None,
-        },
-        keyboard: None,
-    }).await.unwrap();
+    let result = adapter
+        .edit_message(EditMessageParams {
+            chat_id: "98765".to_string(),
+            message_id: "nonexistent".to_string(),
+            message: OutboundMessage {
+                text: "edited".to_string(),
+                parse_mode: ParseMode::None,
+            },
+            keyboard: None,
+        })
+        .await
+        .unwrap();
 
     assert!(!result.success, "edit should fail for nonexistent message");
 
@@ -354,9 +365,15 @@ async fn test_delete_message_not_found() {
         .await;
 
     let adapter = make_adapter(mock_server.address().port()).await;
-    let result = adapter.delete_message("98765", "nonexistent").await.unwrap();
+    let result = adapter
+        .delete_message("98765", "nonexistent")
+        .await
+        .unwrap();
 
-    assert!(!result.success, "delete should fail for nonexistent message");
+    assert!(
+        !result.success,
+        "delete should fail for nonexistent message"
+    );
 
     mock_server.verify().await;
 }

@@ -38,8 +38,7 @@ fn default_version() -> String {
 impl PluginManifest {
     /// 解析 YAML 字符串为清单
     pub fn from_yaml(yaml: &str) -> Result<Self, String> {
-        serde_yaml::from_str(yaml)
-            .map_err(|e| format!("Failed to parse plugin manifest: {}", e))
+        serde_yaml::from_str(yaml).map_err(|e| format!("Failed to parse plugin manifest: {}", e))
     }
 
     /// 计算动态库的完整路径
@@ -50,13 +49,21 @@ impl PluginManifest {
             // 按平台规则推断默认库文件名
             let lib_name = format!("lib{}", self.name);
             #[cfg(target_os = "linux")]
-            { plugin_dir.join(format!("{}.so", lib_name)) }
+            {
+                plugin_dir.join(format!("{}.so", lib_name))
+            }
             #[cfg(target_os = "macos")]
-            { plugin_dir.join(format!("{}.dylib", lib_name)) }
+            {
+                plugin_dir.join(format!("{}.dylib", lib_name))
+            }
             #[cfg(target_os = "windows")]
-            { plugin_dir.join(format!("{}.dll", self.name)) }
+            {
+                plugin_dir.join(format!("{}.dll", self.name))
+            }
             #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-            { plugin_dir.join(format!("{}.so", lib_name)) }
+            {
+                plugin_dir.join(format!("{}.so", lib_name))
+            }
         }
     }
 }
@@ -106,8 +113,15 @@ author: "EasyBot Contributors"
         let path = manifest.library_path(dir);
         // Platform-dependent, but the name should contain "lib" prefix
         let filename = path.file_name().unwrap().to_str().unwrap();
-        assert!(filename.starts_with("lib"), "filename should start with 'lib', got: {}", filename);
-        assert!(filename.contains("my-adapter"), "filename should contain plugin name");
+        assert!(
+            filename.starts_with("lib"),
+            "filename should start with 'lib', got: {}",
+            filename
+        );
+        assert!(
+            filename.contains("my-adapter"),
+            "filename should contain plugin name"
+        );
     }
 
     #[test]

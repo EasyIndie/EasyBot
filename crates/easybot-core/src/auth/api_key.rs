@@ -4,13 +4,13 @@
 //! Key 本身不持久化明文，仅在创建时返回一次。
 //! Phase 4: 从 SHA-256 升级到 argon2id (PHC 格式)
 
+use argon2::password_hash::SaltString;
+use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
+use rand_core::OsRng;
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use tokio::sync::RwLock;
 use uuid::Uuid;
-use sha2::{Sha256, Digest};
-use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
-use argon2::password_hash::SaltString;
-use rand_core::OsRng;
 
 /// API Key 信息
 #[derive(Debug, Clone)]
@@ -223,10 +223,7 @@ mod tests {
     #[tokio::test]
     async fn test_expired_key() {
         let mgr = ApiKeyManager::new();
-        let (_id, key) = mgr
-            .create_key("expired", vec![], Some(1))
-            .await
-            .unwrap();
+        let (_id, key) = mgr.create_key("expired", vec![], Some(1)).await.unwrap();
         // expires_at is 1ms after epoch — definitely expired
         assert!(mgr.authenticate(&key).await.is_err());
     }

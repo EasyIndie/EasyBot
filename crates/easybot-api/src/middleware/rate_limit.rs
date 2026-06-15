@@ -3,8 +3,6 @@
 //! 基于 IP 的滑动窗口速率限制器。使用 DashMap + VecDeque 实现，
 //! 无需额外依赖。支持可配置的每分钟请求数和突发大小。
 
-use std::collections::VecDeque;
-use std::sync::Arc;
 use axum::{
     extract::{ConnectInfo, State},
     http::Request,
@@ -12,6 +10,8 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use dashmap::DashMap;
+use std::collections::VecDeque;
+use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::warn;
 
@@ -78,7 +78,9 @@ impl SlidingWindow {
             if burst > 0 {
                 let burst_window = 1_000; // 1 秒突发窗口
                 let burst_start = now - burst_window;
-                let burst_count = self.timestamps.iter()
+                let burst_count = self
+                    .timestamps
+                    .iter()
                     .filter(|&&ts| ts >= burst_start)
                     .count() as u32;
                 if burst_count >= burst {
@@ -127,7 +129,8 @@ impl RateLimiter {
         let now = chrono::Utc::now().timestamp_millis();
 
         // 获取或创建客户端的滑动窗口
-        let entry = self.buckets
+        let entry = self
+            .buckets
             .entry(client_ip.to_string())
             .or_insert_with(|| Arc::new(RwLock::new(SlidingWindow::new())));
 
@@ -156,10 +159,7 @@ pub async fn rate_limit_middleware(
         .and_then(|v| v.split(',').next().map(|s| s.trim().to_string()))
     {
         forwarded
-    } else if let Some(addr) = req
-        .extensions()
-        .get::<ConnectInfo<std::net::SocketAddr>>()
-    {
+    } else if let Some(addr) = req.extensions().get::<ConnectInfo<std::net::SocketAddr>>() {
         addr.0.ip().to_string()
     } else {
         "unknown".to_string()
@@ -169,7 +169,10 @@ pub async fn rate_limit_middleware(
         next.run(req).await
     } else {
         warn!("Rate limit exceeded for IP: {}", client_ip);
-        ApiError(GatewayError::RateLimited { retry_after_ms: 60000 }).into_response()
+        ApiError(GatewayError::RateLimited {
+            retry_after_ms: 60000,
+        })
+        .into_response()
     }
 }
 
@@ -261,6 +264,9 @@ mod tests {
         window.prune(base);
 
         // 检查窗口是否为空（因为旧请求已被修剪）
-        assert!(window.timestamps.is_empty(), "Old timestamps should be pruned");
+        assert!(
+            window.timestamps.is_empty(),
+            "Old timestamps should be pruned"
+        );
     }
 }
