@@ -914,6 +914,91 @@ mod tests {
     }
 
     #[test]
+    fn test_display_name() {
+        let adapter = QqAdapter::new();
+        assert_eq!(adapter.display_name(), "QQ");
+    }
+
+    #[test]
+    fn test_default() {
+        let adapter = QqAdapter::default();
+        assert_eq!(adapter.platform_name(), "qq");
+    }
+
+    #[test]
+    fn test_def_state_created() {
+        let adapter = QqAdapter::new();
+        assert_eq!(adapter.state(), AdapterState::Created);
+    }
+
+    #[tokio::test]
+    async fn test_disconnect_idempotent() {
+        let mut adapter = QqAdapter::new();
+        adapter.disconnect().await.unwrap();
+        assert_eq!(adapter.state(), AdapterState::Stopped);
+    }
+
+    #[tokio::test]
+    async fn test_double_disconnect() {
+        let mut adapter = QqAdapter::new();
+        adapter.disconnect().await.unwrap();
+        adapter.disconnect().await.unwrap();
+        assert_eq!(adapter.state(), AdapterState::Stopped);
+    }
+
+    #[tokio::test]
+    async fn test_health_before_init() {
+        let adapter = QqAdapter::new();
+        let h = adapter.health().await;
+        assert_eq!(h.status, HealthStatus::Down);
+        assert!(!h.connected);
+    }
+
+    #[tokio::test]
+    async fn test_runtime_config_before_init() {
+        let adapter = QqAdapter::new();
+        let r = adapter.runtime_config();
+        assert!(!r.enabled);
+        assert!(!r.token_configured);
+    }
+
+    #[tokio::test]
+    async fn test_runtime_config_after_init() {
+        let mut adapter = QqAdapter::new();
+        adapter.init(AdapterConfig {
+            enabled: true,
+            token: Some("secret".to_string()),
+            api_key: None,
+            extra: serde_json::json!({"app_id": "123"}),
+        }).await.unwrap();
+        let r = adapter.runtime_config();
+        assert!(r.enabled);
+        assert!(r.token_configured);
+    }
+
+    #[tokio::test]
+    async fn test_send_before_connect() {
+        let adapter = QqAdapter::new();
+        let result = adapter.send(SendTextParams {
+            chat_id: "123".to_string(),
+            message: OutboundMessage {
+                text: "hello".to_string(),
+                parse_mode: ParseMode::None,
+            },
+            reply_to: None,
+            metadata: None,
+        }).await.unwrap();
+        assert!(!result.success);
+    }
+
+    #[tokio::test]
+    async fn test_get_chat_info_uninitialized() {
+        let adapter = QqAdapter::new();
+        let result = adapter.get_chat_info("123").await;
+        assert!(result.is_err(), "Expected error when not initialized");
+    }
+
+    #[test]
     fn test_capabilities() {
         let adapter = QqAdapter::new();
         assert!(adapter.capabilities().iter().any(|c| c.name == CapabilityName::Text && c.supported));

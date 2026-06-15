@@ -729,6 +729,97 @@ impl PlatformAdapter for DiscordAdapter {
 mod tests {
     use super::*;
 
+    #[test]
+    fn test_platform_name() {
+        let adapter = DiscordAdapter::new();
+        assert_eq!(adapter.platform_name(), "discord");
+    }
+
+    #[test]
+    fn test_display_name() {
+        let adapter = DiscordAdapter::new();
+        assert_eq!(adapter.display_name(), "Discord");
+    }
+
+    #[test]
+    fn test_capabilities() {
+        let adapter = DiscordAdapter::new();
+        assert!(adapter.capabilities().iter().any(|c| c.name == CapabilityName::Text));
+    }
+
+    #[test]
+    fn test_default_state() {
+        let adapter = DiscordAdapter::new();
+        assert_eq!(adapter.state(), AdapterState::Created);
+    }
+
+    #[test]
+    fn test_default() {
+        let adapter = DiscordAdapter::default();
+        assert_eq!(adapter.platform_name(), "discord");
+    }
+
+    #[test]
+    fn test_status_summary() {
+        let adapter = DiscordAdapter::new();
+        let s = adapter.status_summary();
+        assert_eq!(s.platform, "discord");
+        assert_eq!(s.display_name, "Discord");
+        assert!(!s.connected);
+    }
+
+    #[tokio::test]
+    async fn test_disconnect_idempotent() {
+        let mut adapter = DiscordAdapter::new();
+        adapter.disconnect().await.unwrap();
+        assert_eq!(adapter.state(), AdapterState::Stopped);
+    }
+
+    #[tokio::test]
+    async fn test_double_disconnect() {
+        let mut adapter = DiscordAdapter::new();
+        adapter.disconnect().await.unwrap();
+        adapter.disconnect().await.unwrap();
+        assert_eq!(adapter.state(), AdapterState::Stopped);
+    }
+
+    #[tokio::test]
+    async fn test_health_before_init() {
+        let adapter = DiscordAdapter::new();
+        let h = adapter.health().await;
+        assert_eq!(h.status, HealthStatus::Down);
+        assert!(!h.connected);
+    }
+
+    #[tokio::test]
+    async fn test_runtime_config_before_init() {
+        let adapter = DiscordAdapter::new();
+        let r = adapter.runtime_config();
+        assert!(!r.enabled);
+        assert!(!r.token_configured);
+    }
+
+    #[tokio::test]
+    async fn test_runtime_config_after_init() {
+        let mut adapter = DiscordAdapter::new();
+        adapter.init(AdapterConfig {
+            enabled: true,
+            token: Some("token".to_string()),
+            api_key: None,
+            extra: serde_json::json!({}),
+        }).await.unwrap();
+        let r = adapter.runtime_config();
+        assert!(r.enabled);
+        assert!(r.token_configured);
+    }
+
+    #[tokio::test]
+    async fn test_get_chat_info() {
+        let adapter = DiscordAdapter::new();
+        let result = adapter.get_chat_info("123456").await;
+        assert!(result.is_err(), "Expected error when not initialized");
+    }
+
     #[tokio::test]
     async fn test_init_without_token() {
         let mut adapter = DiscordAdapter::new();

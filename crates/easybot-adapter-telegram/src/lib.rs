@@ -542,6 +542,116 @@ impl PlatformAdapter for TelegramAdapter {
 mod tests {
     use super::*;
 
+    #[test]
+    fn test_platform_name() {
+        let adapter = TelegramAdapter::new();
+        assert_eq!(adapter.platform_name(), "telegram");
+    }
+
+    #[test]
+    fn test_display_name() {
+        let adapter = TelegramAdapter::new();
+        assert_eq!(adapter.display_name(), "Telegram");
+    }
+
+    #[test]
+    fn test_capabilities() {
+        let adapter = TelegramAdapter::new();
+        assert!(adapter.capabilities().iter().any(|c| c.name == CapabilityName::Text));
+    }
+
+    #[test]
+    fn test_default_state() {
+        let adapter = TelegramAdapter::new();
+        assert_eq!(adapter.state(), AdapterState::Created);
+    }
+
+    #[test]
+    fn test_default() {
+        let adapter = TelegramAdapter::default();
+        assert_eq!(adapter.platform_name(), "telegram");
+    }
+
+    #[test]
+    fn test_status_summary() {
+        let adapter = TelegramAdapter::new();
+        let s = adapter.status_summary();
+        assert_eq!(s.platform, "telegram");
+        assert_eq!(s.display_name, "Telegram");
+        assert!(!s.connected);
+    }
+
+    #[tokio::test]
+    async fn test_disconnect_idempotent() {
+        let mut adapter = TelegramAdapter::new();
+        // 在连接前 disconnect 不应 panic
+        adapter.disconnect().await.unwrap();
+        assert_eq!(adapter.state(), AdapterState::Stopped);
+    }
+
+    #[tokio::test]
+    async fn test_double_disconnect() {
+        let mut adapter = TelegramAdapter::new();
+        adapter.disconnect().await.unwrap();
+        adapter.disconnect().await.unwrap();
+        assert_eq!(adapter.state(), AdapterState::Stopped);
+    }
+
+    #[tokio::test]
+    async fn test_health_before_init() {
+        let adapter = TelegramAdapter::new();
+        let h = adapter.health().await;
+        assert_eq!(h.status, HealthStatus::Down);
+        assert!(!h.connected);
+    }
+
+    #[tokio::test]
+    async fn test_runtime_config_before_init() {
+        let adapter = TelegramAdapter::new();
+        let r = adapter.runtime_config();
+        assert!(!r.enabled);
+        assert!(!r.token_configured);
+    }
+
+    #[tokio::test]
+    async fn test_runtime_config_after_init() {
+        let mut adapter = TelegramAdapter::new();
+        adapter.init(AdapterConfig {
+            enabled: true,
+            token: Some("123:token".to_string()),
+            api_key: None,
+            extra: serde_json::json!({}),
+        }).await.unwrap();
+        let r = adapter.runtime_config();
+        assert!(r.enabled);
+        assert!(r.token_configured);
+    }
+
+    #[tokio::test]
+    async fn test_get_chat_info() {
+        let adapter = TelegramAdapter::new();
+        // 未初始化时调用 get_chat_info 应返回错误（不 panic）
+        let result = adapter.get_chat_info("-100123456").await;
+        assert!(result.is_err(), "Expected error when adapter is not initialized");
+    }
+
+    #[tokio::test]
+    async fn test_send_before_connect_errors() {
+        let adapter = TelegramAdapter::new();
+        let result = adapter.send(SendTextParams {
+            chat_id: "123".to_string(),
+            message: OutboundMessage {
+                text: "test".to_string(),
+                parse_mode: ParseMode::None,
+            },
+            reply_to: None,
+            metadata: None,
+        }).await.unwrap();
+        // 未初始化时 send 应返回错误
+        assert!(!result.success);
+        assert!(result.error.is_some());
+    }
+
     #[tokio::test]
     async fn test_init_without_token() {
         let mut adapter = TelegramAdapter::new();
