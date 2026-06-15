@@ -28,3 +28,4 @@ utoipa-swagger-ui = { workspace = true, features = ["axum"] }
 sqlx = { workspace = true }
 http-body-util = "0.1"
 bytes = "1"
+tokio-tungstenite = { workspace = true, features = ["connect"] }

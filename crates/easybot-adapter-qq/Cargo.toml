@@ -18,5 +18,8 @@ tokio-tungstenite = { version = "0.24", default-features = false, features = ["c
 tokio-native-tls = "0.3.1"
 native-tls = "0.2.18"
 
+[dev-dependencies]
+wiremock = "0.6"
+
 [features]
 default = []

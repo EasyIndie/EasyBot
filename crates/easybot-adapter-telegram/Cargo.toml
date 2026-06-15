@@ -14,3 +14,7 @@ tracing.workspace = true
 chrono.workspace = true
 anyhow.workspace = true
 reqwest = { workspace = true }
+
+[dev-dependencies]
+wiremock = "0.6"
+serde = { workspace = true, features = ["derive"] }

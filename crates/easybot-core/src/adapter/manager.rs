@@ -405,6 +405,7 @@ mod tests {
             enabled: true,
             token: Some("test-token".into()),
             api_key: None,
+            base_url: None,
             extra: serde_json::json!({}),
         };
 
@@ -433,6 +434,7 @@ mod tests {
             enabled: true,
             token: Some("my-secret-token".into()),
             api_key: Some("my-api-key".into()),
+            base_url: None,
             extra: serde_json::json!({"custom": "value"}),
         };
 

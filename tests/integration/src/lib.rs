@@ -88,6 +88,7 @@ library: "{}"
             enabled: true,
             token: None,
             api_key: None,
+            base_url: None,
             extra: serde_json::Value::Null,
         }
     }

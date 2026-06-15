@@ -77,6 +77,7 @@ pub async fn start_adapter(
             enabled: true,
             token: None,
             api_key: None,
+            base_url: None,
             extra: serde_json::json!({}),
         });
     match state.adapter_manager.start(&platform, adapter_config).await {

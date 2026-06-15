@@ -95,6 +95,14 @@ impl DiscordAdapter {
         self.http_client.get_or_init(reqwest::Client::new)
     }
 
+    /// 返回 REST API 基础 URL（支持通过 config.base_url 覆盖）
+    fn api_base_url(&self) -> &str {
+        self.config
+            .as_ref()
+            .and_then(|c| c.base_url.as_deref())
+            .unwrap_or(DISCORD_API)
+    }
+
     /// 设置事件总线（在 init 之前调用）
     pub fn set_event_bus(&mut self, event_bus: Arc<EventBus>) {
         self.event_bus = Some(event_bus);
@@ -116,7 +124,7 @@ impl DiscordAdapter {
         body: Option<serde_json::Value>,
     ) -> Result<T, GatewayError> {
         let client = self.http_client();
-        let url = format!("{}{}", DISCORD_API, endpoint);
+        let url = format!("{}{}", self.api_base_url(), endpoint);
 
         let mut req = client
             .request(method, &url)
@@ -681,7 +689,7 @@ impl PlatformAdapter for DiscordAdapter {
         message_id: &str,
     ) -> Result<DeleteResult, GatewayError> {
         let client = self.http_client();
-        let url = format!("{}/channels/{}/messages/{}", DISCORD_API, chat_id, message_id);
+        let url = format!("{}/channels/{}/messages/{}", self.api_base_url(), chat_id, message_id);
 
         let resp = client
             .delete(&url)
@@ -806,6 +814,7 @@ mod tests {
             enabled: true,
             token: Some("token".to_string()),
             api_key: None,
+            base_url: None,
             extra: serde_json::json!({}),
         }).await.unwrap();
         let r = adapter.runtime_config();
@@ -827,6 +836,7 @@ mod tests {
             enabled: true,
             token: None,
             api_key: None,
+            base_url: None,
             extra: serde_json::json!({}),
         }).await.unwrap();
         assert!(!result.ok);
@@ -839,6 +849,7 @@ mod tests {
             enabled: true,
             token: Some("fake_discord_token".to_string()),
             api_key: None,
+            base_url: None,
             extra: serde_json::json!({}),
         }).await.unwrap();
         assert!(init_result.ok);
@@ -857,6 +868,7 @@ mod tests {
             enabled: true,
             token: Some("fake_discord_token".to_string()),
             api_key: None,
+            base_url: None,
             extra: serde_json::json!({}),
         }).await.unwrap();
 

@@ -177,6 +177,14 @@ impl QqAdapter {
         self.event_bus = Some(event_bus);
     }
 
+    /// 返回 API 基础 URL（支持通过 config.base_url 覆盖）
+    fn api_base_url(&self) -> &str {
+        self.config
+            .as_ref()
+            .and_then(|c| c.base_url.as_deref())
+            .unwrap_or(QQ_API)
+    }
+
     fn client(&self) -> Result<&reqwest::Client, GatewayError> {
         self.http_client.as_ref().ok_or_else(|| {
             GatewayError::Internal("HTTP client not initialized".to_string())
@@ -194,7 +202,7 @@ impl QqAdapter {
     async fn api_get<T: serde::de::DeserializeOwned>(&self, path: &str) -> Result<T, GatewayError> {
         let token = self.bot_token()?;
         let client = self.client()?;
-        let url = format!("{}{}", QQ_API, path);
+        let url = format!("{}{}", self.api_base_url(), path);
         let resp = client.get(&url)
             .header("Authorization", &token)
             .send().await
@@ -214,7 +222,7 @@ impl QqAdapter {
     ) -> Result<T, GatewayError> {
         let token = self.bot_token()?;
         let client = self.client()?;
-        let url = format!("{}{}", QQ_API, path);
+        let url = format!("{}{}", self.api_base_url(), path);
         let resp = client.post(&url)
             .header("Authorization", &token)
             .json(body)
@@ -235,7 +243,7 @@ impl QqAdapter {
     ) -> Result<T, GatewayError> {
         let token = self.bot_token()?;
         let client = self.client()?;
-        let url = format!("{}{}", QQ_API, path);
+        let url = format!("{}{}", self.api_base_url(), path);
         let resp = client.patch(&url)
             .header("Authorization", &token)
             .json(body)
@@ -254,7 +262,7 @@ impl QqAdapter {
     async fn api_delete(&self, path: &str) -> Result<(), GatewayError> {
         let token = self.bot_token()?;
         let client = self.client()?;
-        let url = format!("{}{}", QQ_API, path);
+        let url = format!("{}{}", self.api_base_url(), path);
         let resp = client.delete(&url)
             .header("Authorization", &token)
             .send().await
@@ -349,6 +357,7 @@ impl QqAdapter {
     #[allow(clippy::too_many_lines)]
     async fn gateway_loop(
         token_store: QqTokenStore,
+        base_url: String,
         event_bus: Arc<EventBus>,
         bot_id: String,
         mut cancel_rx: broadcast::Receiver<()>,
@@ -365,7 +374,7 @@ impl QqAdapter {
             }
 
             // 获取 Gateway URL
-            let gw_url = match Self::fetch_gateway_url(&token_store).await {
+            let gw_url = match Self::fetch_gateway_url(&token_store, &base_url).await {
                 Some(url) => url,
                 None => {
                     tracing::error!("QQ Gateway: failed to get gateway URL, retry 30s");
@@ -508,10 +517,10 @@ impl QqAdapter {
         }
     }
 
-    async fn fetch_gateway_url(token_store: &QqTokenStore) -> Option<String> {
+    async fn fetch_gateway_url(token_store: &QqTokenStore, base_url: &str) -> Option<String> {
         let token = token_store.get().ok()?;
         let client = reqwest::Client::new();
-        let resp = client.get(format!("{}/gateway/bot", QQ_API))
+        let resp = client.get(format!("{}/gateway/bot", base_url))
             .header("Authorization", &token)
             .send().await.ok()?;
         let data: GatewayResponse = resp.json().await.ok()?;
@@ -763,8 +772,11 @@ impl PlatformAdapter for QqAdapter {
             self.cancel_tx = Some(cancel_tx);
             let eb = event_bus.clone();
             let msg_in = self.messages_in.clone();
+            let base_url = self.config.as_ref()
+                .and_then(|c| c.base_url.clone())
+                .unwrap_or_else(|| QQ_API.to_string());
             tokio::spawn(async move {
-                Self::gateway_loop(ts_clone, eb, bot_id, cancel_rx, msg_in).await;
+                Self::gateway_loop(ts_clone, base_url, eb, bot_id, cancel_rx, msg_in).await;
             });
         }
 
@@ -969,6 +981,7 @@ mod tests {
             enabled: true,
             token: Some("secret".to_string()),
             api_key: None,
+            base_url: None,
             extra: serde_json::json!({"app_id": "123"}),
         }).await.unwrap();
         let r = adapter.runtime_config();
@@ -1009,6 +1022,7 @@ mod tests {
         let mut adapter = QqAdapter::new();
         let r = adapter.init(AdapterConfig {
             enabled: true, token: None, api_key: None, extra: serde_json::json!({}),
+            base_url: None,
         }).await.unwrap();
         assert!(!r.ok);
     }
@@ -1018,6 +1032,7 @@ mod tests {
         let mut adapter = QqAdapter::new();
         let r = adapter.init(AdapterConfig {
             enabled: true, token: Some("tk".into()), api_key: None,
+            base_url: None,
             extra: serde_json::json!({"app_id": "123"}),
         }).await.unwrap();
         assert!(r.ok);

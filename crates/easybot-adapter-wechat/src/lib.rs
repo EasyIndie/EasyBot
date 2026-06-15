@@ -854,6 +854,7 @@ mod tests {
             enabled: true,
             token: None,
             api_key: None,
+            base_url: None,
             extra: serde_json::json!({}),
         }).await.unwrap();
         assert!(result.ok);
@@ -866,6 +867,7 @@ mod tests {
             enabled: true,
             token: None,
             api_key: None,
+            base_url: None,
             extra: serde_json::json!({
                 "bot_token": "saved_token",
                 "ilink_bot_id": "saved_bot",
@@ -1070,6 +1072,7 @@ mod tests {
             enabled: true,
             token: None,
             api_key: None,
+            base_url: None,
             extra: serde_json::json!({"bot_token": "test"}),
         }).await.unwrap();
         let rc = adapter.runtime_config();

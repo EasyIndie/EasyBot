@@ -91,10 +91,14 @@ impl TelegramAdapter {
 
     /// 构造 Bot API URL
     fn api_url(&self, method: &str) -> String {
-        let token = self.config.as_ref()
+        let config = self.config.as_ref();
+        let base = config
+            .and_then(|c| c.base_url.as_deref())
+            .unwrap_or(TELEGRAM_API);
+        let token = config
             .and_then(|c| c.token.clone())
             .unwrap_or_default();
-        format!("{}{}/{}", TELEGRAM_API, token, method)
+        format!("{}{}/{}", base, token, method)
     }
 
     /// 将 Telegram 消息转换为网关 InboundMessage
@@ -192,6 +196,7 @@ impl TelegramAdapter {
     /// getUpdates 长轮询循环
     async fn polling_loop(
         token: String,
+        base_url: String,
         event_bus: Arc<EventBus>,
         mut cancel_rx: broadcast::Receiver<()>,
     ) {
@@ -205,7 +210,7 @@ impl TelegramAdapter {
                     tracing::info!("Telegram polling cancelled");
                     break;
                 }
-                result = Self::poll_once(&client, &token, &mut offset) => {
+                result = Self::poll_once(&client, &token, &base_url, &mut offset) => {
                     match result {
                         Ok(updates) => {
                             for update in updates {
@@ -238,9 +243,10 @@ impl TelegramAdapter {
     async fn poll_once(
         client: &reqwest::Client,
         token: &str,
+        base_url: &str,
         offset: &mut i64,
     ) -> Result<Vec<TelegramUpdate>, GatewayError> {
-        let url = format!("{}{}/getUpdates", TELEGRAM_API, token);
+        let url = format!("{}{}/getUpdates", base_url, token);
         let params = serde_json::json!({
             "offset": *offset,
             "timeout": POLL_TIMEOUT,
@@ -347,9 +353,12 @@ impl PlatformAdapter for TelegramAdapter {
             let (cancel_tx, cancel_rx) = broadcast::channel(1);
             self.cancel_tx = Some(cancel_tx);
             let token_clone = token.clone();
+            let base_url = self.config.as_ref()
+                .and_then(|c| c.base_url.clone())
+                .unwrap_or_else(|| TELEGRAM_API.to_string());
 
             tokio::spawn(async move {
-                Self::polling_loop(token_clone, event_bus, cancel_rx).await;
+                Self::polling_loop(token_clone, base_url, event_bus, cancel_rx).await;
             });
         }
 
@@ -620,6 +629,7 @@ mod tests {
             enabled: true,
             token: Some("123:token".to_string()),
             api_key: None,
+            base_url: None,
             extra: serde_json::json!({}),
         }).await.unwrap();
         let r = adapter.runtime_config();
@@ -659,6 +669,7 @@ mod tests {
             enabled: true,
             token: None,
             api_key: None,
+            base_url: None,
             extra: serde_json::json!({}),
         }).await.unwrap();
         assert!(!result.ok);
@@ -671,6 +682,7 @@ mod tests {
             enabled: true,
             token: Some("123456:test-token".to_string()),
             api_key: None,
+            base_url: None,
             extra: serde_json::json!({}),
         }).await.unwrap();
         assert!(init_result.ok);
@@ -689,6 +701,7 @@ mod tests {
             enabled: true,
             token: Some("123456:test-token".to_string()),
             api_key: None,
+            base_url: None,
             extra: serde_json::json!({}),
         }).await.unwrap();
 

@@ -110,6 +110,9 @@ pub struct AdapterConfig {
     pub enabled: bool,
     pub token: Option<String>,
     pub api_key: Option<String>,
+    /// 自定义 API 基础 URL（用于测试或代理场景，默认使用平台官方 API）
+    #[serde(default)]
+    pub base_url: Option<String>,
     #[serde(default)]
     pub extra: serde_json::Value,
 }

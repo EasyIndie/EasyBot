@@ -662,6 +662,7 @@ mod tests {
             enabled: true,
             token: None,
             api_key: None,
+            base_url: None,
             extra: serde_json::json!({}),
         }).await.unwrap();
         assert!(!result.ok); // 应该失败，缺少配置
@@ -674,6 +675,7 @@ mod tests {
             enabled: true,
             token: Some("test_secret".to_string()),
             api_key: None,
+            base_url: None,
             extra: serde_json::json!({}),
         }).await.unwrap();
         assert!(!result.ok); // 缺少 app_id
@@ -686,6 +688,7 @@ mod tests {
             enabled: true,
             token: Some("test_secret".to_string()),
             api_key: None,
+            base_url: None,
             extra: serde_json::json!({"app_id": "cli_xxxxx"}),
         }).await.unwrap();
         assert!(result.ok);
@@ -726,6 +729,7 @@ mod tests {
             enabled: true,
             token: Some("secret".to_string()),
             api_key: None,
+            base_url: None,
             extra: serde_json::json!({"app_id": "cli_xxx"}),
         }).await.unwrap();
         let rc = adapter.runtime_config();
