@@ -5,12 +5,14 @@
 //! - 接收: 事件订阅 (WebSocket 长连接 / Webhook)
 
 mod types;
+mod event;
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use async_trait::async_trait;
+use larksuite_oapi_sdk_rs::{Client, EventDispatcher};
 use tokio::sync::broadcast;
 use easybot_core::bus::EventBus;
 use easybot_core::types::adapter::*;
@@ -250,23 +252,73 @@ impl PlatformAdapter for FeishuAdapter {
         // 1. 获取 access token 验证凭证
         let _token = self.refresh_token().await?;
 
-        // 2. 获取 bot 信息 (通过获取应用信息)
-        let bot_name = {
-            let config = self.config.as_ref().unwrap();
-            config.extra.get("app_id")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown")
-                .to_string()
-        };
+        // 2. 获取配置
+        let config = self.config.as_ref().unwrap();
+        let app_id = config.extra.get("app_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
 
         self.state = AdapterState::Connected;
         self.bot_info = Some(BotInfo {
-            name: bot_name.clone(),
+            name: app_id.to_string(),
             username: Some("feishu_bot".to_string()),
-            id: bot_name,
+            id: app_id.to_string(),
         });
 
         tracing::info!("飞书适配器已连接");
+
+        // 3. 如果配置了 EventBus，启动 WebSocket 事件订阅
+        if let Some(ref event_bus) = self.event_bus {
+            let (cancel_tx, mut cancel_rx) = broadcast::channel(1);
+            self.cancel_tx = Some(cancel_tx);
+
+            let eb = event_bus.clone();
+            let app_id_owned = app_id.to_string();
+            let app_secret = config.token.clone().unwrap_or_default();
+
+            // 创建 SDK Client + EventDispatcher
+            let sdk_client = match Client::builder(&app_id_owned, &app_secret).build() {
+                Ok(c) => c,
+                Err(e) => {
+                    tracing::error!("飞书 SDK 客户端创建失败: {}", e);
+                    return Ok(ConnectResult {
+                        ok: true,
+                        error: Some(format!("SDK client init failed: {}", e)),
+                        bot_info: self.bot_info.clone(),
+                    });
+                }
+            };
+
+            let dispatcher = EventDispatcher::new("", "")
+                .skip_sign_verify()
+                .on_event(types::EVENT_MESSAGE_RECEIVE_V1, move |event_data| {
+                    let eb = eb.clone();
+                    let bot_id = app_id_owned.clone();
+                    async move {
+                        event::handle_message_receive(event_data, &eb, &bot_id).await;
+                        Ok(())
+                    }
+                });
+
+            let ws_client = sdk_client.ws_client(dispatcher);
+            let log_level = tracing::Level::DEBUG;
+            let ws_client = ws_client.log_level(log_level);
+
+            // 在后台任务中运行
+            tokio::spawn(async move {
+                tokio::select! {
+                    _ = cancel_rx.recv() => {
+                        tracing::info!("飞书 WebSocket 事件订阅已停止");
+                    }
+                    result = ws_client.start() => {
+                        match result {
+                            Ok(()) => tracing::info!("飞书 WebSocket 连接正常关闭"),
+                            Err(e) => tracing::error!("飞书 WebSocket 连接异常: {}", e),
+                        }
+                    }
+                }
+            });
+        }
 
         Ok(ConnectResult {
             ok: true,
@@ -276,8 +328,10 @@ impl PlatformAdapter for FeishuAdapter {
     }
 
     async fn disconnect(&mut self) -> Result<(), GatewayError> {
+        // 发送取消信号停止 WebSocket 事件订阅
         if let Some(cancel_tx) = &self.cancel_tx {
             let _ = cancel_tx.send(());
+            tracing::info!("飞书 WebSocket 事件订阅停止信号已发送");
         }
         self.cancel_tx = None;
         self.state = AdapterState::Stopped;
@@ -409,14 +463,26 @@ impl PlatformAdapter for FeishuAdapter {
     async fn send_interactive(&self, params: SendInteractiveParams) -> Result<SendResult, GatewayError> {
         let content = serde_json::json!({
             "elements": params.keyboard.rows.iter().map(|row| {
-                serde_json::json!({
-                    "tag": "button",
-                    "text": {
-                        "tag": "plain_text",
-                        "content": row.buttons.first().map(|b| b.text.clone()).unwrap_or_default(),
-                    },
-                    "value": row.buttons.first().and_then(|b| b.callback_data.as_ref()).map(|d| serde_json::json!({"data": d})).unwrap_or_default(),
-                })
+                let buttons: Vec<serde_json::Value> = row.buttons.iter().map(|b| {
+                    let text = b.text.clone();
+                    let value = b.callback_data.as_ref().map(|d| serde_json::json!({"data": d})).unwrap_or_default();
+                    serde_json::json!({
+                        "tag": "button",
+                        "text": {
+                            "tag": "plain_text",
+                            "content": text,
+                        },
+                        "value": value,
+                    })
+                }).collect();
+                if buttons.len() == 1 {
+                    buttons.into_iter().next().unwrap()
+                } else {
+                    serde_json::json!({
+                        "tag": "action",
+                        "actions": buttons,
+                    })
+                }
             }).collect::<Vec<_>>(),
         });
 
@@ -465,13 +531,11 @@ impl PlatformAdapter for FeishuAdapter {
         })
     }
 
-    async fn delete_message(&self, _chat_id: &str, message_id: &str) -> Result<DeleteResult, GatewayError> {
-        let path = format!("/im/v1/messages/{}", message_id);
-        let _: FeishuApiResponse<serde_json::Value> = self.api_get(&path).await?;
-        // Note: 飞书没有真正的删除消息 API，返回成功但标记为不可用
+    async fn delete_message(&self, _chat_id: &str, _message_id: &str) -> Result<DeleteResult, GatewayError> {
+        // 飞书没有真正的删除消息 API，直接返回不支持
         Ok(DeleteResult {
-            success: true,
-            error: None,
+            success: false,
+            error: Some("飞书不支持删除消息".to_string()),
         })
     }
 
@@ -643,5 +707,112 @@ mod tests {
         assert_eq!(status.platform, "feishu");
         assert_eq!(status.display_name, "飞书");
         assert!(!status.connected);
+    }
+
+    #[tokio::test]
+    async fn test_runtime_config_before_init() {
+        let adapter = FeishuAdapter::new();
+        let rc = adapter.runtime_config();
+        assert!(!rc.enabled);
+        assert!(!rc.token_configured);
+        // 未初始化时 extra 应为 null 或空对象
+        assert!(rc.extra.is_object() || rc.extra.is_null());
+    }
+
+    #[tokio::test]
+    async fn test_runtime_config_after_init() {
+        let mut adapter = FeishuAdapter::new();
+        adapter.init(AdapterConfig {
+            enabled: true,
+            token: Some("secret".to_string()),
+            api_key: None,
+            extra: serde_json::json!({"app_id": "cli_xxx"}),
+        }).await.unwrap();
+        let rc = adapter.runtime_config();
+        assert!(rc.enabled);
+        assert!(rc.token_configured);
+        assert_eq!(rc.extra.get("app_id").and_then(|v| v.as_str()), Some("cli_xxx"));
+    }
+
+    #[tokio::test]
+    async fn test_health_before_init() {
+        let adapter = FeishuAdapter::new();
+        let health = adapter.health().await;
+        assert_eq!(health.status, HealthStatus::Down);
+        assert!(!health.connected);
+    }
+
+    #[tokio::test]
+    async fn test_disconnect_idempotent() {
+        let mut adapter = FeishuAdapter::new();
+        // 在 connect 之前调用 disconnect 不应 panic
+        let result = adapter.disconnect().await;
+        assert!(result.is_ok());
+        assert_eq!(adapter.state(), AdapterState::Stopped);
+    }
+
+    #[tokio::test]
+    async fn test_double_disconnect() {
+        let mut adapter = FeishuAdapter::new();
+        adapter.disconnect().await.unwrap();
+        adapter.disconnect().await.unwrap(); // 连续两次 disconnect
+        assert_eq!(adapter.state(), AdapterState::Stopped);
+    }
+
+    #[tokio::test]
+    async fn test_get_chat_info_network_error() {
+        let adapter = FeishuAdapter::new();
+        // 未初始化时调用应返回错误
+        let result = adapter.get_chat_info("oc_test").await;
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_adapter_default() {
+        let adapter = FeishuAdapter::default();
+        assert_eq!(adapter.platform_name(), "feishu");
+    }
+
+    #[tokio::test]
+    async fn test_send_before_connect() {
+        let adapter = FeishuAdapter::new();
+        let result = adapter.send(SendTextParams {
+            chat_id: "oc_test".to_string(),
+            message: OutboundMessage { text: "hello".to_string(), parse_mode: ParseMode::None },
+            reply_to: None,
+            metadata: None,
+        }).await;
+        // 未初始化时发送应返回错误
+        assert!(result.unwrap().error.is_some());
+    }
+
+    #[tokio::test]
+    async fn test_delete_message_unsupported() {
+        let adapter = FeishuAdapter::new();
+        let result = adapter.delete_message("oc_test", "om_test").await.unwrap();
+        assert!(!result.success);
+        assert_eq!(result.error.as_deref(), Some("飞书不支持删除消息"));
+    }
+
+    #[test]
+    fn test_capabilities_all_expected() {
+        let adapter = FeishuAdapter::new();
+        let caps = adapter.capabilities();
+        let expected = vec![
+            CapabilityName::Text,
+            CapabilityName::Image,
+            CapabilityName::Audio,
+            CapabilityName::Video,
+            CapabilityName::Document,
+            CapabilityName::Interactive,
+            CapabilityName::Markdown,
+            CapabilityName::Group,
+            CapabilityName::MessageEdit,
+            CapabilityName::MessageDelete,
+        ];
+        for name in expected {
+            assert!(caps.iter().any(|c| c.name == name && c.supported),
+                "capability {:?} should be supported", name);
+        }
     }
 }
