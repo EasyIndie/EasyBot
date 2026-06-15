@@ -3,11 +3,13 @@
 //! 使用腾讯官方 iLink Bot API 实现个人微信消息收发。
 //! 协议文档：https://ilinkai.weixin.qq.com
 //!
+//! 凭据文件：`~/.easybot/.wechat-credentials.json`（扫码登录后自动保存，避免重复扫码）
+//!
 //! # 配置
 //! ```yaml
 //! wechat:
 //!   enabled: true
-//!   # 可选：预填凭据（免二次扫码）
+//!   # 可选：预填凭据到配置中（免二次扫码）
 //!   extra:
 //!     bot_token: "<saved_bot_token>"
 //!     ilink_bot_id: "<saved_bot_id>"
@@ -16,7 +18,8 @@
 //! ```
 //!
 //! # 登录流程
-//! 首次启动时终端打印 QR 码，微信扫码确认后自动保存凭据。
+//! 首次启动时终端打印 QR 码，微信扫码确认后自动保存凭据到 `~/.easybot/.wechat-credentials.json`。
+//! 后续启动会自动读取凭据，无需重复扫码。
 //!
 //! # 已知限制
 //! - 仅支持 DM（一对一聊天），不支持群聊
@@ -35,6 +38,67 @@ use easybot_core::types::error::GatewayError;
 
 /// iLink Bot API 基础 URL
 const ILINK_API: &str = "https://ilinkai.weixin.qq.com";
+
+/// 凭据文件路径（相对于 home 目录的 .easybot/）
+const CREDENTIALS_FILE: &str = ".easybot/.wechat-credentials.json";
+
+/// 微信凭据（持久化到磁盘）
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct WeChatCredentials {
+    bot_token: String,
+    ilink_bot_id: String,
+    ilink_user_id: String,
+    baseurl: String,
+}
+
+/// 获取凭据文件路径
+fn credential_path() -> Option<std::path::PathBuf> {
+    dirs::home_dir().map(|h| h.join(CREDENTIALS_FILE))
+}
+
+/// 从磁盘加载凭据
+fn load_credentials_from_disk() -> Option<WeChatCredentials> {
+    let path = credential_path()?;
+    if !path.exists() {
+        return None;
+    }
+    match std::fs::read_to_string(&path) {
+        Ok(s) => serde_json::from_str(&s).ok(),
+        Err(_) => None,
+    }
+}
+
+/// 保存凭据到磁盘
+fn save_credentials_to_disk(creds: &WeChatCredentials) {
+    let path = match credential_path() {
+        Some(p) => p,
+        None => {
+            tracing::warn!("无法确定凭据文件路径");
+            return;
+        }
+    };
+    // 确保目录存在
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    match serde_json::to_string_pretty(creds) {
+        Ok(json) => {
+            match std::fs::write(&path, &json) {
+                Ok(_) => {
+                    // 设置仅用户可读写（类 Unix）
+                    #[cfg(unix)]
+                    {
+                        use std::os::unix::fs::PermissionsExt;
+                        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+                    }
+                    tracing::info!("个人微信凭据已保存到 {:?}", path);
+                }
+                Err(e) => tracing::warn!("保存凭据失败: {}", e),
+            }
+        }
+        Err(e) => tracing::warn!("序列化凭据失败: {}", e),
+    }
+}
 
 /// 长轮询超时（秒）
 const LONGPOLL_TIMEOUT: u64 = 35;
@@ -307,6 +371,16 @@ impl PlatformAdapter for WeChatAdapter {
             *self.ilink_user_id.write().await = Some(user_id.to_string());
         }
 
+        // 如果配置中没有但磁盘上有保存的凭据，自动加载
+        if self.bot_token.read().await.is_none() {
+            if let Some(creds) = load_credentials_from_disk() {
+                tracing::info!("个人微信适配器：从磁盘加载保存的凭据");
+                *self.bot_token.write().await = Some(creds.bot_token);
+                *self.ilink_bot_id.write().await = Some(creds.ilink_bot_id);
+                *self.ilink_user_id.write().await = Some(creds.ilink_user_id);
+            }
+        }
+
         self.state = AdapterState::Starting;
         Ok(InitResult { ok: true, error: None })
     }
@@ -394,7 +468,7 @@ impl PlatformAdapter for WeChatAdapter {
                 GatewayError::Internal("QR login timeout or failed".to_string())
             })?;
 
-            // 保存凭据
+            // 保存凭据（内存）
             *self.bot_token.write().await = Some(bot_token.clone());
             if let Some(id) = bot_id {
                 *self.ilink_bot_id.write().await = Some(id.clone());
@@ -402,9 +476,19 @@ impl PlatformAdapter for WeChatAdapter {
             if let Some(uid) = user_id {
                 *self.ilink_user_id.write().await = Some(uid.clone());
             }
-            if let Some(url) = baseurl {
+            if let Some(ref url) = baseurl {
                 tracing::info!("个人微信登录成功，baseurl: {}", url);
             }
+
+            // 持久化凭据到磁盘（下次自动加载）
+            let saved_baseurl = baseurl.unwrap_or_else(|| ILINK_API.to_string());
+            let creds = WeChatCredentials {
+                bot_token: self.bot_token.read().await.clone().unwrap_or_default(),
+                ilink_bot_id: self.ilink_bot_id.read().await.clone().unwrap_or_default(),
+                ilink_user_id: self.ilink_user_id.read().await.clone().unwrap_or_default(),
+                baseurl: saved_baseurl,
+            };
+            save_credentials_to_disk(&creds);
 
             // 注意：凭据可以持久化到配置文件中，方便下次自动登录
             tracing::info!("个人微信适配器：扫码登录成功");
@@ -563,6 +647,16 @@ impl Default for WeChatAdapter {
 
 // ── 长轮询后台任务 ──
 
+/// 清除保存的凭据（检测到 session 过期时调用）
+fn clear_credentials() {
+    if let Some(path) = credential_path() {
+        if path.exists() {
+            let _ = std::fs::remove_file(&path);
+            tracing::warn!("个人微信凭据已清除（可能已过期），文件: {:?}", path);
+        }
+    }
+}
+
 async fn longpoll_loop(
     client: reqwest::Client,
     token: String,
@@ -572,6 +666,7 @@ async fn longpoll_loop(
 ) {
     let url = format!("{}/ilink/bot/getupdates", ILINK_API);
     let mut buf = initial_buf;
+    let mut consecutive_failures: u32 = 0;
 
     loop {
         tokio::select! {
@@ -583,6 +678,7 @@ async fn longpoll_loop(
                 match result {
                     Ok(Some((new_buf, msgs))) => {
                         buf = new_buf;
+                        consecutive_failures = 0;
                         for msg in msgs {
                             if let Some(inbound) = convert_message(msg) {
                                 let event = easybot_core::types::event::GatewayEvent::new(
@@ -596,9 +692,19 @@ async fn longpoll_loop(
                     }
                     Ok(None) => {
                         // 超时无消息，继续轮询
+                        consecutive_failures = 0;
                     }
                     Err(e) => {
-                        tracing::warn!("个人微信长轮询错误: {}", e);
+                        consecutive_failures += 1;
+                        tracing::warn!("个人微信长轮询错误 (第{}次): {}", consecutive_failures, e);
+
+                        // 连续 10 次失败，清除凭据并退出（session 可能已过期）
+                        if consecutive_failures >= 10 {
+                            tracing::error!("个人微信长轮询连续失败 {} 次，session 可能已过期，清除凭据", consecutive_failures);
+                            clear_credentials();
+                            break;
+                        }
+
                         // 等待后重试
                         tokio::time::sleep(Duration::from_secs(5)).await;
                     }
