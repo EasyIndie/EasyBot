@@ -3,6 +3,8 @@
 //! 验证 easybot 二进制的基本 CLI 行为。
 //! 使用 std::process::Command 直接调用二进制。
 
+use std::io::Write;
+use std::net::TcpListener;
 use std::path::PathBuf;
 use std::process::Command;
 use std::io::Read;
@@ -18,6 +20,22 @@ fn easybot_bin() -> PathBuf {
         .parent()   // workspace root
         .unwrap();
     workspace_root.join("target").join("debug").join("easybot")
+}
+
+/// 找到一个空闲端口
+fn find_free_port() -> u16 {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("failed to bind for port discovery");
+    listener.local_addr().unwrap().port()
+}
+
+/// 在测试目录中写入 gateway.local.yaml，将 server.port 设为指定值
+/// 确保并行测试不会因端口冲突而失败
+fn write_port_override(dir: &std::path::Path, port: u16) {
+    let content = format!("server:\n  port: {}\n", port);
+    let mut file = std::fs::File::create(dir.join("gateway.local.yaml"))
+        .expect("failed to create gateway.local.yaml");
+    file.write_all(content.as_bytes())
+        .expect("failed to write port override");
 }
 
 #[test]
@@ -128,6 +146,8 @@ fn test_cli_unknown_flag() {
 fn test_cli_short_flags() {
     let dir = tempfile::tempdir().expect("failed to create temp dir");
     let dir_path = dir.path().to_str().unwrap();
+    let port = find_free_port();
+    write_port_override(dir.path(), port);
 
     // Server will block, so use spawn + kill pattern
     let mut child = Command::new(easybot_bin())
@@ -168,8 +188,9 @@ fn test_openapi_has_security_scheme() {
     // Start the server
     let dir = tempfile::tempdir().expect("failed to create temp dir");
     let dir_path = dir.path().to_str().unwrap();
+    let port = find_free_port();
 
-    // First init the dir, then start the server
+    // First init the dir, then write port override, then start the server
     let init = Command::new(easybot_bin())
         .arg("--init")
         .arg("--dir")
@@ -177,6 +198,9 @@ fn test_openapi_has_security_scheme() {
         .output()
         .expect("init failed");
     assert!(init.status.success());
+
+    // 写入 port override（必须在 --init 之后，否则会被 init 覆盖）
+    write_port_override(dir.path(), port);
 
     let mut child = Command::new(easybot_bin())
         .arg("--debug")
@@ -191,7 +215,8 @@ fn test_openapi_has_security_scheme() {
     std::thread::sleep(std::time::Duration::from_secs(2));
 
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let resp = ureq::get("http://localhost:8080/openapi.json")
+        let url = format!("http://localhost:{}/openapi.json", port);
+        let resp = ureq::get(&url)
             .call()
             .expect("failed to fetch openapi.json");
         assert_eq!(resp.status(), 200, "openapi.json should return 200");

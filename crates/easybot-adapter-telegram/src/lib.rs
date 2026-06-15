@@ -306,7 +306,7 @@ impl PlatformAdapter for TelegramAdapter {
 
         // 通过 getMe 验证 Token 并获取 Bot 信息
         let client = self.http_client();
-        let url = format!("{}bot{}/getMe", TELEGRAM_API, token);
+        let url = self.api_url("getMe");
 
         let resp = client.get(&url)
             .send()

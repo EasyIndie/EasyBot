@@ -70,13 +70,16 @@ pub async fn start_adapter(
     State(state): State<AppState>,
     Path(platform): Path<String>,
 ) -> Json<serde_json::Value> {
-    // Phase 1: 简化处理，实际需要从配置读取 AdapterConfig
-    match state.adapter_manager.start(&platform, easybot_core::types::adapter::AdapterConfig {
-        enabled: true,
-        token: None,
-        api_key: None,
-        extra: serde_json::json!({}),
-    }).await {
+    // 从当前配置中读取该平台的 AdapterConfig（包含 token 等凭证）
+    let adapter_config = state.config.adapters.get(&platform)
+        .cloned()
+        .unwrap_or_else(|| easybot_core::types::adapter::AdapterConfig {
+            enabled: true,
+            token: None,
+            api_key: None,
+            extra: serde_json::json!({}),
+        });
+    match state.adapter_manager.start(&platform, adapter_config).await {
         Ok(result) => Json(serde_json::json!({
             "ok": result.ok,
             "platform": result.platform,

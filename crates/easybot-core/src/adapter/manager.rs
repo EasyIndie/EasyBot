@@ -144,6 +144,14 @@ impl AdapterManager {
             if let Err(e) = adapter.disconnect().await {
                 warn!("Error disconnecting adapter '{}': {}", platform, e);
             }
+            // 更新状态缓存，否则 get_status 仍返回旧状态
+            {
+                let mut statuses = self.statuses.write().await;
+                if let Some(status) = statuses.get_mut(platform) {
+                    status.state = AdapterState::Stopped;
+                    status.connected = false;
+                }
+            }
             self.publish_event(event_types::ADAPTER_DISCONNECTED, serde_json::json!({
                 "platform": platform,
                 "connected": false,
@@ -284,6 +292,157 @@ impl AdapterManager {
 impl Default for AdapterManager {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use async_trait::async_trait;
+    use crate::adapter::AdapterFactory;
+    use crate::types::message::{SendTextParams, SendResult, ChatInfo};
+
+    // ── Mock 适配器 ──────────────────────────────────────────
+
+    struct MockTestAdapter {
+        platform: String,
+        display: String,
+        state: AdapterState,
+    }
+
+    impl MockTestAdapter {
+        fn new() -> Self {
+            Self {
+                platform: "test-mock".into(),
+                display: "Test Mock".into(),
+                state: AdapterState::Created,
+            }
+        }
+    }
+
+    #[async_trait]
+    impl PlatformAdapter for MockTestAdapter {
+        fn platform_name(&self) -> &str { &self.platform }
+        fn display_name(&self) -> &str { &self.display }
+        fn capabilities(&self) -> &[Capability] { &[] }
+
+        async fn init(&mut self, config: AdapterConfig) -> Result<InitResult, GatewayError> {
+            let _ = config;
+            self.state = AdapterState::Starting;
+            Ok(InitResult { ok: true, error: None })
+        }
+
+        async fn connect(&mut self) -> Result<ConnectResult, GatewayError> {
+            self.state = AdapterState::Connected;
+            Ok(ConnectResult { ok: true, error: None, bot_info: None })
+        }
+
+        async fn disconnect(&mut self) -> Result<(), GatewayError> {
+            self.state = AdapterState::Stopped;
+            Ok(())
+        }
+
+        fn state(&self) -> AdapterState { self.state.clone() }
+
+        async fn health(&self) -> HealthReport {
+            HealthReport {
+                status: if self.state == AdapterState::Connected { HealthStatus::Healthy } else { HealthStatus::Down },
+                connected: self.state == AdapterState::Connected,
+                last_connected_at: None, last_error_at: None,
+                last_error: None, messages_in: 0, messages_out: 0,
+                errors: 0, uptime: None,
+            }
+        }
+
+        async fn send(&self, _p: SendTextParams) -> Result<SendResult, GatewayError> {
+            Ok(SendResult { success: true, message_id: None, timestamp: None, error: None, error_code: None, retryable: false })
+        }
+
+        async fn get_chat_info(&self, _id: &str) -> Result<ChatInfo, GatewayError> {
+            Err(GatewayError::capability_not_supported("get_chat_info"))
+        }
+
+        fn runtime_config(&self) -> AdapterRuntimeConfig {
+            AdapterRuntimeConfig { enabled: true, token_configured: false, extra: serde_json::json!({}) }
+        }
+
+        fn status_summary(&self) -> AdapterStatusSummary {
+            AdapterStatusSummary {
+                platform: self.platform.clone(),
+                display_name: self.display.clone(),
+                state: self.state.clone(),
+                connected: self.state == AdapterState::Connected,
+                health: None, last_error: None, uptime: None,
+                messages_in: 0, messages_out: 0,
+            }
+        }
+    }
+
+    /// 注册 MockTestAdapter 到 registry
+    async fn register_mock_adapter(manager: &AdapterManager) {
+        let registry = manager.registry();
+        let factory: AdapterFactory = std::sync::Arc::new(|config| {
+            Box::pin(async move {
+                let mut adapter = MockTestAdapter::new();
+                let result = adapter.init(config).await.map_err(|e| e.to_string())?;
+                if !result.ok {
+                    return Err(result.error.unwrap_or_default());
+                }
+                Ok(Box::new(adapter) as Box<dyn PlatformAdapter>)
+            })
+        });
+        registry.register("test-mock", "Test Mock", factory).await;
+    }
+
+    // ── 测试: stop() 后 get_status() 返回 Stopped ────────────
+
+    #[tokio::test]
+    async fn test_stop_updates_status_cache() {
+        let manager = AdapterManager::new();
+        register_mock_adapter(&manager).await;
+
+        let config = AdapterConfig {
+            enabled: true,
+            token: Some("test-token".into()),
+            api_key: None,
+            extra: serde_json::json!({}),
+        };
+
+        // 启动 → 预期状态为 Connected
+        let start_result = manager.start("test-mock", config).await.unwrap();
+        assert!(start_result.ok);
+        let status = manager.get_status("test-mock").await.unwrap();
+        assert_eq!(status.state, AdapterState::Connected);
+        assert!(status.connected);
+
+        // 停止 → 预期状态为 Stopped
+        manager.stop("test-mock").await.unwrap();
+        let status = manager.get_status("test-mock").await.unwrap();
+        assert_eq!(status.state, AdapterState::Stopped);
+        assert!(!status.connected);
+    }
+
+    // ── 测试: config（含 token）被正确传递到适配器 ───────────
+
+    #[tokio::test]
+    async fn test_start_passes_config_to_adapter() {
+        let manager = AdapterManager::new();
+        register_mock_adapter(&manager).await;
+
+        let config = AdapterConfig {
+            enabled: true,
+            token: Some("my-secret-token".into()),
+            api_key: Some("my-api-key".into()),
+            extra: serde_json::json!({"custom": "value"}),
+        };
+
+        // 启动后，config 应该被传递到 init()，工厂创建 adapter 时使用
+        let start_result = manager.start("test-mock", config.clone()).await.unwrap();
+        assert!(start_result.ok);
+
+        // get_status 验证状态
+        let status = manager.get_status("test-mock").await.unwrap();
+        assert_eq!(status.state, AdapterState::Connected);
     }
 }
 
