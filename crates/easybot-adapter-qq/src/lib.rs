@@ -1075,4 +1075,239 @@ mod tests {
         assert_eq!(s.platform, "qq");
         assert_eq!(s.display_name, "QQ");
     }
+
+    // ── Gateway dispatch 测试 ──
+
+    #[tokio::test]
+    async fn test_handle_dispatch_at_message() {
+        let event_bus = Arc::new(easybot_core::bus::EventBus::new());
+        let mut rx = event_bus.subscribe(easybot_core::types::event::event_types::MESSAGE_INBOUND);
+        let messages_in = AtomicU64::new(0);
+
+        let data = serde_json::json!({
+            "id": "msg001",
+            "channel_id": "ch123",
+            "guild_id": "guild456",
+            "content": "Hello from QQ channel",
+            "author": {"id": "user_001", "username": "TestUser", "bot": false},
+            "timestamp": "2026-06-01T12:00:00+00:00"
+        });
+        let payload = GatewayPayload {
+            op: 0,
+            d: Some(data),
+            s: Some(100),
+            t: Some("AT_MESSAGE_CREATE".to_string()),
+        };
+
+        QqAdapter::handle_dispatch(
+            "AT_MESSAGE_CREATE", &payload, &event_bus, "bot_id_001", &messages_in,
+        ).await;
+
+        let event = rx.try_recv().ok();
+        assert!(event.is_some(), "Expected MESSAGE_INBOUND event for AT_MESSAGE_CREATE");
+        if let Some(e) = event {
+            assert_eq!(e.event_type, "message.inbound");
+            assert_eq!(e.source, "qq");
+        }
+        assert_eq!(messages_in.load(Ordering::Relaxed), 1);
+    }
+
+    #[tokio::test]
+    async fn test_handle_dispatch_group_at() {
+        let event_bus = Arc::new(easybot_core::bus::EventBus::new());
+        let mut rx = event_bus.subscribe(easybot_core::types::event::event_types::MESSAGE_INBOUND);
+        let messages_in = AtomicU64::new(0);
+
+        let data = serde_json::json!({
+            "id": "gmsg001",
+            "group_openid": "GROUP_OPENID_001",
+            "content": "@bot hello group",
+            "author": {"member_openid": "MEMBER_001"},
+            "timestamp": "2026-06-01T12:00:00+00:00"
+        });
+        let payload = GatewayPayload {
+            op: 0,
+            d: Some(data),
+            s: Some(101),
+            t: Some("GROUP_AT_MESSAGE_CREATE".to_string()),
+        };
+
+        QqAdapter::handle_dispatch(
+            "GROUP_AT_MESSAGE_CREATE", &payload, &event_bus, "bot_id", &messages_in,
+        ).await;
+
+        let event = rx.try_recv().ok();
+        assert!(event.is_some(), "Expected MESSAGE_INBOUND for group message");
+        if let Some(e) = event {
+            assert_eq!(e.data["is_group"], true);
+            assert_eq!(e.data["chat_type"], "Group");
+            assert_eq!(e.data["chat_id"], "GROUP_OPENID_001");
+        }
+        assert_eq!(messages_in.load(Ordering::Relaxed), 1);
+    }
+
+    #[tokio::test]
+    async fn test_handle_dispatch_c2c() {
+        let event_bus = Arc::new(easybot_core::bus::EventBus::new());
+        let mut rx = event_bus.subscribe(easybot_core::types::event::event_types::MESSAGE_INBOUND);
+        let messages_in = AtomicU64::new(0);
+
+        let data = serde_json::json!({
+            "id": "c2cmsg001",
+            "content": "private message hello",
+            "author": {"user_openid": "USER_OPENID_001"},
+            "timestamp": "2026-06-01T12:00:00+00:00"
+        });
+        let payload = GatewayPayload {
+            op: 0,
+            d: Some(data),
+            s: Some(102),
+            t: Some("C2C_MESSAGE_CREATE".to_string()),
+        };
+
+        QqAdapter::handle_dispatch(
+            "C2C_MESSAGE_CREATE", &payload, &event_bus, "bot_id", &messages_in,
+        ).await;
+
+        let event = rx.try_recv().ok();
+        assert!(event.is_some(), "Expected MESSAGE_INBOUND for C2C message");
+        if let Some(e) = event {
+            assert_eq!(e.data["is_group"], false);
+            assert_eq!(e.data["chat_type"], "Dm");
+            assert_eq!(e.data["chat_id"], "USER_OPENID_001");
+        }
+        assert_eq!(messages_in.load(Ordering::Relaxed), 1);
+    }
+
+    #[tokio::test]
+    async fn test_handle_dispatch_self_filter_channel() {
+        let event_bus = Arc::new(easybot_core::bus::EventBus::new());
+        let mut rx = event_bus.subscribe(easybot_core::types::event::event_types::MESSAGE_INBOUND);
+        let messages_in = AtomicU64::new(0);
+
+        let data = serde_json::json!({
+            "id": "selfmsg",
+            "channel_id": "ch123",
+            "content": "I am the bot",
+            "author": {"id": "bot_self", "username": "MyBot", "bot": true},
+            "timestamp": "2026-06-01T12:00:00+00:00"
+        });
+        let payload = GatewayPayload {
+            op: 0,
+            d: Some(data),
+            s: Some(103),
+            t: Some("AT_MESSAGE_CREATE".to_string()),
+        };
+
+        QqAdapter::handle_dispatch(
+            "AT_MESSAGE_CREATE", &payload, &event_bus, "bot_self", &messages_in,
+        ).await;
+
+        let event = rx.try_recv().ok();
+        assert!(event.is_none(), "Self messages should be filtered out");
+        assert_eq!(messages_in.load(Ordering::Relaxed), 0);
+    }
+
+    #[tokio::test]
+    async fn test_handle_dispatch_ignored_event() {
+        let event_bus = Arc::new(easybot_core::bus::EventBus::new());
+        let mut rx = event_bus.subscribe(easybot_core::types::event::event_types::MESSAGE_INBOUND);
+        let messages_in = AtomicU64::new(0);
+
+        let data = serde_json::json!({"dummy": true});
+        let payload = GatewayPayload {
+            op: 0,
+            d: Some(data),
+            s: Some(104),
+            t: Some("MESSAGE_REACTION_UPDATE".to_string()),
+        };
+
+        QqAdapter::handle_dispatch(
+            "MESSAGE_REACTION_UPDATE", &payload, &event_bus, "bot_id", &messages_in,
+        ).await;
+
+        let event = rx.try_recv().ok();
+        assert!(event.is_none(), "Unknown event type should not publish");
+        assert_eq!(messages_in.load(Ordering::Relaxed), 0);
+    }
+
+    #[tokio::test]
+    async fn test_handle_dispatch_missing_data() {
+        let event_bus = Arc::new(easybot_core::bus::EventBus::new());
+        let mut rx = event_bus.subscribe(easybot_core::types::event::event_types::MESSAGE_INBOUND);
+        let messages_in = AtomicU64::new(0);
+
+        let payload = GatewayPayload::<serde_json::Value> {
+            op: 0,
+            d: None,
+            s: Some(105),
+            t: Some("AT_MESSAGE_CREATE".to_string()),
+        };
+
+        QqAdapter::handle_dispatch(
+            "AT_MESSAGE_CREATE", &payload, &event_bus, "bot_id", &messages_in,
+        ).await;
+
+        let event = rx.try_recv().ok();
+        assert!(event.is_none(), "Missing data should not publish event");
+        assert_eq!(messages_in.load(Ordering::Relaxed), 0);
+    }
+
+    #[tokio::test]
+    async fn test_handle_dispatch_malformed_data() {
+        let event_bus = Arc::new(easybot_core::bus::EventBus::new());
+        let mut rx = event_bus.subscribe(easybot_core::types::event::event_types::MESSAGE_INBOUND);
+        let messages_in = AtomicU64::new(0);
+
+        // missing required fields (author, timestamp)
+        let data = serde_json::json!({
+            "id": "partial_msg",
+            "content": "partial"
+        });
+        let payload = GatewayPayload {
+            op: 0,
+            d: Some(data),
+            s: Some(106),
+            t: Some("AT_MESSAGE_CREATE".to_string()),
+        };
+
+        QqAdapter::handle_dispatch(
+            "AT_MESSAGE_CREATE", &payload, &event_bus, "bot_id", &messages_in,
+        ).await;
+
+        let event = rx.try_recv().ok();
+        assert!(event.is_none(), "Malformed data should not publish event");
+        assert_eq!(messages_in.load(Ordering::Relaxed), 0);
+    }
+
+    #[tokio::test]
+    async fn test_handle_dispatch_c2c_self_not_filtered() {
+        // C2C 和 group 消息没有 bot 字段，无法通过 id 过滤自身
+        // 验证即使 bot_id 出现在 user_openid 中，消息仍被处理
+        let event_bus = Arc::new(easybot_core::bus::EventBus::new());
+        let mut rx = event_bus.subscribe(easybot_core::types::event::event_types::MESSAGE_INBOUND);
+        let messages_in = AtomicU64::new(0);
+
+        let data = serde_json::json!({
+            "id": "c2c_self",
+            "content": "hello from self",
+            "author": {"user_openid": "bot_self"},
+            "timestamp": "2026-06-01T12:00:00+00:00"
+        });
+        let payload = GatewayPayload {
+            op: 0,
+            d: Some(data),
+            s: Some(107),
+            t: Some("C2C_MESSAGE_CREATE".to_string()),
+        };
+
+        QqAdapter::handle_dispatch(
+            "C2C_MESSAGE_CREATE", &payload, &event_bus, "bot_self", &messages_in,
+        ).await;
+
+        let event = rx.try_recv().ok();
+        // C2C 没有 bot 字段，不会被过滤
+        assert!(event.is_some(), "C2C messages should not be self-filtered");
+        assert_eq!(messages_in.load(Ordering::Relaxed), 1);
+    }
 }
