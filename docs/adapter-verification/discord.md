@@ -15,16 +15,46 @@
 
 ## 前置条件
 
-### 获取 Discord Bot Token
+### 平台机器人与凭证获取
 
-1. 打开 [Discord Developer Portal](https://discord.com/developers/applications)
-2. 点击 **New Application**，输入名称
-3. 左侧导航 → **Bot** → **Reset Token**，复制 token
-4. 在同一页面开启 **Message Content Intent**（必须，否则收不到消息内容）
-5. 左侧导航 → **OAuth2 → URL Generator**：
-   - Scopes: 勾选 `bot`
-   - Bot Permissions: 勾选 `Send Messages`、`Read Messages/View Channels`、`Read Message History`
-   - 复制生成的 URL，在浏览器中打开，将 Bot 拉入你的测试服务器
+#### Discord Bot 创建步骤（完整流程）
+
+1. **创建 Application**
+   - 打开 [Discord Developer Portal](https://discord.com/developers/applications)
+   - 点击 **New Application**，输入名称（如 `MyEasyBot`）
+   - 创建后会自动进入应用设置页
+
+2. **创建 Bot 并获取 Token**
+   - 左侧导航 → **Bot**
+   - 点击 **Add Bot** → 确认
+   - 在 **Token** 区域点击 **Reset Token** → 复制 token（格式示例：`YOUR_BOT_TOKEN_HERE.xxxxxxxxxxxxx`）
+   - ⚠️ **务必开启 Message Content Intent**（开关在 TOKEN 下方），否则收不到消息内容
+
+3. **邀请 Bot 到测试服务器**
+   - 左侧导航 → **OAuth2 → URL Generator**
+   - **Scopes**: 勾选 `bot`
+   - **Bot Permissions**: 勾选以下权限：
+     - `Send Messages`
+     - `Read Messages/View Channels`
+     - `Read Message History`
+   - 复制页面底部生成的 **URL**
+   - 在浏览器中打开该 URL → 选择你的测试服务器 → 授权
+
+4. **开启开发者模式**（用于获取 ID）
+   - Discord 应用 → 左下角齿轮 ⚙️ → **Advanced**
+   - 打开 **Developer Mode**
+   - 右键任意频道、用户或服务器 → **Copy ID**
+
+#### 获取测试用的 channelId
+
+1. 在 Discord 中进入你的测试服务器
+2. 右键目标文字频道 → **复制 ID**（频道 ID 通常是纯数字，如 `1101910610033250468`）
+3. 或者：在频道中发一条消息，通过 API 查询：
+
+```bash
+curl -s -H "Authorization: Bearer <your-api-key>" \
+  "http://localhost:8080/api/v1/messages?platform=discord" | jq '.messages[0].chat_id'
+```
 
 ### 配置
 
@@ -47,16 +77,15 @@ EOF
 > ```
 > 或者同时启用所有适配器：`cargo run --features full -- --debug`
 
-### 获取测试用的 channelId
+### 常见调试问题
 
-1. 在 Discord 中进入你的测试服务器
-2. 右键目标文字频道 → **复制 ID**（需在开发者模式开启：Settings → Advanced → Developer Mode）
-3. 或者：在频道中发一条消息，通过 API 查询：
-
-```bash
-curl -s -H "Authorization: Bearer <your-api-key>" \
-  "http://localhost:8080/api/v1/messages?platform=discord" | jq '.messages[0].chat_id'
-```
+| 问题 | 原因 | 解决方法 |
+|------|------|---------|
+| Gateway 连接失败 `invalid peer certificate` | rustls 未配置 CryptoProvider | 已修复（使用 aws-lc-rs + webpki-roots） |
+| 用户消息收不到 | Message Content Intent 未开启 | 在 Bot 设置页面打开开关 |
+| 自身消息也收到 | 未过滤 bot 自身消息 | 已修复（按 author.id == bot_user_id 过滤） |
+| DELETE 消息返回 500 | 204 No Content 无法解析 JSON | 已修复（直接处理空响应） |
+| 消息内容为空 | Message Content Intent 未开启 | 检查 Bot 页面 intent 开关 |
 
 ## 验证结果
 

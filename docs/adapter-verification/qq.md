@@ -27,15 +27,52 @@
 
 ## 前置条件
 
-### 获取 QQ 机器人凭证（QQ 开放平台统一机器人）
+### 平台机器人与凭证获取
 
-1. 登录 [QQ 开放平台](https://q.qq.com/)
-2. 创建或选择一个机器人应用
-3. 获取 **BotAppID** 和 **AppSecret**
+#### QQ 统一机器人创建步骤（完整流程）
+
+1. **注册账号**
+   - 打开 [QQ 开放平台](https://q.qq.com/)
+   - 点击右上角 **立即注册**（支持个人/企业实名）
+   - 完成注册并登录
+
+2. **创建机器人应用**
+   - 登录后点击 **创建机器人**
+   - 填写机器人名称、简介、头像等信息
+   - 选择 **私域机器人**（推荐测试用，无需审核）
+   - 创建成功后进入机器人管理页
+
+3. **获取 AppID 和 AppSecret**
+   - 左侧菜单 → **开发设置**
+   - **BotAppID**：直接复制（如 `123456789`）
+   - **AppSecret**：点击 **查看**（仅首次查看时可复制，离开后不可见），格式如 `your_app_secret_here_xxxxxxxxxxxx`
+   - ⚠️ **AppSecret 非常重要**，不要泄露到版本控制系统
+
+4. **配置 IP 白名单**（必须）
+   - 同一页面 → **IP白名单**
+   - 添加你运行服务的服务器/机器的**公网 IP**
+   - 可用以下命令查看本机公网 IP：
+     ```bash
+     curl -s https://api.ipify.org
+     ```
+   - ⚠️ 如果本机有代理工具（Surge/Clash 等），需在代理工具中也配置 `api.sgroup.qq.com` 和 `bots.qq.com` 走直连（DIRECT），或添加代理的出口 IP 到白名单
+
+5. **沙箱环境配置**（测试用）
+   - 左侧菜单 → **沙箱配置**
+   - **创建测试 QQ 群**：群名必须包含"测试"二字（如 "EasyBot测试群"），你必须是群主
+   - 在沙箱配置页面下拉选择该群 → 添加
+   - (可选) **私聊白名单**：添加允许与机器人私聊的 QQ 号
+   - (可选) **频道测试**：如果你有频道主权限的频道，可在沙箱中添加
+
+6. **在 QQ App 中添加机器人到群**
+   - 手机 QQ → 进入测试群 → 右上角菜单 → **群机器人**
+   - 在列表底部找到你的机器人 → 点击 **添加**
+   - 之后在群里 @机器人 即可触发消息
 
 ### 配置
 
 ```bash
+# 环境变量
 export QQ_APP_ID="你的BotAppID"
 export QQ_CLIENT_SECRET="你的AppSecret"
 ```
@@ -55,9 +92,28 @@ adapters:
 cargo run --features full -- --debug
 ```
 
-### 获取测试用的频道 ID
+### 常见调试问题
 
-将机器人添加到你的 QQ 频道或群聊，然后通过 WebSocket Gateway 或 Webhook 接收消息来获取 channelId。
+| 问题 | 原因 | 解决方法 |
+|------|------|---------|
+| `接口访问源IP不在白名单` | 服务器 IP 未在 QQ 平台白名单中 | 在"开发设置→IP白名单"中添加本机公网 IP |
+| DNS 解析到 `198.18.0.x` | 本机代理工具（Surge/Clash）拦截 DNS | 代理工具中配置 `api.sgroup.qq.com` 走 DIRECT，或临时关闭代理 |
+| `主动消息失败, 无权限` | QQ 限制机器人主动发消息 | 必须用 `msg_id` 被动回复（回复用户 5 分钟内收到的消息） |
+| `频道不存在` | 群消息用了 `/channels/` 而非 `/groups/` | 已自动处理（先试 channel 端点，失败则降级到 group 端点） |
+| `缺少 channel_id` 字段 | 群消息格式与频道消息不同 | 已修复（代码根据事件类型使用对应的解析结构） |
+| `不支持的调用` | 用了旧版 `/groups/` 而非 `/v2/groups/` | 已修复（群消息发送使用 `/v2/groups/{openid}/messages`） |
+
+### 获取测试用的频道/群 ID
+
+启动服务后，在 QQ 群里 @机器人 发消息，然后：
+
+```bash
+API_KEY=$(grep "Dev API Key" <服务日志文件> | grep -oP 'key=\K\S+')
+curl -s -H "Authorization: Bearer $API_KEY" \
+  "http://localhost:8080/api/v1/messages?platform=qq" | jq '.messages[0].chat_id'
+```
+
+群聊的 ID 是 `group_openid` 格式（如 `74241426963B2AD398CF5DD01AE48EC8`），频道的 ID 则是 `channel_id` 格式。
 
 ## 验证结果
 

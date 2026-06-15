@@ -2,6 +2,45 @@
 
 验证范围：`easybot-adapter-telegram` crate。
 
+## 平台机器人与凭证获取
+
+### Telegram Bot 创建步骤
+
+1. 打开 Telegram，搜索 [@BotFather](https://t.me/BotFather)（官方机器人创建工具）
+2. 发送 `/newbot` 命令
+3. 按提示输入：
+   - Bot 名称（如 `MyEasyBot`）— 显示用名称
+   - Bot 用户名（如 `MyEasyBot_123_bot`）— 必须唯一，以 `bot` 结尾
+4. 创建成功后，BotFather 会返回 **Bot Token**，格式如：
+   ```
+   1234567890:ABC-DEF1234ghIkl-zyx57W2v1u123ew11
+   ```
+5. (可选) 通过 BotFather 的 `/setprivacy` 命令关闭 Privacy Mode，让机器人能看到群聊中所有消息（否则只能看到 @mention 的消息）
+
+### 获取测试 Chat ID
+
+有两种方式获取你的 Telegram 用户/群组的 chatId：
+
+**方式 A：通过消息 API**
+```bash
+# 启动服务后，向机器人发一条消息，然后查询
+export TELEGRAM_BOT_TOKEN="你的token"
+cargo run -- --debug
+# 在另一个终端：
+curl -s http://127.0.0.1:8080/api/v1/messages?platform=telegram | jq '.messages[0].chat_id'
+```
+
+**方式 B：通过 @userinfobot**
+1. 搜索 [@userinfobot](https://t.me/userinfobot)
+2. 发送任意消息，它会返回你的 ID
+3. 群聊 ID 通常以 `-` 开头（负数）
+
+### 环境变量配置
+
+```bash
+export TELEGRAM_BOT_TOKEN="1234567890:ABC-DEF1234ghIkl-zyx57W2v1u123ew11"
+```
+
 ## 当前测试现状
 
 | 测试名 | 类型 | 依赖网络 | 需要真实 Token |
