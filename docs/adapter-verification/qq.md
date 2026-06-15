@@ -76,9 +76,12 @@ cargo run --features full -- --debug
 | 重启适配器 | ✅ | `POST /adapters/qq/start` → `Connected`, `connected: true` |
 | **出站消息** | | |
 | 群聊消息发送（被动回复） | ✅ | 通过 `reply_to` 传 `msg_id`，使用 `/v2/groups/{openid}/messages` |
+| 频道消息发送 | ⬜ TODO | 需提供 QQ 频道测试环境验证（见 TODO） |
 | 主动消息发送 | ❌ | QQ 限制（需特殊权限），需通过被动回复方式 |
 | **入站消息** | | |
 | 群聊 @消息接收 | ✅ | `GROUP_AT_MESSAGE_CREATE` 成功解析存储 |
+| 频道 @消息接收 | ⬜ TODO | 代码已实现 `AT_MESSAGE_CREATE` 解析，需端到端验证 |
+| C2C 私聊消息接收 | ⬜ TODO | 代码已实现 `C2C_MESSAGE_CREATE` 解析，未验证 |
 | 自身消息过滤 | ❌ | 群消息不含 `bot` 字段，需另寻方案 |
 | **连接方式** | | |
 | Gateway WebSocket | ✅ | 使用 native-tls (系统 CA) |
@@ -178,7 +181,7 @@ curl -s -X POST http://127.0.0.1:8080/api/v1/messages/send \
 
 ## 后续改进建议
 
-- [ ] 实现消息发送测试和入站消息验证（需要测试频道/群聊）
+- [ ] **QQ 频道双向消息验证** — 目前只验证了群聊（`GROUP_AT_MESSAGE_CREATE`）。频道消息（`AT_MESSAGE_CREATE`）的解析已实现但未端到端验证，需要将机器人添加到一个 QQ 频道中进行测试
 - [ ] 添加入站消息的 `chat_name` 字段填充
 - [ ] 补充 `list_chats` 实现（当前返回空列表）
 - [ ] 考虑 Docker Alpine 环境下 `native-tls` 需要 OpenSSL 支持
