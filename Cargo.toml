@@ -8,6 +8,7 @@ members = [
     "crates/easybot-adapter-discord",
     "crates/easybot-adapter-feishu",
     "crates/easybot-adapter-qq",
+    "crates/easybot-adapter-wecom",
     "crates/easybot-adapter-wechat",
     "crates/easybot-plugin-sdk",
     "tests/plugins/mock-adapter",
@@ -59,6 +60,7 @@ dirs = "6"
 argon2 = "0.5"
 hmac = "0.12"
 sha2 = "0.10"
+base64 = "0.22"
 
 # 可观测性
 prometheus = { version = "0.13", features = ["process"] }

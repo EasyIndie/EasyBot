@@ -65,7 +65,8 @@ EasyBot is an independent **IM Gateway** service connecting multiple instant mes
 │  DiscordAdapter   (Gateway WebSocket)                      │
 │  FeishuAdapter    (WebSocket 事件订阅)                           │
 │  QQAdapter        (统一 QQBot 鉴权 + Gateway WebSocket)         │
-│  WeChatAdapter    (企业微信 REST API + 群机器人 Webhook)          │
+│  WeChatAdapter (wecom)  (企业微信 REST API + 群机器人 Webhook) │
+│  WeChatAdapter (wechat) (个人微信 iLink Bot API 长轮询)         │
 └──────────────────────────────────────────────────────────┘
 ```
 
@@ -147,7 +148,7 @@ The `AdapterRegistry` holds factory functions keyed by platform name. `AdapterMa
 |-------|-------|--------|
 | **P1 MVP** | Core types, PlatformAdapter trait, Telegram adapter, REST API, config loading, cross-platform paths | ✅ Done |
 | **P2 Bidirectional** | Event bus, WebSocket push, webhooks, inbound message handling, session persistence, message edit/delete, adapter lifecycle events | 100% ✅ |
-| **P3 Multi-platform** | Telegram ✅, Discord ✅, **飞书/Lark** ✅, **QQ** ✅ (群消息已验证, 频道 TODO), **企业微信** ❌ (代码就绪待验证) — 五个平台 + 媒体发送 | 80% ✅ |
+| **P3 Multi-platform** | Telegram ✅, Discord ✅, **飞书/Lark** ✅, **QQ** ✅ (群消息已验证, 频道 TODO), **企业微信(wecom)** ❌ (待验证), **个人微信(wechat)** 💻 (代码就绪待验证) — 五个平台 + 媒体发送 | 80% ✅ |
 | **P4 Production** | API key auth (Argon2), rate limiting, hot-reload, graceful shutdown, PostgreSQL, Prometheus, Docker, TTL retention | 80% ✅ (均已完成，仅剩生产环境打磨) |
 | **P5 Plugin System** | Plugin SDK, dynamic library loading, plugin registry | ❌ Not started |
 

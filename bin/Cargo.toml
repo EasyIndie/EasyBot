@@ -10,6 +10,7 @@ easybot-adapter-telegram = { path = "../crates/easybot-adapter-telegram", option
 easybot-adapter-discord = { path = "../crates/easybot-adapter-discord", optional = true }
 easybot-adapter-feishu = { path = "../crates/easybot-adapter-feishu", optional = true }
 easybot-adapter-qq = { path = "../crates/easybot-adapter-qq", optional = true }
+easybot-adapter-wecom = { path = "../crates/easybot-adapter-wecom", optional = true }
 easybot-adapter-wechat = { path = "../crates/easybot-adapter-wechat", optional = true }
 
 tokio.workspace = true
@@ -27,8 +28,9 @@ adapter-telegram = ["easybot-adapter-telegram"]
 adapter-discord = ["easybot-adapter-discord"]
 adapter-feishu = ["easybot-adapter-feishu"]
 adapter-qq = ["easybot-adapter-qq"]
+adapter-wecom = ["easybot-adapter-wecom"]
 adapter-wechat = ["easybot-adapter-wechat"]
-full = ["adapter-telegram", "adapter-discord", "adapter-feishu", "adapter-qq", "adapter-wechat"]
+full = ["adapter-telegram", "adapter-discord", "adapter-feishu", "adapter-qq", "adapter-wecom", "adapter-wechat"]
 plugin-system = ["easybot-core/plugin-system"]
 
 [[bin]]
