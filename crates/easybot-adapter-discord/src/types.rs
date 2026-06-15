@@ -137,3 +137,54 @@ pub(crate) struct HeartbeatPayload {
     pub op: u8,
     pub d: Option<u64>,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_discord_user_deserialize_with_bot_field() {
+        let json = r#"{"id":"123","username":"test","global_name":"Test","bot":true,"avatar":null}"#;
+        let user: DiscordUser = serde_json::from_str(json).unwrap();
+        assert_eq!(user.id, "123");
+        assert_eq!(user.bot, Some(true));
+        assert_eq!(user.username, "test");
+    }
+
+    #[test]
+    fn test_discord_user_deserialize_without_bot_field() {
+        // 普通用户消息中不包含 bot 字段，应默认 None
+        let json = r#"{"id":"456","username":"realuser","global_name":"Real User","avatar":null}"#;
+        let user: DiscordUser = serde_json::from_str(json).unwrap();
+        assert_eq!(user.id, "456");
+        assert_eq!(user.bot, None);
+    }
+
+    #[test]
+    fn test_discord_user_deserialize_bot_false() {
+        let json = r#"{"id":"789","username":"human","global_name":null,"bot":false,"avatar":"abc"}"#;
+        let user: DiscordUser = serde_json::from_str(json).unwrap();
+        assert_eq!(user.bot, Some(false));
+    }
+
+    #[test]
+    fn test_discord_message_deserialize_without_bot_on_author() {
+        // Discord MESSAGE_CREATE 中 author 可能不含 bot 字段
+        let json = r#"{
+            "id":"msg1",
+            "channel_id":"ch1",
+            "guild_id":null,
+            "author":{"id":"author1","username":"user","global_name":null,"avatar":null},
+            "content":"hello",
+            "timestamp":"2026-01-01T00:00:00+00:00",
+            "edited_timestamp":null,
+            "mention_everyone":false,
+            "tts":false,
+            "type":0
+        }"#;
+        let msg: DiscordMessage = serde_json::from_str(json).unwrap();
+        assert_eq!(msg.author.id, "author1");
+        assert_eq!(msg.author.bot, None);
+        assert_eq!(msg.content, Some("hello".to_string()));
+    }
+}

@@ -7,6 +7,7 @@
 | 文件 | 适配器 | 状态 |
 |------|--------|------|
 | [telegram.md](telegram.md) | Telegram | ✅ 已验证 |
+| [discord.md](discord.md) | Discord | ✅ 已验证 |
 | _其他适配器待添加_ | | |
 
 ## 验证方法速览

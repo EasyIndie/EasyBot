@@ -58,7 +58,42 @@ curl -s -H "Authorization: Bearer <your-api-key>" \
   "http://localhost:8080/api/v1/messages?platform=discord" | jq '.messages[0].chat_id'
 ```
 
-## 验证方法
+## 验证结果
+
+### 已验证功能清单
+
+| 验证项 | 状态 | 说明 |
+|--------|------|------|
+| **适配器管理** | | |
+| 自动启动 | ✅ | REST API 验证 token → Gateway WebSocket 连接 |
+| 停止适配器 | ✅ | `POST /adapters/discord/stop` → `Stopped`, `connected: false` |
+| 重启适配器 | ✅ | `POST /adapters/discord/start` → `Connected`, `connected: true` |
+| **出站消息** | | |
+| 纯文本发送 | ✅ | `POST /messages/send` → Discord 中收到消息 |
+| 消息编辑 | ✅ | `PUT /messages/{id}` → `ok: true` |
+| 消息删除 | ✅ | `DELETE /messages/{id}` → `ok: true`（修复 204 空 body 解析后） |
+| Typing Indicator | ✅ | `POST /channels/{id}/typing`（通过适配器实现） |
+| **入站消息** | | |
+| DM 消息接收 | ✅ | 用户"烛龙一现"的私信正确解析（修复 `bot` 字段后） |
+| 频道消息接收 | ✅ | `is_group: true`, `chat_type: Group` |
+| 自身消息过滤 | ✅ | `convert_message` 返回 `None` 当 `author.id == bot_user_id` |
+| **WebSocket 推送** | | |
+| 出站事件推送 | ✅ | `message.sent` 事件实时推送到 WS 客户端 |
+| 入站事件推送 | ✅ | `message.inbound` 事件实时推送到 WS 客户端 |
+| **错误处理** | | |
+| 无效 channelId | ✅ | 返回 `"Unknown Channel" (404)` |
+| 未认证请求 | ✅ | 返回 401 `AUTH_FAILED` |
+| 无效 API Key | ✅ | 返回 401 `AUTH_FAILED` |
+
+### 验证中发现并修复的问题
+
+| Bug | 修复 | 文件 |
+|-----|------|------|
+| `tokio-tungstenite` TLS 未编译 | 添加 `__rustls-tls` + `connect` features | `Cargo.toml` |
+| Rustls 0.23 CryptoProvider 未配置 | 调用 `aws_lc_rs::default_provider().install_default()` | `lib.rs` |
+| Gateway 证书验证失败 | 手动 TLS 连接器 + `webpki-roots` 根证书 | `lib.rs` |
+| 用户消息 MESSAGE_CREATE 解析失败 | `DiscordUser.bot` 改为 `Option<bool>` + `#[serde(default)]` | `types.rs` |
+| DELETE 返回 204 No Content 解析失败 | 重写 `delete_message` 直接处理空响应 | `lib.rs` |
 
 ### 1. 纯离线单元测试
 
