@@ -107,9 +107,12 @@ pub fn generate_env_example() -> String {
 # FEISHU_APP_ID=cli_xxxxxxxxxxxx
 # FEISHU_APP_SECRET=xxxxxxxxxxxxxxxxxxxxxxxx
 
-# QQ Bot Token
-# QQ_BOT_TOKEN=your_qq_bot_token
+# QQ 机器人凭据（AppSecret 作为 token，AppId 作为 app_id）
+# QQ_CLIENT_SECRET=your_qq_client_secret
+# QQ_APP_ID=your_qq_app_id
 
+# 个人微信 iLink Bot Token（可选，未设置时启动后扫码登录）
+# WECHAT_BOT_TOKEN=your_wechat_bot_token
 
 # PostgreSQL（可选，默认：SQLite）
 # DATABASE_URL=postgresql://user:password@localhost:5432/easybot
@@ -320,7 +323,9 @@ adapters:
         assert!(content.contains("DISCORD_BOT_TOKEN"));
         assert!(content.contains("FEISHU_APP_ID"));
         assert!(content.contains("FEISHU_APP_SECRET"));
-        assert!(content.contains("QQ_BOT_TOKEN"));
+        assert!(content.contains("QQ_CLIENT_SECRET"));
+        assert!(content.contains("QQ_APP_ID"));
+        assert!(content.contains("WECHAT_BOT_TOKEN"));
         assert!(content.contains("DATABASE_URL"));
     }
 }
