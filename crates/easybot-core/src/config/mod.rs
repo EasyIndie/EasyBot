@@ -105,9 +105,9 @@ pub fn generate_env_example() -> String {
 # FEISHU_APP_ID=cli_xxxxxxxxxxxx
 # FEISHU_APP_SECRET=xxxxxxxxxxxxxxxxxxxxxxxx
 
-# QQ 机器人凭据（AppSecret 作为 token，AppId 作为 app_id）
-# QQ_CLIENT_SECRET=your_qq_client_secret
+# QQ 机器人凭据（AppId 作为 app_id，AppSecret 作为 token）
 # QQ_APP_ID=your_qq_app_id
+# QQ_CLIENT_SECRET=your_qq_client_secret
 
 # 个人微信 iLink Bot Token（可选，未设置时启动后扫码登录）
 # WECHAT_BOT_TOKEN=your_wechat_bot_token

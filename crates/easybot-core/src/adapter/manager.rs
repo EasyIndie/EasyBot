@@ -235,6 +235,10 @@ impl AdapterManager {
     /// - `enabled: Some(false)` — 强制跳过，不启动
     /// - `enabled: Some(true)` — 强制启用，即使凭据未就绪
     /// - `enabled: None`（默认）— 自动检测：所有凭据环境变量已设置则启用
+    ///
+    /// 自动启用时，会将凭据环境变量的值注入 AdapterConfig：
+    /// - 第一个凭据变量 → `config.token`
+    /// - 所有凭据变量 → `config.extra`（key 为去掉平台前缀的小写名，如 FEISHU_APP_ID → app_id）
     pub async fn start_all(&self, configs: HashMap<String, AdapterConfig>) -> StartAllResult {
         let mut succeeded = Vec::new();
         let mut failed = Vec::new();
@@ -244,7 +248,7 @@ impl AdapterManager {
 
         for (platform, display_name) in platforms {
             // 从配置中获取覆盖值（如果存在），否则使用默认配置
-            let config = configs
+            let mut config = configs
                 .get(&platform)
                 .cloned()
                 .unwrap_or_else(|| AdapterConfig {
@@ -303,6 +307,8 @@ impl AdapterManager {
             };
 
             if effective_enabled {
+                // 将凭据环境变量注入 AdapterConfig（仅在 config 未显式设置时）
+                self.inject_credentials(&platform, &mut config).await;
                 match self.start(&platform, config).await {
                     Ok(r) if r.ok => succeeded.push(platform),
                     Ok(r) => failed.push((platform, r.error.unwrap_or_default())),
@@ -312,6 +318,49 @@ impl AdapterManager {
         }
 
         StartAllResult { succeeded, failed }
+    }
+
+    /// 将凭据环境变量注入 AdapterConfig
+    ///
+    /// - 若 `config.token` 未设置，从最后一个凭据环境变量读取（Secret/Token 惯例排在最后）
+    /// - 所有凭据变量值写入 `config.extra`，key 为去掉平台前缀的小写名
+    async fn inject_credentials(&self, platform: &str, config: &mut AdapterConfig) {
+        let env_vars = self.registry.credential_env_vars(platform).await;
+        if env_vars.is_empty() {
+            return;
+        }
+
+        // 最后一个凭据变量 → token（惯例：ID 在前，Secret/Token 在后）
+        if config.token.is_none() {
+            if let Some(last_var) = env_vars.last() {
+                if let Ok(val) = std::env::var(last_var) {
+                    if !val.is_empty() {
+                        config.token = Some(val);
+                    }
+                }
+            }
+        }
+
+        // 所有凭据变量 → extra（key: 去掉平台前缀，小写）
+        let prefix = platform.to_uppercase() + "_";
+        let mut extra_map = match config.extra.clone() {
+            serde_json::Value::Object(m) => m,
+            _ => serde_json::Map::new(),
+        };
+        for var_name in &env_vars {
+            let key = var_name
+                .strip_prefix(&prefix)
+                .unwrap_or(var_name)
+                .to_lowercase();
+            if let Ok(val) = std::env::var(var_name) {
+                if !val.is_empty() {
+                    extra_map
+                        .entry(key)
+                        .or_insert(serde_json::Value::String(val));
+                }
+            }
+        }
+        config.extra = serde_json::Value::Object(extra_map);
     }
 
     /// 停止所有适配器
@@ -705,6 +754,112 @@ mod tests {
 
         assert_eq!(event.event_type, event_types::ADAPTER_DISCONNECTED);
         assert_eq!(event.source, "adapter_manager");
+    }
+
+    // ── inject_credentials 测试 ───────────────────────────────
+
+    #[tokio::test]
+    async fn test_inject_credentials_populates_token_and_extra() {
+        let manager = AdapterManager::new();
+        let registry = manager.registry();
+        let factory: AdapterFactory = std::sync::Arc::new(|_config| {
+            Box::pin(async move {
+                let adapter = MockTestAdapter::new();
+                Ok(Box::new(adapter) as Box<dyn PlatformAdapter>)
+            })
+        });
+        // platform "test" → prefix "TEST_" → env vars must start with "TEST_"
+        registry
+            .register("test", "Test", factory, &["TEST_APP_ID", "TEST_APP_SECRET"])
+            .await;
+
+        std::env::set_var("TEST_APP_ID", "app-id-123");
+        std::env::set_var("TEST_APP_SECRET", "secret-456");
+
+        let mut config = AdapterConfig {
+            enabled: None,
+            token: None,
+            api_key: None,
+            base_url: None,
+            extra: serde_json::json!({}),
+        };
+
+        manager.inject_credentials("test", &mut config).await;
+
+        // token 应为最后一个凭据变量（SECRET）
+        assert_eq!(config.token.as_deref(), Some("secret-456"));
+        // extra: 去掉平台前缀 TEST_ 后的小写 key
+        assert_eq!(config.extra["app_id"], "app-id-123");
+        assert_eq!(config.extra["app_secret"], "secret-456");
+
+        std::env::remove_var("TEST_APP_ID");
+        std::env::remove_var("TEST_APP_SECRET");
+    }
+
+    #[tokio::test]
+    async fn test_inject_credentials_does_not_overwrite_existing_token() {
+        let manager = AdapterManager::new();
+        let registry = manager.registry();
+        let factory: AdapterFactory = std::sync::Arc::new(|_config| {
+            Box::pin(async move {
+                let adapter = MockTestAdapter::new();
+                Ok(Box::new(adapter) as Box<dyn PlatformAdapter>)
+            })
+        });
+        registry
+            .register("toktest", "TokTest", factory, &["TOKTEST_TOKEN"])
+            .await;
+
+        std::env::set_var("TOKTEST_TOKEN", "from-env");
+
+        let mut config = AdapterConfig {
+            enabled: None,
+            token: Some("explicit-token".to_string()),
+            api_key: None,
+            base_url: None,
+            extra: serde_json::json!({}),
+        };
+
+        manager.inject_credentials("toktest", &mut config).await;
+
+        // 显式设置的 token 保持不变
+        assert_eq!(config.token.as_deref(), Some("explicit-token"));
+        // extra 仍会被填充，key 为去前缀后的小写: TOKTEST_TOKEN → strip TOKTEST_ → TOKEN → lowercase → token
+        assert_eq!(config.extra["token"], "from-env");
+
+        std::env::remove_var("TOKTEST_TOKEN");
+    }
+
+    #[tokio::test]
+    async fn test_start_all_auto_enables_with_injected_credentials() {
+        let manager = AdapterManager::new();
+        let registry = manager.registry();
+        let factory: AdapterFactory = std::sync::Arc::new(|config| {
+            Box::pin(async move {
+                let mut adapter = MockTestAdapter::new();
+                // 验证 config 已被注入凭据
+                let init_result = adapter.init(config).await.map_err(|e| e.to_string())?;
+                if !init_result.ok {
+                    return Err(init_result.error.unwrap_or_default());
+                }
+                Ok(Box::new(adapter) as Box<dyn PlatformAdapter>)
+            })
+        });
+        registry
+            .register("autotest", "AutoTest", factory, &["AUTOTEST_TOKEN"])
+            .await;
+
+        std::env::set_var("AUTOTEST_TOKEN", "my-token");
+
+        // 不传入任何 config — start_all 应自动检测并注入凭据
+        let result = manager.start_all(HashMap::new()).await;
+        assert!(
+            result.succeeded.contains(&"autotest".to_string()),
+            "autotest should be auto-enabled: {:?}",
+            result
+        );
+
+        std::env::remove_var("AUTOTEST_TOKEN");
     }
 }
 
