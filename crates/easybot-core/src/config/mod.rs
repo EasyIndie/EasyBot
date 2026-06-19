@@ -206,6 +206,58 @@ adapters:
     .to_string()
 }
 
+/// 生成 `gateway.local.yaml` 示例内容
+///
+/// 列出所有支持的内置适配器及其配置方式，供用户复制为 `gateway.local.yaml`
+/// 后启用对应的 IM 平台适配器。该文件不会上传到版本控制（已写入 .gitignore）。
+///
+/// secret 字段通过 `${VAR_NAME}` 引用环境变量，需在 `.env` 文件中设置对应值。
+pub fn generate_local_config_example() -> String {
+    r#"# EasyBot 本地配置覆盖
+#
+# 复制此文件为 gateway.local.yaml 并取消注释以启用对应适配器。
+# 此文件不会被版本控制（已在 .gitignore 中），适合存放本地覆盖和密钥引用。
+#
+# Secret 值通过 ${VAR_NAME} 引用环境变量，需在 .env 中设置对应值。
+#
+# 使用方式:
+#   cp gateway.local.yaml.example gateway.local.yaml
+#   vim gateway.local.yaml
+#
+# 注意: 所有适配器默认 disabled，需显式设置 enabled: true。
+
+# Telegram
+# telegram:
+#   enabled: true
+#   token: "${TELEGRAM_BOT_TOKEN}"
+
+# Discord
+# discord:
+#   enabled: true
+#   token: "${DISCORD_BOT_TOKEN}"
+
+# 飞书/Lark
+# feishu:
+#   enabled: true
+#   token: "${FEISHU_APP_SECRET}"
+#   extra:
+#     app_id: "${FEISHU_APP_ID}"
+
+# QQ 机器人
+# qq:
+#   enabled: true
+#   token: "${QQ_CLIENT_SECRET}"
+#   extra:
+#     app_id: "${QQ_APP_ID}"
+
+# 个人微信（可选，未配置 bot_token 时启动后扫码登录）
+# wechat:
+#   enabled: true
+#   # bot_token: "${WECHAT_BOT_TOKEN}"
+"#
+    .to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -336,5 +388,22 @@ adapters:
         assert!(content.contains("QQ_APP_ID"));
         assert!(content.contains("WECHAT_BOT_TOKEN"));
         assert!(content.contains("DATABASE_URL"));
+    }
+
+    #[test]
+    fn test_generate_local_config_example_contains_all_platforms() {
+        let content = generate_local_config_example();
+        assert!(content.contains("telegram:"));
+        assert!(content.contains("TELEGRAM_BOT_TOKEN"));
+        assert!(content.contains("discord:"));
+        assert!(content.contains("DISCORD_BOT_TOKEN"));
+        assert!(content.contains("feishu:"));
+        assert!(content.contains("FEISHU_APP_SECRET"));
+        assert!(content.contains("FEISHU_APP_ID"));
+        assert!(content.contains("qq:"));
+        assert!(content.contains("QQ_CLIENT_SECRET"));
+        assert!(content.contains("QQ_APP_ID"));
+        assert!(content.contains("wechat:"));
+        assert!(content.contains("WECHAT_BOT_TOKEN"));
     }
 }

@@ -384,6 +384,17 @@ async fn handle_init(cli: Cli) -> anyhow::Result<()> {
             tracing::info!("Created .env.example: {}", env_example_path.display());
         }
 
+        // 同时创建 gateway.local.yaml.example（若不存在）
+        let local_example_path = home.join("gateway.local.yaml.example");
+        if !local_example_path.exists() {
+            let local_example = easybot_core::config::generate_local_config_example();
+            tokio::fs::write(&local_example_path, &local_example).await?;
+            tracing::info!(
+                "Created local config example: {}",
+                local_example_path.display()
+            );
+        }
+
         println!("\nEasyBot initialized at:");
         paths.print_tree();
         println!("\nNext steps:");
@@ -392,11 +403,14 @@ async fn handle_init(cli: Cli) -> anyhow::Result<()> {
             paths.config_file.display()
         );
         println!(
-            "  2. Edit {} to set tokens and secrets",
+            "  2. Copy {} to gateway.local.yaml\n     and uncomment the adapters you need",
+            local_example_path.display()
+        );
+        println!(
+            "  3. Copy {} to .env\n     and fill in your tokens and secrets",
             env_example_path.display()
         );
-        println!("     (or copy it to .env in the same directory)");
-        println!("  3. Run `easybot` to start");
+        println!("  4. Run `easybot` to start");
     } else {
         tracing::info!(
             "Configuration already exists: {}",
