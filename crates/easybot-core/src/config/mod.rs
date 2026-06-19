@@ -89,13 +89,13 @@ pub fn load_env(paths: &EasyBotPaths) -> Result<(), crate::types::error::Gateway
 pub fn generate_env_example() -> String {
     r#"# EasyBot 环境变量
 #
-# 将此文件复制为 .env 并填入你的令牌/密钥。
+# 取消注释并填入你的令牌/密钥以启用对应平台。
 # 此文件不受版本控制（.env 已在 .gitignore 中）。
 #
 # Shell 中设置的环境变量（export VAR=value）或
 # docker-compose.yml 中的设置优先于本文件的值。
 #
-# 取消 '#' 注释以启用每个令牌。
+# 提示: 同时还需在 gateway.local.yaml 中取消注释对应的适配器。
 
 # Telegram Bot Token（从 @BotFather 获取）
 # TELEGRAM_BOT_TOKEN=123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11
@@ -215,14 +215,13 @@ adapters:
 pub fn generate_local_config_example() -> String {
     r#"# EasyBot 本地配置覆盖
 #
-# 复制此文件为 gateway.local.yaml 并取消注释以启用对应适配器。
+# 取消注释以启用对应适配器。
 # 此文件不会被版本控制（已在 .gitignore 中），适合存放本地覆盖和密钥引用。
 #
 # Secret 值通过 ${VAR_NAME} 引用环境变量，需在 .env 中设置对应值。
 #
 # 使用方式:
-#   cp gateway.local.yaml.example gateway.local.yaml
-#   vim gateway.local.yaml
+#   取消下面所需适配器的注释，同时在 .env 中取消注释并填入对应 token
 #
 # 注意: 所有适配器默认 disabled，需显式设置 enabled: true。
 

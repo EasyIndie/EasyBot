@@ -1,11 +1,14 @@
 # EasyBot 本地配置覆盖
 #
 # 复制此文件为 gateway.local.yaml 并取消注释以启用对应适配器。
+# 也可通过 easybot --init 自动生成（推荐）。
 # 此文件不会被版本控制（已在 .gitignore 中），适合存放本地覆盖和密钥引用。
 #
 # Secret 值通过 ${VAR_NAME} 引用环境变量，需在 .env 中设置对应值。
 #
 # 使用方式:
+#   easybot --init                # 自动生成（推荐）
+#   或
 #   cp gateway.local.yaml.example gateway.local.yaml
 #   vim gateway.local.yaml
 #
