@@ -14,7 +14,7 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 
 fn qq_config(mock_port: u16) -> AdapterConfig {
     AdapterConfig {
-        enabled: true,
+        enabled: Some(true),
         token: Some("test-client-secret".into()),
         api_key: None,
         base_url: Some(format!("http://127.0.0.1:{}", mock_port)),
@@ -43,7 +43,7 @@ async fn test_send_before_connect_returns_error() {
     // QQ 的 send() 需要 token_store（connect() 时创建），
     // send() 前未连接应返回错误
     let config = AdapterConfig {
-        enabled: true,
+        enabled: Some(true),
         token: Some("test-secret".into()),
         api_key: None,
         base_url: None,
@@ -72,7 +72,7 @@ async fn test_send_before_connect_returns_error() {
 async fn test_init_requires_app_id_and_token() {
     // 缺少 app_id
     let config = AdapterConfig {
-        enabled: true,
+        enabled: Some(true),
         token: Some("secret".into()),
         api_key: None,
         base_url: None,
@@ -84,7 +84,7 @@ async fn test_init_requires_app_id_and_token() {
 
     // 缺少 token
     let config = AdapterConfig {
-        enabled: true,
+        enabled: Some(true),
         token: None,
         api_key: None,
         base_url: None,
@@ -133,7 +133,7 @@ async fn test_connect_uses_base_url_for_gateway() {
 #[tokio::test]
 async fn test_send_media_before_connect_fails() {
     let config = AdapterConfig {
-        enabled: true,
+        enabled: Some(true),
         token: Some("test-secret".into()),
         api_key: None,
         base_url: None,
@@ -173,7 +173,7 @@ async fn test_connect_failure_state() {
     // QQ connect() 需要 access token refresh（硬编码的 bots.qq.com 端点）
     // 该请求必然失败，connect() 应该返回 ConnectResult{ok:false} 或 Err
     let config = AdapterConfig {
-        enabled: true,
+        enabled: Some(true),
         token: Some("test-secret".into()),
         api_key: None,
         base_url: None,
@@ -198,7 +198,7 @@ async fn test_connect_failure_state() {
 #[tokio::test]
 async fn test_connect_disconnect_state_cycle() {
     let config = AdapterConfig {
-        enabled: true,
+        enabled: Some(true),
         token: Some("test-secret".into()),
         api_key: None,
         base_url: None,

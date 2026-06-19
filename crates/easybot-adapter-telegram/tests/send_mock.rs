@@ -17,7 +17,7 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 async fn make_adapter(mock_port: u16) -> impl PlatformAdapter {
     let base_url = format!("http://127.0.0.1:{}/bot", mock_port);
     let config = AdapterConfig {
-        enabled: true,
+        enabled: Some(true),
         token: Some("test-token".into()),
         api_key: None,
         base_url: Some(base_url),
@@ -215,7 +215,7 @@ async fn test_send_with_malformed_json_response() {
 #[tokio::test]
 async fn test_init_rejects_empty_token() {
     let config = AdapterConfig {
-        enabled: true,
+        enabled: Some(true),
         token: None,
         api_key: None,
         base_url: None,
@@ -338,7 +338,7 @@ async fn test_connect_malformed_response() {
 #[tokio::test]
 async fn test_connect_no_token_returns_config_error() {
     let config = AdapterConfig {
-        enabled: true,
+        enabled: Some(true),
         token: None,
         api_key: None,
         base_url: None,

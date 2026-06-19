@@ -832,7 +832,10 @@ impl PlatformAdapter for TelegramAdapter {
 
     fn runtime_config(&self) -> AdapterRuntimeConfig {
         AdapterRuntimeConfig {
-            enabled: self.config.as_ref().is_some_and(|c| c.enabled),
+            enabled: self
+                .config
+                .as_ref()
+                .is_some_and(|c| c.enabled != Some(false)),
             token_configured: self
                 .config
                 .as_ref()
@@ -940,7 +943,7 @@ mod tests {
         let mut adapter = TelegramAdapter::new();
         adapter
             .init(AdapterConfig {
-                enabled: true,
+                enabled: Some(true),
                 token: Some("123:token".to_string()),
                 api_key: None,
                 base_url: None,
@@ -989,7 +992,7 @@ mod tests {
         let mut adapter = TelegramAdapter::new();
         let result = adapter
             .init(AdapterConfig {
-                enabled: true,
+                enabled: Some(true),
                 token: None,
                 api_key: None,
                 base_url: None,
@@ -1005,7 +1008,7 @@ mod tests {
         let mut adapter = TelegramAdapter::new();
         let init_result = adapter
             .init(AdapterConfig {
-                enabled: true,
+                enabled: Some(true),
                 token: Some("123456:test-token".to_string()),
                 api_key: None,
                 base_url: None,
@@ -1027,7 +1030,7 @@ mod tests {
         let mut adapter = TelegramAdapter::new();
         adapter
             .init(AdapterConfig {
-                enabled: true,
+                enabled: Some(true),
                 token: Some("123456:test-token".to_string()),
                 api_key: None,
                 base_url: None,

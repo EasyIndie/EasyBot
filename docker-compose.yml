@@ -3,14 +3,12 @@ version: "3.9"
 # EasyBot Stack
 #
 # Quick start:
-#   cp .env.example .env     # Edit tokens
+#   cp .env.example .env     # Edit tokens — adapters auto-enable when tokens are set
 #   docker compose up -d
 #   curl localhost:8080/health
 #
-# 启用更多适配器:
-#   1. 复制 .env.example 为 .env，填入 token
-#   2. 编辑 gateway.yaml，取消对应适配器的注释
-#   3. docker compose --profile postgres up -d
+# 启用适配器: 只需在下方 environment 或 .env 中设置令牌即可自动启用。
+# 无需编辑 gateway.yaml — 系统自动检测已配置凭据的平台。
 #
 # For monitoring (optional):
 #   docker-compose --profile monitoring up -d

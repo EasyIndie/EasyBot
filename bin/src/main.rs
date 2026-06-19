@@ -399,16 +399,13 @@ async fn handle_init(cli: Cli) -> anyhow::Result<()> {
         paths.print_tree();
         println!("\nNext steps:");
         println!(
-            "  1. Edit {} — uncomment the adapters you need",
-            paths.config_file.display()
-        );
-        println!(
-            "  2. Edit {} — uncomment and fill in your tokens",
+            "  1. Edit {} — uncomment and fill in your tokens",
             paths.env_path.display()
         );
-        println!("  3. Run `easybot --debug` to start");
+        println!("  2. Run `easybot --debug` to start");
         println!();
-        println!("Docker Compose 用户使用同样的方式: 编辑 gateway.yaml 并 docker compose up -d");
+        println!("Docker Compose users:");
+        println!("  cp .env.example .env && vim .env && docker compose up -d");
     } else {
         tracing::info!(
             "Configuration already exists: {}",
@@ -453,7 +450,7 @@ async fn load_plugin_adapters(
         {
             adapter_manager
                 .registry()
-                .register(&result.platform_name, &result.display_name, factory)
+                .register(&result.platform_name, &result.display_name, factory, &[])
                 .await;
             tracing::info!(
                 "Registered plugin adapter: {} ({})",
@@ -505,7 +502,9 @@ async fn register_builtin_adapters(
                 Ok(Box::new(adapter) as Box<dyn easybot_core::PlatformAdapter>)
             })
         });
-        registry.register("telegram", "Telegram", factory).await;
+        registry
+            .register("telegram", "Telegram", factory, &["TELEGRAM_BOT_TOKEN"])
+            .await;
         tracing::info!("Registered built-in adapter: telegram");
     }
 
@@ -530,7 +529,9 @@ async fn register_builtin_adapters(
                 Ok(Box::new(adapter) as Box<dyn easybot_core::PlatformAdapter>)
             })
         });
-        registry.register("discord", "Discord", factory).await;
+        registry
+            .register("discord", "Discord", factory, &["DISCORD_BOT_TOKEN"])
+            .await;
         tracing::info!("Registered built-in adapter: discord");
     }
 
@@ -555,7 +556,14 @@ async fn register_builtin_adapters(
                 Ok(Box::new(adapter) as Box<dyn easybot_core::PlatformAdapter>)
             })
         });
-        registry.register("feishu", "飞书", factory).await;
+        registry
+            .register(
+                "feishu",
+                "飞书",
+                factory,
+                &["FEISHU_APP_ID", "FEISHU_APP_SECRET"],
+            )
+            .await;
         tracing::info!("Registered built-in adapter: feishu");
     }
 
@@ -580,7 +588,9 @@ async fn register_builtin_adapters(
                 Ok(Box::new(adapter) as Box<dyn easybot_core::PlatformAdapter>)
             })
         });
-        registry.register("qq", "QQ", factory).await;
+        registry
+            .register("qq", "QQ", factory, &["QQ_APP_ID", "QQ_CLIENT_SECRET"])
+            .await;
         tracing::info!("Registered built-in adapter: qq");
     }
 
@@ -604,7 +614,8 @@ async fn register_builtin_adapters(
                 Ok(Box::new(adapter) as Box<dyn easybot_core::PlatformAdapter>)
             })
         });
-        registry.register("wechat", "个人微信", factory).await;
+        // 个人微信可通过扫码登录，无需强制凭据。设置 WECHAT_BOT_TOKEN 可启用 iLink Bot API。
+        registry.register("wechat", "个人微信", factory, &[]).await;
         tracing::info!("Registered built-in adapter: wechat");
     }
 

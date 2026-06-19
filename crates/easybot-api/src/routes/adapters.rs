@@ -75,7 +75,7 @@ pub async fn start_adapter(
         .get(&platform)
         .cloned()
         .unwrap_or_else(|| easybot_core::types::adapter::AdapterConfig {
-            enabled: true,
+            enabled: Some(true),
             token: None,
             api_key: None,
             base_url: None,

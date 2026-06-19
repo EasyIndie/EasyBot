@@ -93,7 +93,7 @@ library: "{}"
 
     fn make_adapter_config() -> AdapterConfig {
         AdapterConfig {
-            enabled: true,
+            enabled: Some(true),
             token: None,
             api_key: None,
             base_url: None,

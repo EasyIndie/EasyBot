@@ -229,20 +229,85 @@ impl AdapterManager {
         statuses.values().cloned().collect()
     }
 
-    /// 启动所有已配置的适配器
+    /// 启动所有适配器（基于注册表 + 凭据自动检测）
+    ///
+    /// 遍历所有已注册的适配器平台，根据配置和凭据环境变量决定是否启动：
+    /// - `enabled: Some(false)` — 强制跳过，不启动
+    /// - `enabled: Some(true)` — 强制启用，即使凭据未就绪
+    /// - `enabled: None`（默认）— 自动检测：所有凭据环境变量已设置则启用
     pub async fn start_all(&self, configs: HashMap<String, AdapterConfig>) -> StartAllResult {
         let mut succeeded = Vec::new();
         let mut failed = Vec::new();
 
-        for (platform, config) in configs {
-            if !config.enabled {
-                info!("Skipping disabled adapter '{}'", platform);
-                continue;
-            }
-            match self.start(&platform, config).await {
-                Ok(r) if r.ok => succeeded.push(platform),
-                Ok(r) => failed.push((platform, r.error.unwrap_or_default())),
-                Err(e) => failed.push((platform, e.to_string())),
+        // 遍历所有已注册的适配器平台（而非仅配置文件中的平台）
+        let platforms = self.registry.list_platforms().await;
+
+        for (platform, display_name) in platforms {
+            // 从配置中获取覆盖值（如果存在），否则使用默认配置
+            let config = configs
+                .get(&platform)
+                .cloned()
+                .unwrap_or_else(|| AdapterConfig {
+                    enabled: None,
+                    token: None,
+                    api_key: None,
+                    base_url: None,
+                    extra: serde_json::Value::default(),
+                });
+
+            // 解析 enabled 状态
+            let effective_enabled = match config.enabled {
+                Some(false) => {
+                    info!(
+                        "Skipping adapter '{}' ({}) — explicitly disabled in config",
+                        platform, display_name
+                    );
+                    continue;
+                }
+                Some(true) => {
+                    info!(
+                        "Starting adapter '{}' ({}) — explicitly enabled",
+                        platform, display_name
+                    );
+                    true
+                }
+                None => {
+                    // 自动检测：检查凭据环境变量是否全部设置
+                    let env_vars = self.registry.credential_env_vars(&platform).await;
+                    if env_vars.is_empty() {
+                        // 无凭据要求（例如个人微信扫码登录）— 自动启用
+                        info!(
+                            "Auto-enabling adapter '{}' ({}) — no credentials required",
+                            platform, display_name
+                        );
+                        true
+                    } else {
+                        let all_set = env_vars
+                            .iter()
+                            .all(|v| std::env::var(v).map(|val| !val.is_empty()).unwrap_or(false));
+                        if all_set {
+                            info!(
+                                "Auto-enabling adapter '{}' ({}) — credentials detected via env vars: {:?}",
+                                platform, display_name, env_vars
+                            );
+                            true
+                        } else {
+                            info!(
+                                "Skipping adapter '{}' ({}) — credentials not set (env vars: {:?})",
+                                platform, display_name, env_vars
+                            );
+                            continue;
+                        }
+                    }
+                }
+            };
+
+            if effective_enabled {
+                match self.start(&platform, config).await {
+                    Ok(r) if r.ok => succeeded.push(platform),
+                    Ok(r) => failed.push((platform, r.error.unwrap_or_default())),
+                    Err(e) => failed.push((platform, e.to_string())),
+                }
             }
         }
 
@@ -437,7 +502,9 @@ mod tests {
                 Ok(Box::new(adapter) as Box<dyn PlatformAdapter>)
             })
         });
-        registry.register("test-mock", "Test Mock", factory).await;
+        registry
+            .register("test-mock", "Test Mock", factory, &[])
+            .await;
     }
 
     // ── 测试: stop() 后 get_status() 返回 Stopped ────────────
@@ -448,7 +515,7 @@ mod tests {
         register_mock_adapter(&manager).await;
 
         let config = AdapterConfig {
-            enabled: true,
+            enabled: Some(true),
             token: Some("test-token".into()),
             api_key: None,
             base_url: None,
@@ -477,7 +544,7 @@ mod tests {
         register_mock_adapter(&manager).await;
 
         let config = AdapterConfig {
-            enabled: true,
+            enabled: Some(true),
             token: Some("my-secret-token".into()),
             api_key: Some("my-api-key".into()),
             base_url: None,
@@ -501,7 +568,7 @@ mod tests {
         assert!(!manager.has_connected().await);
 
         let config = AdapterConfig {
-            enabled: true,
+            enabled: Some(true),
             token: Some("t".into()),
             api_key: None,
             base_url: None,
@@ -518,7 +585,7 @@ mod tests {
         register_mock_adapter(&manager).await;
 
         let config = AdapterConfig {
-            enabled: true,
+            enabled: Some(true),
             token: Some("t".into()),
             api_key: None,
             base_url: None,
@@ -545,7 +612,7 @@ mod tests {
         register_mock_adapter(&manager).await;
 
         let config = AdapterConfig {
-            enabled: true,
+            enabled: Some(true),
             token: Some("t".into()),
             api_key: None,
             base_url: None,
@@ -569,7 +636,7 @@ mod tests {
         configs.insert(
             "test-mock".to_string(),
             AdapterConfig {
-                enabled: false,
+                enabled: Some(false),
                 token: None,
                 api_key: None,
                 base_url: None,
@@ -596,7 +663,7 @@ mod tests {
         register_mock_adapter(&manager).await;
 
         let config = AdapterConfig {
-            enabled: true,
+            enabled: Some(true),
             token: Some("t".into()),
             api_key: None,
             base_url: None,
@@ -621,7 +688,7 @@ mod tests {
         register_mock_adapter(&manager).await;
 
         let config = AdapterConfig {
-            enabled: true,
+            enabled: Some(true),
             token: Some("t".into()),
             api_key: None,
             base_url: None,

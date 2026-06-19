@@ -89,13 +89,11 @@ pub fn load_env(paths: &EasyBotPaths) -> Result<(), crate::types::error::Gateway
 pub fn generate_env_example() -> String {
     r#"# EasyBot 环境变量
 #
-# 取消注释并填入你的令牌/密钥以启用对应平台。
+# 取消注释并填入令牌/密钥，对应平台适配器会自动启用。
+# 无需修改 gateway.yaml。
+#
 # 此文件不受版本控制（.env 已在 .gitignore 中）。
-#
-# Shell 中设置的环境变量（export VAR=value）或
-# docker-compose.yml 中的设置优先于本文件的值。
-#
-# 提示: 同时还需在 gateway.local.yaml 中取消注释对应的适配器。
+# Shell export / Docker environment 优先于本文件的值。
 
 # Telegram Bot Token（从 @BotFather 获取）
 # TELEGRAM_BOT_TOKEN=123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11
@@ -161,13 +159,17 @@ pub fn generate_default_config() -> String {
     r#"# EasyBot 默认配置
 #
 # 配置文件支持环境变量引用语法: ${VAR_NAME}
-# 环境变量优先级（从高到低）:
-#   1. shell export / Docker environment:
-#   2. {config_dir}/.env 文件
 # 使用 gateway.local.yaml 覆盖本配置中的值（不上传到版本控制）
 #
-# 启用适配器: 设置 enabled: true，同时在 .env 中填入对应的 token/secret。
-# 适配器所需的字段参考 gateway.local.yaml 模板（运行 easybot --init 生成）。
+# 启用适配器: 在 .env 或 Shell 中设置对应平台的环境变量即可自动启用。
+# 无需在配置文件中声明适配器 — 系统会自动检测已注册的平台。
+#
+# 各平台所需环境变量:
+#   Telegram:  TELEGRAM_BOT_TOKEN
+#   Discord:   DISCORD_BOT_TOKEN
+#   飞书:      FEISHU_APP_ID + FEISHU_APP_SECRET
+#   QQ:        QQ_APP_ID + QQ_CLIENT_SECRET
+#   个人微信:  无（扫码登录）或 WECHAT_BOT_TOKEN (iLink Bot API)
 
 server:
   host: "127.0.0.1"
@@ -192,73 +194,39 @@ logging:
   level: "info"
   format: "text"
   output: "stdout"
-
-adapters:
-  telegram:
-    enabled: false
-
-  discord:
-    enabled: false
-
-  feishu:
-    enabled: false
-
-  qq:
-    enabled: false
-
-  wechat:
-    enabled: false
 "#
     .to_string()
 }
 
 /// 生成 `gateway.local.yaml` 示例内容
 ///
-/// 列出所有支持的内置适配器及其配置方式，供用户复制为 `gateway.local.yaml`
-/// 后启用对应的 IM 平台适配器。该文件不会上传到版本控制（已写入 .gitignore）。
-///
-/// secret 字段通过 `${VAR_NAME}` 引用环境变量，需在 `.env` 文件中设置对应值。
+/// 高级用法：覆盖 gateway.yaml 中的默认值或显式控制适配器启用/禁用。
+/// 一般情况下无需此文件 — 在 .env 中设置令牌即可自动启用适配器。
+/// 该文件不会上传到版本控制（已写入 .gitignore）。
 pub fn generate_local_config_example() -> String {
-    r#"# EasyBot 本地配置覆盖
+    r#"# EasyBot 本地配置覆盖（高级用法）
 #
-# 取消注释以启用对应适配器。
-# 此文件不会被版本控制（已在 .gitignore 中），适合存放本地覆盖和密钥引用。
+# 此文件用于覆盖 gateway.yaml 中的默认配置。
+# 一般情况下无需此文件 — 在 .env 中设置令牌即可自动启用适配器。
 #
-# Secret 值通过 ${VAR_NAME} 引用环境变量，需在 .env 中设置对应值。
+# 高级场景:
+#   - 显式禁用某个已配置凭据的适配器: enabled: false
+#   - 覆盖服务器端口: server.port: 9090
+#   - 设置自定义 API 地址: base_url: "https://custom-api.example.com"
 #
-# 使用方式:
-#   取消下面所需适配器的注释，同时在 .env 中取消注释并填入对应 token
-#
-# 注意: 所有适配器默认 disabled，需显式设置 enabled: true。
+# 此文件不会被版本控制（已在 .gitignore 中）。
 
-# Telegram
+# 示例: 显式禁用 Telegram（即使 TELEGRAM_BOT_TOKEN 已设置）
 # telegram:
-#   enabled: true
-#   token: "${TELEGRAM_BOT_TOKEN}"
+#   enabled: false
 
-# Discord
-# discord:
-#   enabled: true
-#   token: "${DISCORD_BOT_TOKEN}"
-
-# 飞书/Lark
-# feishu:
-#   enabled: true
-#   token: "${FEISHU_APP_SECRET}"
-#   extra:
-#     app_id: "${FEISHU_APP_ID}"
-
-# QQ 机器人
-# qq:
-#   enabled: true
-#   token: "${QQ_CLIENT_SECRET}"
-#   extra:
-#     app_id: "${QQ_APP_ID}"
-
-# 个人微信（可选，未配置 bot_token 时启动后扫码登录）
+# 示例: 启用个人微信 QR 扫码登录（无需设置 WECHAT_BOT_TOKEN）
 # wechat:
 #   enabled: true
-#   # bot_token: "${WECHAT_BOT_TOKEN}"
+
+# 示例: 自定义服务器端口
+# server:
+#   port: 9090
 "#
     .to_string()
 }
@@ -396,19 +364,12 @@ adapters:
     }
 
     #[test]
-    fn test_generate_local_config_example_contains_all_platforms() {
+    fn test_generate_local_config_example_contains_override_examples() {
         let content = generate_local_config_example();
-        assert!(content.contains("telegram:"));
-        assert!(content.contains("TELEGRAM_BOT_TOKEN"));
-        assert!(content.contains("discord:"));
-        assert!(content.contains("DISCORD_BOT_TOKEN"));
-        assert!(content.contains("feishu:"));
-        assert!(content.contains("FEISHU_APP_SECRET"));
-        assert!(content.contains("FEISHU_APP_ID"));
-        assert!(content.contains("qq:"));
-        assert!(content.contains("QQ_CLIENT_SECRET"));
-        assert!(content.contains("QQ_APP_ID"));
-        assert!(content.contains("wechat:"));
-        assert!(content.contains("WECHAT_BOT_TOKEN"));
+        // 新格式仅包含高级覆盖示例，不再逐平台列举
+        assert!(content.contains("本地配置覆盖"));
+        assert!(content.contains("enabled: false"));
+        assert!(content.contains("enabled: true"));
+        assert!(content.contains("server:"));
     }
 }

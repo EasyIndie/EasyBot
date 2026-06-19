@@ -816,7 +816,10 @@ impl PlatformAdapter for DiscordAdapter {
 
     fn runtime_config(&self) -> AdapterRuntimeConfig {
         AdapterRuntimeConfig {
-            enabled: self.config.as_ref().is_some_and(|c| c.enabled),
+            enabled: self
+                .config
+                .as_ref()
+                .is_some_and(|c| c.enabled != Some(false)),
             token_configured: self
                 .config
                 .as_ref()
@@ -924,7 +927,7 @@ mod tests {
         let mut adapter = DiscordAdapter::new();
         adapter
             .init(AdapterConfig {
-                enabled: true,
+                enabled: Some(true),
                 token: Some("token".to_string()),
                 api_key: None,
                 base_url: None,
@@ -949,7 +952,7 @@ mod tests {
         let mut adapter = DiscordAdapter::new();
         let result = adapter
             .init(AdapterConfig {
-                enabled: true,
+                enabled: Some(true),
                 token: None,
                 api_key: None,
                 base_url: None,
@@ -965,7 +968,7 @@ mod tests {
         let mut adapter = DiscordAdapter::new();
         let init_result = adapter
             .init(AdapterConfig {
-                enabled: true,
+                enabled: Some(true),
                 token: Some("fake_discord_token".to_string()),
                 api_key: None,
                 base_url: None,
@@ -987,7 +990,7 @@ mod tests {
         let mut adapter = DiscordAdapter::new();
         adapter
             .init(AdapterConfig {
-                enabled: true,
+                enabled: Some(true),
                 token: Some("fake_discord_token".to_string()),
                 api_key: None,
                 base_url: None,

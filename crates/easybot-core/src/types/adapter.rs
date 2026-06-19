@@ -104,10 +104,15 @@ pub struct BotInfo {
 }
 
 /// 适配器配置（来源自配置文件）
+///
+/// `enabled` 支持三态：
+/// - `None`（默认）：自动检测 — 凭据环境变量已设置则启用
+/// - `Some(true)`：强制启用，即使未检测到凭据
+/// - `Some(false)`：强制禁用，即使凭据已设置
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, ToSchema)]
 pub struct AdapterConfig {
     #[serde(default)]
-    pub enabled: bool,
+    pub enabled: Option<bool>,
     pub token: Option<String>,
     pub api_key: Option<String>,
     /// 自定义 API 基础 URL（用于测试或代理场景，默认使用平台官方 API）
@@ -115,6 +120,19 @@ pub struct AdapterConfig {
     pub base_url: Option<String>,
     #[serde(default)]
     pub extra: serde_json::Value,
+}
+
+impl AdapterConfig {
+    /// 创建一个仅指定 enabled 状态的最小配置
+    pub fn with_enabled(enabled: bool) -> Self {
+        Self {
+            enabled: Some(enabled),
+            token: None,
+            api_key: None,
+            base_url: None,
+            extra: serde_json::Value::default(),
+        }
+    }
 }
 
 /// 适配器运行时配置状态

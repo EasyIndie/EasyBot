@@ -16,7 +16,7 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 async fn make_adapter(mock_port: u16) -> impl PlatformAdapter {
     let base_url = format!("http://127.0.0.1:{}", mock_port);
     let config = AdapterConfig {
-        enabled: true,
+        enabled: Some(true),
         token: Some("test-app-secret".into()),
         api_key: None,
         base_url: Some(base_url),
@@ -185,7 +185,7 @@ async fn test_token_refresh_failure() {
 async fn test_init_requires_app_id_and_secret() {
     // 缺少 app_id
     let config = AdapterConfig {
-        enabled: true,
+        enabled: Some(true),
         token: Some("secret".into()),
         api_key: None,
         base_url: None,
@@ -197,7 +197,7 @@ async fn test_init_requires_app_id_and_secret() {
 
     // 缺少 token
     let config = AdapterConfig {
-        enabled: true,
+        enabled: Some(true),
         token: None,
         api_key: None,
         base_url: None,
@@ -219,7 +219,7 @@ async fn test_new_state_created() {
 #[tokio::test]
 async fn test_init_sets_starting() {
     let config = AdapterConfig {
-        enabled: true,
+        enabled: Some(true),
         token: Some("app-secret".into()),
         api_key: None,
         base_url: None,
@@ -249,7 +249,7 @@ async fn test_connect_success_state() {
     let mock_port = mock_server.address().port();
     let base_url = format!("http://127.0.0.1:{}", mock_port);
     let config = AdapterConfig {
-        enabled: true,
+        enabled: Some(true),
         token: Some("app-secret".into()),
         api_key: None,
         base_url: Some(base_url),
@@ -268,7 +268,7 @@ async fn test_connect_success_state() {
 async fn test_connect_fails_without_mock() {
     // 没有 mock server，token refresh 应失败
     let config = AdapterConfig {
-        enabled: true,
+        enabled: Some(true),
         token: Some("app-secret".into()),
         api_key: None,
         base_url: Some("http://127.0.0.1:1".into()),
@@ -302,7 +302,7 @@ async fn test_disconnect_sets_stopped() {
 
     let base_url = format!("http://127.0.0.1:{}", mock_server.address().port());
     let config = AdapterConfig {
-        enabled: true,
+        enabled: Some(true),
         token: Some("secret".into()),
         api_key: None,
         base_url: Some(base_url),

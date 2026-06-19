@@ -12,7 +12,7 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 async fn make_adapter(mock_port: u16) -> impl PlatformAdapter {
     let base_url = format!("http://127.0.0.1:{}", mock_port);
     let config = AdapterConfig {
-        enabled: true,
+        enabled: Some(true),
         token: None,
         api_key: None,
         base_url: Some(base_url),
@@ -170,7 +170,7 @@ async fn test_send_ret_error_code() {
 async fn test_init_always_succeeds() {
     // WeChat init 不验证凭证，总是成功
     let config = AdapterConfig {
-        enabled: true,
+        enabled: Some(true),
         token: None,
         api_key: None,
         base_url: None,
@@ -193,7 +193,7 @@ async fn test_new_state_created() {
 #[tokio::test]
 async fn test_init_sets_starting() {
     let config = AdapterConfig {
-        enabled: true,
+        enabled: Some(true),
         token: None,
         api_key: None,
         base_url: None,
@@ -212,7 +212,7 @@ async fn test_init_sets_starting() {
 async fn test_connect_success_with_credentials() {
     // WeChat connect() 在提供了 bot_token/ilink_bot_id/ilink_user_id 时不发起 HTTP 请求
     let config = AdapterConfig {
-        enabled: true,
+        enabled: Some(true),
         token: None,
         api_key: None,
         base_url: None,
@@ -248,7 +248,7 @@ async fn test_disconnect_from_created_is_idempotent() {
 #[tokio::test]
 async fn test_disconnect_sets_stopped() {
     let config = AdapterConfig {
-        enabled: true,
+        enabled: Some(true),
         token: None,
         api_key: None,
         base_url: None,

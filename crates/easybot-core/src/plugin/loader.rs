@@ -342,7 +342,9 @@ impl PluginLoader {
 
         for (platform, display_name) in platforms {
             if let Some(factory) = self.get_factory(&platform, event_bus.clone()).await {
-                registry.register(&platform, &display_name, factory).await;
+                registry
+                    .register(&platform, &display_name, factory, &[])
+                    .await;
             }
         }
     }

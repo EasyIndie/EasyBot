@@ -135,6 +135,7 @@ async fn setup() -> (Router, String, MockServer) {
                     Ok(Box::new(adapter) as Box<dyn easybot_core::PlatformAdapter>)
                 })
             }),
+            &["TELEGRAM_BOT_TOKEN"],
         )
         .await;
 
@@ -143,7 +144,7 @@ async fn setup() -> (Router, String, MockServer) {
     adapter_configs.insert(
         "telegram".to_string(),
         easybot_core::types::adapter::AdapterConfig {
-            enabled: true,
+            enabled: Some(true),
             token: Some("test-token".to_string()),
             api_key: None,
             base_url: Some(mock_base),

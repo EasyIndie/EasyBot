@@ -636,7 +636,11 @@ impl PlatformAdapter for WeChatAdapter {
 
     fn runtime_config(&self) -> AdapterRuntimeConfig {
         AdapterRuntimeConfig {
-            enabled: self.config.as_ref().map(|c| c.enabled).unwrap_or(false),
+            enabled: self
+                .config
+                .as_ref()
+                .map(|c| c.enabled != Some(false))
+                .unwrap_or(false),
             token_configured: self
                 .bot_token
                 .try_read()
@@ -996,7 +1000,7 @@ mod tests {
         let mut adapter = WeChatAdapter::new();
         let result = adapter
             .init(AdapterConfig {
-                enabled: true,
+                enabled: Some(true),
                 token: None,
                 api_key: None,
                 base_url: None,
@@ -1012,7 +1016,7 @@ mod tests {
         let mut adapter = WeChatAdapter::new();
         let result = adapter
             .init(AdapterConfig {
-                enabled: true,
+                enabled: Some(true),
                 token: None,
                 api_key: None,
                 base_url: None,
@@ -1238,7 +1242,7 @@ mod tests {
         let mut adapter = WeChatAdapter::new();
         adapter
             .init(AdapterConfig {
-                enabled: true,
+                enabled: Some(true),
                 token: None,
                 api_key: None,
                 base_url: None,
