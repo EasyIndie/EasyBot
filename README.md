@@ -89,8 +89,8 @@
 - Protobuf 编译器（用于飞书 SDK 编译）
 
 ```bash
-# macO
-sbrew install protobuf
+# macOS
+brew install protobuf
 
 # Ubuntu / Debian
 sudo apt-get install protobuf-compiler
