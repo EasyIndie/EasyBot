@@ -400,13 +400,15 @@ async fn handle_init(cli: Cli) -> anyhow::Result<()> {
         println!("\nNext steps:");
         println!(
             "  1. Edit {} — uncomment the adapters you need",
-            paths.local_config_file.display()
+            paths.config_file.display()
         );
         println!(
             "  2. Edit {} — uncomment and fill in your tokens",
             paths.env_path.display()
         );
         println!("  3. Run `easybot --debug` to start");
+        println!();
+        println!("Docker Compose 用户使用同样的方式: 编辑 gateway.yaml 并 docker compose up -d");
     } else {
         tracing::info!(
             "Configuration already exists: {}",
