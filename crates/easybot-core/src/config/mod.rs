@@ -165,6 +165,9 @@ pub fn generate_default_config() -> String {
 #   1. shell export / Docker environment:
 #   2. {config_dir}/.env 文件
 # 使用 gateway.local.yaml 覆盖本配置中的值（不上传到版本控制）
+#
+# 启用适配器: 取消下面对应平台的注释，设置 enabled: true，
+# 同时在 .env 中填入对应的 token/secret。
 
 server:
   host: "127.0.0.1"
@@ -183,7 +186,6 @@ api:
 
 storage:
   type: "sqlite"
-  # path 留空时使用默认值 {data_dir}/gateway.db
   path: ""
 
 logging:
@@ -196,12 +198,26 @@ adapters:
     enabled: false
     # token: "${TELEGRAM_BOT_TOKEN}"
 
-# webhooks:
-#   - name: "my-service"
-#     url: "https://my-service.com/webhook"
-#     secret: "${WEBHOOK_SECRET}"
-#     events: ["message.inbound"]
-#     platforms: ["telegram"]
+  discord:
+    enabled: false
+    # token: "${DISCORD_BOT_TOKEN}"
+
+  feishu:
+    enabled: false
+    # token: "${FEISHU_APP_SECRET}"
+    # extra:
+    #   app_id: "${FEISHU_APP_ID}"
+
+  qq:
+    enabled: false
+    # token: "${QQ_CLIENT_SECRET}"
+    # extra:
+    #   app_id: "${QQ_APP_ID}"
+
+  wechat:
+    enabled: false
+    # extra:
+    #   bot_token: "${WECHAT_BOT_TOKEN}"
 "#
     .to_string()
 }
