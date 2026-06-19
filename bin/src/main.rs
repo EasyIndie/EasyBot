@@ -376,22 +376,22 @@ async fn handle_init(cli: Cli) -> anyhow::Result<()> {
             paths.config_file.display()
         );
 
-        // 同时创建 .env.example（若不存在）
-        let env_example_path = home.join(".env.example");
-        if !env_example_path.exists() {
-            let env_example = easybot_core::config::generate_env_example();
-            tokio::fs::write(&env_example_path, &env_example).await?;
-            tracing::info!("Created .env.example: {}", env_example_path.display());
+        // 同时创建 .env（若不存在）— 所有变量注释掉，用户取消注释即可使用
+        let env_path = &paths.env_path;
+        if !env_path.exists() {
+            let env_content = easybot_core::config::generate_env_example();
+            tokio::fs::write(env_path, &env_content).await?;
+            tracing::info!("Created .env: {}", env_path.display());
         }
 
-        // 同时创建 gateway.local.yaml.example（若不存在）
-        let local_example_path = home.join("gateway.local.yaml.example");
-        if !local_example_path.exists() {
-            let local_example = easybot_core::config::generate_local_config_example();
-            tokio::fs::write(&local_example_path, &local_example).await?;
+        // 同时创建 gateway.local.yaml（若不存在）
+        // 所有适配器以注释形式列出，用户取消注释即可启用
+        if !paths.local_config_file.exists() {
+            let local_config = easybot_core::config::generate_local_config_example();
+            tokio::fs::write(&paths.local_config_file, &local_config).await?;
             tracing::info!(
-                "Created local config example: {}",
-                local_example_path.display()
+                "Created local config: {}",
+                paths.local_config_file.display()
             );
         }
 
@@ -399,18 +399,14 @@ async fn handle_init(cli: Cli) -> anyhow::Result<()> {
         paths.print_tree();
         println!("\nNext steps:");
         println!(
-            "  1. Edit {} to configure platforms",
-            paths.config_file.display()
+            "  1. Edit {} — uncomment the adapters you need",
+            paths.local_config_file.display()
         );
         println!(
-            "  2. Copy {} to gateway.local.yaml\n     and uncomment the adapters you need",
-            local_example_path.display()
+            "  2. Edit {} — uncomment and fill in your tokens",
+            paths.env_path.display()
         );
-        println!(
-            "  3. Copy {} to .env\n     and fill in your tokens and secrets",
-            env_example_path.display()
-        );
-        println!("  4. Run `easybot` to start");
+        println!("  3. Run `easybot --debug` to start");
     } else {
         tracing::info!(
             "Configuration already exists: {}",
