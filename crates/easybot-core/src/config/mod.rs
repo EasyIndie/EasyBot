@@ -231,10 +231,19 @@ mod tests {
         let content = "# ${MY_VAR}\nkey: \"${MY_VAR}\"\n# secret: \"${WEBHOOK_SECRET}\"\n";
         let result = resolve_env_vars(content);
         // 注释行保持原样
-        assert!(result.starts_with("# ${MY_VAR}"), "comment line should not be resolved");
-        assert!(result.contains("# secret: \"${WEBHOOK_SECRET}\""), "comment line should not be resolved");
+        assert!(
+            result.starts_with("# ${MY_VAR}"),
+            "comment line should not be resolved"
+        );
+        assert!(
+            result.contains("# secret: \"${WEBHOOK_SECRET}\""),
+            "comment line should not be resolved"
+        );
         // 非注释行正常解析
-        assert!(result.contains("key: \"hello\""), "non-comment line should be resolved");
+        assert!(
+            result.contains("key: \"hello\""),
+            "non-comment line should be resolved"
+        );
         std::env::remove_var("MY_VAR");
     }
 
