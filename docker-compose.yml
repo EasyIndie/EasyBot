@@ -27,8 +27,6 @@ services:
       - FEISHU_APP_ID=${FEISHU_APP_ID:-}
       - FEISHU_APP_SECRET=${FEISHU_APP_SECRET:-}
       - QQ_BOT_TOKEN=${QQ_BOT_TOKEN:-}
-      - WECHAT_CORP_ID=${WECHAT_CORP_ID:-}
-      - WECHAT_CORP_SECRET=${WECHAT_CORP_SECRET:-}
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
