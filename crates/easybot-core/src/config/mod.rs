@@ -122,23 +122,35 @@ pub fn generate_env_example() -> String {
 /// 支持语法:
 /// - ${VAR_NAME}
 /// - $VAR_NAME
+///
+/// 跳过 YAML 注释行（以 # 开头，可含前导空格），防止注释中的 ${...} 被误解析。
 fn resolve_env_vars(content: &str) -> String {
     let re = Regex::new(r"\$\{([^}]+)\}|\$([A-Za-z_][A-Za-z0-9_]*)").unwrap();
-    re.replace_all(content, |caps: &regex::Captures| {
-        let var_name = caps
-            .get(1)
-            .or_else(|| caps.get(2))
-            .map(|m| m.as_str())
-            .unwrap_or("");
-        std::env::var(var_name).unwrap_or_else(|_| {
-            tracing::warn!(
-                "Environment variable '{}' not set, using empty string",
-                var_name
-            );
-            String::new()
+    content
+        .lines()
+        .map(|line| {
+            // 跳过注释行
+            if line.trim_start().starts_with('#') {
+                return line.to_string();
+            }
+            re.replace_all(line, |caps: &regex::Captures| {
+                let var_name = caps
+                    .get(1)
+                    .or_else(|| caps.get(2))
+                    .map(|m| m.as_str())
+                    .unwrap_or("");
+                std::env::var(var_name).unwrap_or_else(|_| {
+                    tracing::warn!(
+                        "Environment variable '{}' not set, using empty string",
+                        var_name
+                    );
+                    String::new()
+                })
+            })
+            .to_string()
         })
-    })
-    .to_string()
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// 生成默认配置
@@ -207,6 +219,20 @@ mod tests {
     fn test_resolve_env_vars_missing() {
         let result = resolve_env_vars("${MISSING_VAR}");
         assert_eq!(result, "");
+    }
+
+    #[test]
+    fn test_resolve_env_vars_skips_comments() {
+        std::env::set_var("MY_VAR", "hello");
+        // 注释行中的 ${MY_VAR} 不应被解析
+        let content = "# ${MY_VAR}\nkey: \"${MY_VAR}\"\n# secret: \"${WEBHOOK_SECRET}\"\n";
+        let result = resolve_env_vars(content);
+        // 注释行保持原样
+        assert!(result.starts_with("# ${MY_VAR}"), "comment line should not be resolved");
+        assert!(result.contains("# secret: \"${WEBHOOK_SECRET}\""), "comment line should not be resolved");
+        // 非注释行正常解析
+        assert!(result.contains("key: \"hello\""), "non-comment line should be resolved");
+        std::env::remove_var("MY_VAR");
     }
 
     #[test]
