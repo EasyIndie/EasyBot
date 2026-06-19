@@ -3,9 +3,20 @@ version: "3.9"
 # EasyBot Stack
 #
 # Quick start:
-#   cp .env.example .env   # Edit tokens
-#   docker-compose up -d
+#   cp .env.example .env     # Edit tokens
+#   docker compose up -d
 #   curl localhost:8080/health
+#
+# 启用更多适配器（以 QQ 为例）:
+#   1. 复制 .env.example 为 .env，填入 token
+#   2. 创建 gateway.local.yaml:
+#       qq:
+#         enabled: true
+#         token: "${QQ_CLIENT_SECRET}"
+#         extra:
+#           app_id: "${QQ_APP_ID}"
+#   3. 取消下方 qq service 中 local-config-volume 的注释
+#   4. docker compose --profile postgres up -d
 #
 # For monitoring (optional):
 #   docker-compose --profile monitoring up -d
@@ -18,6 +29,8 @@ services:
       - "8080:8080"
     volumes:
       - ./gateway.yaml:/etc/easybot/gateway.yaml:ro
+      # 取消注释以启用更多适配器（创建 gateway.local.yaml 后挂载）
+      # - ./gateway.local.yaml:/var/lib/easybot/gateway.local.yaml:ro
       - easybot_data:/var/lib/easybot/data
     environment:
       - EASYBOT_HOME=/var/lib/easybot
