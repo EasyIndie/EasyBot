@@ -122,18 +122,17 @@ cargo run -- --debug
 ### 初始化配置
 
 ```bash
-# 初始化配置目录（创建默认 gateway.yaml 和 .env.example）
+# 初始化配置目录（自动创建 gateway.yaml + .env）
 cargo run -- --init --dir ~/.easybot
 
-# 编辑配置
-vim ~/.easybot/gateway.local.yaml
-
-# 编辑密钥
+# 编辑 .env，取消注释并填入你要启用的平台令牌
 vim ~/.easybot/.env
 
-# 启动
+# 启动 — 系统自动检测已设置令牌的平台并启用对应适配器
 cargo run -- --debug
 ```
+
+> 💡 **无需手动编辑 gateway.yaml** — 在 `.env` 中设置令牌即可自动启用对应平台适配器。
 
 ### Docker 部署
 
@@ -141,9 +140,8 @@ cargo run -- --debug
 # 构建镜像
 docker build -t easybot .
 
-# 运行
+# 运行（通过环境变量传入令牌，自动启用对应适配器）
 docker run -p 8080:8080 \
-  -v ./gateway.yaml:/etc/easybot/gateway.yaml:ro \
   -e TELEGRAM_BOT_TOKEN="your_token_here" \
   easybot
 ```
@@ -151,19 +149,13 @@ docker run -p 8080:8080 \
 ### Docker Compose 部署
 
 ```bash
-# 复制环境变量模板
-cp .env.example .env
+# 复制环境变量模板并填入令牌
+cp .env.example .env && vim .env
 
-# 编辑 .env 填入各平台 token
-vim .env
-
-# 启动服务
+# 启动（系统自动检测已设置令牌的平台）
 docker compose up -d
 
-# 启动服务 + PostgreSQL
-docker compose --profile postgres up -d
-
-# 启动服务 + PostgreSQL + Prometheus 监控
+# 启动 + PostgreSQL + Prometheus 监控
 docker compose --profile postgres --profile monitoring up -d
 
 # 查看状态
@@ -178,9 +170,9 @@ curl http://localhost:8080/health
 
 ```
 ~/.easybot/
-├── gateway.yaml              # 基础配置（版本控制）
-├── gateway.local.yaml        # 本地覆盖配置（.gitignore）
-├── .env                      # 密钥文件（chmod 600）
+├── gateway.yaml              # 基础配置（版本控制，一般无需修改）
+├── gateway.local.yaml        # 本地覆盖配置（可选，高级用途）
+├── .env                      # 令牌文件（chmod 600，编辑此文件即可启用适配器）
 ├── data/gateway.db           # SQLite 数据库（自动创建）
 └── logs/                     # 日志文件
 ```
@@ -195,6 +187,7 @@ curl http://localhost:8080/health
 ### 核心配置示例
 
 ```yaml
+# gateway.yaml — 默认配置，一般无需修改
 server:
   host: "0.0.0.0"          # 监听地址
   port: 8080               # 监听端口
@@ -202,21 +195,29 @@ server:
 api:
   basePath: "/api/v1"
   websocket:
-    enabled: true          # 启用 WebSocket
-    maxClients: 1000       # 最大连接数
+    enabled: true           # 启用 WebSocket
+    maxClients: 1000        # 最大连接数
 
 storage:
-  type: "sqlite"           # sqlite / postgres
+  type: "sqlite"            # sqlite / postgres
 
 logging:
-  level: "info"            # debug / info / warn / error
-  format: "text"           # text / json
-
-adapters:
-  telegram:
-    enabled: true
-    token: "${TELEGRAM_BOT_TOKEN}"
+  level: "info"             # debug / info / warn / error
+  format: "text"            # text / json
 ```
+
+```bash
+# .env — 唯一需要编辑的文件，设置令牌即自动启用对应平台
+TELEGRAM_BOT_TOKEN=123456:ABC-DEF...
+DISCORD_BOT_TOKEN=your_token
+FEISHU_APP_ID=cli_xxx
+FEISHU_APP_SECRET=your_secret
+QQ_APP_ID=your_app_id
+QQ_CLIENT_SECRET=your_secret
+# WECHAT_BOT_TOKEN=optional  # 个人微信可不设令牌，扫码登录
+```
+
+> 各平台所需的环境变量参见 `.env.example`。高级用户可通过 `gateway.local.yaml` 覆盖默认值或显式禁用某平台。
 
 ---
 

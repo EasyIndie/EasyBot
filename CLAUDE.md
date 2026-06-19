@@ -122,7 +122,8 @@ User-level config stored at `~/.easybot/` (macOS/Linux) or `%APPDATA%\easybot\` 
 
 Config supports `${VAR_NAME}` for environment variable substitution and merges `gateway.local.yaml` on top of `gateway.yaml`.
 Environment variable priority: `export` / Docker `environment:` > `.env` file (loaded via `dotenvy::from_path`, does not override existing vars).
-Run `easybot --init` to create `gateway.yaml` and `.env.example` (template with all known variables).
+Run `easybot --init` to create `gateway.yaml` and `.env` (template with all known variables).
+Adapters auto-enable via credential env var detection — no need to manually set `enabled: true` in YAML config.
 
 ### Adapter Lifecycle
 
@@ -132,7 +133,7 @@ init(config) → connect() → send()/send_media()/... → disconnect()
  Created →   Starting → Connected → Reconnecting → Failed → Stopped
 ```
 
-The `AdapterRegistry` holds factory functions keyed by platform name. `AdapterManager::start_all()` iterates enabled adapters from config, creates them through the registry, calls init then connect. Built-in adapters are registered at startup in `bin/main.rs`.
+The `AdapterRegistry` holds factory functions keyed by platform name, each with declared credential environment variable names. `AdapterManager::start_all()` iterates registered adapters (not config entries), auto-detects credentials via env vars, and starts adapters whose credentials are present. `AdapterConfig.enabled` is `Option<bool>`: `None` auto-detects, `Some(true)` forces enable, `Some(false)` forces disable. Built-in adapters are registered at startup in `bin/main.rs`.
 
 ### API Routes (base path: `/api/v1`)
 
@@ -180,4 +181,5 @@ The `AdapterRegistry` holds factory functions keyed by platform name. `AdapterMa
 - **Session key format**: `"{platform}:{chatId}"` or `"{platform}:{chatId}:{threadId}"`
 - **Target format** (API): `"{platform}:{chatId}"` — parsed by `parse_target()` in messages route
 - **Config precedence**: YAML → `.local.yaml` merge → env var substitution (`${VAR_NAME}`); env vars sourced from `export` > Docker env > `.env` file (loaded via `dotenvy::from_path` before config loading)
-- **Env var loading**: Call `load_env(&EasyBotPaths)` at startup (in `bin/main.rs`) before `load_config()`; `.env` file lives at `{config_dir}/.env`; run `easybot --init` to generate `.env.example`
+- **Env var loading**: Call `load_env(&EasyBotPaths)` at startup (in `bin/main.rs`) before `load_config()`; `.env` file lives at `{config_dir}/.env`; run `easybot --init` to generate `.env` template
+- **Adapter auto-enable**: `start_all()` traverses registry, checks `credential_env_vars` per platform; adapters with credentials set auto-enable without needing `enabled: true` in YAML
