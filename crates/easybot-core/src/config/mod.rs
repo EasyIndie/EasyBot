@@ -166,8 +166,8 @@ pub fn generate_default_config() -> String {
 #   2. {config_dir}/.env 文件
 # 使用 gateway.local.yaml 覆盖本配置中的值（不上传到版本控制）
 #
-# 启用适配器: 取消下面对应平台的注释，设置 enabled: true，
-# 同时在 .env 中填入对应的 token/secret。
+# 启用适配器: 设置 enabled: true，同时在 .env 中填入对应的 token/secret。
+# 适配器所需的字段参考 gateway.local.yaml 模板（运行 easybot --init 生成）。
 
 server:
   host: "127.0.0.1"
@@ -196,28 +196,18 @@ logging:
 adapters:
   telegram:
     enabled: false
-    # token: "${TELEGRAM_BOT_TOKEN}"
 
   discord:
     enabled: false
-    # token: "${DISCORD_BOT_TOKEN}"
 
   feishu:
     enabled: false
-    # token: "${FEISHU_APP_SECRET}"
-    # extra:
-    #   app_id: "${FEISHU_APP_ID}"
 
   qq:
     enabled: false
-    # token: "${QQ_CLIENT_SECRET}"
-    # extra:
-    #   app_id: "${QQ_APP_ID}"
 
   wechat:
     enabled: false
-    # extra:
-    #   bot_token: "${WECHAT_BOT_TOKEN}"
 "#
     .to_string()
 }
