@@ -29,7 +29,8 @@ BASE_URL="${E2E_BASE_URL:-http://127.0.0.1:8080}"
 API_BASE="$BASE_URL/api/v1"
 LOG_FILE="/tmp/easybot-e2e.log"
 SUMMARY_FILE="/tmp/easybot-e2e-summary.txt"
-WAIT_TIMEOUT="${E2E_TIMEOUT:-120}"
+WAIT_TIMEOUT="${E2E_TIMEOUT:-30}"
+POLL_INTERVAL=2  # 每 2 秒轮询一次
 QUICK_MODE=false
 
 # ── 工具函数 ──
@@ -126,7 +127,7 @@ phase3_wait_for_messages() {
     section "Phase 3: 等待入站消息"
 
     echo ""
-    echo -e "  ${BOLD}📱 请在 ${WAIT_TIMEOUT}s 内向各平台 Bot 发送一条测试消息：${NC}"
+    echo -e "  ${BOLD}📱 请向各平台 Bot 发送一条测试消息：${NC}"
     echo ""
     echo "    Telegram → 向 Bot 发送任意文字"
     echo "    Discord  → 在已添加 Bot 的频道/私信发送消息"
@@ -139,22 +140,18 @@ phase3_wait_for_messages() {
         read -r -p "  完成发送后按 Enter 开始检测..." _
     fi
 
-    info "开始轮询检测入站消息（最多 ${WAIT_TIMEOUT}s）..."
+    info "开始轮询检测入站消息（每 ${POLL_INTERVAL}s 检测一次，最多 ${WAIT_TIMEOUT}s）..."
 
     local expected_platforms=("telegram" "discord" "feishu" "qq" "wechat")
     local found_platforms=()
-    local prev_count=0
+    local elapsed=0
 
-    for i in $(seq 1 "$WAIT_TIMEOUT"); do
-        sleep 1
+    while [ "$elapsed" -lt "$WAIT_TIMEOUT" ]; do
+        sleep "$POLL_INTERVAL"
+        elapsed=$((elapsed + POLL_INTERVAL))
 
-        # 检查新会话
         local resp
         resp=$(api_get "$API_BASE/sessions")
-        local cur_count
-        cur_count=$(echo "$resp" | jq -r '.total // 0')
-
-        # 提取平台列表
         local cur_platforms
         cur_platforms=$(echo "$resp" | jq -r '[.sessions[].platform] | unique | .[]' 2>/dev/null || true)
 
@@ -163,24 +160,29 @@ phase3_wait_for_messages() {
             [ -n "$p" ] && found_platforms+=("$p")
         done <<< "$cur_platforms"
 
-        if [ "$cur_count" -gt "$prev_count" ]; then
-            echo ""
-            info "检测到新会话 (${cur_count} total): ${found_platforms[*]}"
-            prev_count="$cur_count"
-        fi
-
         # 5 个全部出现则提前退出
         if [ "${#found_platforms[@]}" -ge 5 ]; then
             echo ""
-            pass "全部 5 个平台均已收到消息!"
+            pass "全部 5 个平台均已收到消息! (${elapsed}s)"
             break
         fi
 
-        # 进度指示
-        if [ $((i % 5)) -eq 0 ]; then
-            echo -n "  [${i}s] 已检测: ${found_platforms[*]:-无}  "
-        fi
+        echo -n "  [${elapsed}s] 已检测: ${found_platforms[*]:-无}  "
     done
+
+    if [ "${#found_platforms[@]}" -lt 5 ]; then
+        echo ""
+        # 报告缺失的平台
+        local missing=()
+        for p in "${expected_platforms[@]}"; do
+            local found=false
+            for f in "${found_platforms[@]}"; do
+                [ "$f" = "$p" ] && found=true && break
+            done
+            [ "$found" = false ] && missing+=("$p")
+        done
+        warn "超时未检测到: ${missing[*]}"
+    fi
     echo ""
 }
 
