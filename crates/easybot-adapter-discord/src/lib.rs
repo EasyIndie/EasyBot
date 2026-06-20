@@ -337,76 +337,110 @@ impl DiscordAdapter {
     }
 
     /// 网关主循环（WebSocket 连接 + 心跳 + 事件接收）
+    /// 外层 loop 提供自动重连：任意阶段断开后 5s 重试
     async fn gateway_loop(
         token: String,
         event_bus: Arc<EventBus>,
         bot_user_id: String,
-        cancel_rx: broadcast::Receiver<()>,
+        mut cancel_rx: broadcast::Receiver<()>,
     ) {
-        tracing::info!("Discord Gateway connecting...");
+        loop {
+            tracing::info!("Discord Gateway connecting...");
 
-        let (ws_stream, _) = match Self::connect_gateway().await {
-            Ok(s) => s,
-            Err(e) => {
-                tracing::error!("Discord Gateway connect failed: {}", e);
+            let (ws_stream, _) = match Self::connect_gateway().await {
+                Ok(s) => s,
+                Err(e) => {
+                    tracing::error!("Discord Gateway connect failed: {}", e);
+                    if Self::sleep_or_cancel(Duration::from_secs(5), &mut cancel_rx).await {
+                        return;
+                    }
+                    continue;
+                }
+            };
+
+            let (mut write, mut read) = ws_stream.split();
+
+            // Step 1: 等待 Hello
+            let hello_data = match Self::recv_hello(&mut read).await {
+                Some(h) => h,
+                None => {
+                    if Self::sleep_or_cancel(Duration::from_secs(5), &mut cancel_rx).await {
+                        return;
+                    }
+                    continue;
+                }
+            };
+
+            let hb_interval = Duration::from_millis(hello_data.heartbeat_interval);
+            tracing::debug!(
+                "Discord Gateway Hello received, heartbeat interval: {:?}",
+                hb_interval
+            );
+
+            // Step 2: 发送 Identify
+            let identify_msg = serde_json::json!({
+                "op": OP_IDENTIFY,
+                "d": {
+                    "token": token,
+                    "intents": DEFAULT_INTENTS,
+                    "properties": {
+                        "$os": std::env::consts::OS,
+                        "$browser": "easybot",
+                        "$device": "easybot",
+                    },
+                },
+            });
+
+            if let Err(e) = write.send(WsMessage::Text(identify_msg.to_string())).await {
+                tracing::error!("Failed to send Identify: {}", e);
+                if Self::sleep_or_cancel(Duration::from_secs(5), &mut cancel_rx).await {
+                    return;
+                }
+                continue;
+            }
+
+            // Step 3: 等待 Ready
+            let mut seq: Option<u64> = None;
+            if !Self::wait_for_ready(&mut read, &mut write, &mut seq, &cancel_rx).await {
+                if Self::sleep_or_cancel(Duration::from_secs(5), &mut cancel_rx).await {
+                    return;
+                }
+                continue;
+            }
+
+            tracing::info!("Discord Gateway connected");
+
+            // Step 4: 主循环（事件接收 + 心跳发送）
+            Self::event_loop(
+                &mut read,
+                &mut write,
+                &mut seq,
+                hb_interval,
+                &event_bus,
+                &bot_user_id,
+                &cancel_rx,
+            )
+            .await;
+
+            tracing::info!("Discord Gateway loop ended, reconnecting in 5s...");
+            if Self::sleep_or_cancel(Duration::from_secs(5), &mut cancel_rx).await {
                 return;
             }
-        };
-
-        let (mut write, mut read) = ws_stream.split();
-
-        // Step 1: 等待 Hello
-        let hello_data = match Self::recv_hello(&mut read).await {
-            Some(h) => h,
-            None => return,
-        };
-
-        let hb_interval = Duration::from_millis(hello_data.heartbeat_interval);
-        tracing::debug!(
-            "Discord Gateway Hello received, heartbeat interval: {:?}",
-            hb_interval
-        );
-
-        // Step 2: 发送 Identify
-        let identify_msg = serde_json::json!({
-            "op": OP_IDENTIFY,
-            "d": {
-                "token": token,
-                "intents": DEFAULT_INTENTS,
-                "properties": {
-                    "$os": std::env::consts::OS,
-                    "$browser": "easybot",
-                    "$device": "easybot",
-                },
-            },
-        });
-
-        if let Err(e) = write.send(WsMessage::Text(identify_msg.to_string())).await {
-            tracing::error!("Failed to send Identify: {}", e);
-            return;
         }
+    }
 
-        // Step 3: 等待 Ready
-        let mut seq: Option<u64> = None;
-        if !Self::wait_for_ready(&mut read, &mut write, &mut seq, &cancel_rx).await {
-            return;
+    /// 等待指定时长或 cancel 信号。返回 true 表示收到 cancel 信号应退出。
+    async fn sleep_or_cancel(
+        duration: Duration,
+        cancel_rx: &mut broadcast::Receiver<()>,
+    ) -> bool {
+        tokio::select! {
+            _ = tokio::time::sleep(duration) => false,
+            _ = cancel_rx.recv() => {
+                tracing::info!("Discord Gateway cancelled during reconnect wait");
+                true
+            }
         }
-
-        tracing::info!("Discord Gateway connected");
-
-        // Step 4: 主循环（事件接收 + 心跳发送）
-        Self::event_loop(
-            &mut read,
-            &mut write,
-            &mut seq,
-            hb_interval,
-            &event_bus,
-            &bot_user_id,
-            &cancel_rx,
-        )
-        .await;
-
-        tracing::info!("Discord Gateway loop ended");
     }
 
     /// 接收 Hello 并返回 HeartbeatInterval

@@ -305,7 +305,7 @@ wscat -c "ws://localhost:8080/api/v1/ws" \
 | 鉴权方式 | HTTP Header `Authorization: Bot <token>` |
 | 默认 Intents | `GUILD_MESSAGES \| DIRECT_MESSAGES \| MESSAGE_CONTENT` |
 | 心跳间隔 | 由 Gateway Hello 事件指定 |
-| 自动重连 | ❌ 未实现（loop 退出后不再重试） |
+| 自动重连 | ✅ 外层 loop 无限重试（5s 延迟，支持 cancel 信号） |
 | parse_mode 支持 | ❌ 忽略（Discord 不支持，客户端自行渲染 Markdown） |
 | 入站消息过滤 | 按 `author.id == bot_user_id` 过滤自身消息 |
 | 能力声明 | Text、Markdown、Group、TypingIndicator、MessageEdit、MessageDelete |
@@ -317,7 +317,7 @@ wscat -c "ws://localhost:8080/api/v1/ws" \
 |------|---------|---------|
 | 连接方式 | 长轮询（getUpdates） | Gateway WebSocket |
 | 心跳 | 无（HTTP 轮询天然无心跳） | Gateway 心跳（Hello 指定间隔） |
-| 自动重连 | 轮询失败 5 秒后重试 | 未实现（需手动 restart） |
+| 自动重连 | 轮询失败 5 秒后重试 | ✅ 外层 loop 无限重连（5s） |
 | parse_mode | 支持 `markdown`/`html`/`none` | 不支持（直接发纯文本） |
 | reply_to 支持 | ✅ 完整（`reply_to_message_id`） | ❌ `message_reference` 未映射 |
 | chat_name 来源 | `chat.title` 或 `chat.first_name` | 查询时不可用（需额外 API 查询） |
@@ -328,7 +328,6 @@ wscat -c "ws://localhost:8080/api/v1/ws" \
 
 - [ ] 引入 `wiremock` 或 `mockito` 为 Discord REST API 编写 mock 测试
 - [ ] 实现 `reply_to` 字段到 Discord `message_reference` API 参数的映射
-- [ ] 实现 Gateway 自动重连（当前收到 RECONNECT/INVALID_SESSION 后 loop 退出）
 - [ ] 支持更多 Intents 从配置读取（当前硬编码）
 - [ ] 补充 `chat_name` 的获取（从 Gateway Ready 的 guild 信息或独立查询）
 - [ ] 增加更多 Gateway 事件类型的处理（MESSAGE_UPDATE、MESSAGE_DELETE 等）
