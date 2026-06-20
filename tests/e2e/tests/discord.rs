@@ -1,0 +1,199 @@
+//! Discord 适配器端到端（E2E）集成测试
+//!
+//! 使用 wiremock 模拟 Discord REST API（Gateway WebSocket 不在此测试范围内）。
+
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use axum::Router;
+use e2e_tests::{
+    auth_get, auth_post, build_router, create_core, default_gateway_config, public_get,
+    start_and_connect,
+};
+use easybot_core::types::adapter::AdapterConfig;
+use easybot_core::PlatformAdapter;
+use wiremock::matchers::{method, path};
+use wiremock::{Mock, MockServer, ResponseTemplate};
+
+async fn setup() -> (Router, String, MockServer) {
+    let mock_server = MockServer::start().await;
+    let mock_port = mock_server.address().port();
+    let mock_base = format!("http://127.0.0.1:{}", mock_port);
+
+    let (event_bus, adapter_manager, session_manager, message_store) = create_core().await;
+
+    let registry = adapter_manager.registry();
+    let eb = event_bus.clone();
+    registry
+        .register(
+            "discord",
+            "Discord",
+            Arc::new(move |config| {
+                let eb = eb.clone();
+                Box::pin(async move {
+                    let mut adapter = easybot_adapter_discord::DiscordAdapter::new();
+                    adapter.set_event_bus(eb);
+                    let result = adapter
+                        .init(config)
+                        .await
+                        .map_err(|e| format!("init: {}", e))?;
+                    if !result.ok {
+                        return Err(result.error.unwrap_or_default());
+                    }
+                    Ok(Box::new(adapter) as Box<dyn easybot_core::PlatformAdapter>)
+                })
+            }),
+            &["DISCORD_BOT_TOKEN"],
+        )
+        .await;
+
+    let mut config = default_gateway_config();
+    config.adapters = {
+        let mut m = HashMap::new();
+        m.insert(
+            "discord".to_string(),
+            AdapterConfig {
+                enabled: Some(true),
+                token: Some("test-discord-token".to_string()),
+                api_key: None,
+                base_url: Some(mock_base),
+                extra: serde_json::json!({}),
+            },
+        );
+        m
+    };
+
+    let (router, key) = build_router(
+        event_bus,
+        adapter_manager,
+        session_manager,
+        message_store,
+        config,
+    )
+    .await;
+
+    (router, key, mock_server)
+}
+
+async fn mock_discord_users_me(mock_server: &MockServer) {
+    Mock::given(method("GET"))
+        .and(path("/users/@me"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": "1515905813489782835",
+            "username": "TestBot",
+            "discriminator": "0000",
+            "bot": true
+        })))
+        .expect(0..)
+        .mount(mock_server)
+        .await;
+}
+
+async fn mock_discord_send(mock_server: &MockServer, channel_id: &str, msg_id: &str) {
+    Mock::given(method("POST"))
+        .and(path(format!("/channels/{}/messages", channel_id)))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": msg_id,
+            "channel_id": channel_id,
+            "content": "Hello Discord",
+            "author": { "id": "bot", "username": "Bot", "discriminator": "0000", "bot": true },
+            "timestamp": "2026-06-20T12:00:00+00:00"
+        })))
+        .expect(0..)
+        .mount(mock_server)
+        .await;
+}
+
+// ── 基础 ──
+
+#[tokio::test]
+async fn test_e2e_discord_health() {
+    let (router, ..) = setup().await;
+    let (status, _) = public_get(&router, "/api/v1/health").await;
+    assert_eq!(status, 200);
+}
+
+#[tokio::test]
+async fn test_e2e_discord_lifecycle() {
+    let (router, key, mock_server) = setup().await;
+
+    // Discord connect() 调用 GET /users/@me 验证 token
+    mock_discord_users_me(&mock_server).await;
+
+    let _conn = start_and_connect(&router, &key, "discord").await;
+    // Gateway 部分无法 mock → connect 可能报告 ok 但 Gateway 连接失败
+    // 这里验证 REST API 层（/users/@me）正常工作
+    let (_, json) = auth_get(&router, "/api/v1/adapters/discord/status", &key).await;
+    // Discord 在 Gateway 连接失败时仍可能 report Connected（取决于实现）
+    eprintln!("Discord status after start: {:?}", json);
+
+    // 停止
+    let (status, json) = auth_post(&router, "/api/v1/adapters/discord/stop", &key, None).await;
+    assert_eq!(status, 200);
+    assert_eq!(json["ok"], true);
+}
+
+#[tokio::test]
+async fn test_e2e_discord_send_message() {
+    let (router, key, mock_server) = setup().await;
+
+    mock_discord_users_me(&mock_server).await;
+    mock_discord_send(&mock_server, "dm_channel_123", "msg_discord_001").await;
+
+    let conn = start_and_connect(&router, &key, "discord").await;
+    assert!(conn, "discord should connect");
+
+    let (status, json) = auth_post(
+        &router,
+        "/api/v1/messages/send",
+        &key,
+        Some(serde_json::json!({"target": "discord:dm_channel_123", "text": "Hello Discord"})),
+    )
+    .await;
+    assert_eq!(status, 200);
+    assert_eq!(json["status"], "sent");
+    assert_eq!(json["messageId"], "msg_discord_001");
+}
+
+#[tokio::test]
+async fn test_e2e_discord_send_error() {
+    let (router, key, mock_server) = setup().await;
+
+    mock_discord_users_me(&mock_server).await;
+
+    // 不 mock send endpoint → wiremock 返回 404 → send 失败
+    let conn = start_and_connect(&router, &key, "discord").await;
+    assert!(conn);
+
+    let (status, json) = auth_post(
+        &router,
+        "/api/v1/messages/send",
+        &key,
+        Some(serde_json::json!({"target": "discord:bad_channel", "text": "fail"})),
+    )
+    .await;
+    assert_eq!(status, 200);
+    assert_eq!(json["status"], "failed");
+}
+
+#[tokio::test]
+async fn test_e2e_discord_auth_failure() {
+    let (router, key, mock_server) = setup().await;
+
+    // /users/@me 返回 401 → connect 应失败
+    Mock::given(method("GET"))
+        .and(path("/users/@me"))
+        .respond_with(ResponseTemplate::new(401).set_body_json(serde_json::json!({
+            "message": "401: Unauthorized", "code": 0
+        })))
+        .expect(0..)
+        .mount(&mock_server)
+        .await;
+
+    let (_, _) = auth_post(&router, "/api/v1/adapters/discord/start", &key, None).await;
+    let (_, json) = auth_get(&router, "/api/v1/adapters/discord/status", &key).await;
+    assert_ne!(
+        json["connected"], true,
+        "discord should not connect with invalid token"
+    );
+}

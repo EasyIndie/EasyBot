@@ -8,6 +8,10 @@ publish = false
 easybot-core = { path = "../../crates/easybot-core" }
 easybot-api = { path = "../../crates/easybot-api" }
 easybot-adapter-telegram = { path = "../../crates/easybot-adapter-telegram" }
+easybot-adapter-discord = { path = "../../crates/easybot-adapter-discord" }
+easybot-adapter-feishu = { path = "../../crates/easybot-adapter-feishu" }
+easybot-adapter-qq = { path = "../../crates/easybot-adapter-qq" }
+easybot-adapter-wechat = { path = "../../crates/easybot-adapter-wechat" }
 sqlx = { workspace = true }
 
 tokio.workspace = true
