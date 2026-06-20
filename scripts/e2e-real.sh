@@ -126,7 +126,7 @@ phase3_wait_for_messages() {
     section "Phase 3: 等待入站消息"
 
     echo ""
-    echo -e "  ${BOLD}📱 请在各平台客户端向 Bot 发送一条测试消息：${NC}"
+    echo -e "  ${BOLD}📱 请在 ${WAIT_TIMEOUT}s 内向各平台 Bot 发送一条测试消息：${NC}"
     echo ""
     echo "    Telegram → 向 Bot 发送任意文字"
     echo "    Discord  → 在已添加 Bot 的频道/私信发送消息"
@@ -136,10 +136,10 @@ phase3_wait_for_messages() {
     echo ""
 
     if [ -t 0 ]; then
-        read -r -t "${WAIT_TIMEOUT}" -p "  请在各平台发送消息后按 Enter 开始检测（${WAIT_TIMEOUT}s 后自动开始）..." _ || true
+        read -r -t "${WAIT_TIMEOUT}" -p "  按 Enter 立即开始轮询检测（或等待 ${WAIT_TIMEOUT}s 自动开始）..." _ || true
     fi
 
-    info "轮询检测入站消息（最多 ${WAIT_TIMEOUT}s）..."
+    info "开始轮询检测入站消息（最多 ${WAIT_TIMEOUT}s，在此期间发送消息均可被检测）..."
 
     local expected_platforms=("telegram" "discord" "feishu" "qq" "wechat")
     local found_platforms=()
