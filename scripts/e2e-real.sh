@@ -140,6 +140,9 @@ phase3_wait_for_messages() {
         read -r -p "  完成发送后按 Enter 开始检测..." _
     fi
 
+    # 记录轮询开始时间戳（毫秒），Phase 4 只回复本轮收到的消息
+    POLL_START_MS=$(($(date +%s) * 1000))
+
     info "开始轮询检测入站消息（每 ${POLL_INTERVAL}s 检测一次，最多 ${WAIT_TIMEOUT}s）..."
 
     local expected_platforms=("telegram" "discord" "feishu" "qq" "wechat")
@@ -153,7 +156,9 @@ phase3_wait_for_messages() {
         local resp
         resp=$(api_get "$API_BASE/sessions")
         local cur_platforms
-        cur_platforms=$(echo "$resp" | jq -r '[.sessions[].platform] | unique | .[]' 2>/dev/null || true)
+        # 只统计本轮 polling 开始后更新过的 session（与 Phase 4 过滤逻辑一致）
+        cur_platforms=$(echo "$resp" | jq -r --argjson since "$POLL_START_MS" \
+            '[.sessions[] | select(.updated_at > $since) | .platform] | unique | .[]' 2>/dev/null || true)
 
         found_platforms=()
         while IFS= read -r p; do
@@ -167,7 +172,7 @@ phase3_wait_for_messages() {
             break
         fi
 
-        echo -n "  [${elapsed}s] 已检测: ${found_platforms[*]:-无}  "
+        printf "  [%02ds] 已检测: %s\n" "$elapsed" "${found_platforms[*]:-无}"
     done
 
     if [ "${#found_platforms[@]}" -lt 5 ]; then
@@ -196,9 +201,15 @@ phase4_auto_reply() {
 
     local resp
     resp=$(api_get "$API_BASE/sessions")
-    # 每个平台只取第一个会话（去重）
+    # 只取本轮 polling 开始后更新的 session（避免用旧 session 发消息）
     local targets
-    targets=$(echo "$resp" | jq -r '[.sessions | group_by(.platform) | .[] | "\(.[0].platform):\(.[0].chat_id)"] | .[]')
+    targets=$(echo "$resp" | jq -r --argjson since "${POLL_START_MS:-0}" \
+        '[.sessions | map(select(.updated_at > $since)) | group_by(.platform) | .[] | "\(.[0].platform):\(.[0].chat_id)"] | .[]')
+
+    if [ -z "$targets" ]; then
+        warn "没有检测到本轮新入站消息，跳过自动回复"
+        return 0
+    fi
 
     while IFS= read -r target; do
         [ -z "$target" ] && continue
