@@ -1440,6 +1440,104 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_handle_dispatch_group_message_create_mentioned() {
+        let event_bus = Arc::new(easybot_core::bus::EventBus::new());
+        let mut rx =
+            event_bus.subscribe(easybot_core::types::event::event_types::MESSAGE_INBOUND);
+        let messages_in = AtomicU64::new(0);
+
+        // 2026 新版全量群消息，其中 @了机器人
+        let data = serde_json::json!({
+            "id": "ROBOT1.0_gmsg001",
+            "group_openid": "GROUP_OPENID_NEW001",
+            "content": "@bot hello everyone",
+            "author": {"member_openid": "MEMBER_002"},
+            "timestamp": "2026-06-01T12:00:00+00:00",
+            "mentions": [
+                {"is_you": true, "scope": "single", "username": "EasyBot"}
+            ],
+            "message_scene": {"source": "default", "ext": ["msg_idx=REFIDX_001"]},
+            "message_type": 0
+        });
+        let payload = GatewayPayload {
+            op: 0,
+            d: Some(data),
+            s: Some(200),
+            t: Some("GROUP_MESSAGE_CREATE".to_string()),
+        };
+
+        QqAdapter::handle_dispatch(
+            "GROUP_MESSAGE_CREATE",
+            &payload,
+            &event_bus,
+            "bot_id",
+            &messages_in,
+        )
+        .await;
+
+        let event = rx.try_recv().ok();
+        assert!(
+            event.is_some(),
+            "Expected MESSAGE_INBOUND for GROUP_MESSAGE_CREATE"
+        );
+        if let Some(e) = event {
+            assert_eq!(e.data["is_group"], true);
+            assert_eq!(e.data["chat_type"], "Group");
+            assert_eq!(e.data["chat_id"], "GROUP_OPENID_NEW001");
+            assert_eq!(e.data["mentioned"], true);
+            // metadata contains mentions info
+            assert!(e.data["metadata"]["mentions"].is_array());
+        }
+        assert_eq!(messages_in.load(Ordering::Relaxed), 1);
+    }
+
+    #[tokio::test]
+    async fn test_handle_dispatch_group_message_create_not_mentioned() {
+        let event_bus = Arc::new(easybot_core::bus::EventBus::new());
+        let mut rx =
+            event_bus.subscribe(easybot_core::types::event::event_types::MESSAGE_INBOUND);
+        let messages_in = AtomicU64::new(0);
+
+        // 2026 新版全量群消息，没有 @机器人
+        let data = serde_json::json!({
+            "id": "ROBOT1.0_gmsg002",
+            "group_openid": "GROUP_OPENID_NEW002",
+            "content": "just a regular message",
+            "author": {"member_openid": "MEMBER_003"},
+            "timestamp": "2026-06-01T12:01:00+00:00",
+            "mentions": [],
+            "message_type": 0
+        });
+        let payload = GatewayPayload {
+            op: 0,
+            d: Some(data),
+            s: Some(201),
+            t: Some("GROUP_MESSAGE_CREATE".to_string()),
+        };
+
+        QqAdapter::handle_dispatch(
+            "GROUP_MESSAGE_CREATE",
+            &payload,
+            &event_bus,
+            "bot_id",
+            &messages_in,
+        )
+        .await;
+
+        let event = rx.try_recv().ok();
+        assert!(
+            event.is_some(),
+            "Expected MESSAGE_INBOUND even for non-@ group message"
+        );
+        if let Some(e) = event {
+            assert_eq!(e.data["is_group"], true);
+            assert_eq!(e.data["chat_id"], "GROUP_OPENID_NEW002");
+            assert_eq!(e.data["mentioned"], false);
+        }
+        assert_eq!(messages_in.load(Ordering::Relaxed), 1);
+    }
+
+    #[tokio::test]
     async fn test_handle_dispatch_c2c() {
         let event_bus = Arc::new(easybot_core::bus::EventBus::new());
         let mut rx = event_bus.subscribe(easybot_core::types::event::event_types::MESSAGE_INBOUND);
