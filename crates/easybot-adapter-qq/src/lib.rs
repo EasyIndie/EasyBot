@@ -26,6 +26,8 @@ use types::*;
 
 /// QQ API 基础 URL（正式环境）
 const QQ_API: &str = "https://api.sgroup.qq.com";
+/// QQ 鉴权 API 基础 URL（正式环境）
+const QQ_AUTH_API: &str = "https://bots.qq.com";
 
 // ── Access Token 管理 ──
 
@@ -39,14 +41,16 @@ struct QqTokenStore {
     state: Arc<Mutex<Option<(String, tokio::time::Instant)>>>,
     app_id: String,
     client_secret: String,
+    auth_base_url: String,
 }
 
 impl QqTokenStore {
-    fn new(app_id: String, client_secret: String) -> Self {
+    fn new(app_id: String, client_secret: String, auth_base_url: String) -> Self {
         Self {
             state: Arc::new(Mutex::new(None)),
             app_id,
             client_secret,
+            auth_base_url,
         }
     }
 
@@ -63,7 +67,7 @@ impl QqTokenStore {
         });
 
         let resp = client
-            .post("https://bots.qq.com/app/getAppAccessToken")
+            .post(format!("{}/app/getAppAccessToken", self.auth_base_url))
             .json(&body)
             .send()
             .await
@@ -209,6 +213,14 @@ impl QqAdapter {
             .as_ref()
             .and_then(|c| c.base_url.as_deref())
             .unwrap_or(QQ_API)
+    }
+
+    /// 返回鉴权 API 基础 URL（支持通过 config.extra["auth_base_url"] 覆盖）
+    fn auth_base_url(&self) -> &str {
+        self.config
+            .as_ref()
+            .and_then(|c| c.extra.get("auth_base_url").and_then(|v| v.as_str()))
+            .unwrap_or(QQ_AUTH_API)
     }
 
     fn client(&self) -> Result<&reqwest::Client, GatewayError> {
@@ -843,8 +855,12 @@ impl PlatformAdapter for QqAdapter {
             GatewayError::ConfigError("Missing 'token' (client_secret) for qq".to_string())
         })?;
 
+        // auth_base_url 支持通过 config.extra["auth_base_url"] 覆盖（测试/代理场景）
+        let auth_base_url = self.auth_base_url().to_string();
+
         // 创建 TokenStore 并获取 access token
-        let token_store = QqTokenStore::new(app_id.to_string(), client_secret.to_string());
+        let token_store =
+            QqTokenStore::new(app_id.to_string(), client_secret.to_string(), auth_base_url);
         if let Err(e) = token_store.refresh().await {
             return Ok(ConnectResult {
                 ok: false,
@@ -1242,21 +1258,21 @@ mod tests {
 
     #[test]
     fn test_token_store_new_needs_refresh() {
-        let store = QqTokenStore::new("app123".into(), "secret".into());
+        let store = QqTokenStore::new("app123".into(), "secret".into(), QQ_AUTH_API.to_string());
         // 新创建的 store 还没有 token，需要 refresh
         assert!(store.needs_refresh());
     }
 
     #[test]
     fn test_token_store_get_uninitialized_returns_err() {
-        let store = QqTokenStore::new("app123".into(), "secret".into());
+        let store = QqTokenStore::new("app123".into(), "secret".into(), QQ_AUTH_API.to_string());
         // 未 refresh 前 get 应该返回错误
         assert!(store.get().is_err());
     }
 
     #[test]
     fn test_token_store_clone() {
-        let store = QqTokenStore::new("app123".into(), "secret".into());
+        let store = QqTokenStore::new("app123".into(), "secret".into(), QQ_AUTH_API.to_string());
         let cloned = store.clone();
         // 两个实例共享同一个 Arc<Mutex> 状态
         assert!(store.needs_refresh());
