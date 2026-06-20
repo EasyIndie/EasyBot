@@ -683,6 +683,7 @@ impl QqAdapter {
                     callback: None,
                     reply_to: None,
                     thread_id: None,
+                    mentioned: Some(true), // 频道 @消息
                     is_group: true,
                     metadata: None,
                 };
@@ -733,8 +734,72 @@ impl QqAdapter {
                     callback: None,
                     reply_to: None,
                     thread_id: None,
+                    mentioned: Some(true), // 旧协议仅推送 @消息
                     is_group: true,
                     metadata: None,
+                };
+
+                let event = GatewayEvent::new(
+                    easybot_core::types::event::event_types::MESSAGE_INBOUND,
+                    "qq",
+                    serde_json::to_value(&inbound).unwrap_or_default(),
+                );
+                event_bus.publish(event);
+            }
+            "GROUP_MESSAGE_CREATE" => {
+                let msg_event: QqGroupMessageCreateEvent =
+                    match serde_json::from_value(data.clone()) {
+                        Ok(m) => m,
+                        Err(e) => {
+                            tracing::warn!("QQ failed to parse {}: {}", event_type, e);
+                            return;
+                        }
+                    };
+                // 通过 mentions 数组判断是否 @了机器人
+                let is_mentioned = msg_event.mentions.iter().any(|m| m.is_you);
+                tracing::info!(
+                    "QQ {} from member={} id={} group={} mentioned={}",
+                    event_type,
+                    msg_event.author.member_openid,
+                    msg_event.id,
+                    msg_event.group_openid,
+                    is_mentioned
+                );
+
+                messages_in.fetch_add(1, Ordering::Relaxed);
+                let ts = Self::parse_timestamp(&msg_event.timestamp);
+                let openid = msg_event.group_openid.clone();
+                let member_id = msg_event.author.member_openid.clone();
+                let inbound = InboundMessage {
+                    id: msg_event.id,
+                    platform: "qq".to_string(),
+                    chat_id: openid,
+                    chat_type: ChatType::Group,
+                    chat_name: None,
+                    text: msg_event.content,
+                    author: MessageAuthor {
+                        id: member_id.clone(),
+                        name: Some(member_id),
+                        is_bot: false,
+                    },
+                    timestamp: ts,
+                    media: None,
+                    command: None,
+                    callback: None,
+                    reply_to: None,
+                    thread_id: None,
+                    mentioned: Some(is_mentioned),
+                    is_group: true,
+                    metadata: Some(serde_json::json!({
+                        "mentions": msg_event.mentions.iter().map(|m| serde_json::json!({
+                            "is_you": m.is_you,
+                            "scope": m.scope,
+                            "username": m.username,
+                        })).collect::<Vec<_>>(),
+                        "message_scene": msg_event.message_scene.map(|s| serde_json::json!({
+                            "source": s.source,
+                        })),
+                    })),
                 };
 
                 let event = GatewayEvent::new(
@@ -780,6 +845,7 @@ impl QqAdapter {
                     callback: None,
                     reply_to: None,
                     thread_id: None,
+                    mentioned: None, // C2C 私聊无 @概念
                     is_group: false,
                     metadata: None,
                 };

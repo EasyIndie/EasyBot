@@ -214,6 +214,7 @@ impl TelegramAdapter {
             callback: None,
             reply_to,
             thread_id: None,
+            mentioned: None,
             is_group: tg_msg.chat.chat_type != "private",
             metadata: None,
         })

@@ -135,8 +135,9 @@ curl -s -H "Authorization: Bearer $API_KEY" \
 | 频道消息发送 | ✅ 已实现 | `try_send()` 自动降级频道→群→C2C，需端到端验证环境 |
 | 主动消息发送 | ❌ | QQ 限制（需特殊权限），需通过被动回复方式 |
 | **入站消息** | | |
-| 群聊 @消息接收 | ✅ | `GROUP_AT_MESSAGE_CREATE` 成功解析存储 |
-| 频道 @消息接收 | ✅ 已实现 | 代码已实现 `AT_MESSAGE_CREATE` 解析，需端到端验证环境 |
+| 群聊 @消息接收（旧协议） | ✅ | `GROUP_AT_MESSAGE_CREATE` 成功解析存储，`mentioned: true` |
+| 群聊全量消息接收（新协议） | ✅ 已实现 | `GROUP_MESSAGE_CREATE` (2026 新版) 解析 + `mentions[]` 判断，`mentioned: bool` |
+| 频道 @消息接收 | ✅ 已实现 | 代码已实现 `AT_MESSAGE_CREATE` 解析，`mentioned: true`，需端到端验证环境 |
 | C2C 私聊消息接收 | ✅ 已实现 | 代码已实现 `C2C_MESSAGE_CREATE` 解析 + C2C 端点发送，需端到端验证环境 |
 | 自身消息过滤 | ❌ | 群消息不含 `bot` 字段，需另寻方案 |
 | **连接方式** | | |
@@ -232,7 +233,9 @@ curl -s -X POST http://127.0.0.1:8080/api/v1/messages/send \
 | TLS 方案 | `native-tls`（系统 CA 证书） |
 | 支持的消息类型 | Text (0), Image (2), Markdown |
 | 支持的能力 | Text, Image, Markdown, Group, Thread, MessageEdit, MessageDelete |
-| 默认 Intents | `AT_MESSAGE | C2C_MESSAGE | GROUP_AT_MESSAGE` |
+| 默认 Intents | `AT_MESSAGE \| C2C_MESSAGE \| GROUP_AT_MESSAGE` |
+| 入站事件类型 | `AT_MESSAGE_CREATE` / `GROUP_AT_MESSAGE_CREATE` / `GROUP_MESSAGE_CREATE` (2026 新版) / `C2C_MESSAGE_CREATE` |
+| 新字段 `mentioned` | 频道/旧版群@ → `Some(true)`, 新版全量群 → `Some(bool)`, C2C → `None` |
 | 自动重连 | ✅ 外层循环自动重连（同时刷新 token） |
 | Token 定时刷新 | ✅ Gateway 事件循环中每 3500s 刷新一次 |
 

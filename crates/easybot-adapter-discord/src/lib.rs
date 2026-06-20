@@ -255,6 +255,7 @@ impl DiscordAdapter {
             callback: None,
             reply_to: None,
             thread_id: None,
+            mentioned: None,
             is_group: msg.guild_id.is_some(),
             metadata: None,
         })

@@ -104,7 +104,7 @@ pub struct QqChannelMessageEvent {
     pub timestamp: String,
 }
 
-/// 群聊消息事件数据（GROUP_AT_MESSAGE_CREATE）
+/// 群聊消息事件数据（GROUP_AT_MESSAGE_CREATE — 旧协议，仅 @消息）
 #[derive(Debug, Deserialize)]
 pub struct QqGroupMessageEvent {
     pub id: String,
@@ -113,6 +113,50 @@ pub struct QqGroupMessageEvent {
     pub content: Option<String>,
     pub author: QqGroupMessageAuthor,
     pub timestamp: String,
+}
+
+/// 群聊全量消息事件数据（GROUP_MESSAGE_CREATE — 2026 新协议，全部群消息）
+#[derive(Debug, Deserialize)]
+pub struct QqGroupMessageCreateEvent {
+    pub id: String,
+    pub group_openid: String,
+    #[serde(default)]
+    pub content: Option<String>,
+    pub author: QqGroupMessageAuthor,
+    pub timestamp: String,
+    /// @提及列表，通过 mentions[].is_you 判断是否 @了机器人
+    #[serde(default)]
+    pub mentions: Vec<QqMention>,
+    /// 消息场景信息
+    #[serde(default)]
+    pub message_scene: Option<QqMessageScene>,
+    /// 消息类型（0=文本）
+    #[serde(default)]
+    pub message_type: Option<u32>,
+}
+
+/// @提及信息
+#[derive(Debug, Deserialize, Clone)]
+pub struct QqMention {
+    /// 是否 @了当前机器人
+    pub is_you: bool,
+    /// 提及范围（single / all / here）
+    #[serde(default)]
+    pub scope: Option<String>,
+    /// 被提及的用户名
+    #[serde(default)]
+    pub username: Option<String>,
+}
+
+/// 消息场景
+#[derive(Debug, Deserialize, Clone)]
+pub struct QqMessageScene {
+    /// 消息来源（default 等）
+    #[serde(default)]
+    pub source: Option<String>,
+    /// 扩展字段
+    #[serde(default)]
+    pub ext: Option<Vec<String>>,
 }
 
 /// 私聊消息事件数据（C2C_MESSAGE_CREATE）
@@ -189,11 +233,11 @@ pub struct QqApiError {
 // ── 意图 (Intents) ──
 
 pub mod intents {
-    /// 群聊@消息
+    /// 群聊消息（2026 起涵盖 GROUP_AT_MESSAGE_CREATE 和 GROUP_MESSAGE_CREATE）
     pub const GROUP_AT_MESSAGE: u32 = 1 << 25;
     /// 私聊消息
     pub const C2C_MESSAGE: u32 = 1 << 30;
-    /// 频道@消息
+    /// 频道消息
     pub const AT_MESSAGE: u32 = 1 << 9;
 }
 
@@ -317,5 +361,48 @@ mod tests {
         let resp: QqSendMessageResponse = serde_json::from_str(json).unwrap();
         assert_eq!(resp.id, "send1");
         assert!(resp.timestamp.is_some());
+    }
+
+    #[test]
+    fn test_group_message_create_event_deserialize() {
+        let json = r#"{
+            "id": "ROBOT1.0_abc123",
+            "group_openid": "GROUP_OPENID_001",
+            "content": "hello everyone",
+            "author": {"member_openid": "MEMBER002"},
+            "timestamp": "2026-05-08T13:24:53+08:00",
+            "mentions": [
+                {"is_you": true, "scope": "single", "username": "EasyBot"}
+            ],
+            "message_scene": {"source": "default", "ext": ["msg_idx=REFIDX_001"]},
+            "message_type": 0
+        }"#;
+        let msg: QqGroupMessageCreateEvent = serde_json::from_str(json).unwrap();
+        assert_eq!(msg.id, "ROBOT1.0_abc123");
+        assert_eq!(msg.group_openid, "GROUP_OPENID_001");
+        assert_eq!(msg.content, Some("hello everyone".to_string()));
+        assert_eq!(msg.author.member_openid, "MEMBER002");
+        assert_eq!(msg.mentions.len(), 1);
+        assert!(msg.mentions[0].is_you);
+        assert_eq!(msg.mentions[0].scope, Some("single".to_string()));
+        assert_eq!(msg.mentions[0].username, Some("EasyBot".to_string()));
+        assert!(msg.message_scene.is_some());
+        assert_eq!(msg.message_type, Some(0));
+    }
+
+    #[test]
+    fn test_group_message_create_event_no_mentions() {
+        let json = r#"{
+            "id": "ROBOT1.0_noat",
+            "group_openid": "GROUP_NOAT",
+            "content": "just a message",
+            "author": {"member_openid": "MEMBER003"},
+            "timestamp": "2026-05-08T14:00:00+08:00"
+        }"#;
+        let msg: QqGroupMessageCreateEvent = serde_json::from_str(json).unwrap();
+        assert_eq!(msg.id, "ROBOT1.0_noat");
+        assert!(msg.mentions.is_empty());
+        assert!(msg.message_scene.is_none());
+        assert!(msg.message_type.is_none());
     }
 }

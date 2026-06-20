@@ -75,6 +75,7 @@ pub async fn handle_message_receive(
         callback: None,
         reply_to: None,
         thread_id: None,
+        mentioned: None,
         is_group,
         metadata: None,
     };

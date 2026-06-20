@@ -35,6 +35,9 @@ pub struct InboundMessage {
     pub reply_to: Option<MessageReference>,
     /// 话题 ID
     pub thread_id: Option<String>,
+    /// 是否 @了机器人（仅群聊场景有意义，None 表示不适用或未知）
+    #[serde(default)]
+    pub mentioned: Option<bool>,
     /// 是否为群组消息
     pub is_group: bool,
     /// 平台特有元数据

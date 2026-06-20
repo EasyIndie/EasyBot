@@ -85,6 +85,7 @@ mod tests {
             callback: None,
             reply_to: None,
             thread_id: None,
+            mentioned: None,
             metadata: None,
         }
     }
@@ -245,6 +246,7 @@ mod tests {
             callback: None,
             reply_to: None,
             thread_id: None,
+            mentioned: None,
             metadata: None,
         };
         let event = crate::types::event::GatewayEvent {

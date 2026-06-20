@@ -1041,6 +1041,7 @@ fn convert_message(msg: WeixinMessage) -> Option<InboundMessage> {
         callback: None,
         reply_to: None,
         thread_id: None,
+        mentioned: None,
         is_group,
         metadata: Some(serde_json::json!({
             "session_id": msg.session_id,
