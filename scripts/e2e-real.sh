@@ -126,6 +126,9 @@ phase2_auto_checks() {
 phase3_wait_for_messages() {
     section "Phase 3: 等待入站消息"
 
+    # 记录轮询开始时间戳（毫秒），在提示之前打点，确保用户后续发送的消息时间戳 > POLL_START_MS
+    POLL_START_MS=$(($(date +%s) * 1000))
+
     echo ""
     echo -e "  ${BOLD}📱 请向各平台 Bot 发送一条测试消息：${NC}"
     echo ""
@@ -139,9 +142,6 @@ phase3_wait_for_messages() {
     if [ -t 0 ]; then
         read -r -p "  完成发送后按 Enter 开始检测..." _
     fi
-
-    # 记录轮询开始时间戳（毫秒），Phase 4 只回复本轮收到的消息
-    POLL_START_MS=$(($(date +%s) * 1000))
 
     info "开始轮询检测入站消息（每 ${POLL_INTERVAL}s 检测一次，最多 ${WAIT_TIMEOUT}s）..."
 
