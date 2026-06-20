@@ -165,8 +165,11 @@ The `AdapterRegistry` holds factory functions keyed by platform name, each with 
 |-------|-------|--------|
 | **P1 MVP** | Core types, PlatformAdapter trait, Telegram adapter, REST API, config loading, cross-platform paths | ✅ Done |
 | **P2 Bidirectional** | Event bus, WebSocket push, webhooks, inbound message handling, session persistence, message edit/delete, adapter lifecycle events | 100% ✅ |
-| **P3 Multi-platform** | Telegram ✅, Discord ✅, **飞书/Lark** ✅, **QQ** ✅ (群消息已验证, C2C/频道代码已实现待验证环境), **个人微信(wechat)** ✅ (iLink Bot API 已验证) — 五个平台 + 媒体发送 | 95% ✅ |
-| **P4 Production** | API key auth (Argon2), rate limiting, hot-reload, graceful shutdown, PostgreSQL, Prometheus, Docker, TTL retention | 80% ✅ (均已完成，仅剩生产环境打磨) |
+| **P3 Multi-platform** | Telegram ✅, Discord ✅, **飞书/Lark** ✅, **QQ** ✅ (群消息已验证, C2C/频道代码已实现待验证环境), **个人微信(wechat)** ✅ (iLink Bot API 已验证) — 五个平台 + 媒体发送 | 85% ✅ |
+| **P4 Production** | API key auth (Argon2), rate limiting, hot-reload, graceful shutdown, PostgreSQL, Prometheus, Docker, TTL retention | 75% ✅ |
+
+> **P3 未完成项**: Discord `send_media`/`send_interactive`、微信 `edit_message`/`delete_message`/`send_interactive`、所有适配器 `list_chats` 实际实现。
+> **P4 未完成项**: 权限模型 RBAC (`auth/permissions.rs`)、`send_draft` 流式草稿、通用适配器健康轮询/自动重连（仅 Discord 实现了 Gateway 重连）、TLS 仅配置层未在应用层处理。
 | **P5 Plugin System** | Plugin SDK, dynamic library loading, plugin registry, loader tests, developer docs | ✅ Done |
 
 ### 不可退让的设计约束
@@ -183,3 +186,30 @@ The `AdapterRegistry` holds factory functions keyed by platform name, each with 
 - **Config precedence**: YAML → `.local.yaml` merge → env var substitution (`${VAR_NAME}`); env vars sourced from `export` > Docker env > `.env` file (loaded via `dotenvy::from_path` before config loading)
 - **Env var loading**: Call `load_env(&EasyBotPaths)` at startup (in `bin/main.rs`) before `load_config()`; `.env` file lives at `{config_dir}/.env`; run `easybot --init` to generate `.env` template
 - **Adapter auto-enable**: `start_all()` traverses registry, checks `credential_env_vars` per platform; adapters with credentials set auto-enable without needing `enabled: true` in YAML
+
+## Known Gaps & TODO
+
+Detailed tracking: see `docs/TODO.md` for the full prioritized checklist.
+
+### P3: Multi-Platform (85% → target: 100%)
+
+| Gap | Platform | File | Description |
+|-----|----------|------|-------------|
+| `send_media` | **Discord** | `crates/easybot-adapter-discord/src/lib.rs` | Send images/audio/video/files via Discord REST API |
+| `send_interactive` | **Discord** | same | Inline keyboard / button messages |
+| `list_chats` | **Discord** | same | List available guilds/channels |
+| `edit_message` | **WeChat** | `crates/easybot-adapter-wechat/src/lib.rs` | Edit previously sent messages |
+| `delete_message` | **WeChat** | same | Delete/recall messages |
+| `send_interactive` | **WeChat** | same | Interactive button messages |
+| `send_interactive` | **QQ** | `crates/easybot-adapter-qq/src/lib.rs` | Interactive button/keyboard messages |
+| `list_chats` | **QQ / WeChat** | respective adapters | Return actual chat lists (currently empty vec) |
+
+### P4: Production (75% → target: 100%)
+
+| Gap | File | Description |
+|-----|------|-------------|
+| Permission model (RBAC) | `crates/easybot-core/src/auth/` (new `permissions.rs`) | Role-based access control with permission-check middleware |
+| `send_draft` streaming | PlatformAdapter trait + adapters | Streaming draft send method (`send_draft` defined in trait, no adapter implements it) |
+| Health poll + auto-reconnect | `crates/easybot-core/src/adapter/manager.rs` | Periodic `health()` checks for all adapters with automatic reconnect; currently only Discord Gateway has its own reconnect loop |
+| TLS/HTTPS termination | `crates/easybot-api/src/server.rs` | TLS config exists but cert loading/serving not wired at application layer |
+| Health: track start time | `crates/easybot-api/src/routes/health.rs:56` | Record and expose gateway process start time in health endpoint |

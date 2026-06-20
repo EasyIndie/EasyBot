@@ -34,7 +34,7 @@
 [package]
 name = "easybot"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 
 [dependencies]
 # 异步运行时
@@ -464,7 +464,7 @@ mod cross_platform_tests {
 
 ## 第三章：项目结构
 
-### 2.1 工作空间（Workspace）布局
+### 3.1 工作空间（Workspace）布局
 
 ```
 easybot/
@@ -569,14 +569,14 @@ easybot/
         └── main.rs
 ```
 
-### 2.2 二进制 Crate (`bin/`)
+### 3.2 二进制 Crate (`bin/`)
 
 ```toml
 # bin/Cargo.toml
 [package]
 name = "easybot"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 
 [dependencies]
 easybot-core = { path = "../crates/easybot-core" }
@@ -602,7 +602,7 @@ path = "src/main.rs"
 
 ---
 
-## 第三章：关键类型设计（Rust 代码草图）
+## 第四章：关键类型设计（Rust 代码草图）
 
 ### 3.1 适配器 Trait
 
@@ -1657,7 +1657,7 @@ async fn main() -> anyhow::Result<()> {
 
 ---
 
-## 第四章：分阶段实施计划
+## 第五章：分阶段实施计划
 
 ### Phase 1：最小可行产品（MVP）—— 核心链路打通
 
@@ -1731,20 +1731,26 @@ curl http://localhost:8080/api/v1/messages?sessionKey=telegram:123456
 
 ### Phase 3：多平台支持
 
-**目标：** 支持至少 3 个 IM 平台（Telegram / Discord / WhatsApp），验证适配器接口的通用性。
+**目标：** 支持至少 3 个 IM 平台（Telegram / Discord / 飞书 / QQ / 微信），验证适配器接口的通用性。
+
+**实际完成平台：5 个** (Telegram ✅, Discord ✅, 飞书 ✅, QQ ✅, 微信 ✅)，**WhatsApp 未实现**（原计划但被飞书/QQ/微信替代）。
 
 **预计工时：** 3-4 周
 
-| 任务 | 模块 | 说明 |
-|------|------|------|
-| 3.1 Discord 适配器 | `adapter-discord/` | Discord Bot API，支持 gateway intents |
-| 3.2 WhatsApp Cloud API 适配器 | `adapter-whatsapp/` | WhatsApp Business API 或 Baileys |
-| 3.3 适配器接口评审 | `core/types/adapter.rs` | 根据 3 个实现调整 trait 设计 |
-| 3.4 发送媒体 | `adapter-telegram` | 实现 send_media |
-| 3.5 发送媒体 | `adapter-discord` | 实现 send_media |
-| 3.6 消息格式转换 | `adapter-*/format.rs` | Markdown / HTML 按平台能力转换 |
-| 3.7 适配器状态持久化 | `core/adapter/manager.rs` | 状态写入数据库 |
-| 3.8 批量发送 | `api/routes/messages.rs` | POST /messages/batch-send |
+| 任务 | 模块 | 说明 | 状态 |
+|------|------|------|------|
+| 3.1 Discord 适配器 | `adapter-discord/` | Discord Bot API，支持 gateway intents | ✅ 完成 |
+| 3.2 飞书/Lark 适配器 | `adapter-feishu/` | 飞书 REST API + WebSocket 事件订阅 | ✅ 完成 (替代 WhatsApp) |
+| 3.3 QQ 适配器 | `adapter-qq/` | 统一 QQBot 鉴权 + Gateway WebSocket | ✅ 完成 |
+| 3.4 微信适配器 | `adapter-wechat/` | 个人微信 iLink Bot API 长轮询 | ✅ 完成 |
+| 3.5 适配器接口评审 | `core/types/adapter.rs` | 根据多个实现调整 trait 设计 | ✅ 完成 |
+| 3.6 发送媒体 | `adapter-telegram` / `adapter-discord` / etc. | 实现 send_media | ⚠️ **Discord send_media 未实现** |
+| 3.7 消息格式转换 | `adapter-*/format.rs` | Markdown / HTML 按平台能力转换 | ✅ 完成 |
+| 3.8 适配器状态持久化 | `core/adapter/manager.rs` | 状态写入数据库 | ✅ 完成 |
+| 3.9 批量发送 | `api/routes/messages.rs` | POST /messages/batch-send | ✅ 完成 |
+| — send_interactive | 各适配器 | 交互式按钮/键盘消息 | ⚠️ 仅 Telegram/飞书有 |
+| — edit_message / delete_message | 各适配器 | 编辑/删除已发送消息 | ⚠️ **微信缺少** edit+delete |
+| — list_chats | 各适配器 | 列出可用聊天列表 | ⚠️ **Discord/QQ/微信返回空 Vec** |
 
 ---
 
@@ -1754,20 +1760,20 @@ curl http://localhost:8080/api/v1/messages?sessionKey=telegram:123456
 
 **预计工时：** 4-6 周
 
-| 任务 | 模块 | 说明 |
-|------|------|------|
-| 4.1 API Key 管理 | `core/auth/` | 生成/验证/吊销 |
-| 4.2 权限模型 | `core/auth/permissions.rs` | 角色 + 权限检查中间件 |
-| 4.3 速率限制 | `api/middleware/rate_limit.rs` | token bucket 或 sliding window |
-| 4.4 配置热重载 | `core/config.rs` + `notify` | 文件变更监听 + 动态重载 |
-| 4.5 优雅关闭 | `bin/src/main.rs` | signal handler + drain |
-| 4.6 PostgreSQL 支持 | `core/session/store.rs` | sqlx 连接池 + migration |
-| 4.7 适配器健康轮询 | `core/adapter/manager.rs` | 定时 health() 检查 + 自动重连 |
-| 4.8 Prometheus 指标 | `api/middleware/metrics.rs` | HTTP 请求数、延迟、错误率 |
-| 4.9 交互式按钮 | `adapter-telegram` | 实现 send_interactive |
-| 4.10 流式草稿 | `adapter-telegram` | 实现 send_draft |
-| 4.11 Docker 镜像 | `Dockerfile` | 多阶段构建 |
-| 4.12 HTTPS / WSS | `api/server.rs` | rustls 配置 |
+| 任务 | 模块 | 说明 | 状态 |
+|------|------|------|------|
+| 4.1 API Key 管理 | `core/auth/` | 生成/验证/吊销 | ✅ 完成 (Argon2) |
+| 4.2 权限模型 | `core/auth/permissions.rs` | 角色 + 权限检查中间件 | ❌ **未实现** |
+| 4.3 速率限制 | `api/middleware/rate_limit.rs` | token bucket 或 sliding window | ✅ 完成 |
+| 4.4 配置热重载 | `core/config.rs` + `notify` | 文件变更监听 + 动态重载 | ✅ 完成 (60s 轮询) |
+| 4.5 优雅关闭 | `bin/src/main.rs` | signal handler + drain | ✅ 完成 |
+| 4.6 PostgreSQL 支持 | `core/session/store.rs` | sqlx 连接池 + migration | ✅ 完成 |
+| 4.7 适配器健康轮询 | `core/adapter/manager.rs` | 定时 health() 检查 + 自动重连 | ⚠️ **仅 Discord Gateway 有重连，通用轮询未实现** |
+| 4.8 Prometheus 指标 | `api/middleware/metrics.rs` | HTTP 请求数、延迟、错误率 | ✅ 完成 |
+| 4.9 交互式按钮 | 各适配器 | 实现 send_interactive | ⚠️ **仅 Telegram/飞书有** |
+| 4.10 流式草稿 | `adapter-telegram` | 实现 send_draft | ❌ **未实现（trait 已定义，无适配器实现）** |
+| 4.11 Docker 镜像 | `Dockerfile` | 多阶段构建 | ✅ 完成 |
+| 4.12 HTTPS / WSS | `api/server.rs` | rustls 配置 | ⚠️ **TLS 配置存在但未在应用层处理** |
 
 ---
 
@@ -1788,7 +1794,7 @@ curl http://localhost:8080/api/v1/messages?sessionKey=telegram:123456
 
 ---
 
-## 第五章：关键设计决策说明
+## 第六章：关键设计决策说明
 
 ### 5.1 为何选择 axum 而非 actix-web
 
@@ -1839,7 +1845,9 @@ easybot process
 │   ├── Adapter Manager
 │   │   ├── Telegram polling task
 │   │   ├── Discord gateway task
-│   │   └── WhatsApp webhook listener
+│   │   ├── Feishu WebSocket task
+│   │   ├── QQ Gateway WebSocket task
+│   │   └── WeChat long-polling task
 │   ├── Health poller (定期任务)
 │   └── Config watcher (notify 异步监听)
 └── signal handler (ctrl+c / SIGTERM)
@@ -1924,7 +1932,7 @@ fn resolve_env_vars(value: &str) -> String {
 
 ---
 
-## 第六章：目录结构总览（最终形态）
+## 第七章：目录结构总览（最终形态）
 
 ```
 easybot/
@@ -1972,70 +1980,86 @@ easybot/
 │   │   ├── Cargo.toml
 │   │   └── src/lib.rs
 │   │
+│   ├── easybot-adapter-feishu/
+│   │   ├── Cargo.toml
+│   │   └── src/lib.rs
+│   │
+│   ├── easybot-adapter-qq/
+│   │   ├── Cargo.toml
+│   │   └── src/lib.rs
+│   │
+│   ├── easybot-adapter-wechat/
+│   │   ├── Cargo.toml
+│   │   └── src/lib.rs
+│   │
 │   └── easybot-plugin-sdk/
 │       ├── Cargo.toml
 │       └── src/lib.rs
 │
 ├── tests/
 │   ├── integration/                     # 集成测试
-│   │   ├── api_messages_test.rs
-│   │   ├── api_ws_test.rs
-│   │   └── adapter_telegram_test.rs
-│   └── common/                          # 测试共享代码
-│       └── mod.rs
+│   │   └── integration-tests/
+│   └── plugins/
+│       └── mock-adapter/                # 插件系统测试适配器
 │
 └── docs/
-    ├── easybot-architecture.md       # 架构设计文档
-    └── rust-implementation-plan.md      # 本文件
+    ├── im-gateway-architecture.md       # 架构设计文档
+    ├── rust-implementation-plan.md      # 本文件
+    ├── TEST_PLAN.md                     # 测试计划
+    └── TODO.md                          # 待办事项清单
 ```
 
 ---
 
-## 第七章：总结
+## 第八章：总结
 
-### 实施路线图
+### 实施路线图 (当前状态)
 
 ```
                  Phase 1              Phase 2              Phase 3              Phase 4               Phase 5
                 (2-3 周)             (2-3 周)             (3-4 周)             (4-6 周)              (4 周)
                 ─────────            ─────────            ─────────            ─────────              ─────────
-核心链路打通      ████████
-双向通信                     ██████████████
-多平台                                     ████████████████
-生产级完善                                                ████████████████████
-插件系统                                                                                    ████████████
+                 ✅ 完成              ✅ 完成               ⚠️ 85%                ⚠️ 75%                 ✅ 完成
 
 REST 单发        ██
 Telegram         ██        ██
 WebSocket                    ██
 Webhook                      ██
 Discord                                ██
-WhatsApp                               ██
-3+ 平台                                  ██
-API Key / 权限                                        ██
+飞书/QQ/微信                            ██
+5 平台                                   ██
+API Key / 权限                                        ██  (权限模型 ❌)
 速率限制                                                 ██
 热重载                                                    ██
-健康轮询 + 自动重连                                        ██
-HTTPS/WSS                                                  ██
+健康轮询 + 自动重连                                        ██ (仅 Discord ⚠️)
+HTTPS/WSS                                                  ██ (仅配置 ⚠️)
 Prometheus                                                  ██
 Docker                                                       ██
-交互式按钮 + 流式                                              ██
+交互式按钮 + 流式                                              ██ (send_draft ❌)
 PostgreSQL                                                     ██
 插件 SDK                                                                   ██
 动态加载                                                                     ██
 ```
 
-### 关键数字
+### 关键数字 (实际 vs 计划)
 
-| 指标 | Phase 1 | Phase 4 |
-|------|---------|---------|
-| 支持平台数 | 1 | 3+ |
-| 启动到首次发送 | ~30 分钟 | — |
-| 消息延迟（P99） | — | <500ms |
-| 代码行数估计 | ~3,000 | ~20,000 |
-| Rust 文件数 | ~30 | ~150 |
-| 第三方依赖数 | ~15 | ~25 |
+| 指标 | Phase 1 计划 | Phase 4 计划 | 实际当前 |
+|------|-------------|-------------|---------|
+| 支持平台数 | 1 | 3+ | **5** (Telegram, Discord, 飞书, QQ, 微信) |
+| 代码行数估计 | ~3,000 | ~20,000 | **~30,000+** |
+| Rust 文件数 | ~30 | ~150 | **~200+** |
+| 第三方依赖数 | ~15 | ~25 | ~30 |
 
-### 下一步
+### 剩余工作 (详情见 docs/TODO.md)
 
-你可以在完成 Phase 1 核心链路后立即投入使用（发送消息到 Telegram），后续逐步扩展能力和平台覆盖。
+**P3 补完 (15%):**
+- Discord: send_media, send_interactive, list_chats
+- 微信: edit_message, delete_message, send_interactive
+- QQ: send_interactive, list_chats 实际实现
+
+**P4 补完 (25%):**
+- 权限模型 RBAC (auth/permissions.rs)
+- send_draft 流式草稿 (trait 已定义，无适配器实现)
+- 通用适配器健康轮询 + 自动重连
+- TLS/HTTPS 应用层处理
+- Health 端点记录启动时间
