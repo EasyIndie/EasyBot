@@ -142,7 +142,10 @@ async fn test_connect_success() {
     assert_eq!(adapter.state(), AdapterState::Starting);
 
     let result = adapter.connect().await.unwrap();
-    assert!(result.ok, "connect should succeed with mocked token and bot info");
+    assert!(
+        result.ok,
+        "connect should succeed with mocked token and bot info"
+    );
     assert_eq!(adapter.state(), AdapterState::Connected);
     assert!(result.bot_info.is_some());
     assert_eq!(result.bot_info.as_ref().unwrap().id, "bot_001");
@@ -172,7 +175,10 @@ async fn test_token_refresh_failure() {
     let result = adapter.connect().await.unwrap();
     assert!(!result.ok, "connect should fail when token refresh fails");
     assert!(
-        result.error.unwrap_or_default().contains("missing access_token"),
+        result
+            .error
+            .unwrap_or_default()
+            .contains("missing access_token"),
         "error should mention missing access_token"
     );
     assert_eq!(adapter.state(), AdapterState::Starting);
