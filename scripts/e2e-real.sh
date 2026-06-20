@@ -136,10 +136,10 @@ phase3_wait_for_messages() {
     echo ""
 
     if [ -t 0 ]; then
-        read -r -t "${WAIT_TIMEOUT}" -p "  按 Enter 立即开始轮询检测（或等待 ${WAIT_TIMEOUT}s 自动开始）..." _ || true
+        read -r -p "  完成发送后按 Enter 开始检测..." _
     fi
 
-    info "开始轮询检测入站消息（最多 ${WAIT_TIMEOUT}s，在此期间发送消息均可被检测）..."
+    info "开始轮询检测入站消息（最多 ${WAIT_TIMEOUT}s）..."
 
     local expected_platforms=("telegram" "discord" "feishu" "qq" "wechat")
     local found_platforms=()
