@@ -168,6 +168,9 @@ struct WeixinMessage {
     session_id: String,
     #[serde(default)]
     group_id: String,
+    /// 消息上下文令牌（回复时必须回传）
+    #[serde(default)]
+    context_token: Option<String>,
 }
 
 /// 消息内容项
@@ -222,10 +225,19 @@ struct WeixinFileItem {
     file_url: Option<String>,
 }
 
-/// 发送消息响应（实际 API 无 ret 字段，直接返回结果）
+/// 发送消息响应
+///
+/// iLink send API 可能返回空的 {}，或包含 ret/errmsg（错误时），
+/// 或包含 message_id/seq（成功时）。
 #[derive(Debug, serde::Deserialize)]
 #[allow(dead_code)]
 struct SendMessageResponse {
+    #[serde(default)]
+    ret: Option<i64>,
+    #[serde(default)]
+    errmsg: Option<String>,
+    #[serde(default)]
+    message_id: Option<String>,
     #[serde(default)]
     msg_id: Option<i64>,
     #[serde(default)]
@@ -275,6 +287,8 @@ pub struct WeChatAdapter {
     ilink_bot_id: tokio::sync::RwLock<Option<String>>,
     /// iLink User ID
     ilink_user_id: tokio::sync::RwLock<Option<String>>,
+    /// 最近收到的 context_token（回复时需回传，与长轮询任务共享）
+    context_token: Arc<tokio::sync::RwLock<Option<String>>>,
 }
 
 impl WeChatAdapter {
@@ -324,6 +338,7 @@ impl WeChatAdapter {
             cancel_tx: None,
             ilink_bot_id: tokio::sync::RwLock::new(None),
             ilink_user_id: tokio::sync::RwLock::new(None),
+            context_token: Arc::new(tokio::sync::RwLock::new(None)),
         }
     }
 
@@ -590,8 +605,9 @@ impl PlatformAdapter for WeChatAdapter {
                 .and_then(|c| c.base_url.clone())
                 .unwrap_or_else(|| ILINK_API.to_string());
 
+            let ctx_token = self.context_token.clone();
             tokio::spawn(async move {
-                longpoll_loop(client, token, buf, base_url, eb, cancel_rx).await;
+                longpoll_loop(client, token, buf, base_url, eb, cancel_rx, ctx_token).await;
             });
         }
 
@@ -675,9 +691,21 @@ impl PlatformAdapter for WeChatAdapter {
         let client = self.client()?;
         let url = format!("{}/ilink/bot/sendmessage", self.api_base_url());
 
-        let body = serde_json::json!({
+        // iLink send API 完整格式：msg 包装 + context_token + 元数据
+        let ctx_token = self.context_token.read().await.clone();
+        let client_id = format!(
+            "easybot:{}:{}",
+            chrono::Utc::now().timestamp_millis(),
+            uuid::Uuid::new_v4().as_simple()
+        );
+
+        let mut body = serde_json::json!({
             "msg": {
+                "from_user_id": "",
                 "to_user_id": params.chat_id,
+                "client_id": client_id,
+                "message_type": 2,
+                "message_state": 2,
                 "item_list": [
                     {
                         "type": 1,
@@ -686,8 +714,22 @@ impl PlatformAdapter for WeChatAdapter {
                         }
                     }
                 ]
+            },
+            "base_info": {
+                "channel_version": "1.0.0"
             }
         });
+
+        if let Some(ref ct) = ctx_token {
+            body["msg"]["context_token"] = serde_json::Value::String(ct.clone());
+        }
+
+        tracing::debug!(
+            "WeChat send request: to_user_id={}, has_ctx={}, text={}",
+            params.chat_id,
+            ctx_token.is_some(),
+            &params.message.text[..params.message.text.len().min(100)]
+        );
 
         let raw_resp = client
             .post(&url)
@@ -697,15 +739,29 @@ impl PlatformAdapter for WeChatAdapter {
             .await
             .map_err(|e| GatewayError::Internal(format!("WeChat send failed: {}", e)))?;
 
+        let status = raw_resp.status();
         let resp_text = raw_resp
             .text()
             .await
             .map_err(|e| GatewayError::Internal(format!("WeChat send read failed: {}", e)))?;
 
         tracing::debug!(
-            "WeChat send response: {}",
+            "WeChat send response (status={}): {}",
+            status,
             &resp_text[..resp_text.len().min(300)]
         );
+
+        if !status.is_success() {
+            self.errors.fetch_add(1, Ordering::Relaxed);
+            return Ok(SendResult::fail(
+                format!(
+                    "WeChat send HTTP {}: {}",
+                    status.as_u16(),
+                    &resp_text[..resp_text.len().min(200)]
+                ),
+                false,
+            ));
+        }
 
         let resp: SendMessageResponse = serde_json::from_str(&resp_text).map_err(|e| {
             GatewayError::Internal(format!(
@@ -715,13 +771,27 @@ impl PlatformAdapter for WeChatAdapter {
             ))
         })?;
 
+        // ret 存在且非 0 时报告错误
+        if let Some(ret) = resp.ret {
+            if ret != 0 {
+                self.errors.fetch_add(1, Ordering::Relaxed);
+                let err_detail = resp.errmsg.as_deref().unwrap_or("unknown error");
+                tracing::warn!("WeChat send API error: ret={}, errmsg={}", ret, err_detail);
+                return Ok(SendResult::fail(
+                    format!("WeChat API error (ret={}): {}", ret, err_detail),
+                    false,
+                ));
+            }
+        }
+
         self.messages_out.fetch_add(1, Ordering::Relaxed);
 
         let msg_id = resp
-            .msg_id
-            .map(|id| id.to_string())
+            .message_id
             .or(resp.msg_id_str)
-            .or(resp.local_id);
+            .or(resp.msg_id.map(|id| id.to_string()))
+            .or(resp.local_id)
+            .or(resp.seq.map(|s| s.to_string()));
 
         Ok(SendResult {
             success: true,
@@ -785,6 +855,7 @@ async fn longpoll_loop(
     base_url: String,
     event_bus: Arc<EventBus>,
     mut cancel_rx: tokio::sync::broadcast::Receiver<()>,
+    context_token: Arc<tokio::sync::RwLock<Option<String>>>,
 ) {
     let url = format!("{}/ilink/bot/getupdates", base_url);
     let mut buf = initial_buf;
@@ -802,6 +873,10 @@ async fn longpoll_loop(
                         buf = new_buf;
                         consecutive_failures = 0;
                         for msg in msgs {
+                            if let Some(ref ct) = msg.context_token {
+                                let mut ctx = context_token.write().await;
+                                *ctx = Some(ct.clone());
+                            }
                             if let Some(inbound) = convert_message(msg) {
                                 let event = easybot_core::types::event::GatewayEvent::new(
                                     easybot_core::types::event::event_types::MESSAGE_INBOUND,
@@ -1065,6 +1140,7 @@ mod tests {
             create_time_ms: 1700000000000,
             session_id: "session_abc".to_string(),
             group_id: "".to_string(),
+            context_token: None,
             item_list: vec![WeixinMessageItem {
                 item_type: 1,
                 text_item: Some(WeixinTextItem {
@@ -1099,6 +1175,7 @@ mod tests {
             create_time_ms: 1700000000000,
             session_id: "sess2".to_string(),
             group_id: "".to_string(),
+            context_token: None,
             item_list: vec![WeixinMessageItem {
                 item_type: 2,
                 text_item: None,
@@ -1135,6 +1212,7 @@ mod tests {
             create_time_ms: 1700000000000,
             session_id: "".to_string(),
             group_id: "".to_string(),
+            context_token: None,
             item_list: vec![WeixinMessageItem {
                 item_type: 4,
                 text_item: None,
@@ -1169,6 +1247,7 @@ mod tests {
             create_time_ms: 1700000000000,
             session_id: "".to_string(),
             group_id: "group@im.wechat".to_string(),
+            context_token: None,
             item_list: vec![WeixinMessageItem {
                 item_type: 1,
                 text_item: Some(WeixinTextItem {
@@ -1280,6 +1359,7 @@ mod tests {
             create_time_ms: 1000,
             session_id: "".to_string(),
             group_id: "".to_string(),
+            context_token: None,
             item_list: vec![],
         };
         let inbound = convert_message(msg).unwrap();
@@ -1296,6 +1376,7 @@ mod tests {
             create_time_ms: 2000,
             session_id: "".to_string(),
             group_id: "".to_string(),
+            context_token: None,
             item_list: vec![],
         };
         let inbound = convert_message(msg).unwrap();

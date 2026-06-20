@@ -42,10 +42,10 @@ fn send_text_params() -> SendTextParams {
 }
 
 fn send_success_response() -> serde_json::Value {
+    // iLink send API 返回扁平结构，message_id 为字符串
     serde_json::json!({
-        "ret": 0,
-        "errmsg": "ok",
-        "msg_id": 12345,
+        "message_id": "12345",
+        "seq": 100,
         "local_id": "local-001"
     })
 }
@@ -76,12 +76,10 @@ async fn test_send_success() {
 async fn test_send_uses_msg_id_str_fallback() {
     let mock_server = MockServer::start().await;
 
-    // 返回 msg_id_str 而不是 msg_id
+    // 返回 msg_id_str 而不是 message_id
     Mock::given(method("POST"))
         .and(path("/ilink/bot/sendmessage"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "ret": 0,
-            "errmsg": "ok",
             "msg_id_str": "str-msg-001",
             "local_id": "local-001"
         })))
@@ -116,9 +114,13 @@ async fn test_send_http_error() {
         .await;
 
     let adapter = make_adapter(mock_server.address().port()).await;
-    let result = adapter.send(send_text_params()).await;
+    let result = adapter.send(send_text_params()).await.unwrap();
 
-    assert!(result.is_err(), "HTTP 500 should return Err(GatewayError)");
+    assert!(!result.success, "HTTP 500 should return success=false");
+    assert!(
+        result.error.unwrap_or_default().contains("500"),
+        "error should contain HTTP status code"
+    );
 }
 
 #[tokio::test]
@@ -158,10 +160,33 @@ async fn test_send_ret_error_code() {
         .await;
 
     let adapter = make_adapter(mock_server.address().port()).await;
-    // WeChat adapter 的 send() 对任何 200 返回 success
-    // ret!=0 会被忽略（当前实现将 ret 字段仅用于 i64 解析）
     let result = adapter.send(send_text_params()).await.unwrap();
-    assert!(result.success, "WeChat adapter treats all 200 as success");
+    assert!(!result.success, "ret!=0 should return success=false");
+    assert!(
+        result.error.unwrap_or_default().contains("1001"),
+        "error should contain the ret code"
+    );
+}
+
+#[tokio::test]
+async fn test_send_empty_response() {
+    // 真实 iLink send API 在成功时可能返回 {}（空对象）
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/ilink/bot/sendmessage"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({})))
+        .expect(1..)
+        .mount(&mock_server)
+        .await;
+
+    let adapter = make_adapter(mock_server.address().port()).await;
+    let result = adapter.send(send_text_params()).await.unwrap();
+    assert!(
+        result.success,
+        "empty response '{{}}' should be treated as success"
+    );
+    assert_eq!(result.message_id, None, "empty response has no message ID");
 }
 
 // ── 前置条件 ──

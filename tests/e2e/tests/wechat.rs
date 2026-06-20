@@ -113,13 +113,12 @@ async fn test_e2e_wechat_lifecycle() {
 async fn test_e2e_wechat_send_message() {
     let (router, key, mock_server) = setup().await;
 
-    // WeChat send: POST /ilink/bot/sendmessage
+    // WeChat send: POST /ilink/bot/sendmessage（扁平结构，无 msg 包装）
     Mock::given(method("POST"))
         .and(path("/ilink/bot/sendmessage"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "ret": 0,
-            "msg": "ok",
-            "msg_id_str": "msg_wechat_001"
+            "message_id": "msg_wechat_001",
+            "seq": 100
         })))
         .expect(0..)
         .mount(&mock_server)
@@ -165,4 +164,37 @@ async fn test_e2e_wechat_send_error() {
     .await;
     // WeChat send 解析失败时 API 层返回 500
     assert!(status.is_server_error() || json["status"] == "failed");
+}
+
+#[tokio::test]
+async fn test_e2e_wechat_send_api_error() {
+    let (router, key, mock_server) = setup().await;
+
+    // WeChat API 返回 ret != 0 → 业务错误，send() 返回 status=failed
+    Mock::given(method("POST"))
+        .and(path("/ilink/bot/sendmessage"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "ret": 1001,
+            "errmsg": "invalid token"
+        })))
+        .expect(0..)
+        .mount(&mock_server)
+        .await;
+
+    assert!(start_and_connect(&router, &key, "wechat").await);
+
+    let (status, json) = auth_post(
+        &router,
+        "/api/v1/messages/send",
+        &key,
+        Some(serde_json::json!({"target": "wechat:test_user@im.wechat", "text": "Hello"})),
+    )
+    .await;
+    assert_eq!(status, 200);
+    assert_eq!(json["status"], "failed");
+    assert!(
+        json["error"].as_str().unwrap_or("").contains("1001"),
+        "error should contain ret code 1001, got: {:?}",
+        json["error"]
+    );
 }
