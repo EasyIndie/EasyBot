@@ -101,12 +101,12 @@ phase2_auto_checks() {
     # Health
     local health
     health=$(api_get "$API_BASE/health")
-    local total adapters=$(echo "$health" | jq -r '.adapters.total // 0')
-    local connected=$(echo "$health" | jq -r '.adapters.connected // 0')
+    local connected
+    connected=$(echo "$health" | jq -r '.adapters.connected // 0')
     if [ "$connected" -ge 5 ]; then
-        pass "Health: $connected/$total adapters connected"
+        pass "Health: $connected adapters connected"
     else
-        fail "Health: $connected/$total (expected 5)"
+        fail "Health: $connected adapters (expected 5)"
     fi
 
     # Adapters
