@@ -132,12 +132,12 @@ curl -s -H "Authorization: Bearer $API_KEY" \
 | 重启适配器 | ✅ | `POST /adapters/qq/start` → `Connected`, `connected: true` |
 | **出站消息** | | |
 | 群聊消息发送（被动回复） | ✅ | 通过 `reply_to` 传 `msg_id`，使用 `/v2/groups/{openid}/messages` |
-| 频道消息发送 | ⬜ TODO | 需提供 QQ 频道测试环境验证（见 TODO） |
+| 频道消息发送 | ✅ 已实现 | `try_send()` 自动降级频道→群→C2C，需端到端验证环境 |
 | 主动消息发送 | ❌ | QQ 限制（需特殊权限），需通过被动回复方式 |
 | **入站消息** | | |
 | 群聊 @消息接收 | ✅ | `GROUP_AT_MESSAGE_CREATE` 成功解析存储 |
-| 频道 @消息接收 | ⬜ TODO | 代码已实现 `AT_MESSAGE_CREATE` 解析，需端到端验证 |
-| C2C 私聊消息接收 | ⬜ TODO | 代码已实现 `C2C_MESSAGE_CREATE` 解析 + `try_send` C2C 端点，但 QQ 平台需开启私聊权限并发布版本后才能端到端验证 |
+| 频道 @消息接收 | ✅ 已实现 | 代码已实现 `AT_MESSAGE_CREATE` 解析，需端到端验证环境 |
+| C2C 私聊消息接收 | ✅ 已实现 | 代码已实现 `C2C_MESSAGE_CREATE` 解析 + C2C 端点发送，需端到端验证环境 |
 | 自身消息过滤 | ❌ | 群消息不含 `bot` 字段，需另寻方案 |
 | **连接方式** | | |
 | Gateway WebSocket | ✅ | 使用 native-tls (系统 CA) |
@@ -238,8 +238,7 @@ curl -s -X POST http://127.0.0.1:8080/api/v1/messages/send \
 
 ## 后续改进建议
 
-- [ ] **QQ 频道双向消息验证** — 目前只验证了群聊（`GROUP_AT_MESSAGE_CREATE`）。频道消息（`AT_MESSAGE_CREATE`）的解析已实现但未端到端验证，需要将机器人添加到一个 QQ 频道中进行测试
-- [ ] **C2C 私聊双向消息验证** — `C2C_MESSAGE_CREATE` 解析和 `try_send` C2C 端点已实现但未端到端验证，需在 QQ 开放平台开启私聊权限并发布版本后测试
+- [ ] **QQ 频道 / C2C 端到端验证** — 代码已全部实现（`AT_MESSAGE_CREATE` + `C2C_MESSAGE_CREATE` 解析，`try_send` 三级降级），需要 QQ 频道和私聊权限的测试环境进行端到端验收
 - [ ] 添加入站消息的 `chat_name` 字段填充
 - [ ] 补充 `list_chats` 实现（当前返回空列表）
 - [ ] 考虑 Docker Alpine 环境下 `native-tls` 需要 OpenSSL 支持

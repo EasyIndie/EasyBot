@@ -356,7 +356,7 @@ wscat -c "ws://localhost:8080/api/v1/ws" \
 | WebSocket 事件推送 | 7 种事件类型，100ms 发送超时，50 次连续丢弃断开 |
 | 认证方式 | HTTP Header `Authorization: Bearer <api-key>` |
 | 能力声明 | Text、Image、Audio、Video、Document、Interactive、Markdown、HTML、Group、TypingIndicator、MessageEdit、MessageDelete |
-| 不支持的能力 | ChatList、Streaming、send_media()、send_interactive()、list_chats() |
+| 不支持的能力 | ChatList、Streaming、list_chats() |
 
 ## 后续改进建议
 
@@ -365,7 +365,6 @@ wscat -c "ws://localhost:8080/api/v1/ws" \
   cargo add --dev wiremock -p easybot-adapter-telegram
   ```
 - [ ] 将 `TELEGRAM_API` 常量改为可配置项（通过 `AdapterConfig.extra`），方便测试时指向 mock server
-- [ ] 补充 `send_media()` 实现（当前返回默认错误）
 - [ ] 增加更多消息类型的 convert 测试（图片、视频、文档）
 - [ ] 为 AdapterManager 补充更多测试（start_all、stop_all、list_statuses 等）
   - 已添加：`test_stop_updates_status_cache`、`test_start_passes_config_to_adapter`

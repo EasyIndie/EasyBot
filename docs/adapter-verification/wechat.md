@@ -173,7 +173,7 @@ curl -s "http://localhost:8080/api/v1/messages?platform=wechat" \
 | | `X-WeChat-Uin: <base64_uin>`（防重放）|
 | 消息格式 | `item_list[]` 数组（支持多项）|
 | 媒体加密 | AES-128-ECB（当前仅文本消息）|
-| 支持的能力 | Text, Image, Audio, Video, Document |
+| 支持的能力 | Text（Image/Audio/Video/Document 声明为 false，依赖 AES-128-ECB 加密未实现）|
 
 ## 已知限制
 
