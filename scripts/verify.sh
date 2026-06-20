@@ -28,7 +28,6 @@ TIMING=""
 
 section() {
   local label="$1"
-  local start="$2"
   echo ""
   echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
   echo -e "${CYAN}$label${NC}"
@@ -38,7 +37,7 @@ section() {
 pass() {
   local elapsed="$1"
   PASS=$((PASS + 1))
-  TIMING="${TIMING}${GREEN}✓${NC} ${2:-}  (${elapsed}s)\n"
+  TIMING="${TIMING}${GREEN}✓${NC} ${2:-} (${elapsed}s)\n"
 }
 
 fail() {
@@ -127,9 +126,8 @@ echo "╔═══════════════════════�
 echo "║  验收结果                                ║"
 echo "╚══════════════════════════════════════════╝"
 echo ""
-echo -e "$TIMING" | column -t -s' '
-echo ""
-echo "总计: $((PASS + FAIL)) 步 | ${GREEN}通过: $PASS${NC} | ${RED}失败: $FAIL${NC}"
+echo -e "$TIMING"
+echo -e "总计: $((PASS + FAIL)) 步 | ${GREEN}通过: $PASS${NC} | ${RED}失败: $FAIL${NC}"
 echo ""
 
 if [ "$FAIL" -gt 0 ]; then
