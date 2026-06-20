@@ -136,7 +136,7 @@ phase3_wait_for_messages() {
     echo ""
 
     if [ -t 0 ]; then
-        read -r -p "  准备好后按 Enter 开始检测（或等待 ${WAIT_TIMEOUT}s 自动继续）..." _
+        read -r -t "${WAIT_TIMEOUT}" -p "  请在各平台发送消息后按 Enter 开始检测（${WAIT_TIMEOUT}s 后自动开始）..." _ || true
     fi
 
     info "轮询检测入站消息（最多 ${WAIT_TIMEOUT}s）..."
@@ -191,12 +191,12 @@ phase4_auto_reply() {
 
     local ts
     ts=$(date +%H:%M:%S)
-    local results=()
 
     local resp
     resp=$(api_get "$API_BASE/sessions")
-    local sessions
-    sessions=$(echo "$resp" | jq -r '.sessions[] | "\(.platform):\(.chat_id)"')
+    # 每个平台只取第一个会话（去重）
+    local targets
+    targets=$(echo "$resp" | jq -r '[.sessions | group_by(.platform) | .[] | "\(.[0].platform):\(.[0].chat_id)"] | .[]')
 
     while IFS= read -r target; do
         [ -z "$target" ] && continue
@@ -219,11 +219,7 @@ phase4_auto_reply() {
         else
             fail "$plat → $status ($(echo "$result" | jq -r '.error // "unknown"'))"
         fi
-        results+=("$plat:$status:$msg_id")
-    done <<< "$sessions"
-
-    # 写入汇总
-    echo "send_results=${results[*]}" > "$SUMMARY_FILE"
+    done <<< "$targets"
 }
 
 # ── Phase 5: 验证与报告 ──
