@@ -166,10 +166,10 @@ The `AdapterRegistry` holds factory functions keyed by platform name, each with 
 | **P1 MVP** | Core types, PlatformAdapter trait, Telegram adapter, REST API, config loading, cross-platform paths | ✅ Done |
 | **P2 Bidirectional** | Event bus, WebSocket push, webhooks, inbound message handling, session persistence, message edit/delete, adapter lifecycle events | 100% ✅ |
 | **P3 Multi-platform** | Telegram ✅, Discord ✅, **飞书/Lark** ✅, **QQ** ✅ (群消息已验证, C2C/频道代码已实现待验证环境), **个人微信(wechat)** ✅ (iLink Bot API 已验证) — 五个平台 + 媒体发送 | 85% ✅ |
-| **P4 Production** | API key auth (Argon2), rate limiting, hot-reload, graceful shutdown, PostgreSQL, Prometheus, Docker, TTL retention | 75% ✅ |
+| **P4 Production** | API key auth (Argon2), rate limiting, hot-reload, graceful shutdown, PostgreSQL, Prometheus, Docker, TTL retention, health monitor + auto-reconnect | 80% ✅ |
 
 > **P3 未完成项**: Discord `send_media`/`send_interactive`、微信 `edit_message`/`delete_message`/`send_interactive`、所有适配器 `list_chats` 实际实现。
-> **P4 未完成项**: 权限模型 RBAC (`auth/permissions.rs`)、`send_draft` 流式草稿、通用适配器健康轮询/自动重连（仅 Discord 实现了 Gateway 重连）、TLS 仅配置层未在应用层处理。
+> **P4 未完成项**: 权限模型 RBAC (`auth/permissions.rs`)、`send_draft` 流式草稿、TLS 仅配置层未在应用层处理、Health 端点启动时间。
 | **P5 Plugin System** | Plugin SDK, dynamic library loading, plugin registry, loader tests, developer docs | ✅ Done |
 
 ### 不可退让的设计约束

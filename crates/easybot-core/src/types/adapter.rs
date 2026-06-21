@@ -3,6 +3,9 @@
 //! 定义 PlatformAdapter trait，所有 IM 平台连接器必须实现此接口。
 //! 包含适配器生命周期、能力声明、消息发送、健康检查等。
 
+use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::Arc;
+
 use crate::types::error::GatewayError;
 use crate::types::message::*;
 use async_trait::async_trait;
@@ -135,6 +138,57 @@ impl AdapterConfig {
     }
 }
 
+/// Default liveness threshold: if the background task hasn't emitted a
+/// heartbeat in 120 seconds, the adapter is considered Degraded.
+pub const DEFAULT_LIVENESS_THRESHOLD_MS: i64 = 120_000;
+
+/// Utility for tracking background task liveness via periodic heartbeats.
+///
+/// Adapters that spawn long-running background tasks (polling loops, WebSocket
+/// event loops) should store one of these, clone it into the task, and call
+/// [`beat`](Self::beat) on every successful iteration.  The manager reads
+/// [`age_ms`](Self::age_ms) through the adapter's `heartbeat_age_ms()` method
+/// to decide whether the background task is still alive.
+///
+/// Thread-safe and cheap to clone (wraps `Arc<AtomicI64>` internally).
+#[derive(Clone, Debug)]
+pub struct Heartbeat {
+    last_beat_ms: Arc<AtomicI64>,
+}
+
+impl Heartbeat {
+    /// Create a new heartbeat tracker, initialised to "now".
+    pub fn new() -> Self {
+        Self {
+            last_beat_ms: Arc::new(AtomicI64::new(chrono::Utc::now().timestamp_millis())),
+        }
+    }
+
+    /// Record a liveness beat.  Call this from the background task on every
+    /// successful poll iteration / WebSocket message / ping-pong cycle.
+    pub fn beat(&self) {
+        self.last_beat_ms
+            .store(chrono::Utc::now().timestamp_millis(), Ordering::Relaxed);
+    }
+
+    /// How many milliseconds have elapsed since the last beat.
+    pub fn age_ms(&self) -> i64 {
+        let now = chrono::Utc::now().timestamp_millis();
+        now.saturating_sub(self.last_beat_ms.load(Ordering::Relaxed))
+    }
+
+    /// Convenience: is the heartbeat within a given threshold?
+    pub fn is_fresh(&self, threshold_ms: i64) -> bool {
+        self.age_ms() <= threshold_ms
+    }
+}
+
+impl Default for Heartbeat {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// 适配器运行时配置状态
 #[derive(Debug, Clone, serde::Serialize, ToSchema)]
 pub struct AdapterRuntimeConfig {
@@ -195,6 +249,37 @@ pub trait PlatformAdapter: Send + Sync {
     /// 返回是否已连接
     fn is_connected(&self) -> bool {
         self.state() == AdapterState::Connected
+    }
+
+    /// Returns the age of the last background liveness heartbeat in milliseconds.
+    ///
+    /// Returns `None` when the adapter does not support heartbeat tracking
+    /// (the default).  Adapters that return `Some` should store a
+    /// [`Heartbeat`] and forward to [`Heartbeat::age_ms`].
+    fn heartbeat_age_ms(&self) -> Option<i64> {
+        None
+    }
+
+    /// Compute the canonical health status from adapter state and an optional
+    /// liveness heartbeat.
+    ///
+    /// The default implementation checks:
+    /// - `Connected` + fresh heartbeat (or no heartbeat mechanism) => `Healthy`
+    /// - `Connected` + stale heartbeat => `Degraded`
+    /// - Anything else => `Down`
+    ///
+    /// Override this if your adapter needs custom health logic.
+    fn health_status(&self) -> HealthStatus {
+        if self.state() == AdapterState::Connected {
+            if let Some(age_ms) = self.heartbeat_age_ms() {
+                if age_ms > DEFAULT_LIVENESS_THRESHOLD_MS {
+                    return HealthStatus::Degraded;
+                }
+            }
+            HealthStatus::Healthy
+        } else {
+            HealthStatus::Down
+        }
     }
 
     /// 健康检查

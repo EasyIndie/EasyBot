@@ -47,6 +47,8 @@ pub struct DiscordAdapter {
     errors: AtomicU64,
     event_bus: Option<Arc<EventBus>>,
     cancel_tx: Option<broadcast::Sender<()>>,
+    /// Background liveness heartbeat (updated by the Gateway task)
+    heartbeat: Heartbeat,
     /// 缓存的 HTTP 客户端（连接池复用，延迟初始化）
     http_client: OnceLock<reqwest::Client>,
     /// Gateway 连接后得到的 bot user id，用于过滤自身消息
@@ -157,6 +159,7 @@ impl DiscordAdapter {
             errors: AtomicU64::new(0),
             event_bus: None,
             cancel_tx: None,
+            heartbeat: Heartbeat::new(),
             http_client: OnceLock::new(),
             bot_user_id: None,
         }
@@ -359,6 +362,7 @@ impl DiscordAdapter {
         event_bus: Arc<EventBus>,
         bot_user_id: String,
         mut cancel_rx: broadcast::Receiver<()>,
+        heartbeat: Heartbeat,
     ) {
         loop {
             tracing::info!("Discord Gateway connecting...");
@@ -435,6 +439,7 @@ impl DiscordAdapter {
                 &event_bus,
                 &bot_user_id,
                 &cancel_rx,
+                &heartbeat,
             )
             .await;
 
@@ -546,6 +551,7 @@ impl DiscordAdapter {
         event_bus: &EventBus,
         bot_user_id: &str,
         cancel_rx: &broadcast::Receiver<()>,
+        heartbeat: &Heartbeat,
     ) {
         let mut cancel_rx = cancel_rx.resubscribe();
         let mut heartbeat_timer = tokio::time::interval(hb_interval);
@@ -579,6 +585,7 @@ impl DiscordAdapter {
                                     match payload.op {
                                         OP_DISPATCH => {
                                             *seq = payload.s;
+                                            heartbeat.beat(); // liveness: Gateway event received
                                             if let (Some(event_type), Some(d)) = (payload.t, payload.d) {
                                                 Self::handle_dispatch(
                                                     &event_type,
@@ -589,7 +596,7 @@ impl DiscordAdapter {
                                             }
                                         }
                                         OP_HEARTBEAT_ACK => {
-                                            // 心跳确认，无额外操作
+                                            heartbeat.beat(); // liveness: heartbeat ack received
                                         }
                                         OP_RECONNECT => {
                                             tracing::warn!("Discord Gateway requested reconnect");
@@ -708,9 +715,10 @@ impl PlatformAdapter for DiscordAdapter {
 
             let token_clone = token;
             let eb = event_bus.clone();
+            let hb = self.heartbeat.clone();
 
             tokio::spawn(async move {
-                Self::gateway_loop(token_clone, eb, bot_id, cancel_rx).await;
+                Self::gateway_loop(token_clone, eb, bot_id, cancel_rx, hb).await;
             });
         }
 
@@ -735,13 +743,13 @@ impl PlatformAdapter for DiscordAdapter {
         self.state.clone()
     }
 
+    fn heartbeat_age_ms(&self) -> Option<i64> {
+        Some(self.heartbeat.age_ms())
+    }
+
     async fn health(&self) -> HealthReport {
         HealthReport {
-            status: if self.state == AdapterState::Connected {
-                HealthStatus::Healthy
-            } else {
-                HealthStatus::Down
-            },
+            status: self.health_status(),
             connected: self.state == AdapterState::Connected,
             last_connected_at: None,
             last_error_at: None,

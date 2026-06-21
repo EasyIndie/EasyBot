@@ -41,6 +41,8 @@ pub struct TelegramAdapter {
     errors: AtomicU64,
     event_bus: Option<Arc<EventBus>>,
     cancel_tx: Option<broadcast::Sender<()>>,
+    /// Background liveness heartbeat (updated by the polling task)
+    heartbeat: Heartbeat,
     /// 缓存的 HTTP 客户端（连接池复用，延迟初始化）
     http_client: OnceLock<reqwest::Client>,
 }
@@ -131,6 +133,7 @@ impl TelegramAdapter {
             errors: AtomicU64::new(0),
             event_bus: None,
             cancel_tx: None,
+            heartbeat: Heartbeat::new(),
             http_client: OnceLock::new(),
         }
     }
@@ -269,6 +272,7 @@ impl TelegramAdapter {
         base_url: String,
         event_bus: Arc<EventBus>,
         mut cancel_rx: broadcast::Receiver<()>,
+        heartbeat: Heartbeat,
     ) {
         let client = reqwest::Client::new();
         let mut offset: i64 = 0;
@@ -283,6 +287,7 @@ impl TelegramAdapter {
                 result = Self::poll_once(&client, &token, &base_url, &mut offset) => {
                     match result {
                         Ok(updates) => {
+                            heartbeat.beat(); // liveness: successful poll
                             for update in updates {
                                 if update.update_id >= offset {
                                     offset = update.update_id + 1;
@@ -443,9 +448,10 @@ impl PlatformAdapter for TelegramAdapter {
                 .as_ref()
                 .and_then(|c| c.base_url.clone())
                 .unwrap_or_else(|| TELEGRAM_API.to_string());
+            let hb = self.heartbeat.clone();
 
             tokio::spawn(async move {
-                Self::polling_loop(token_clone, base_url, event_bus, cancel_rx).await;
+                Self::polling_loop(token_clone, base_url, event_bus, cancel_rx, hb).await;
             });
         }
 
@@ -471,13 +477,13 @@ impl PlatformAdapter for TelegramAdapter {
         self.state.clone()
     }
 
+    fn heartbeat_age_ms(&self) -> Option<i64> {
+        Some(self.heartbeat.age_ms())
+    }
+
     async fn health(&self) -> HealthReport {
         HealthReport {
-            status: if self.state == AdapterState::Connected {
-                HealthStatus::Healthy
-            } else {
-                HealthStatus::Down
-            },
+            status: self.health_status(),
             connected: self.state == AdapterState::Connected,
             last_connected_at: None,
             last_error_at: None,

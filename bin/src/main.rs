@@ -244,6 +244,12 @@ async fn main() -> anyhow::Result<()> {
         tracing::warn!("Failed adapters: {:?}", start_result.failed);
     }
 
+    // 启动适配器健康监控（30 秒间隔自动检测并重连不健康的适配器）
+    adapter_manager
+        .start_health_monitor(tokio::time::Duration::from_secs(30))
+        .await;
+    tracing::info!("Adapter health monitor started");
+
     // 启动会话桥接器（入站消息 → 自动创建会话）
     easybot_core::session::SessionBridge::start(event_bus.clone(), session_manager.clone());
 

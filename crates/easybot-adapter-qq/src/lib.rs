@@ -142,6 +142,7 @@ pub struct QqAdapter {
     errors: AtomicU64,
     event_bus: Option<Arc<EventBus>>,
     cancel_tx: Option<broadcast::Sender<()>>,
+    heartbeat: Heartbeat,
     http_client: Option<reqwest::Client>,
     bot_user_id: Option<String>,
     token_store: Option<QqTokenStore>,
@@ -197,6 +198,7 @@ impl QqAdapter {
             errors: AtomicU64::new(0),
             event_bus: None,
             cancel_tx: None,
+            heartbeat: Heartbeat::new(),
             http_client: None,
             bot_user_id: None,
             token_store: None,
@@ -448,6 +450,7 @@ impl QqAdapter {
         bot_id: String,
         mut cancel_rx: broadcast::Receiver<()>,
         messages_in: Arc<AtomicU64>,
+        heartbeat: Heartbeat,
     ) {
         loop {
             // 每次重连前刷新 access token
@@ -581,6 +584,7 @@ impl QqAdapter {
 
                                 match payload.op {
                                     0 => {
+                                        heartbeat.beat(); // liveness: Gateway event received
                                         if !identified
                                             && payload.t.as_deref() == Some("READY") {
                                                 identified = true;
@@ -596,7 +600,10 @@ impl QqAdapter {
                                     }
                                     7 => { tracing::info!("QQ reconnect requested"); break; }
                                     9 => { tracing::error!("QQ invalid session"); break; }
-                                    11 => { tracing::trace!("QQ heartbeat ack"); }
+                                    11 => {
+                                        heartbeat.beat(); // liveness: heartbeat ack received
+                                        tracing::trace!("QQ heartbeat ack");
+                                    }
                                     _ => { tracing::debug!("QQ unknown op: {}", payload.op); }
                                 }
                             }
@@ -977,8 +984,9 @@ impl PlatformAdapter for QqAdapter {
                 .as_ref()
                 .and_then(|c| c.base_url.clone())
                 .unwrap_or_else(|| QQ_API.to_string());
+            let hb = self.heartbeat.clone();
             tokio::spawn(async move {
-                Self::gateway_loop(ts_clone, base_url, eb, bot_id, cancel_rx, msg_in).await;
+                Self::gateway_loop(ts_clone, base_url, eb, bot_id, cancel_rx, msg_in, hb).await;
             });
         }
 
@@ -1003,13 +1011,13 @@ impl PlatformAdapter for QqAdapter {
         self.state.clone()
     }
 
+    fn heartbeat_age_ms(&self) -> Option<i64> {
+        Some(self.heartbeat.age_ms())
+    }
+
     async fn health(&self) -> HealthReport {
         HealthReport {
-            status: if self.state == AdapterState::Connected {
-                HealthStatus::Healthy
-            } else {
-                HealthStatus::Down
-            },
+            status: self.health_status(),
             connected: self.state == AdapterState::Connected,
             last_connected_at: None,
             last_error_at: None,

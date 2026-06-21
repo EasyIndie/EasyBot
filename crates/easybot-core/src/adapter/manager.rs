@@ -4,7 +4,10 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Instant;
+use tokio::sync::broadcast;
 use tokio::sync::RwLock;
+use tokio::time::Duration;
 use tracing::{error, info, warn};
 
 use crate::adapter::registry::AdapterRegistry;
@@ -26,6 +29,32 @@ pub struct AdapterManager {
     statuses: RwLock<HashMap<String, AdapterStatusSummary>>,
     /// 事件总线（用于发布适配器生命周期事件）
     event_bus: Option<Arc<EventBus>>,
+    /// Saved adapter configs, keyed by platform name.  Populated on every
+    /// successful `start()` call so the health monitor can reconnect without
+    /// external input.  Configs contain tokens — kept in memory only.
+    configs: RwLock<HashMap<String, AdapterConfig>>,
+    /// Cancel sender for the health monitor background task.
+    monitor_cancel_tx: RwLock<Option<broadcast::Sender<()>>>,
+}
+
+/// Per-platform reconnect state tracked by the health monitor.
+#[derive(Debug, Clone, Default)]
+struct ReconnectState {
+    consecutive_failures: u32,
+    backoff_until: Option<Instant>,
+}
+
+/// Exponential backoff: 5s → 10s → 30s → 60s → 120s, capped at 300s.
+fn compute_backoff(consecutive_failures: u32) -> Duration {
+    let secs = match consecutive_failures {
+        0 => 5,
+        1 => 10,
+        2 => 30,
+        3 => 60,
+        4 => 120,
+        _ => 300, // capped at 5 minutes
+    };
+    Duration::from_secs(secs)
 }
 
 impl AdapterManager {
@@ -36,6 +65,8 @@ impl AdapterManager {
             adapters: RwLock::new(HashMap::new()),
             statuses: RwLock::new(HashMap::new()),
             event_bus: None,
+            configs: RwLock::new(HashMap::new()),
+            monitor_cancel_tx: RwLock::new(None),
         }
     }
 
@@ -56,6 +87,9 @@ impl AdapterManager {
         platform: &str,
         config: AdapterConfig,
     ) -> Result<StartAdapterResult, GatewayError> {
+        // Save a copy of the config for potential auto-reconnect
+        let config_for_storage = config.clone();
+
         // 通过注册表创建适配器实例
         let mut adapter = self
             .registry
@@ -85,6 +119,12 @@ impl AdapterManager {
         {
             let mut adapters = self.adapters.write().await;
             adapters.insert(platform_name.clone(), adapter);
+        }
+
+        // Store config for potential auto-reconnect
+        {
+            let mut configs = self.configs.write().await;
+            configs.insert(platform_name.clone(), config_for_storage);
         }
 
         // 更新状态缓存
@@ -143,6 +183,11 @@ impl AdapterManager {
             let mut adapters = self.adapters.write().await;
             adapters.remove(platform)
         };
+        // Clear saved config since adapter is intentionally stopped
+        {
+            let mut configs = self.configs.write().await;
+            configs.remove(platform);
+        }
         if let Some(mut adapter) = adapter {
             if let Err(e) = adapter.disconnect().await {
                 warn!("Error disconnecting adapter '{}': {}", platform, e);
@@ -367,10 +412,19 @@ impl AdapterManager {
     ///
     /// 一次性取出所有适配器释放写锁，再逐个断开，避免阻塞其他操作。
     pub async fn stop_all(&self) {
+        // Stop health monitor first so it doesn't try to reconnect
+        // adapters while we're shutting them down.
+        self.stop_health_monitor().await;
+
         let adapters: Vec<(String, Box<dyn PlatformAdapter>)> = {
             let mut locked = self.adapters.write().await;
             locked.drain().collect()
         };
+        // Clear all saved configs
+        {
+            let mut configs = self.configs.write().await;
+            configs.clear();
+        }
         for (name, mut adapter) in adapters {
             if let Err(e) = adapter.disconnect().await {
                 warn!("Error disconnecting adapter '{}': {}", name, e);
@@ -390,6 +444,179 @@ impl AdapterManager {
     pub async fn has_connected(&self) -> bool {
         let adapters = self.adapters.read().await;
         adapters.values().any(|a| a.is_connected())
+    }
+
+    /// Start the background health monitoring loop.
+    ///
+    /// Spawns a tokio task that periodically checks every running adapter's
+    /// health and triggers reconnect when unhealthy.  The task is cancelled
+    /// when `stop_all()` or `stop_health_monitor()` is called.
+    ///
+    /// Must be called with an `Arc<Self>` because the spawned task holds a
+    /// clone of the Arc.
+    pub async fn start_health_monitor(self: &Arc<Self>, interval: Duration) {
+        let (cancel_tx, mut cancel_rx) = broadcast::channel(1);
+        {
+            let mut tx = self.monitor_cancel_tx.write().await;
+            *tx = Some(cancel_tx);
+        }
+
+        let mgr = Arc::clone(self);
+        tokio::spawn(async move {
+            mgr.health_monitor_loop(interval, &mut cancel_rx).await;
+        });
+
+        info!(
+            "Health monitor started (interval: {:?})",
+            interval
+        );
+    }
+
+    /// Stop the health monitoring loop (no-op if not running).
+    pub async fn stop_health_monitor(&self) {
+        if let Some(tx) = self.monitor_cancel_tx.write().await.take() {
+            let _ = tx.send(());
+            info!("Health monitor stop signal sent");
+        }
+    }
+
+    /// Internal: the health monitor's main loop.
+    async fn health_monitor_loop(
+        self: Arc<Self>,
+        interval: Duration,
+        cancel_rx: &mut broadcast::Receiver<()>,
+    ) {
+        let mut ticker = tokio::time::interval(interval);
+        ticker.tick().await; // skip the immediate first tick
+
+        // Per-platform reconnect state (exclusive to this task, no lock needed)
+        let mut reconnect_state: HashMap<String, ReconnectState> = HashMap::new();
+
+        loop {
+            tokio::select! {
+                _ = cancel_rx.recv() => {
+                    info!("Health monitor stopped");
+                    break;
+                }
+                _ = ticker.tick() => {
+                    self.run_health_check(&mut reconnect_state).await;
+                }
+            }
+        }
+    }
+
+    /// Internal: one iteration of the health check.
+    async fn run_health_check(&self, reconnect_state: &mut HashMap<String, ReconnectState>) {
+        // Snapshot the configs we know about.
+        let configs: HashMap<String, AdapterConfig> = {
+            self.configs.read().await.clone()
+        };
+
+        for (platform, config) in &configs {
+            let state = reconnect_state
+                .entry(platform.clone())
+                .or_default();
+
+            // Respect backoff window
+            if let Some(until) = state.backoff_until {
+                if Instant::now() < until {
+                    continue;
+                }
+            }
+
+            // Check current adapter health
+            let needs_reconnect = {
+                let adapters = self.adapters.read().await;
+                match adapters.get(platform) {
+                    Some(adapter) => {
+                        let health = adapter.health().await;
+                        health.status != HealthStatus::Healthy
+                    }
+                    None => {
+                        // Adapter was removed but config still exists — treat as unhealthy
+                        true
+                    }
+                }
+            };
+
+            if needs_reconnect {
+                match self.reconnect_adapter(platform, config.clone()).await {
+                    Ok(()) => {
+                        state.consecutive_failures = 0;
+                        state.backoff_until = None;
+                        info!("Reconnect succeeded for '{}'", platform);
+                    }
+                    Err(e) => {
+                        state.consecutive_failures += 1;
+                        let delay = compute_backoff(state.consecutive_failures);
+                        state.backoff_until = Some(Instant::now() + delay);
+                        warn!(
+                            "Reconnect failed for '{}' (attempt {}): {} — next retry in {:?}",
+                            platform,
+                            state.consecutive_failures,
+                            e,
+                            delay,
+                        );
+                    }
+                }
+            } else {
+                // All healthy — reset backoff on the next failure
+                state.consecutive_failures = 0;
+                state.backoff_until = None;
+            }
+        }
+    }
+
+    /// Stop + start an adapter with the given config.  Publishes lifecycle events.
+    async fn reconnect_adapter(
+        &self,
+        platform: &str,
+        config: AdapterConfig,
+    ) -> Result<(), GatewayError> {
+        // Publish reconnecting event
+        self.publish_event(
+            event_types::ADAPTER_RECONNECTING,
+            serde_json::json!({"platform": platform}),
+        );
+        info!("Reconnecting adapter '{}'...", platform);
+
+        // Step 1: stop (this removes the adapter from the map and disconnects)
+        let _ = self.stop(platform).await;
+
+        // Brief pause to let OS-level resources (sockets, TLS sessions) drain
+        tokio::time::sleep(Duration::from_secs(2)).await;
+
+        // Step 2: re-add config (stop() cleared it)
+        {
+            let mut configs = self.configs.write().await;
+            configs.insert(platform.to_string(), config.clone());
+        }
+
+        // Step 3: start fresh via the registry factory
+        match self.start(platform, config).await {
+            Ok(result) if result.ok => {
+                self.publish_event(
+                    event_types::ADAPTER_RECONNECTED,
+                    serde_json::json!({"platform": platform}),
+                );
+                Ok(())
+            }
+            Ok(result) => {
+                let err = result.error.unwrap_or_else(|| "unknown error".to_string());
+                self.publish_event(
+                    event_types::ADAPTER_RECONNECT_FAILED,
+                    serde_json::json!({"platform": platform, "error": &err}),
+                );
+                Err(GatewayError::Internal(err))
+            }
+            Err(e) => {
+                self.publish_event(
+                    event_types::ADAPTER_RECONNECT_FAILED,
+                    serde_json::json!({"platform": platform, "error": e.to_string()}),
+                );
+                Err(e)
+            }
+        }
     }
 
     /// 发布事件到 EventBus
@@ -860,6 +1087,79 @@ mod tests {
         );
 
         std::env::remove_var("AUTOTEST_TOKEN");
+    }
+
+    // ── compute_backoff 测试 ───────────────────────────────────
+
+    #[test]
+    fn test_compute_backoff_sequence() {
+        assert_eq!(compute_backoff(0), Duration::from_secs(5));
+        assert_eq!(compute_backoff(1), Duration::from_secs(10));
+        assert_eq!(compute_backoff(2), Duration::from_secs(30));
+        assert_eq!(compute_backoff(3), Duration::from_secs(60));
+        assert_eq!(compute_backoff(4), Duration::from_secs(120));
+    }
+
+    #[test]
+    fn test_compute_backoff_capped_at_300s() {
+        assert_eq!(compute_backoff(5), Duration::from_secs(300));
+        assert_eq!(compute_backoff(10), Duration::from_secs(300));
+        assert_eq!(compute_backoff(100), Duration::from_secs(300));
+    }
+
+    // ── config storage 测试 ────────────────────────────────────
+
+    #[tokio::test]
+    async fn test_config_stored_on_start_cleared_on_stop() {
+        let manager = AdapterManager::new();
+        register_mock_adapter(&manager).await;
+
+        let config = AdapterConfig {
+            enabled: Some(true),
+            token: Some("test-token".into()),
+            api_key: None,
+            base_url: None,
+            extra: serde_json::json!({"key": "val"}),
+        };
+
+        // Start — config should be stored
+        manager.start("test-mock", config.clone()).await.unwrap();
+        {
+            let configs = manager.configs.read().await;
+            assert!(configs.contains_key("test-mock"));
+            assert_eq!(configs.get("test-mock").unwrap().token.as_deref(), Some("test-token"));
+            assert_eq!(configs.get("test-mock").unwrap().extra["key"], "val");
+        }
+
+        // Stop — config should be cleared
+        manager.stop("test-mock").await.unwrap();
+        {
+            let configs = manager.configs.read().await;
+            assert!(!configs.contains_key("test-mock"));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_stop_all_clears_configs() {
+        let manager = AdapterManager::new();
+        register_mock_adapter(&manager).await;
+
+        let config = AdapterConfig {
+            enabled: Some(true),
+            token: Some("t".into()),
+            api_key: None,
+            base_url: None,
+            extra: serde_json::json!({}),
+        };
+        manager.start("test-mock", config).await.unwrap();
+
+        // Verify config was stored
+        assert!(!manager.configs.read().await.is_empty());
+
+        manager.stop_all().await;
+
+        // stop_all now clears configs as well
+        assert!(manager.configs.read().await.is_empty());
     }
 }
 

@@ -79,11 +79,12 @@
 
 ### 健康与可靠性
 
-- [ ] **通用适配器健康轮询 + 自动重连**
+- [x] **通用适配器健康轮询 + 自动重连**
   - 文件: `crates/easybot-core/src/adapter/manager.rs`
-  - 当前状态: Discord Gateway 有自己的重连循环 (5s 重试), 其他适配器无通用重连机制
-  - 需求: AdapterManager 提供定时 `health()` 检查, 健康状态异常时自动触发重连
-  - 参考: Discord 的 `auto-reconnect` 实现 (commit `d963f2d`)
+  - ✅ 已完成: AdapterManager 提供 `start_health_monitor()` 定时 `health()` 检查（30s 间隔）
+  - 所有 5 个适配器集成 `Heartbeat` liveness 追踪，`health()` 使用 `health_status()` 检测后台任务存活
+  - 指数退避重连: 5s → 10s → 30s → 60s → 120s → 300s 封顶
+  - 通过 `gateway.yaml` 日志和 EventBus 事件 (`adapter.reconnecting/reconnected/reconnect_failed`) 观测
 
 - [ ] **Health 端点记录启动时间**
   - 文件: `crates/easybot-api/src/routes/health.rs:56`

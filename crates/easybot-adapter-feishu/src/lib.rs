@@ -39,6 +39,8 @@ pub struct FeishuAdapter {
     errors: AtomicU64,
     event_bus: Option<Arc<EventBus>>,
     cancel_tx: Option<broadcast::Sender<()>>,
+    /// Background liveness heartbeat (updated by the WebSocket task)
+    heartbeat: Heartbeat,
     /// 缓存的 HTTP 客户端
     http_client: Option<reqwest::Client>,
     /// 当前 access token
@@ -112,6 +114,7 @@ impl FeishuAdapter {
             errors: AtomicU64::new(0),
             event_bus: None,
             cancel_tx: None,
+            heartbeat: Heartbeat::new(),
             http_client: None,
             access_token: tokio::sync::RwLock::new(None),
             token_expires_at: tokio::sync::RwLock::new(0),
@@ -350,6 +353,8 @@ impl PlatformAdapter for FeishuAdapter {
         // 3. 如果配置了 EventBus，启动 WebSocket 事件订阅
         if let Some(ref event_bus) = self.event_bus {
             let (cancel_tx, mut cancel_rx) = broadcast::channel(1);
+            // Subscribe before moving cancel_tx into self so the spawned task can use it
+            let hb_cancel_rx = cancel_tx.subscribe();
             self.cancel_tx = Some(cancel_tx);
 
             let eb = event_bus.clone();
@@ -386,7 +391,23 @@ impl PlatformAdapter for FeishuAdapter {
             let ws_client = ws_client.log_level(log_level);
 
             // 在后台任务中运行
+            let hb = self.heartbeat.clone();
             tokio::spawn(async move {
+                // Separate heartbeat ticker — beats every 30s while ws_client is alive
+                let hb_for_tick = hb.clone();
+                let mut hb_cancel_rx_inner = hb_cancel_rx;
+                let hb_task: tokio::task::JoinHandle<()> = tokio::spawn(async move {
+                    let mut tick = tokio::time::interval(Duration::from_secs(30));
+                    loop {
+                        tokio::select! {
+                            _ = hb_cancel_rx_inner.recv() => break,
+                            _ = tick.tick() => {
+                                hb_for_tick.beat();
+                            }
+                        }
+                    }
+                });
+
                 tokio::select! {
                     _ = cancel_rx.recv() => {
                         tracing::info!("飞书 WebSocket 事件订阅已停止");
@@ -398,6 +419,9 @@ impl PlatformAdapter for FeishuAdapter {
                         }
                     }
                 }
+
+                // Stop the heartbeat task when we exit
+                hb_task.abort();
             });
         }
 
@@ -424,6 +448,10 @@ impl PlatformAdapter for FeishuAdapter {
         self.state.clone()
     }
 
+    fn heartbeat_age_ms(&self) -> Option<i64> {
+        Some(self.heartbeat.age_ms())
+    }
+
     fn runtime_config(&self) -> AdapterRuntimeConfig {
         AdapterRuntimeConfig {
             enabled: self
@@ -446,11 +474,7 @@ impl PlatformAdapter for FeishuAdapter {
 
     async fn health(&self) -> HealthReport {
         HealthReport {
-            status: if self.state == AdapterState::Connected {
-                HealthStatus::Healthy
-            } else {
-                HealthStatus::Down
-            },
+            status: self.health_status(),
             connected: self.state == AdapterState::Connected,
             last_connected_at: None,
             last_error_at: None,

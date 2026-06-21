@@ -283,6 +283,8 @@ pub struct WeChatAdapter {
     updates_buf: tokio::sync::RwLock<Option<String>>,
     /// 取消信号
     cancel_tx: Option<tokio::sync::broadcast::Sender<()>>,
+    /// Background liveness heartbeat (updated by the longpoll task)
+    heartbeat: Heartbeat,
     /// iLink Bot ID
     ilink_bot_id: tokio::sync::RwLock<Option<String>>,
     /// iLink User ID
@@ -336,6 +338,7 @@ impl WeChatAdapter {
             bot_token: tokio::sync::RwLock::new(None),
             updates_buf: tokio::sync::RwLock::new(None),
             cancel_tx: None,
+            heartbeat: Heartbeat::new(),
             ilink_bot_id: tokio::sync::RwLock::new(None),
             ilink_user_id: tokio::sync::RwLock::new(None),
             context_token: Arc::new(tokio::sync::RwLock::new(None)),
@@ -606,8 +609,9 @@ impl PlatformAdapter for WeChatAdapter {
                 .unwrap_or_else(|| ILINK_API.to_string());
 
             let ctx_token = self.context_token.clone();
+            let hb = self.heartbeat.clone();
             tokio::spawn(async move {
-                longpoll_loop(client, token, buf, base_url, eb, cancel_rx, ctx_token).await;
+                longpoll_loop(client, token, buf, base_url, eb, cancel_rx, ctx_token, hb).await;
             });
         }
 
@@ -632,13 +636,13 @@ impl PlatformAdapter for WeChatAdapter {
         self.state.clone()
     }
 
+    fn heartbeat_age_ms(&self) -> Option<i64> {
+        Some(self.heartbeat.age_ms())
+    }
+
     async fn health(&self) -> HealthReport {
         HealthReport {
-            status: if self.state == AdapterState::Connected {
-                HealthStatus::Healthy
-            } else {
-                HealthStatus::Down
-            },
+            status: self.health_status(),
             connected: self.state == AdapterState::Connected,
             last_connected_at: None,
             last_error_at: None,
@@ -856,6 +860,7 @@ async fn longpoll_loop(
     event_bus: Arc<EventBus>,
     mut cancel_rx: tokio::sync::broadcast::Receiver<()>,
     context_token: Arc<tokio::sync::RwLock<Option<String>>>,
+    heartbeat: Heartbeat,
 ) {
     let url = format!("{}/ilink/bot/getupdates", base_url);
     let mut buf = initial_buf;
@@ -870,6 +875,7 @@ async fn longpoll_loop(
             result = poll_messages(&client, &url, &token, &buf) => {
                 match result {
                     Ok(Some((new_buf, msgs))) => {
+                        heartbeat.beat(); // liveness: successful poll
                         buf = new_buf;
                         consecutive_failures = 0;
                         for msg in msgs {
@@ -889,6 +895,7 @@ async fn longpoll_loop(
                     }
                     Ok(None) => {
                         // 超时无消息，继续轮询
+                        heartbeat.beat(); // liveness: poll succeeded, just no messages
                         consecutive_failures = 0;
                     }
                     Err(e) => {

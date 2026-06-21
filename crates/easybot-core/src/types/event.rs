@@ -68,6 +68,12 @@ pub mod event_types {
     pub const ADAPTER_DISCONNECTED: &str = "adapter.disconnected";
     /// 适配器异常
     pub const ADAPTER_ERROR: &str = "adapter.error";
+    /// 适配器重连中
+    pub const ADAPTER_RECONNECTING: &str = "adapter.reconnecting";
+    /// 适配器重连成功
+    pub const ADAPTER_RECONNECTED: &str = "adapter.reconnected";
+    /// 适配器重连失败
+    pub const ADAPTER_RECONNECT_FAILED: &str = "adapter.reconnect_failed";
     /// 收到按钮回调
     pub const CALLBACK_RECEIVED: &str = "callback.received";
     /// 网关启动
@@ -86,6 +92,9 @@ pub mod event_types {
             ADAPTER_CONNECTED,
             ADAPTER_DISCONNECTED,
             ADAPTER_ERROR,
+            ADAPTER_RECONNECTING,
+            ADAPTER_RECONNECTED,
+            ADAPTER_RECONNECT_FAILED,
             CALLBACK_RECEIVED,
             GATEWAY_STARTED,
             GATEWAY_STOPPING,
