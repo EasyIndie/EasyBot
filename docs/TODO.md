@@ -62,7 +62,6 @@
 | **个人微信** | send_interactive | 仅 5 种消息类型，无 keyboard/button |
 | **个人微信** | list_chats | 无聊天列表端点 |
 | **个人微信** | 群聊支持 | 仅一对一私聊 |
-| **个人微信** | Image/Audio/Video/Document | AES-128-ECB 加密尚未实现 |
 | **飞书** | ChatList | 平台 API 限制 |
 | **飞书** | Streaming | 平台 API 限制 |
 | **飞书** | TypingIndicator | 平台 API 限制 |
@@ -75,6 +74,4 @@
 
 ## 技术债务
 
-- [ ] **个人微信 AES-128-ECB 媒体加密** — `crates/easybot-adapter-wechat/src/lib.rs`
-  - 图片/音频/视频/文件发送需要实现 AES-128-ECB 加密上传流程
-  - 当前仅 Text 可发送
+（无 — 所有已知技术债务已解决）

@@ -24,7 +24,6 @@
 //! # 已知限制
 //! - 仅支持 DM（一对一聊天），不支持群聊
 //! - 不支持 Markdown、贴纸、小程序消息
-//! - 媒体文件需要 AES-128-ECB 加解密（当前仅支持文本消息）
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -107,6 +106,21 @@ const LONGPOLL_TIMEOUT: u64 = 35;
 /// Session 刷新间隔（秒），24 小时后过期需重连
 #[allow(dead_code)]
 const SESSION_REFRESH_INTERVAL: u64 = 82800; // 23 小时
+
+/// iLink 媒体类型常量
+const MEDIA_TYPE_IMAGE: i32 = 1;
+const MEDIA_TYPE_VIDEO: i32 = 2;
+const MEDIA_TYPE_FILE: i32 = 3;
+const MEDIA_TYPE_VOICE: i32 = 4;
+
+/// iLink 消息项类型常量
+const ITEM_TYPE_IMAGE: i32 = 2;
+const ITEM_TYPE_VOICE: i32 = 3;
+const ITEM_TYPE_FILE: i32 = 4;
+const ITEM_TYPE_VIDEO: i32 = 5;
+
+/// CDN 上传基础 URL
+const CDN_BASE_URL: &str = "https://novac2c.cdn.weixin.qq.com/c2c";
 
 // ── iLink API 响应类型 ──
 
@@ -252,14 +266,14 @@ struct SendMessageResponse {
 #[derive(Debug, serde::Deserialize)]
 #[allow(dead_code)]
 struct UploadUrlResponse {
+    #[serde(default)]
     ret: i64,
+    #[serde(default)]
     errmsg: Option<String>,
     #[serde(default)]
-    url: Option<String>,
+    upload_param: Option<String>,
     #[serde(default)]
-    token: Option<String>,
-    #[serde(default)]
-    key: Option<String>,
+    upload_full_url: Option<String>,
 }
 
 // ── 适配器 ──
@@ -307,26 +321,24 @@ impl WeChatAdapter {
                     supported: true,
                     limits: None,
                 },
-                // Image/Audio/Video/Document 标记为 false，因为媒体发送依赖 AES-128-ECB
-                // 加密，第一阶段暂未实现
                 Capability {
                     name: CapabilityName::Image,
-                    supported: false,
+                    supported: true,
                     limits: None,
                 },
                 Capability {
                     name: CapabilityName::Audio,
-                    supported: false,
+                    supported: true,
                     limits: None,
                 },
                 Capability {
                     name: CapabilityName::Video,
-                    supported: false,
+                    supported: true,
                     limits: None,
                 },
                 Capability {
                     name: CapabilityName::Document,
-                    supported: false,
+                    supported: true,
                     limits: None,
                 },
             ],
@@ -394,12 +406,341 @@ impl WeChatAdapter {
         );
         headers
     }
+
+    /// 上传媒体文件到 iLink CDN 并返回加密参数
+    ///
+    /// 完整上传流程：
+    /// 1. 获取文件数据（URL 下载或 base64 解码）
+    /// 2. 生成随机 AES key + filekey
+    /// 3. 调用 getuploadurl 获取 CDN 上传地址
+    /// 4. AES-128-ECB 加密文件内容
+    /// 5. POST 到 CDN，提取 x-encrypted-param 下载密钥
+    /// 6. 返回构建 media item 所需的字段
+    async fn upload_media_to_cdn(
+        &self,
+        media: &MediaAttachment,
+        chat_id: &str,
+        media_type: i32,
+    ) -> Result<serde_json::Value, GatewayError> {
+        let token = self.bot_token.read().await.clone().ok_or_else(|| {
+            GatewayError::Internal("Not authenticated (no bot_token)".to_string())
+        })?;
+        let client = self.client()?;
+
+        // 1. 获取文件数据
+        let file_data = resolve_media_data(media, client).await?;
+
+        // 2. 生成 AES key 和 filekey
+        let aes_key = uuid::Uuid::new_v4();
+        let aes_key_bytes: [u8; 16] = *aes_key.as_bytes();
+        let filekey = generate_filekey();
+
+        // 3. 计算元数据
+        let rawsize = file_data.len() as u64;
+        let rawfilemd5 = md5_hex(&file_data);
+        let filesize = aes_padded_size(file_data.len()) as u64;
+
+        // 4. 获取上传 URL
+        let upload_url = format!(
+            "{}/ilink/bot/getuploadurl",
+            self.api_base_url()
+        );
+
+        let aeskey_hex: String = aes_key_bytes
+            .iter()
+            .map(|b| format!("{:02x}", b))
+            .collect();
+
+        let upload_req_body = serde_json::json!({
+            "base_info": {
+                "channel_version": "2.2.0"
+            },
+            "filekey": filekey,
+            "media_type": media_type,
+            "to_user_id": chat_id,
+            "rawsize": rawsize,
+            "rawfilemd5": rawfilemd5,
+            "filesize": filesize,
+            "no_need_thumb": true,
+            "aeskey": aeskey_hex,
+        });
+
+        let raw_resp = client
+            .post(&upload_url)
+            .headers(self.auth_headers(&token))
+            .json(&upload_req_body)
+            .send()
+            .await
+            .map_err(|e| {
+                GatewayError::Internal(format!("getuploadurl request failed: {}", e))
+            })?;
+
+        let resp_text = raw_resp
+            .text()
+            .await
+            .map_err(|e| {
+                GatewayError::Internal(format!("getuploadurl read failed: {}", e))
+            })?;
+
+        tracing::debug!(
+            "WeChat getuploadurl response: {}",
+            &resp_text[..resp_text.len().min(500)]
+        );
+
+        let upload_resp: UploadUrlResponse =
+            serde_json::from_str(&resp_text).map_err(|e| {
+                GatewayError::Internal(format!(
+                    "getuploadurl parse failed: {} (body: {})",
+                    e,
+                    &resp_text[..resp_text.len().min(200)]
+                ))
+            })?;
+
+        if upload_resp.ret != 0 {
+            return Err(GatewayError::Internal(format!(
+                "getuploadurl API error (ret={}): {}",
+                upload_resp.ret,
+                upload_resp.errmsg.unwrap_or_default()
+            )));
+        }
+
+        // 5. 确定 CDN 上传 URL
+        let cdn_url = if let Some(ref full_url) = upload_resp.upload_full_url {
+            full_url.clone()
+        } else if let Some(ref param) = upload_resp.upload_param {
+            build_cdn_upload_url(CDN_BASE_URL, param, &filekey)
+        } else {
+            return Err(GatewayError::Internal(
+                "getuploadurl response missing both upload_full_url and upload_param"
+                    .to_string(),
+            ));
+        };
+
+        tracing::debug!(
+            "WeChat CDN upload URL: {}...",
+            &cdn_url[..cdn_url.len().min(150)]
+        );
+
+        // 6. AES-128-ECB 加密文件
+        let ciphertext = aes_128_ecb_encrypt(&file_data, &aes_key_bytes);
+
+        tracing::debug!(
+            "WeChat media encrypted: raw={} bytes, padded={} bytes, aes_key_hex={}",
+            file_data.len(),
+            ciphertext.len(),
+            aeskey_hex,
+        );
+
+        // 7. 上传到 CDN（使用专用 HTTP/1.1 客户端，避免 HTTP/2 兼容性问题）
+        let cdn_client = reqwest::Client::builder()
+            .http1_only()
+            .timeout(std::time::Duration::from_secs(120))
+            .build()
+            .map_err(|e| {
+                GatewayError::Internal(format!("Failed to create CDN client: {}", e))
+            })?;
+
+        tracing::debug!(
+            "WeChat CDN upload: url_len={}, body_len={}, first_16_key={}",
+            cdn_url.len(),
+            ciphertext.len(),
+            &aeskey_hex[..16]
+        );
+
+        let cdn_resp = cdn_client
+            .post(&cdn_url)
+            .header("Content-Type", "application/octet-stream")
+            .body(ciphertext.clone())
+            .send()
+            .await
+            .map_err(|e| GatewayError::Internal(format!("CDN upload failed: {}", e)))?;
+
+        let cdn_status = cdn_resp.status();
+
+        // Log all response headers for debugging
+        let resp_headers: Vec<String> = cdn_resp
+            .headers()
+            .iter()
+            .map(|(k, v)| format!("{}: {:?}", k, v))
+            .collect();
+        tracing::debug!(
+            "WeChat CDN response: status={}, headers=[{}]",
+            cdn_status.as_u16(),
+            resp_headers.join(", ")
+        );
+
+        if !cdn_status.is_success() {
+            let cdn_body = cdn_resp.text().await.unwrap_or_default();
+            tracing::warn!(
+                "WeChat CDN upload failed: status={}, body_len={}",
+                cdn_status.as_u16(),
+                cdn_body.len()
+            );
+            return Err(GatewayError::Internal(format!(
+                "CDN upload HTTP {}: {}",
+                cdn_status.as_u16(),
+                &cdn_body[..cdn_body.len().min(200)]
+            )));
+        }
+
+        let encrypt_query_param = cdn_resp
+            .headers()
+            .get("x-encrypted-param")
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string())
+            .ok_or_else(|| {
+                GatewayError::Internal(
+                    "CDN upload response missing x-encrypted-param header".to_string(),
+                )
+            })?;
+
+        // 8. 编码 aes_key
+        let aes_key_for_api = encode_aes_key_for_api(&aes_key_bytes);
+
+        tracing::info!(
+            "WeChat media upload success: type={}, rawsize={}, filekey={}",
+            media_type,
+            rawsize,
+            filekey
+        );
+
+        // 9. 构建 media 子对象（各消息类型共用）
+        Ok(serde_json::json!({
+            "media": {
+                "encrypt_query_param": encrypt_query_param,
+                "aes_key": aes_key_for_api,
+                "encrypt_type": 1,
+            },
+            "mid_size": ciphertext.len(),
+            "rawfilemd5": rawfilemd5,
+            "rawsize": rawsize,
+        }))
+    }
 }
 
 /// Base64 编码 uint32（与官方 SDK 对齐）
 fn base64_encode_uin(uin: u32) -> String {
     use base64::Engine;
     base64::engine::general_purpose::STANDARD.encode(uin.to_le_bytes())
+}
+
+// ── AES-128-ECB 媒体加密工具函数 ──
+
+/// PKCS7 填充
+fn pkcs7_pad(data: &[u8], block_size: usize) -> Vec<u8> {
+    let pad_len = block_size - (data.len() % block_size);
+    let mut padded = Vec::with_capacity(data.len() + pad_len);
+    padded.extend_from_slice(data);
+    padded.resize(data.len() + pad_len, pad_len as u8);
+    padded
+}
+
+/// AES-128-ECB 加密
+fn aes_128_ecb_encrypt(plaintext: &[u8], key: &[u8; 16]) -> Vec<u8> {
+    use aes::cipher::{BlockEncrypt, KeyInit, generic_array::GenericArray};
+
+    let cipher = aes::Aes128::new_from_slice(key).expect("AES-128 key must be 16 bytes");
+    let padded = pkcs7_pad(plaintext, 16);
+    let mut result = Vec::with_capacity(padded.len());
+
+    for chunk in padded.chunks(16) {
+        let mut block = GenericArray::clone_from_slice(chunk);
+        cipher.encrypt_block(&mut block);
+        result.extend_from_slice(&block);
+    }
+
+    result
+}
+
+/// 计算 AES 加密后的文件大小（含 PKCS7 填充）
+fn aes_padded_size(raw_size: usize) -> usize {
+    (raw_size + 1).div_ceil(16) * 16
+}
+
+/// 编码 AES key 为 iLink API 期望的格式
+///
+/// **关键**: iLink API 期望 `base64(key.hex().encode())`，而非 `base64(key)`。
+/// 微信客户端的解码链为：base64_decode → 32 ASCII hex chars → bytes.fromhex() → 16-byte AES key。
+fn encode_aes_key_for_api(key: &[u8; 16]) -> String {
+    use base64::Engine;
+    let hex_str: String = key.iter().map(|b| format!("{:02x}", b)).collect();
+    base64::engine::general_purpose::STANDARD.encode(hex_str.as_bytes())
+}
+
+/// 生成新的 32 位十六进制 filekey（用于上传）
+fn generate_filekey() -> String {
+    let uuid = uuid::Uuid::new_v4();
+    let hex_str: String = uuid.as_bytes().iter().map(|b| format!("{:02x}", b)).collect();
+    hex_str[..32].to_string()
+}
+
+/// 构建 CDN 上传 URL
+fn build_cdn_upload_url(cdn_base: &str, upload_param: &str, filekey: &str) -> String {
+    let encoded_param = url_encode_for_cdn(upload_param);
+    format!(
+        "{}/upload?encrypted_query_param={}&filekey={}",
+        cdn_base.trim_end_matches('/'),
+        encoded_param,
+        filekey
+    )
+}
+
+/// CDN URL 百分号编码（仅编码 base64 特殊字符）
+fn url_encode_for_cdn(s: &str) -> String {
+    s.chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' || c == '~' {
+                c.to_string()
+            } else {
+                format!("%{:02X}", c as u8)
+            }
+        })
+        .collect()
+}
+
+/// 计算数据的 MD5 并返回十六进制字符串
+fn md5_hex(data: &[u8]) -> String {
+    format!("{:x}", md5::compute(data))
+}
+
+/// 从 URL 下载文件内容
+async fn download_media(url: &str, client: &reqwest::Client) -> Result<Vec<u8>, GatewayError> {
+    let resp = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|e| GatewayError::Internal(format!("Failed to download media from URL: {}", e)))?;
+
+    if !resp.status().is_success() {
+        return Err(GatewayError::Internal(format!(
+            "Failed to download media: HTTP {}",
+            resp.status().as_u16()
+        )));
+    }
+
+    resp.bytes()
+        .await
+        .map(|b| b.to_vec())
+        .map_err(|e| GatewayError::Internal(format!("Failed to read media bytes: {}", e)))
+}
+
+/// 从 MediaAttachment 获取文件数据（优先 URL，其次 base64 data）
+async fn resolve_media_data(
+    media: &MediaAttachment,
+    client: &reqwest::Client,
+) -> Result<Vec<u8>, GatewayError> {
+    if let Some(ref url) = media.url {
+        download_media(url, client).await
+    } else if let Some(ref b64_data) = media.data {
+        use base64::Engine;
+        base64::engine::general_purpose::STANDARD
+            .decode(b64_data)
+            .map_err(|e| GatewayError::Internal(format!("Failed to decode base64 media data: {}", e)))
+    } else {
+        Err(GatewayError::Internal(
+            "Media attachment has neither url nor data".to_string(),
+        ))
+    }
 }
 
 #[async_trait]
@@ -808,16 +1149,197 @@ impl PlatformAdapter for WeChatAdapter {
     }
 
     async fn send_media(&self, params: SendMediaParams) -> Result<SendResult, GatewayError> {
-        // 当前仅支持文本消息，媒体消息使用 AES-128-ECB 加密/解密
-        // 为简化第一阶段实现，媒体发送暂返回不支持
-        self.errors.fetch_add(1, Ordering::Relaxed);
-        Ok(SendResult::fail(
-            format!(
-                "WeChat media send not yet implemented (type={:?})",
-                params.media.media_type
-            ),
-            false,
-        ))
+        let token = self.bot_token.read().await.clone().ok_or_else(|| {
+            GatewayError::Internal("Not authenticated (no bot_token)".to_string())
+        })?;
+        let client = self.client()?;
+
+        // 将 MediaType 映射到 iLink media_type
+        let (media_type, item_type) = match params.media.media_type {
+            MediaType::Image => (MEDIA_TYPE_IMAGE, ITEM_TYPE_IMAGE),
+            MediaType::Video => (MEDIA_TYPE_VIDEO, ITEM_TYPE_VIDEO),
+            MediaType::Audio => (MEDIA_TYPE_VOICE, ITEM_TYPE_VOICE),
+            MediaType::Document
+            | MediaType::Sticker
+            | MediaType::Animation => (MEDIA_TYPE_FILE, ITEM_TYPE_FILE),
+        };
+
+        // 上传到 CDN
+        let upload_result = self
+            .upload_media_to_cdn(&params.media, &params.chat_id, media_type)
+            .await?;
+
+        // 构建消息体
+        let url = format!("{}/ilink/bot/sendmessage", self.api_base_url());
+        let ctx_token = self.context_token.read().await.clone();
+        let client_id = format!(
+            "easybot:{}:{}",
+            chrono::Utc::now().timestamp_millis(),
+            uuid::Uuid::new_v4().as_simple()
+        );
+
+        // 构建对应类型的 item
+        let item = match item_type {
+            ITEM_TYPE_IMAGE => {
+                let mut img_item = serde_json::json!({
+                    "type": ITEM_TYPE_IMAGE,
+                    "image_item": {
+                        "media": upload_result["media"].clone(),
+                        "mid_size": upload_result["mid_size"],
+                    }
+                });
+                // 添加可选的文件名和尺寸
+                if let Some(ref name) = params.media.filename {
+                    img_item["image_item"]["file_name"] =
+                        serde_json::Value::String(name.clone());
+                }
+                if let Some(size) = params.media.file_size {
+                    img_item["image_item"]["file_size"] = serde_json::json!(size);
+                }
+                img_item
+            }
+            ITEM_TYPE_VIDEO => {
+                let mut vid_item = serde_json::json!({
+                    "type": ITEM_TYPE_VIDEO,
+                    "video_item": {
+                        "media": upload_result["media"].clone(),
+                        "video_size": upload_result["mid_size"],
+                        "video_md5": upload_result["rawfilemd5"],
+                        "play_length": params.media.duration.unwrap_or(0.0) as i64,
+                    }
+                });
+                if let Some(ref name) = params.media.filename {
+                    vid_item["video_item"]["file_name"] =
+                        serde_json::Value::String(name.clone());
+                }
+                vid_item
+            }
+            ITEM_TYPE_VOICE => {
+                let voice_item = serde_json::json!({
+                    "type": ITEM_TYPE_VOICE,
+                    "voice_item": {
+                        "media": upload_result["media"].clone(),
+                        "encode_type": 6,
+                        "bits_per_sample": 16,
+                        "sample_rate": 24000,
+                        "playtime": params.media.duration.unwrap_or(0.0) as i64,
+                    }
+                });
+                voice_item
+            }
+            _ => {
+                let file_item = serde_json::json!({
+                    "type": ITEM_TYPE_FILE,
+                    "file_item": {
+                        "media": upload_result["media"].clone(),
+                        "file_name": params.media.filename.as_deref().unwrap_or("file"),
+                        "len": upload_result["rawsize"],
+                    }
+                });
+                file_item
+            }
+        };
+
+        let mut body = serde_json::json!({
+            "msg": {
+                "from_user_id": "",
+                "to_user_id": params.chat_id,
+                "client_id": client_id,
+                "message_type": 2,
+                "message_state": 2,
+                "item_list": [item],
+            },
+            "base_info": {
+                "channel_version": "1.0.0"
+            }
+        });
+
+        if let Some(ref ct) = ctx_token {
+            body["msg"]["context_token"] = serde_json::Value::String(ct.clone());
+        }
+
+        tracing::debug!(
+            "WeChat send_media: to_user_id={}, media_type={:?}, filename={:?}",
+            params.chat_id,
+            params.media.media_type,
+            params.media.filename,
+        );
+
+        let raw_resp = client
+            .post(&url)
+            .headers(self.auth_headers(&token))
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| GatewayError::Internal(format!("WeChat send_media failed: {}", e)))?;
+
+        let status = raw_resp.status();
+        let resp_text = raw_resp
+            .text()
+            .await
+            .map_err(|e| {
+                GatewayError::Internal(format!("WeChat send_media read failed: {}", e))
+            })?;
+
+        tracing::debug!(
+            "WeChat send_media response (status={}): {}",
+            status,
+            &resp_text[..resp_text.len().min(300)]
+        );
+
+        if !status.is_success() {
+            self.errors.fetch_add(1, Ordering::Relaxed);
+            return Ok(SendResult::fail(
+                format!(
+                    "WeChat send_media HTTP {}: {}",
+                    status.as_u16(),
+                    &resp_text[..resp_text.len().min(200)]
+                ),
+                false,
+            ));
+        }
+
+        let resp: SendMessageResponse = serde_json::from_str(&resp_text).map_err(|e| {
+            GatewayError::Internal(format!(
+                "WeChat send_media parse failed: {} (body: {})",
+                e,
+                &resp_text[..resp_text.len().min(200)]
+            ))
+        })?;
+
+        if let Some(ret) = resp.ret {
+            if ret != 0 {
+                self.errors.fetch_add(1, Ordering::Relaxed);
+                let err_detail = resp.errmsg.as_deref().unwrap_or("unknown error");
+                tracing::warn!(
+                    "WeChat send_media API error: ret={}, errmsg={}",
+                    ret,
+                    err_detail
+                );
+                return Ok(SendResult::fail(
+                    format!("WeChat API error (ret={}): {}", ret, err_detail),
+                    false,
+                ));
+            }
+        }
+
+        self.messages_out.fetch_add(1, Ordering::Relaxed);
+
+        let msg_id = resp
+            .message_id
+            .or(resp.msg_id_str)
+            .or(resp.msg_id.map(|id| id.to_string()))
+            .or(resp.local_id)
+            .or(resp.seq.map(|s| s.to_string()));
+
+        Ok(SendResult {
+            success: true,
+            message_id: msg_id,
+            timestamp: Some(chrono::Utc::now().timestamp_millis()),
+            error: None,
+            error_code: None,
+            retryable: false,
+        })
     }
 
     async fn get_chat_info(&self, chat_id: &str) -> Result<ChatInfo, GatewayError> {
@@ -852,6 +1374,7 @@ fn clear_credentials() {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn longpoll_loop(
     client: reqwest::Client,
     token: String,
@@ -1076,6 +1599,13 @@ mod tests {
         let caps = adapter.capabilities();
         assert!(caps.iter().any(|c| c.name == CapabilityName::Text));
         assert!(caps.iter().any(|c| c.name == CapabilityName::Image));
+        assert!(caps.iter().any(|c| c.name == CapabilityName::Audio));
+        assert!(caps.iter().any(|c| c.name == CapabilityName::Video));
+        assert!(caps.iter().any(|c| c.name == CapabilityName::Document));
+        // All media capabilities should be supported
+        for cap in caps {
+            assert!(cap.supported);
+        }
     }
 
     #[tokio::test]
@@ -1479,7 +2009,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_send_media_not_implemented() {
+    async fn test_send_media_before_connect_errors() {
         let adapter = WeChatAdapter::new();
         let result = adapter
             .send_media(SendMediaParams {
@@ -1498,9 +2028,168 @@ mod tests {
                 reply_to: None,
                 text: None,
             })
-            .await
+            .await;
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Not authenticated"));
+    }
+
+    // ── AES-128-ECB 加密工具函数测试 ──
+
+    #[test]
+    fn test_pkcs7_pad_empty() {
+        let data = b"";
+        let padded = pkcs7_pad(data, 16);
+        assert_eq!(padded.len(), 16);
+        assert!(padded.iter().all(|&b| b == 16));
+    }
+
+    #[test]
+    fn test_pkcs7_pad_exact_block() {
+        let data = b"1234567890123456"; // exactly 16 bytes
+        let padded = pkcs7_pad(data, 16);
+        assert_eq!(padded.len(), 32);
+        assert_eq!(&padded[..16], data);
+        assert!(padded[16..].iter().all(|&b| b == 16));
+    }
+
+    #[test]
+    fn test_pkcs7_pad_partial_block() {
+        let data = b"hello"; // 5 bytes
+        let padded = pkcs7_pad(data, 16);
+        assert_eq!(padded.len(), 16);
+        assert_eq!(&padded[..5], data);
+        assert!(padded[5..].iter().all(|&b| b == 11));
+    }
+
+    #[test]
+    fn test_aes_128_ecb_encrypt_decrypt_roundtrip() {
+        use aes::cipher::{BlockDecrypt, KeyInit, generic_array::GenericArray};
+
+        let key: [u8; 16] = [
+            0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
+            0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,
+        ];
+        let plaintext = b"Hello, WeChat media encryption test!";
+
+        let ciphertext = aes_128_ecb_encrypt(plaintext, &key);
+        assert!(ciphertext.len() >= plaintext.len());
+        assert_ne!(ciphertext, plaintext);
+
+        // Decrypt and verify
+        let cipher = aes::Aes128::new_from_slice(&key).unwrap();
+        let mut decrypted = Vec::new();
+        for chunk in ciphertext.chunks(16) {
+            let mut block = GenericArray::clone_from_slice(chunk);
+            cipher.decrypt_block(&mut block);
+            decrypted.extend_from_slice(&block);
+        }
+
+        // Remove PKCS7 padding
+        let pad_len = *decrypted.last().unwrap() as usize;
+        assert!(pad_len > 0 && pad_len <= 16);
+        let decrypted_len = decrypted.len() - pad_len;
+        assert_eq!(&decrypted[..decrypted_len], plaintext);
+    }
+
+    #[test]
+    fn test_aes_padded_size() {
+        assert_eq!(aes_padded_size(0), 16);
+        assert_eq!(aes_padded_size(1), 16);
+        assert_eq!(aes_padded_size(15), 16);
+        assert_eq!(aes_padded_size(16), 32);
+        assert_eq!(aes_padded_size(100), 112);
+    }
+
+    #[test]
+    fn test_encode_aes_key_for_api_format() {
+        // The key encoding must be base64(hex_string_bytes), not base64(raw_bytes)
+        let key: [u8; 16] = [
+            0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+            0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
+        ];
+        let encoded = encode_aes_key_for_api(&key);
+        // hex string: "000102030405060708090a0b0c0d0e0f"
+        // base64 of that hex string
+        assert!(!encoded.is_empty());
+        // Verify it's valid base64
+        use base64::Engine;
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(&encoded)
             .unwrap();
-        assert!(!result.success);
-        assert!(result.error.unwrap().contains("not yet implemented"));
+        // Decoded should be the 32-char hex string
+        let hex_str = std::str::from_utf8(&decoded).unwrap();
+        assert_eq!(hex_str.len(), 32);
+        assert!(hex_str.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn test_encode_aes_key_for_api_decodable_by_wechat_client() {
+        // Simulate WeChat client's decode chain:
+        // base64_decode → 32 ASCII hex chars → bytes.fromhex() → 16-byte AES key
+        use base64::Engine;
+        let original_key: [u8; 16] = [
+            0xab, 0xcd, 0xef, 0x01, 0x23, 0x45, 0x67, 0x89,
+            0xfe, 0xdc, 0xba, 0x98, 0x76, 0x54, 0x32, 0x10,
+        ];
+        let encoded = encode_aes_key_for_api(&original_key);
+
+        // Client side decode
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(&encoded)
+            .unwrap();
+        let hex_str = std::str::from_utf8(&decoded).unwrap();
+        let recovered_key: Vec<u8> = (0..hex_str.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&hex_str[i..i + 2], 16).unwrap())
+            .collect();
+        assert_eq!(recovered_key.len(), 16);
+        assert_eq!(recovered_key.as_slice(), &original_key);
+    }
+
+    #[test]
+    fn test_md5_hex() {
+        let data = b"hello world";
+        let hash = md5_hex(data);
+        assert_eq!(hash.len(), 32);
+        assert_eq!(hash, "5eb63bbbe01eeed093cb22bb8f5acdc3");
+    }
+
+    #[test]
+    fn test_generate_filekey() {
+        let fk1 = generate_filekey();
+        let fk2 = generate_filekey();
+        assert_eq!(fk1.len(), 32);
+        assert_eq!(fk2.len(), 32);
+        assert_ne!(fk1, fk2);
+        assert!(fk1.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn test_build_cdn_upload_url() {
+        let url = build_cdn_upload_url(
+            "https://novac2c.cdn.weixin.qq.com/c2c",
+            "abc+def/ghi==",
+            "0123456789abcdef0123456789abcdef",
+        );
+        assert!(url.starts_with("https://novac2c.cdn.weixin.qq.com/c2c/upload"));
+        assert!(url.contains("encrypted_query_param="));
+        assert!(url.contains("filekey=0123456789abcdef0123456789abcdef"));
+        // + and / and = should be percent-encoded
+        assert!(!url.contains("+"));
+        assert!(!url.contains("=") || url.contains("%3D"));
+    }
+
+    #[test]
+    fn test_url_encode_for_cdn() {
+        let input = "abc+def/ghi==xyz?&";
+        let encoded = url_encode_for_cdn(input);
+        assert!(!encoded.contains('+'));
+        assert!(!encoded.contains('/'));
+        assert!(!encoded.contains("=="));
+        assert!(!encoded.contains('?'));
+        assert!(!encoded.contains('&'));
     }
 }

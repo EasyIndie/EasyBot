@@ -25,6 +25,8 @@ pub struct SendMessageRequest {
     pub text: String,
     /// 文本解析模式（markdown / html / none）
     pub parse_mode: Option<ParseMode>,
+    /// 媒体附件（可选，如果提供则发送媒体消息）
+    pub media: Option<MediaAttachment>,
     /// 被回复消息 ID（可选）
     pub reply_to: Option<String>,
     /// 平台特有元数据
@@ -80,22 +82,39 @@ pub async fn send_message(
         ))
     })?;
 
-    let result = state
-        .adapter_manager
-        .send_message(
-            &platform,
-            SendTextParams {
-                chat_id: chat_id.clone(),
-                message: OutboundMessage {
-                    text: req.text.clone(),
-                    parse_mode: req.parse_mode.unwrap_or_default(),
+    // 如果有媒体附件，发送媒体消息（文本作为 caption）
+    let result = if let Some(media) = req.media {
+        state
+            .adapter_manager
+            .send_media(
+                &platform,
+                SendMediaParams {
+                    chat_id: chat_id.clone(),
+                    media,
+                    text: Some(req.text.clone()),
+                    reply_to: req.reply_to,
                 },
-                reply_to: req.reply_to,
-                metadata: req.metadata,
-            },
-        )
-        .await
-        .map_err(api_error)?;
+            )
+            .await
+            .map_err(api_error)?
+    } else {
+        state
+            .adapter_manager
+            .send_message(
+                &platform,
+                SendTextParams {
+                    chat_id: chat_id.clone(),
+                    message: OutboundMessage {
+                        text: req.text.clone(),
+                        parse_mode: req.parse_mode.unwrap_or_default(),
+                    },
+                    reply_to: req.reply_to,
+                    metadata: req.metadata,
+                },
+            )
+            .await
+            .map_err(api_error)?
+    };
 
     // 持久化出站消息
     let stored = StoredMessage::from_outbound(&platform, &chat_id, None, &req.text, &result);

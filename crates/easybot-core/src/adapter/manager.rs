@@ -225,6 +225,19 @@ impl AdapterManager {
         adapter.send(params).await
     }
 
+    /// 发送媒体消息
+    pub async fn send_media(
+        &self,
+        platform: &str,
+        params: crate::types::message::SendMediaParams,
+    ) -> Result<crate::types::message::SendResult, GatewayError> {
+        let adapters = self.adapters.read().await;
+        let adapter = adapters
+            .get(platform)
+            .ok_or_else(|| GatewayError::AdapterNotConnected(platform.to_string()))?;
+        adapter.send_media(params).await
+    }
+
     /// 编辑消息
     pub async fn edit_message(
         &self,

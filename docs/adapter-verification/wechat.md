@@ -85,7 +85,7 @@ adapters:
 | 适配器停止 | ✅ | `POST /adapters/wechat/stop` |
 | **出站消息** | | |
 | 文本消息发送 | ✅ | `POST /ilink/bot/sendmessage` |
-| 媒体消息发送 | ❌ | 暂未实现（AES-128-ECB 加密） |
+| 媒体消息发送 | ✅ | AES-128-ECB 加密 + CDN 上传（Image/Audio/Video/Document） |
 | **入站消息** | | |
 | 长轮询接收 | ✅ | `POST /ilink/bot/getupdates` 每 ~18s 轮询 |
 | 文本消息解析 | ✅ | 通过 `item_list[].text_item.text` 提取 |
@@ -172,20 +172,19 @@ curl -s "http://localhost:8080/api/v1/messages?platform=wechat" \
 | | `AuthorizationType: ilink_bot_token` |
 | | `X-WeChat-Uin: <base64_uin>`（防重放）|
 | 消息格式 | `item_list[]` 数组（支持多项）|
-| 媒体加密 | AES-128-ECB（当前仅文本消息）|
-| 支持的能力 | Text（Image/Audio/Video/Document 声明为 false，依赖 AES-128-ECB 加密未实现）|
+| 媒体加密 | AES-128-ECB（getuploadurl → 加密 → CDN POST → 提取 x-encrypted-param）|
+| 支持的能力 | Text / Image / Audio / Video / Document（全部支持）|
 
 ## 已知限制
 
 - **仅 DM** — 不支持群聊
 - **无 Markdown** — 微信客户端不渲染
-- **媒体发送暂未实现** — 需要 AES-128-ECB 加解密 + CDN 上传
 - **Session 24h 过期** — 过期后需重启服务重新扫码
 - **无历史消息 API** — 仅游标式实时拉取
 
 ## 后续改进建议
 
-- [ ] 媒体消息发送（AES-128-ECB 加密 + CDN 上传）
+- [x] 媒体消息发送（AES-128-ECB 加密 + CDN 上传）
 - [ ] 凭据过期时自动重启适配器触发重新登录
 - [ ] 添加入站消息的 `chat_name` 字段填充
 - [ ] 支持语音消息转录文本
