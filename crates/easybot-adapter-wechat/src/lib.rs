@@ -441,15 +441,9 @@ impl WeChatAdapter {
         let filesize = aes_padded_size(file_data.len()) as u64;
 
         // 4. 获取上传 URL
-        let upload_url = format!(
-            "{}/ilink/bot/getuploadurl",
-            self.api_base_url()
-        );
+        let upload_url = format!("{}/ilink/bot/getuploadurl", self.api_base_url());
 
-        let aeskey_hex: String = aes_key_bytes
-            .iter()
-            .map(|b| format!("{:02x}", b))
-            .collect();
+        let aeskey_hex: String = aes_key_bytes.iter().map(|b| format!("{:02x}", b)).collect();
 
         let upload_req_body = serde_json::json!({
             "base_info": {
@@ -471,30 +465,25 @@ impl WeChatAdapter {
             .json(&upload_req_body)
             .send()
             .await
-            .map_err(|e| {
-                GatewayError::Internal(format!("getuploadurl request failed: {}", e))
-            })?;
+            .map_err(|e| GatewayError::Internal(format!("getuploadurl request failed: {}", e)))?;
 
         let resp_text = raw_resp
             .text()
             .await
-            .map_err(|e| {
-                GatewayError::Internal(format!("getuploadurl read failed: {}", e))
-            })?;
+            .map_err(|e| GatewayError::Internal(format!("getuploadurl read failed: {}", e)))?;
 
         tracing::debug!(
             "WeChat getuploadurl response: {}",
             &resp_text[..resp_text.len().min(500)]
         );
 
-        let upload_resp: UploadUrlResponse =
-            serde_json::from_str(&resp_text).map_err(|e| {
-                GatewayError::Internal(format!(
-                    "getuploadurl parse failed: {} (body: {})",
-                    e,
-                    &resp_text[..resp_text.len().min(200)]
-                ))
-            })?;
+        let upload_resp: UploadUrlResponse = serde_json::from_str(&resp_text).map_err(|e| {
+            GatewayError::Internal(format!(
+                "getuploadurl parse failed: {} (body: {})",
+                e,
+                &resp_text[..resp_text.len().min(200)]
+            ))
+        })?;
 
         if upload_resp.ret != 0 {
             return Err(GatewayError::Internal(format!(
@@ -511,8 +500,7 @@ impl WeChatAdapter {
             build_cdn_upload_url(CDN_BASE_URL, param, &filekey)
         } else {
             return Err(GatewayError::Internal(
-                "getuploadurl response missing both upload_full_url and upload_param"
-                    .to_string(),
+                "getuploadurl response missing both upload_full_url and upload_param".to_string(),
             ));
         };
 
@@ -536,9 +524,7 @@ impl WeChatAdapter {
             .http1_only()
             .timeout(std::time::Duration::from_secs(120))
             .build()
-            .map_err(|e| {
-                GatewayError::Internal(format!("Failed to create CDN client: {}", e))
-            })?;
+            .map_err(|e| GatewayError::Internal(format!("Failed to create CDN client: {}", e)))?;
 
         tracing::debug!(
             "WeChat CDN upload: url_len={}, body_len={}, first_16_key={}",
@@ -637,7 +623,7 @@ fn pkcs7_pad(data: &[u8], block_size: usize) -> Vec<u8> {
 
 /// AES-128-ECB 加密
 fn aes_128_ecb_encrypt(plaintext: &[u8], key: &[u8; 16]) -> Vec<u8> {
-    use aes::cipher::{BlockEncrypt, KeyInit, generic_array::GenericArray};
+    use aes::cipher::{generic_array::GenericArray, BlockEncrypt, KeyInit};
 
     let cipher = aes::Aes128::new_from_slice(key).expect("AES-128 key must be 16 bytes");
     let padded = pkcs7_pad(plaintext, 16);
@@ -670,7 +656,11 @@ fn encode_aes_key_for_api(key: &[u8; 16]) -> String {
 /// 生成新的 32 位十六进制 filekey（用于上传）
 fn generate_filekey() -> String {
     let uuid = uuid::Uuid::new_v4();
-    let hex_str: String = uuid.as_bytes().iter().map(|b| format!("{:02x}", b)).collect();
+    let hex_str: String = uuid
+        .as_bytes()
+        .iter()
+        .map(|b| format!("{:02x}", b))
+        .collect();
     hex_str[..32].to_string()
 }
 
@@ -705,11 +695,10 @@ fn md5_hex(data: &[u8]) -> String {
 
 /// 从 URL 下载文件内容
 async fn download_media(url: &str, client: &reqwest::Client) -> Result<Vec<u8>, GatewayError> {
-    let resp = client
-        .get(url)
-        .send()
-        .await
-        .map_err(|e| GatewayError::Internal(format!("Failed to download media from URL: {}", e)))?;
+    let resp =
+        client.get(url).send().await.map_err(|e| {
+            GatewayError::Internal(format!("Failed to download media from URL: {}", e))
+        })?;
 
     if !resp.status().is_success() {
         return Err(GatewayError::Internal(format!(
@@ -735,7 +724,9 @@ async fn resolve_media_data(
         use base64::Engine;
         base64::engine::general_purpose::STANDARD
             .decode(b64_data)
-            .map_err(|e| GatewayError::Internal(format!("Failed to decode base64 media data: {}", e)))
+            .map_err(|e| {
+                GatewayError::Internal(format!("Failed to decode base64 media data: {}", e))
+            })
     } else {
         Err(GatewayError::Internal(
             "Media attachment has neither url nor data".to_string(),
@@ -1159,9 +1150,9 @@ impl PlatformAdapter for WeChatAdapter {
             MediaType::Image => (MEDIA_TYPE_IMAGE, ITEM_TYPE_IMAGE),
             MediaType::Video => (MEDIA_TYPE_VIDEO, ITEM_TYPE_VIDEO),
             MediaType::Audio => (MEDIA_TYPE_VOICE, ITEM_TYPE_VOICE),
-            MediaType::Document
-            | MediaType::Sticker
-            | MediaType::Animation => (MEDIA_TYPE_FILE, ITEM_TYPE_FILE),
+            MediaType::Document | MediaType::Sticker | MediaType::Animation => {
+                (MEDIA_TYPE_FILE, ITEM_TYPE_FILE)
+            }
         };
 
         // 上传到 CDN
@@ -1190,8 +1181,7 @@ impl PlatformAdapter for WeChatAdapter {
                 });
                 // 添加可选的文件名和尺寸
                 if let Some(ref name) = params.media.filename {
-                    img_item["image_item"]["file_name"] =
-                        serde_json::Value::String(name.clone());
+                    img_item["image_item"]["file_name"] = serde_json::Value::String(name.clone());
                 }
                 if let Some(size) = params.media.file_size {
                     img_item["image_item"]["file_size"] = serde_json::json!(size);
@@ -1209,8 +1199,7 @@ impl PlatformAdapter for WeChatAdapter {
                     }
                 });
                 if let Some(ref name) = params.media.filename {
-                    vid_item["video_item"]["file_name"] =
-                        serde_json::Value::String(name.clone());
+                    vid_item["video_item"]["file_name"] = serde_json::Value::String(name.clone());
                 }
                 vid_item
             }
@@ -1277,9 +1266,7 @@ impl PlatformAdapter for WeChatAdapter {
         let resp_text = raw_resp
             .text()
             .await
-            .map_err(|e| {
-                GatewayError::Internal(format!("WeChat send_media read failed: {}", e))
-            })?;
+            .map_err(|e| GatewayError::Internal(format!("WeChat send_media read failed: {}", e)))?;
 
         tracing::debug!(
             "WeChat send_media response (status={}): {}",
@@ -2066,11 +2053,11 @@ mod tests {
 
     #[test]
     fn test_aes_128_ecb_encrypt_decrypt_roundtrip() {
-        use aes::cipher::{BlockDecrypt, KeyInit, generic_array::GenericArray};
+        use aes::cipher::{generic_array::GenericArray, BlockDecrypt, KeyInit};
 
         let key: [u8; 16] = [
-            0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08,
-            0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f, 0x10,
+            0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e,
+            0x0f, 0x10,
         ];
         let plaintext = b"Hello, WeChat media encryption test!";
 
@@ -2107,8 +2094,8 @@ mod tests {
     fn test_encode_aes_key_for_api_format() {
         // The key encoding must be base64(hex_string_bytes), not base64(raw_bytes)
         let key: [u8; 16] = [
-            0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
-            0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
+            0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d,
+            0x0e, 0x0f,
         ];
         let encoded = encode_aes_key_for_api(&key);
         // hex string: "000102030405060708090a0b0c0d0e0f"
@@ -2131,8 +2118,8 @@ mod tests {
         // base64_decode → 32 ASCII hex chars → bytes.fromhex() → 16-byte AES key
         use base64::Engine;
         let original_key: [u8; 16] = [
-            0xab, 0xcd, 0xef, 0x01, 0x23, 0x45, 0x67, 0x89,
-            0xfe, 0xdc, 0xba, 0x98, 0x76, 0x54, 0x32, 0x10,
+            0xab, 0xcd, 0xef, 0x01, 0x23, 0x45, 0x67, 0x89, 0xfe, 0xdc, 0xba, 0x98, 0x76, 0x54,
+            0x32, 0x10,
         ];
         let encoded = encode_aes_key_for_api(&original_key);
 

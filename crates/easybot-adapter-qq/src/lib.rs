@@ -1152,12 +1152,7 @@ impl PlatformAdapter for QqAdapter {
                                     (0u32, url.clone())
                                 } else {
                                     // 回调（at 机器人）
-                                    (
-                                        2u32,
-                                        btn.callback_data
-                                            .clone()
-                                            .unwrap_or_default(),
-                                    )
+                                    (2u32, btn.callback_data.clone().unwrap_or_default())
                                 };
                                 QqKeyboardButton {
                                     id,
@@ -1571,8 +1566,7 @@ mod tests {
     #[tokio::test]
     async fn test_handle_dispatch_group_message_create_mentioned() {
         let event_bus = Arc::new(easybot_core::bus::EventBus::new());
-        let mut rx =
-            event_bus.subscribe(easybot_core::types::event::event_types::MESSAGE_INBOUND);
+        let mut rx = event_bus.subscribe(easybot_core::types::event::event_types::MESSAGE_INBOUND);
         let messages_in = AtomicU64::new(0);
 
         // 2026 新版全量群消息，其中 @了机器人
@@ -1623,8 +1617,7 @@ mod tests {
     #[tokio::test]
     async fn test_handle_dispatch_group_message_create_not_mentioned() {
         let event_bus = Arc::new(easybot_core::bus::EventBus::new());
-        let mut rx =
-            event_bus.subscribe(easybot_core::types::event::event_types::MESSAGE_INBOUND);
+        let mut rx = event_bus.subscribe(easybot_core::types::event::event_types::MESSAGE_INBOUND);
         let messages_in = AtomicU64::new(0);
 
         // 2026 新版全量群消息，没有 @机器人

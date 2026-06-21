@@ -455,10 +455,7 @@ impl DiscordAdapter {
     }
 
     /// 等待指定时长或 cancel 信号。返回 true 表示收到 cancel 信号应退出。
-    async fn sleep_or_cancel(
-        duration: Duration,
-        cancel_rx: &mut broadcast::Receiver<()>,
-    ) -> bool {
+    async fn sleep_or_cancel(duration: Duration, cancel_rx: &mut broadcast::Receiver<()>) -> bool {
         tokio::select! {
             _ = tokio::time::sleep(duration) => false,
             _ = cancel_rx.recv() => {
@@ -865,9 +862,7 @@ impl PlatformAdapter for DiscordAdapter {
             use base64::Engine;
             let decoded = base64::engine::general_purpose::STANDARD
                 .decode(data_b64)
-                .map_err(|e| {
-                    GatewayError::Internal(format!("Base64 decode failed: {}", e))
-                })?;
+                .map_err(|e| GatewayError::Internal(format!("Base64 decode failed: {}", e)))?;
             let fname = params
                 .media
                 .filename
@@ -894,12 +889,7 @@ impl PlatformAdapter for DiscordAdapter {
                 .media
                 .filename
                 .clone()
-                .or_else(|| {
-                    file_url
-                        .split('/')
-                        .next_back()
-                        .map(|s| s.to_string())
-                })
+                .or_else(|| file_url.split('/').next_back().map(|s| s.to_string()))
                 .unwrap_or_else(|| "file".to_string());
             (data.to_vec(), fname, ct)
         } else {
@@ -934,7 +924,10 @@ impl PlatformAdapter for DiscordAdapter {
         }
 
         let form = reqwest::multipart::Form::new()
-            .text("payload_json", serde_json::Value::Object(payload).to_string())
+            .text(
+                "payload_json",
+                serde_json::Value::Object(payload).to_string(),
+            )
             .part("files[0]", file_part);
 
         let resp = client
@@ -943,9 +936,7 @@ impl PlatformAdapter for DiscordAdapter {
             .multipart(form)
             .send()
             .await
-            .map_err(|e| {
-                GatewayError::Internal(format!("Discord API upload failed: {}", e))
-            })?;
+            .map_err(|e| GatewayError::Internal(format!("Discord API upload failed: {}", e)))?;
 
         let status = resp.status();
         if !status.is_success() {
@@ -963,9 +954,10 @@ impl PlatformAdapter for DiscordAdapter {
             ));
         }
 
-        let msg: DiscordMessage = resp.json().await.map_err(|e| {
-            GatewayError::Internal(format!("Discord API JSON parse failed: {}", e))
-        })?;
+        let msg: DiscordMessage = resp
+            .json()
+            .await
+            .map_err(|e| GatewayError::Internal(format!("Discord API JSON parse failed: {}", e)))?;
 
         self.messages_out.fetch_add(1, Ordering::Relaxed);
         Ok(SendResult::ok(msg.id))
@@ -1073,11 +1065,7 @@ impl PlatformAdapter for DiscordAdapter {
         // 获取 DM 频道列表
         if want_dm {
             match self
-                .api_call::<Vec<DiscordChannel>>(
-                    reqwest::Method::GET,
-                    "/users/@me/channels",
-                    None,
-                )
+                .api_call::<Vec<DiscordChannel>>(reqwest::Method::GET, "/users/@me/channels", None)
                 .await
             {
                 Ok(channels) => {
@@ -1099,11 +1087,7 @@ impl PlatformAdapter for DiscordAdapter {
         // 获取服务器列表
         if want_group {
             match self
-                .api_call::<Vec<DiscordGuild>>(
-                    reqwest::Method::GET,
-                    "/users/@me/guilds",
-                    None,
-                )
+                .api_call::<Vec<DiscordGuild>>(reqwest::Method::GET, "/users/@me/guilds", None)
                 .await
             {
                 Ok(guilds) => {

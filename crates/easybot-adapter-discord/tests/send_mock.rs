@@ -522,10 +522,7 @@ async fn test_send_media_no_data() {
 
     let result = adapter.send_media(params).await.unwrap();
     assert!(!result.success, "send_media with no data/url should fail");
-    assert!(
-        !result.retryable,
-        "missing data should not be retryable"
-    );
+    assert!(!result.retryable, "missing data should not be retryable");
 }
 
 // ── 本地文件上传测试 ──

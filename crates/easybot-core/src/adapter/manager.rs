@@ -482,10 +482,7 @@ impl AdapterManager {
             mgr.health_monitor_loop(interval, &mut cancel_rx).await;
         });
 
-        info!(
-            "Health monitor started (interval: {:?})",
-            interval
-        );
+        info!("Health monitor started (interval: {:?})", interval);
     }
 
     /// Stop the health monitoring loop (no-op if not running).
@@ -524,14 +521,10 @@ impl AdapterManager {
     /// Internal: one iteration of the health check.
     async fn run_health_check(&self, reconnect_state: &mut HashMap<String, ReconnectState>) {
         // Snapshot the configs we know about.
-        let configs: HashMap<String, AdapterConfig> = {
-            self.configs.read().await.clone()
-        };
+        let configs: HashMap<String, AdapterConfig> = { self.configs.read().await.clone() };
 
         for (platform, config) in &configs {
-            let state = reconnect_state
-                .entry(platform.clone())
-                .or_default();
+            let state = reconnect_state.entry(platform.clone()).or_default();
 
             // Respect backoff window
             if let Some(until) = state.backoff_until {
@@ -568,10 +561,7 @@ impl AdapterManager {
                         state.backoff_until = Some(Instant::now() + delay);
                         warn!(
                             "Reconnect failed for '{}' (attempt {}): {} — next retry in {:?}",
-                            platform,
-                            state.consecutive_failures,
-                            e,
-                            delay,
+                            platform, state.consecutive_failures, e, delay,
                         );
                     }
                 }
@@ -1143,7 +1133,10 @@ mod tests {
         {
             let configs = manager.configs.read().await;
             assert!(configs.contains_key("test-mock"));
-            assert_eq!(configs.get("test-mock").unwrap().token.as_deref(), Some("test-token"));
+            assert_eq!(
+                configs.get("test-mock").unwrap().token.as_deref(),
+                Some("test-token")
+            );
             assert_eq!(configs.get("test-mock").unwrap().extra["key"], "val");
         }
 
