@@ -163,6 +163,33 @@ pub struct DeleteResult {
     pub error: Option<String>,
 }
 
+/// 流式草稿发送参数
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct SendDraftParams {
+    /// 目标聊天 ID
+    pub chat_id: String,
+    /// 已有消息 ID（更新草稿），None 则创建新消息
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message_id: Option<String>,
+    /// 当前草稿文本
+    pub text: String,
+    /// 解析模式（可选）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parse_mode: Option<ParseMode>,
+    /// 被回复消息 ID（可选，仅新建时有效）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reply_to: Option<String>,
+}
+
+/// 流式草稿结果
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct DraftResult {
+    pub success: bool,
+    /// 消息 ID（新建时返回，更新时回传）
+    pub message_id: Option<String>,
+    pub error: Option<String>,
+}
+
 // ── 支持类型 ──
 
 /// 聊天类型

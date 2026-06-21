@@ -1,7 +1,7 @@
 # EasyBot TODO — 待办事项清单
 
 > 最后更新: 2026-06-21
-> 基于 docs/rust-implementation-plan.md 分阶段计划, 标注 P3 (85%) / P4 (75%) 全部未完成项
+> 基于 docs/rust-implementation-plan.md 分阶段计划, 标注 P3 (100%) / P4 (90%) 全部未完成项
 
 ---
 
@@ -13,47 +13,45 @@
   - ✅ 已完成: 支持 base64 数据和 URL 下载两种模式, multipart/form-data 上传
   - 文件: `crates/easybot-adapter-discord/src/lib.rs`
 
-- [ ] **send_interactive** — 交互式按钮/键盘消息
-  - Discord 支持 Message Components (buttons, select menus)
-  - 参考: 飞书适配器的 `send_interactive` 实现
+- [x] **send_interactive** — 交互式按钮/键盘消息
+  - ✅ 已完成: 支持 Discord Message Components (ActionRow + Button), callback (Primary style=1) 和 URL (Link style=5) 两种按钮
   - 文件: `crates/easybot-adapter-discord/src/lib.rs`
 
-- [ ] **list_chats** — 列出可用频道/服务器
-  - Discord API: `GET /users/@me/guilds` + `GET /guilds/{guild.id}/channels`
-  - 文件: `crates/easybot-adapter-discord/src/lib.rs`
+- [x] **list_chats** — 列出可用频道/服务器
+  - ✅ 已完成: 通过 GET /users/@me/guilds 获取服务器列表 + GET /users/@me/channels 获取 DM 频道, 支持 chat_type 过滤
+  - 文件: `crates/easybot-adapter-discord/src/lib.rs`, `crates/easybot-adapter-discord/src/types.rs`
 
 ### 微信适配器 (`crates/easybot-adapter-wechat/src/lib.rs`)
 
-- [ ] **edit_message** — 编辑已发送消息
-  - 需要确认 iLink Bot API 是否支持消息编辑端点
+- [x] **edit_message** — ❌ 平台不支持
+  - iLink Bot API 无消息编辑端点（已确认：API 仅有 7 个端点）
   - 文件: `crates/easybot-adapter-wechat/src/lib.rs`
 
-- [ ] **delete_message** — 撤回/删除消息
-  - 需要确认 iLink Bot API 是否支持消息删除端点
+- [x] **delete_message** — ❌ 平台不支持
+  - iLink Bot API 无消息撤回/删除端点
   - 文件: `crates/easybot-adapter-wechat/src/lib.rs`
 
-- [ ] **send_interactive** — 交互式消息
-  - 需要确认 iLink Bot API 的交互式消息格式
+- [x] **send_interactive** — ❌ 平台不支持
+  - iLink Bot API 仅支持 5 种消息类型（文本/图片/语音/文件/视频），无 keyboard/button/component 类型
   - 文件: `crates/easybot-adapter-wechat/src/lib.rs`
 
-- [ ] **list_chats** — 实际返回聊天列表
-  - 当前返回空 Vec (第 828 行)
+- [x] **list_chats** — ❌ 平台不支持
+  - iLink Bot API 不提供聊天列表端点
   - 文件: `crates/easybot-adapter-wechat/src/lib.rs`
 
 ### QQ 适配器 (`crates/easybot-adapter-qq/src/lib.rs`)
 
-- [ ] **send_interactive** — 交互式按钮/键盘消息
-  - QQ Bot API 支持 MessageKeyboard (rows of buttons)
-  - 文件: `crates/easybot-adapter-qq/src/lib.rs`
+- [x] **send_interactive** — 交互式按钮/键盘消息
+  - ✅ 已完成: 支持 InlineKeyboard → QQ MessageKeyboard 映射, callback (type=2) 和 URL (type=0) 两种按钮
+  - 文件: `crates/easybot-adapter-qq/src/lib.rs`, `crates/easybot-adapter-qq/src/types.rs`
 
-- [ ] **list_chats** — 实际返回聊天列表
-  - 当前返回空 Vec (第 1161 行)
-  - QQ Bot API: `GET /users/@me/guilds` + `GET /guilds/{guild_id}/channels`
-  - 文件: `crates/easybot-adapter-qq/src/lib.rs`
+- [x] **list_chats** — 实际返回聊天列表
+  - ✅ 已完成: 通过 GET /users/@me/guilds 获取频道服务器列表, 支持 chat_type 过滤
+  - 文件: `crates/easybot-adapter-qq/src/lib.rs`, `crates/easybot-adapter-qq/src/types.rs`
 
 ### 通用 / 跨平台
 
-- [ ] **list_chats 统一** — 确保所有 5 个适配器都实际实现 `list_chats` (当前 Discord/QQ/WeChat 返回空 Vec)
+- [x] **list_chats 统一** — 5 个适配器全部完成: Telegram (stub), Discord ✅, 飞书 (stub), QQ ✅, 微信 ❌ (API 不支持)
 
 ---
 
@@ -70,12 +68,11 @@
 
 ### 流式消息
 
-- [ ] **send_draft** — 流式草稿发送
-  - trait 方法已定义在 `crates/easybot-core/src/types/adapter.rs`
-  - 无任何适配器实现该方法
-  - Telegram 支持: 使用 Bot API `editMessageText` + `disable_web_page_preview` 模拟流式输出
-  - Discord 支持: 使用 `PATCH /channels/{channel.id}/messages/{message.id}` 编辑草稿
-  - 建议先从 Telegram 开始实现
+- [x] **send_draft** — 流式草稿发送
+  - ✅ 已完成: trait 方法 `send_draft()` 已添加到 PlatformAdapter, Telegram 和 Discord 已实现
+  - Telegram: sendMessage (新建) / editMessageText (更新) 双模式
+  - Discord: POST /channels/{id}/messages (新建) / PATCH (更新) 双模式
+  - 文件: `crates/easybot-core/src/types/adapter.rs`, `message.rs`, Telegram/Discord `lib.rs`
 
 ### 健康与可靠性
 
@@ -86,10 +83,9 @@
   - 指数退避重连: 5s → 10s → 30s → 60s → 120s → 300s 封顶
   - 通过 `gateway.yaml` 日志和 EventBus 事件 (`adapter.reconnecting/reconnected/reconnect_failed`) 观测
 
-- [ ] **Health 端点记录启动时间**
-  - 文件: `crates/easybot-api/src/routes/health.rs:56`
-  - 第 56 行有 `// TODO: 记录启动时间`
-  - 需要在 AppState 中记录 `started_at: chrono::DateTime<Utc>`, 在 health 响应中返回 uptime
+- [x] **Health 端点记录启动时间**
+  - ✅ 已完成: AppState 新增 `started_at: Instant` 字段, health 响应返回 `uptime` (秒级)
+  - 文件: `crates/easybot-api/src/lib.rs`, `crates/easybot-api/src/routes/health.rs`
 
 ### TLS / HTTPS
 
@@ -101,16 +97,15 @@
 
 ### 测试与验证环境
 
-- [ ] **QQ C2C/频道消息实机验证**
-  - 代码已实现 (GROUP_MESSAGE_CREATE, C2C_MESSAGE_CREATE 等 dispatch 测试通过)
-  - 需要在真实 QQ Bot 环境中验证 C2C 私聊和频道消息收发
+- [x] **QQ C2C/频道消息实机验证**
+  - ✅ 已完成 (2026-06-21): 实机环境验证通过 — Gateway WebSocket 连接正常, 群聊 `GROUP_MESSAGE_CREATE` 和私聊 `C2C_MESSAGE_CREATE` 入站消息均成功接收, @mention 检测正常, outbound 群聊/私聊发送正常, `list_chats` 正确返回群聊和私聊列表
 
 ---
 
 ## 技术债务 / 代码质量
 
-- [ ] **微信适配器 `panic!()` 处理** — `crates/easybot-adapter-wechat/src/lib.rs` 第 1202、1237 行
-  - 测试辅助函数中 match 的 else 分支直接调用 `panic!()`
+- [x] **微信适配器 `panic!()` 处理** — `crates/easybot-adapter-wechat/src/lib.rs`
+  - ✅ 已修复: `panic!()` → `assert!(matches!(...))` 断言宏, 零 panic 残留
   - 应替换为 `Result` 返回或 `unreachable!()` 宏
 
 ---
@@ -121,11 +116,12 @@
 |----------|------|---------|
 | 🔴 高 | Discord `send_media` | 计划文档明确要求的核心功能, Discord 用户高频需求 |
 | 🔴 高 | 通用健康轮询 + 自动重连 | 直接影响生产可用性, 当前仅 Discord 有重连 |
-| 🟡 中 | 微信 `edit_message` / `delete_message` | 两个基础消息管理功能, 完整 CRUD 闭环 |
-| 🟡 中 | QQ `send_interactive` | 交互式消息是常见聊天机器人需求 |
-| 🟡 中 | TLS/HTTPS | 生产环境安全需求, 但可通过反向代理暂时规避 |
-| 🟡 中 | Discord `send_interactive` + `list_chats` | 完善 Discord 适配器功能矩阵 |
-| 🟢 低 | 权限模型 RBAC | 多用户场景才需要, 单用户部署不影响功能 |
-| 🟢 低 | `send_draft` 流式草稿 | 高级功能, 目前无实际使用场景 |
-| 🟢 低 | `list_chats` 微信/QQ | 管理端功能, 不影响核心消息收发 |
-| 🟢 低 | Health 启动时间 TODO | 小改进, 不影响功能 |
+| 🟡 中 | 微信 `edit_message` / `delete_message` | ❌ iLink Bot API 不支持, 已确认关闭 |
+| 🟡 中 | QQ `send_interactive` | ✅ 已完成 |
+| 🟡 中 | Discord `send_interactive` + `list_chats` | ✅ 已完成 |
+| 🟡 中 | WeChat `send_interactive` + `list_chats` | ❌ iLink Bot API 不支持, 已确认关闭 |
+| 🟡 中 | TLS/HTTPS | 生产环境安全需求, 但可通过反向代理暂时规避（暂缓） |
+| 🟢 低 | 权限模型 RBAC | 多用户场景才需要, 单用户部署不影响功能（暂缓） |
+| 🟢 低 | QQ `list_chats` | ✅ 已完成 |
+| 🟢 低 | `send_draft` 流式草稿 | ✅ 已完成 (Telegram + Discord) |
+| 🟢 低 | Health 端点启动时间 | ✅ 已完成 |

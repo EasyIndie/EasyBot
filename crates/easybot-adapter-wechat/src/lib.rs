@@ -1204,10 +1204,11 @@ mod tests {
         assert_eq!(inbound.text.as_deref(), Some("[图片]"));
         assert!(inbound.media.is_some());
         let media_type = &inbound.media.as_ref().unwrap().first().unwrap().media_type;
-        match media_type {
-            MediaType::Image => {}
-            _ => panic!("expected Image media type, got {:?}", media_type),
-        }
+        assert!(
+            matches!(media_type, MediaType::Image),
+            "expected Image media type, got {:?}",
+            media_type
+        );
     }
 
     #[test]
@@ -1239,10 +1240,11 @@ mod tests {
         assert_eq!(inbound.text.as_deref(), Some("report.pdf"));
         assert!(inbound.media.is_some());
         let media_type = &inbound.media.as_ref().unwrap().first().unwrap().media_type;
-        match media_type {
-            MediaType::Document => {}
-            _ => panic!("expected Document media type"),
-        }
+        assert!(
+            matches!(media_type, MediaType::Document),
+            "expected Document media type, got {:?}",
+            media_type
+        );
     }
 
     #[test]

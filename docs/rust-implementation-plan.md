@@ -1744,13 +1744,13 @@ curl http://localhost:8080/api/v1/messages?sessionKey=telegram:123456
 | 3.3 QQ 适配器 | `adapter-qq/` | 统一 QQBot 鉴权 + Gateway WebSocket | ✅ 完成 |
 | 3.4 微信适配器 | `adapter-wechat/` | 个人微信 iLink Bot API 长轮询 | ✅ 完成 |
 | 3.5 适配器接口评审 | `core/types/adapter.rs` | 根据多个实现调整 trait 设计 | ✅ 完成 |
-| 3.6 发送媒体 | `adapter-telegram` / `adapter-discord` / etc. | 实现 send_media | ⚠️ **Discord send_media 未实现** |
+| 3.6 发送媒体 | `adapter-telegram` / `adapter-discord` / etc. | 实现 send_media | ✅ 完成 |
 | 3.7 消息格式转换 | `adapter-*/format.rs` | Markdown / HTML 按平台能力转换 | ✅ 完成 |
 | 3.8 适配器状态持久化 | `core/adapter/manager.rs` | 状态写入数据库 | ✅ 完成 |
 | 3.9 批量发送 | `api/routes/messages.rs` | POST /messages/batch-send | ✅ 完成 |
-| — send_interactive | 各适配器 | 交互式按钮/键盘消息 | ⚠️ 仅 Telegram/飞书有 |
-| — edit_message / delete_message | 各适配器 | 编辑/删除已发送消息 | ⚠️ **微信缺少** edit+delete |
-| — list_chats | 各适配器 | 列出可用聊天列表 | ⚠️ **Discord/QQ/微信返回空 Vec** |
+| — send_interactive | 各适配器 | 交互式按钮/键盘消息 | ✅ 完成 (Telegram/飞书/Discord/QQ; 微信 ❌ API 不支持) |
+| — edit_message / delete_message | 各适配器 | 编辑/删除已发送消息 | ✅ 完成 (Telegram/Discord/飞书/QQ; 微信 ❌ API 不支持) |
+| — list_chats | 各适配器 | 列出可用聊天列表 | ✅ 完成 (Discord/QQ; Telegram/飞书 stub; 微信 ❌ API 不支持) |
 
 ---
 
@@ -1768,12 +1768,14 @@ curl http://localhost:8080/api/v1/messages?sessionKey=telegram:123456
 | 4.4 配置热重载 | `core/config.rs` + `notify` | 文件变更监听 + 动态重载 | ✅ 完成 (60s 轮询) |
 | 4.5 优雅关闭 | `bin/src/main.rs` | signal handler + drain | ✅ 完成 |
 | 4.6 PostgreSQL 支持 | `core/session/store.rs` | sqlx 连接池 + migration | ✅ 完成 |
-| 4.7 适配器健康轮询 | `core/adapter/manager.rs` | 定时 health() 检查 + 自动重连 | ⚠️ **仅 Discord Gateway 有重连，通用轮询未实现** |
+| 4.7 适配器健康轮询 | `core/adapter/manager.rs` | 定时 health() 检查 + 自动重连 | ✅ 完成 (通用健康监控，5 个适配器全部集成 Heartbeat) |
 | 4.8 Prometheus 指标 | `api/middleware/metrics.rs` | HTTP 请求数、延迟、错误率 | ✅ 完成 |
-| 4.9 交互式按钮 | 各适配器 | 实现 send_interactive | ⚠️ **仅 Telegram/飞书有** |
-| 4.10 流式草稿 | `adapter-telegram` | 实现 send_draft | ❌ **未实现（trait 已定义，无适配器实现）** |
+| 4.9 交互式按钮 | 各适配器 | 实现 send_interactive | ✅ 完成 (Telegram/Discord/飞书/QQ) |
+| 4.10 流式草稿 | `adapter-telegram` / `adapter-discord` | 实现 send_draft | ✅ 完成 (Telegram + Discord; trait 方法 + 类型已添加) |
 | 4.11 Docker 镜像 | `Dockerfile` | 多阶段构建 | ✅ 完成 |
-| 4.12 HTTPS / WSS | `api/server.rs` | rustls 配置 | ⚠️ **TLS 配置存在但未在应用层处理** |
+| 4.12 HTTPS / WSS | `api/server.rs` | rustls 配置 | ⚠️ 暂缓 (TLS 配置存在但未在应用层处理) |
+| 4.13 权限模型 RBAC | `core/auth/permissions.rs` | 角色 + 权限检查中间件 | ⚠️ 暂缓 |
+| 4.14 Health 启动时间 | `api/routes/health.rs` | 进程启动时间和 uptime | ✅ 完成 |
 
 ---
 

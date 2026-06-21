@@ -252,8 +252,13 @@ impl AdapterManager {
         adapter.delete_message(chat_id, message_id).await
     }
 
-    /// 获取单个适配器状态（O(1) 查找）
+    /// 获取单个适配器状态（优先实时查询，已停止适配器回退缓存）
     pub async fn get_status(&self, platform: &str) -> Option<AdapterStatusSummary> {
+        let adapters = self.adapters.read().await;
+        if let Some(adapter) = adapters.get(platform) {
+            return Some(adapter.status_summary());
+        }
+        // 已停止的适配器不在 adapters 中，回退到状态缓存
         let statuses = self.statuses.read().await;
         statuses.get(platform).cloned()
     }
@@ -263,12 +268,10 @@ impl AdapterManager {
         let adapters = self.adapters.read().await;
         let mut statuses = self.statuses.write().await;
 
-        // 更新实时状态
+        // 从适配器拉取全量实时状态（含 messages_in/out/uptime 等动态字段）
         for (platform, adapter) in adapters.iter() {
-            if let Some(status) = statuses.get_mut(platform) {
-                status.state = adapter.state();
-                status.connected = adapter.is_connected();
-            }
+            let fresh = adapter.status_summary();
+            statuses.insert(platform.clone(), fresh);
         }
 
         statuses.values().cloned().collect()

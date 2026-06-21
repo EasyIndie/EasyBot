@@ -308,6 +308,17 @@ pub trait PlatformAdapter: Send + Sync {
         Err(GatewayError::capability_not_supported("send_typing"))
     }
 
+    // ── 流式消息 ──
+
+    /// 流式草稿发送（可选）
+    ///
+    /// 首次调用时不传 `message_id`，适配器发送初始消息并返回 `message_id`。
+    /// 后续调用传入 `message_id` 更新草稿内容，实现流式输出效果。
+    /// 流式结束后通过 `edit_message` 或再次调用 `send_draft` 定型最终内容。
+    async fn send_draft(&self, _params: SendDraftParams) -> Result<DraftResult, GatewayError> {
+        Err(GatewayError::capability_not_supported("send_draft"))
+    }
+
     // ── 消息管理 ──
 
     /// 编辑消息（可选）

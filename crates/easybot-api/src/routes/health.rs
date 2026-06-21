@@ -53,7 +53,7 @@ pub async fn health_check(State(state): State<AppState>) -> Json<HealthResponse>
             "degraded".to_string()
         },
         version: env!("CARGO_PKG_VERSION").to_string(),
-        uptime: 0, // TODO: 记录启动时间
+        uptime: state.started_at.elapsed().as_secs() as i64,
         adapters: AdapterSummary {
             total: statuses.len(),
             connected,

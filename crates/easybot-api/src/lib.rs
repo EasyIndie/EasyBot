@@ -33,6 +33,8 @@ pub struct AppState {
     /// 配置管理器（支持原子替换和文件监听）
     pub config_manager: ConfigManager,
     pub metrics: Option<Arc<metrics::MetricsRegistry>>,
+    /// 进程启动时间
+    pub started_at: std::time::Instant,
 }
 
 impl AppState {
@@ -58,6 +60,7 @@ impl AppState {
             config: config_arc,
             config_manager,
             metrics,
+            started_at: std::time::Instant::now(),
         }
     }
 }

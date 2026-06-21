@@ -90,6 +90,15 @@ pub(crate) struct DiscordChannel {
     pub guild_id: Option<String>,
 }
 
+/// Discord 服务器（Guild）对象 — GET /users/@me/guilds 响应
+#[derive(Debug, Deserialize)]
+pub(crate) struct DiscordGuild {
+    pub id: String,
+    pub name: String,
+    #[serde(default)]
+    pub owner: Option<bool>,
+}
+
 /// Discord 消息对象（Gateway MESSAGE_CREATE & REST 响应共用）
 #[derive(Debug, Deserialize)]
 pub(crate) struct DiscordMessage {
@@ -188,5 +197,23 @@ mod tests {
         assert_eq!(msg.author.id, "author1");
         assert_eq!(msg.author.bot, None);
         assert_eq!(msg.content, Some("hello".to_string()));
+    }
+
+    #[test]
+    fn test_discord_guild_deserialize() {
+        let json = r#"{"id":"guild123","name":"My Server","owner":true}"#;
+        let guild: DiscordGuild = serde_json::from_str(json).unwrap();
+        assert_eq!(guild.id, "guild123");
+        assert_eq!(guild.name, "My Server");
+        assert_eq!(guild.owner, Some(true));
+    }
+
+    #[test]
+    fn test_discord_guild_deserialize_without_owner() {
+        let json = r#"{"id":"guild456","name":"Another Server"}"#;
+        let guild: DiscordGuild = serde_json::from_str(json).unwrap();
+        assert_eq!(guild.id, "guild456");
+        assert_eq!(guild.name, "Another Server");
+        assert_eq!(guild.owner, None);
     }
 }

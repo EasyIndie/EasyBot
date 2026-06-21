@@ -207,6 +207,67 @@ pub struct QqSendMessageResponse {
     pub timestamp: Option<String>,
 }
 
+// ── 键盘（交互式消息）──
+
+/// QQ 消息键盘（顶层包装）
+#[derive(Debug, Serialize)]
+pub struct QqKeyboard {
+    pub content: QqKeyboardContent,
+}
+
+/// 键盘内容
+#[derive(Debug, Serialize)]
+pub struct QqKeyboardContent {
+    pub rows: Vec<QqKeyboardRow>,
+}
+
+/// 键盘行
+#[derive(Debug, Serialize)]
+pub struct QqKeyboardRow {
+    pub buttons: Vec<QqKeyboardButton>,
+}
+
+/// 键盘按钮
+#[derive(Debug, Serialize)]
+pub struct QqKeyboardButton {
+    pub id: String,
+    pub render_data: QqButtonRenderData,
+    pub action: QqButtonAction,
+}
+
+/// 按钮渲染数据
+#[derive(Debug, Serialize)]
+pub struct QqButtonRenderData {
+    pub label: String,
+    pub visited_label: String,
+    pub style: u32,
+}
+
+/// 按钮动作
+#[derive(Debug, Serialize)]
+pub struct QqButtonAction {
+    #[serde(rename = "type")]
+    pub action_type: u32,
+    pub permission: QqButtonPermission,
+    pub data: String,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub enter: bool,
+}
+
+/// 按钮权限
+#[derive(Debug, Serialize)]
+pub struct QqButtonPermission {
+    #[serde(rename = "type")]
+    pub permission_type: u32,
+}
+
+/// QQ 频道服务器（Guild）对象 — GET /users/@me/guilds 响应
+#[derive(Debug, Deserialize)]
+pub struct QqGuild {
+    pub id: String,
+    pub name: String,
+}
+
 /// 频道信息
 #[derive(Debug, Deserialize)]
 pub struct QqChannelInfo {
@@ -404,5 +465,136 @@ mod tests {
         assert!(msg.mentions.is_empty());
         assert!(msg.message_scene.is_none());
         assert!(msg.message_type.is_none());
+    }
+
+    #[test]
+    fn test_qq_guild_deserialize() {
+        let json = r#"{"id":"guild123","name":"我的频道"}"#;
+        let guild: QqGuild = serde_json::from_str(json).unwrap();
+        assert_eq!(guild.id, "guild123");
+        assert_eq!(guild.name, "我的频道");
+    }
+
+    #[test]
+    fn test_keyboard_serialization_callback_button() {
+        let keyboard = QqKeyboard {
+            content: QqKeyboardContent {
+                rows: vec![QqKeyboardRow {
+                    buttons: vec![QqKeyboardButton {
+                        id: "btn_0_0".to_string(),
+                        render_data: QqButtonRenderData {
+                            label: "点击我".to_string(),
+                            visited_label: "点击我".to_string(),
+                            style: 1,
+                        },
+                        action: QqButtonAction {
+                            action_type: 2,
+                            permission: QqButtonPermission { permission_type: 2 },
+                            data: "/start".to_string(),
+                            enter: false,
+                        },
+                    }],
+                }],
+            },
+        };
+        let json = serde_json::to_string(&keyboard).unwrap();
+        assert!(json.contains(r#""id":"btn_0_0""#));
+        assert!(json.contains(r#""label":"点击我""#));
+        assert!(json.contains(r#""type":2"#)); // action type (callback)
+        assert!(json.contains(r#""data":"/start""#));
+        assert!(!json.contains(r#""enter":true"#));
+    }
+
+    #[test]
+    fn test_keyboard_serialization_url_button() {
+        let keyboard = QqKeyboard {
+            content: QqKeyboardContent {
+                rows: vec![QqKeyboardRow {
+                    buttons: vec![QqKeyboardButton {
+                        id: "btn_0_0".to_string(),
+                        render_data: QqButtonRenderData {
+                            label: "打开链接".to_string(),
+                            visited_label: "打开链接".to_string(),
+                            style: 1,
+                        },
+                        action: QqButtonAction {
+                            action_type: 0, // URL jump
+                            permission: QqButtonPermission { permission_type: 2 },
+                            data: "https://example.com".to_string(),
+                            enter: false,
+                        },
+                    }],
+                }],
+            },
+        };
+        let json = serde_json::to_string(&keyboard).unwrap();
+        assert!(json.contains(r#""type":0"#)); // action type (URL jump)
+        assert!(json.contains(r#""data":"https://example.com""#));
+    }
+
+    #[test]
+    fn test_keyboard_serialization_multi_row() {
+        let keyboard = QqKeyboard {
+            content: QqKeyboardContent {
+                rows: vec![
+                    QqKeyboardRow {
+                        buttons: vec![QqKeyboardButton {
+                            id: "btn_0_0".to_string(),
+                            render_data: QqButtonRenderData {
+                                label: "按钮1".to_string(),
+                                visited_label: "按钮1".to_string(),
+                                style: 1,
+                            },
+                            action: QqButtonAction {
+                                action_type: 2,
+                                permission: QqButtonPermission { permission_type: 2 },
+                                data: "cb_1".to_string(),
+                                enter: false,
+                            },
+                        }],
+                    },
+                    QqKeyboardRow {
+                        buttons: vec![
+                            QqKeyboardButton {
+                                id: "btn_1_0".to_string(),
+                                render_data: QqButtonRenderData {
+                                    label: "按钮2".to_string(),
+                                    visited_label: "按钮2".to_string(),
+                                    style: 1,
+                                },
+                                action: QqButtonAction {
+                                    action_type: 2,
+                                    permission: QqButtonPermission { permission_type: 2 },
+                                    data: "cb_2".to_string(),
+                                    enter: false,
+                                },
+                            },
+                            QqKeyboardButton {
+                                id: "btn_1_1".to_string(),
+                                render_data: QqButtonRenderData {
+                                    label: "按钮3".to_string(),
+                                    visited_label: "按钮3".to_string(),
+                                    style: 1,
+                                },
+                                action: QqButtonAction {
+                                    action_type: 2,
+                                    permission: QqButtonPermission { permission_type: 2 },
+                                    data: "cb_3".to_string(),
+                                    enter: false,
+                                },
+                            },
+                        ],
+                    },
+                ],
+            },
+        };
+        let json = serde_json::to_string(&keyboard).unwrap();
+        // 验证两行都存在
+        assert!(json.contains(r#""id":"btn_0_0""#));
+        assert!(json.contains(r#""id":"btn_1_0""#));
+        assert!(json.contains(r#""id":"btn_1_1""#));
+        assert!(json.contains(r#""label":"按钮1""#));
+        assert!(json.contains(r#""label":"按钮2""#));
+        assert!(json.contains(r#""label":"按钮3""#));
     }
 }

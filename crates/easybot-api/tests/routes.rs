@@ -80,7 +80,9 @@ async fn test_health_returns_ok() {
 #[tokio::test]
 async fn test_health_snapshot() {
     let (state, _key) = common::test_app_state().await;
-    let (_, json) = get(state, "/api/v1/health", None).await;
+    let (_, mut json) = get(state, "/api/v1/health", None).await;
+    // uptime 是动态值，固定为 0 后比对其余字段
+    json["uptime"] = serde_json::Value::Number(0.into());
     insta::assert_json_snapshot!("health_response", json);
 }
 

@@ -101,11 +101,15 @@ impl DiscordAdapter {
                     supported: false,
                     limits: None,
                 },
-                // Discord 没有内置交互式按钮（需要组件）
+                // Discord 支持 Message Components (buttons, select menus)
                 Capability {
                     name: CapabilityName::Interactive,
-                    supported: false,
-                    limits: None,
+                    supported: true,
+                    limits: Some(CapabilityLimits {
+                        max_text_length: None,
+                        max_file_size: None,
+                        max_buttons: Some(25), // 5 rows × 5 buttons
+                    }),
                 },
                 Capability {
                     name: CapabilityName::Image,
@@ -145,12 +149,12 @@ impl DiscordAdapter {
                 },
                 Capability {
                     name: CapabilityName::ChatList,
-                    supported: false,
+                    supported: true,
                     limits: None,
                 },
                 Capability {
                     name: CapabilityName::Streaming,
-                    supported: false,
+                    supported: true,
                     limits: None,
                 },
             ],
@@ -794,6 +798,59 @@ impl PlatformAdapter for DiscordAdapter {
         Ok(())
     }
 
+    async fn send_draft(&self, params: SendDraftParams) -> Result<DraftResult, GatewayError> {
+        if let Some(ref msg_id) = params.message_id {
+            // 更新已有草稿 → PATCH
+            let endpoint = format!("/channels/{}/messages/{}", params.chat_id, msg_id);
+            let body = serde_json::json!({ "content": params.text });
+
+            match self
+                .api_call::<DiscordMessage>(reqwest::Method::PATCH, &endpoint, Some(body))
+                .await
+            {
+                Ok(_) => Ok(DraftResult {
+                    success: true,
+                    message_id: Some(msg_id.clone()),
+                    error: None,
+                }),
+                Err(e) => {
+                    self.errors.fetch_add(1, Ordering::Relaxed);
+                    Ok(DraftResult {
+                        success: false,
+                        message_id: Some(msg_id.clone()),
+                        error: Some(e.to_string()),
+                    })
+                }
+            }
+        } else {
+            // 创建新草稿 → POST
+            let endpoint = format!("/channels/{}/messages", params.chat_id);
+            let body = serde_json::json!({ "content": params.text });
+
+            match self
+                .api_call::<DiscordMessage>(reqwest::Method::POST, &endpoint, Some(body))
+                .await
+            {
+                Ok(msg) => {
+                    self.messages_out.fetch_add(1, Ordering::Relaxed);
+                    Ok(DraftResult {
+                        success: true,
+                        message_id: Some(msg.id),
+                        error: None,
+                    })
+                }
+                Err(e) => {
+                    self.errors.fetch_add(1, Ordering::Relaxed);
+                    Ok(DraftResult {
+                        success: false,
+                        message_id: None,
+                        error: Some(e.to_string()),
+                    })
+                }
+            }
+        }
+    }
+
     async fn send_media(&self, params: SendMediaParams) -> Result<SendResult, GatewayError> {
         let client = self.http_client();
         let url = format!(
@@ -913,6 +970,74 @@ impl PlatformAdapter for DiscordAdapter {
         Ok(SendResult::ok(msg.id))
     }
 
+    async fn send_interactive(
+        &self,
+        params: SendInteractiveParams,
+    ) -> Result<SendResult, GatewayError> {
+        // 构建 Discord Message Components
+        // 每行 → 一个 Action Row (type=1)，每个按钮 → Button (type=2)
+        let components: Vec<serde_json::Value> = params
+            .keyboard
+            .rows
+            .iter()
+            .map(|row| {
+                let buttons: Vec<serde_json::Value> = row
+                    .buttons
+                    .iter()
+                    .map(|btn| {
+                        if let Some(ref url) = btn.url {
+                            // Link 按钮 (style=5)
+                            serde_json::json!({
+                                "type": 2,
+                                "style": 5,
+                                "label": btn.text,
+                                "url": url,
+                            })
+                        } else {
+                            // 回调按钮 (style=1, Primary)
+                            let custom_id = btn
+                                .callback_data
+                                .clone()
+                                .unwrap_or_else(|| btn.text.clone());
+                            serde_json::json!({
+                                "type": 2,
+                                "style": 1,
+                                "label": btn.text,
+                                "custom_id": custom_id,
+                            })
+                        }
+                    })
+                    .collect();
+
+                serde_json::json!({
+                    "type": 1,
+                    "components": buttons,
+                })
+            })
+            .collect();
+
+        let body = serde_json::json!({
+            "content": params.text,
+            "components": components,
+        });
+
+        let endpoint = format!("/channels/{}/messages", params.chat_id);
+
+        match self
+            .api_call::<DiscordMessage>(reqwest::Method::POST, &endpoint, Some(body))
+            .await
+        {
+            Ok(msg) => {
+                self.messages_out.fetch_add(1, Ordering::Relaxed);
+                Ok(SendResult::ok(msg.id))
+            }
+            Err(e) => {
+                self.errors.fetch_add(1, Ordering::Relaxed);
+                Ok(SendResult::fail(e.to_string(), true))
+            }
+        }
+    }
+
     async fn get_chat_info(&self, chat_id: &str) -> Result<ChatInfo, GatewayError> {
         let endpoint = format!("/channels/{}", chat_id);
         let channel: DiscordChannel = self.api_call(reqwest::Method::GET, &endpoint, None).await?;
@@ -928,6 +1053,75 @@ impl PlatformAdapter for DiscordAdapter {
             chat_type,
             member_count: None,
         })
+    }
+
+    async fn list_chats(&self, filter: Option<ChatFilter>) -> Result<Vec<ChatInfo>, GatewayError> {
+        let mut chats: Vec<ChatInfo> = Vec::new();
+
+        let want_dm = filter
+            .as_ref()
+            .and_then(|f| f.chat_type.as_ref())
+            .map(|t| *t == ChatType::Dm)
+            .unwrap_or(true);
+        let want_group = filter
+            .as_ref()
+            .and_then(|f| f.chat_type.as_ref())
+            .map(|t| *t == ChatType::Group)
+            .unwrap_or(true);
+
+        // 获取 DM 频道列表
+        if want_dm {
+            match self
+                .api_call::<Vec<DiscordChannel>>(
+                    reqwest::Method::GET,
+                    "/users/@me/channels",
+                    None,
+                )
+                .await
+            {
+                Ok(channels) => {
+                    for ch in channels {
+                        chats.push(ChatInfo {
+                            chat_id: ch.id,
+                            name: ch.name,
+                            chat_type: ChatType::Dm,
+                            member_count: None,
+                        });
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Discord list_chats: failed to get DM channels: {}", e);
+                }
+            }
+        }
+
+        // 获取服务器列表
+        if want_group {
+            match self
+                .api_call::<Vec<DiscordGuild>>(
+                    reqwest::Method::GET,
+                    "/users/@me/guilds",
+                    None,
+                )
+                .await
+            {
+                Ok(guilds) => {
+                    for g in guilds {
+                        chats.push(ChatInfo {
+                            chat_id: g.id,
+                            name: Some(g.name),
+                            chat_type: ChatType::Group,
+                            member_count: None,
+                        });
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Discord list_chats: failed to get guilds: {}", e);
+                }
+            }
+        }
+
+        Ok(chats)
     }
 
     async fn edit_message(&self, params: EditMessageParams) -> Result<EditResult, GatewayError> {
@@ -1361,5 +1555,114 @@ mod tests {
         let mut rx = event_bus.subscribe(easybot_core::types::event::event_types::MESSAGE_INBOUND);
         let event = rx.try_recv().ok();
         assert!(event.is_none(), "Malformed message should not be published");
+    }
+
+    #[test]
+    fn test_build_keyboard_components_callback_button() {
+        // 验证回调按钮的 JSON 格式
+        let components: Vec<serde_json::Value> = vec![serde_json::json!({
+            "type": 1,
+            "components": [{
+                "type": 2,
+                "style": 1,
+                "label": "点击我",
+                "custom_id": "/start"
+            }]
+        })];
+
+        let body = serde_json::json!({
+            "content": "测试消息",
+            "components": components,
+        });
+
+        assert_eq!(body["content"], "测试消息");
+        let row = &body["components"][0];
+        assert_eq!(row["type"], 1);
+        let btn = &row["components"][0];
+        assert_eq!(btn["type"], 2);
+        assert_eq!(btn["style"], 1); // Primary
+        assert_eq!(btn["label"], "点击我");
+        assert_eq!(btn["custom_id"], "/start");
+        assert!(btn["url"].is_null());
+    }
+
+    #[test]
+    fn test_build_keyboard_components_url_button() {
+        // 验证 URL 按钮的 JSON 格式
+        let components: Vec<serde_json::Value> = vec![serde_json::json!({
+            "type": 1,
+            "components": [{
+                "type": 2,
+                "style": 5,
+                "label": "打开链接",
+                "url": "https://example.com"
+            }]
+        })];
+
+        let body = serde_json::json!({
+            "content": "链接消息",
+            "components": components,
+        });
+
+        let btn = &body["components"][0]["components"][0];
+        assert_eq!(btn["style"], 5); // Link
+        assert_eq!(btn["url"], "https://example.com");
+        assert!(btn["custom_id"].is_null());
+    }
+
+    #[test]
+    fn test_build_keyboard_components_multi_row() {
+        // 验证多行键盘
+        let components: Vec<serde_json::Value> = vec![
+            serde_json::json!({
+                "type": 1,
+                "components": [{
+                    "type": 2,
+                    "style": 1,
+                    "label": "按钮1",
+                    "custom_id": "cb_1"
+                }]
+            }),
+            serde_json::json!({
+                "type": 1,
+                "components": [
+                    {
+                        "type": 2,
+                        "style": 1,
+                        "label": "按钮2",
+                        "custom_id": "cb_2"
+                    },
+                    {
+                        "type": 2,
+                        "style": 5,
+                        "label": "链接",
+                        "url": "https://example.com"
+                    }
+                ]
+            }),
+        ];
+
+        let body = serde_json::json!({
+            "content": "多行键盘",
+            "components": components,
+        });
+
+        assert_eq!(body["components"].as_array().unwrap().len(), 2);
+        // 第一行有 1 个按钮
+        assert_eq!(
+            body["components"][0]["components"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        // 第二行有 2 个按钮
+        assert_eq!(
+            body["components"][1]["components"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
     }
 }

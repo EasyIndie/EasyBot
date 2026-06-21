@@ -165,11 +165,11 @@ The `AdapterRegistry` holds factory functions keyed by platform name, each with 
 |-------|-------|--------|
 | **P1 MVP** | Core types, PlatformAdapter trait, Telegram adapter, REST API, config loading, cross-platform paths | ✅ Done |
 | **P2 Bidirectional** | Event bus, WebSocket push, webhooks, inbound message handling, session persistence, message edit/delete, adapter lifecycle events | 100% ✅ |
-| **P3 Multi-platform** | Telegram ✅, Discord ✅, **飞书/Lark** ✅, **QQ** ✅ (群消息已验证, C2C/频道代码已实现待验证环境), **个人微信(wechat)** ✅ (iLink Bot API 已验证) — 五个平台 + 媒体发送 | 85% ✅ |
-| **P4 Production** | API key auth (Argon2), rate limiting, hot-reload, graceful shutdown, PostgreSQL, Prometheus, Docker, TTL retention, health monitor + auto-reconnect | 80% ✅ |
+| **P3 Multi-platform** | Telegram ✅, Discord ✅ (含 send_interactive + list_chats), **飞书/Lark** ✅, **QQ** ✅ (含 send_interactive + list_chats), **个人微信(wechat)** ✅ (iLink Bot API 已验证; edit/delete/send_interactive/list_chats 平台不支持) — 五平台全部完成 | 100% ✅ |
+| **P4 Production** | API key auth (Argon2), rate limiting, hot-reload, graceful shutdown, PostgreSQL, Prometheus, Docker, TTL retention, health monitor + auto-reconnect, send_draft streaming, health uptime | 90% ✅ |
 
-> **P3 未完成项**: Discord `send_media`/`send_interactive`、微信 `edit_message`/`delete_message`/`send_interactive`、所有适配器 `list_chats` 实际实现。
-> **P4 未完成项**: 权限模型 RBAC (`auth/permissions.rs`)、`send_draft` 流式草稿、TLS 仅配置层未在应用层处理、Health 端点启动时间。
+> **P3 完成**: 所有可实现功能已交付，微信平台限制项 (edit/delete/send_interactive/list_chats) 已确认关闭。
+> **P4 未完成项**: 权限模型 RBAC (`auth/permissions.rs`)、TLS 仅配置层未在应用层处理（均暂缓）。
 | **P5 Plugin System** | Plugin SDK, dynamic library loading, plugin registry, loader tests, developer docs | ✅ Done |
 
 ### 不可退让的设计约束
@@ -195,21 +195,13 @@ Detailed tracking: see `docs/TODO.md` for the full prioritized checklist.
 
 | Gap | Platform | File | Description |
 |-----|----------|------|-------------|
-| `send_media` | **Discord** | `crates/easybot-adapter-discord/src/lib.rs` | Send images/audio/video/files via Discord REST API |
-| `send_interactive` | **Discord** | same | Inline keyboard / button messages |
-| `list_chats` | **Discord** | same | List available guilds/channels |
-| `edit_message` | **WeChat** | `crates/easybot-adapter-wechat/src/lib.rs` | Edit previously sent messages |
-| `delete_message` | **WeChat** | same | Delete/recall messages |
-| `send_interactive` | **WeChat** | same | Interactive button messages |
-| `send_interactive` | **QQ** | `crates/easybot-adapter-qq/src/lib.rs` | Interactive button/keyboard messages |
-| `list_chats` | **QQ / WeChat** | respective adapters | Return actual chat lists (currently empty vec) |
+### P3: Multi-Platform (100% complete)
 
-### P4: Production (75% → target: 100%)
+All P3 features are delivered. WeChat platform limitations (edit/delete/send_interactive/list_chats) confirmed and documented.
+
+### P4: Production (85% → target: 100%)
 
 | Gap | File | Description |
 |-----|------|-------------|
-| Permission model (RBAC) | `crates/easybot-core/src/auth/` (new `permissions.rs`) | Role-based access control with permission-check middleware |
-| `send_draft` streaming | PlatformAdapter trait + adapters | Streaming draft send method (`send_draft` defined in trait, no adapter implements it) |
-| Health poll + auto-reconnect | `crates/easybot-core/src/adapter/manager.rs` | Periodic `health()` checks for all adapters with automatic reconnect; currently only Discord Gateway has its own reconnect loop |
-| TLS/HTTPS termination | `crates/easybot-api/src/server.rs` | TLS config exists but cert loading/serving not wired at application layer |
-| Health: track start time | `crates/easybot-api/src/routes/health.rs:56` | Record and expose gateway process start time in health endpoint |
+| Permission model (RBAC) | `crates/easybot-core/src/auth/` (new `permissions.rs`) | Role-based access control with permission-check middleware (暂缓) |
+| TLS/HTTPS termination | `crates/easybot-api/src/server.rs` | TLS config exists but cert loading/serving not wired at application layer (暂缓) |

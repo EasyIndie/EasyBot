@@ -124,7 +124,7 @@ impl TelegramAdapter {
                 },
                 Capability {
                     name: CapabilityName::Streaming,
-                    supported: false,
+                    supported: true,
                     limits: None,
                 },
             ],
@@ -756,6 +756,76 @@ impl PlatformAdapter for TelegramAdapter {
         self.api_call::<serde_json::Value>("sendChatAction", Some(body))
             .await?;
         Ok(())
+    }
+
+    async fn send_draft(&self, params: SendDraftParams) -> Result<DraftResult, GatewayError> {
+        let mut body = serde_json::json!({
+            "chat_id": params.chat_id,
+            "text": params.text,
+        });
+
+        // Parse mode
+        if let Some(ref pm) = params.parse_mode {
+            match pm {
+                ParseMode::Markdown => {
+                    body["parse_mode"] = "MarkdownV2".into();
+                }
+                ParseMode::Html => {
+                    body["parse_mode"] = "HTML".into();
+                }
+                ParseMode::None => {}
+            }
+        }
+
+        if let Some(ref reply_to) = params.reply_to {
+            body["reply_to_message_id"] = serde_json::json!(reply_to);
+        }
+
+        if let Some(ref msg_id) = params.message_id {
+            // 更新已有草稿 → 使用 editMessageText
+            body["message_id"] = serde_json::json!(msg_id);
+            match self
+                .api_call::<serde_json::Value>("editMessageText", Some(body))
+                .await
+            {
+                Ok(_) => Ok(DraftResult {
+                    success: true,
+                    message_id: Some(msg_id.clone()),
+                    error: None,
+                }),
+                Err(e) => {
+                    self.errors.fetch_add(1, Ordering::Relaxed);
+                    Ok(DraftResult {
+                        success: false,
+                        message_id: Some(msg_id.clone()),
+                        error: Some(e.to_string()),
+                    })
+                }
+            }
+        } else {
+            // 创建新草稿 → 使用 sendMessage
+            match self
+                .api_call::<TelegramMessage>("sendMessage", Some(body))
+                .await
+            {
+                Ok(msg) => {
+                    self.messages_out.fetch_add(1, Ordering::Relaxed);
+                    Ok(DraftResult {
+                        success: true,
+                        message_id: Some(msg.message_id.to_string()),
+                        error: None,
+                    })
+                }
+                Err(e) => {
+                    self.errors.fetch_add(1, Ordering::Relaxed);
+                    Ok(DraftResult {
+                        success: false,
+                        message_id: None,
+                        error: Some(e.to_string()),
+                    })
+                }
+            }
+        }
     }
 
     async fn get_chat_info(&self, chat_id: &str) -> Result<ChatInfo, GatewayError> {

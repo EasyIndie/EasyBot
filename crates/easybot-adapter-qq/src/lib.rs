@@ -192,6 +192,16 @@ impl QqAdapter {
                     supported: true,
                     limits: None,
                 },
+                Capability {
+                    name: CapabilityName::Interactive,
+                    supported: true,
+                    limits: None,
+                },
+                Capability {
+                    name: CapabilityName::ChatList,
+                    supported: true,
+                    limits: None,
+                },
             ],
             messages_in: Arc::new(AtomicU64::new(0)),
             messages_out: AtomicU64::new(0),
@@ -1118,6 +1128,89 @@ impl PlatformAdapter for QqAdapter {
         }
     }
 
+    async fn send_interactive(
+        &self,
+        params: SendInteractiveParams,
+    ) -> Result<SendResult, GatewayError> {
+        // 构建 QQ 键盘
+        let keyboard = QqKeyboard {
+            content: QqKeyboardContent {
+                rows: params
+                    .keyboard
+                    .rows
+                    .iter()
+                    .enumerate()
+                    .map(|(row_idx, row)| QqKeyboardRow {
+                        buttons: row
+                            .buttons
+                            .iter()
+                            .enumerate()
+                            .map(|(btn_idx, btn)| {
+                                let id = format!("btn_{}_{}", row_idx, btn_idx);
+                                let (action_type, data) = if let Some(ref url) = btn.url {
+                                    // URL 跳转
+                                    (0u32, url.clone())
+                                } else {
+                                    // 回调（at 机器人）
+                                    (
+                                        2u32,
+                                        btn.callback_data
+                                            .clone()
+                                            .unwrap_or_default(),
+                                    )
+                                };
+                                QqKeyboardButton {
+                                    id,
+                                    render_data: QqButtonRenderData {
+                                        label: btn.text.clone(),
+                                        visited_label: btn.text.clone(),
+                                        style: 1, // 蓝色主按钮
+                                    },
+                                    action: QqButtonAction {
+                                        action_type,
+                                        permission: QqButtonPermission {
+                                            permission_type: 2, // 所有人可点击
+                                        },
+                                        data,
+                                        enter: false,
+                                    },
+                                }
+                            })
+                            .collect(),
+                    })
+                    .collect(),
+            },
+        };
+
+        let mut body = serde_json::json!({
+            "content": params.text,
+            "msg_type": 0,
+            "keyboard": serde_json::to_value(&keyboard).unwrap_or_default(),
+        });
+
+        if let Some(ref reply_to) = params.reply_to {
+            body["msg_id"] = serde_json::Value::String(reply_to.clone());
+        }
+
+        match self.try_send(&params.chat_id, &body).await {
+            Ok(resp) => {
+                self.messages_out.fetch_add(1, Ordering::Relaxed);
+                Ok(SendResult {
+                    success: true,
+                    message_id: Some(resp.id),
+                    timestamp: resp.timestamp.and_then(|t| t.parse::<i64>().ok()),
+                    error: None,
+                    error_code: None,
+                    retryable: false,
+                })
+            }
+            Err(e) => {
+                self.errors.fetch_add(1, Ordering::Relaxed);
+                Ok(SendResult::fail(e.to_string(), true))
+            }
+        }
+    }
+
     async fn edit_message(&self, params: EditMessageParams) -> Result<EditResult, GatewayError> {
         let path = format!(
             "/channels/{}/messages/{}",
@@ -1166,8 +1259,36 @@ impl PlatformAdapter for QqAdapter {
         })
     }
 
-    async fn list_chats(&self, _filter: Option<ChatFilter>) -> Result<Vec<ChatInfo>, GatewayError> {
-        Ok(Vec::new())
+    async fn list_chats(&self, filter: Option<ChatFilter>) -> Result<Vec<ChatInfo>, GatewayError> {
+        let want_group = filter
+            .as_ref()
+            .and_then(|f| f.chat_type.as_ref())
+            .map(|t| *t == ChatType::Group)
+            .unwrap_or(true);
+
+        if !want_group {
+            // QQ API 仅支持列出频道服务器，没有 DM/群聊列表端点
+            return Ok(Vec::new());
+        }
+
+        match self.api_get::<Vec<QqGuild>>("/users/@me/guilds").await {
+            Ok(guilds) => {
+                let chats = guilds
+                    .into_iter()
+                    .map(|g| ChatInfo {
+                        chat_id: g.id,
+                        name: Some(g.name),
+                        chat_type: ChatType::Group,
+                        member_count: None,
+                    })
+                    .collect();
+                Ok(chats)
+            }
+            Err(e) => {
+                tracing::warn!("QQ list_chats: failed to get guilds: {}", e);
+                Ok(Vec::new())
+            }
+        }
     }
 }
 
