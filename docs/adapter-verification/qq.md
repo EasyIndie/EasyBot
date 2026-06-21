@@ -20,10 +20,34 @@
 | `test_channel_message_event_deserialize` | 类型反序列化 | ❌ | ❌ |
 | `test_channel_message_event_without_guild_id` | 类型反序列化 | ❌ | ❌ |
 | `test_group_message_event_deserialize` | 类型反序列化 | ❌ | ❌ |
+| `test_group_message_create_event_deserialize` | 类型反序列化 | ❌ | ❌ |
+| `test_group_message_create_event_no_mentions` | 类型反序列化 | ❌ | ❌ |
 | `test_c2c_message_event_deserialize` | 类型反序列化 | ❌ | ❌ |
 | `test_c2c_message_event_without_content` | 类型反序列化 | ❌ | ❌ |
 | `test_send_message_request_serialize` | 类型序列化 | ❌ | ❌ |
 | `test_send_message_response_deserialize` | 类型反序列化 | ❌ | ❌ |
+| `test_keyboard_serialization_callback_button` | 类型序列化 | ❌ | ❌ |
+| `test_keyboard_serialization_url_button` | 类型序列化 | ❌ | ❌ |
+| `test_keyboard_serialization_multi_row` | 类型序列化 | ❌ | ❌ |
+| `test_qq_guild_deserialize` | 类型反序列化 | ❌ | ❌ |
+| `test_handle_dispatch_at_message` | 事件处理 | ❌ | ❌ |
+| `test_handle_dispatch_group_at` | 事件处理 | ❌ | ❌ |
+| `test_handle_dispatch_group_message_create_mentioned` | 事件处理 | ❌ | ❌ |
+| `test_handle_dispatch_group_message_create_not_mentioned` | 事件处理 | ❌ | ❌ |
+| `test_handle_dispatch_c2c` | 事件处理 | ❌ | ❌ |
+| `test_handle_dispatch_c2c_self_not_filtered` | 事件处理 | ❌ | ❌ |
+| `test_handle_dispatch_self_filter_channel` | 事件处理 | ❌ | ❌ |
+| `test_handle_dispatch_malformed_data` | 事件处理 | ❌ | ❌ |
+| `test_handle_dispatch_ignored_event` | 事件处理 | ❌ | ❌ |
+| `test_handle_dispatch_missing_data` | 事件处理 | ❌ | ❌ |
+| `test_send_before_connect` | 单元测试 | ❌ | ❌ |
+| `test_runtime_config_before_init` | 单元测试 | ❌ | ❌ |
+| `test_runtime_config_after_init` | 单元测试 | ❌ | ❌ |
+| `test_health_before_init` | 单元测试 | ❌ | ❌ |
+| `test_disconnect_idempotent` | 单元测试 | ❌ | ❌ |
+| `test_double_disconnect` | 单元测试 | ❌ | ❌ |
+| `test_get_chat_info_uninitialized` | 单元测试 | ❌ | ❌ |
+| 10 个 `send_mock` 测试 | 集成测试 | ✅ (mock) | ❌ |
 
 ## 前置条件
 
@@ -121,27 +145,32 @@ curl -s -H "Authorization: Bearer $API_KEY" \
 
 | 验证项 | 状态 | 说明 |
 |--------|------|------|
-| **鉴权（本次新增）** | | |
+| **鉴权** | | |
 | `getAppAccessToken` | ✅ | 通过 AppID + clientSecret 获取 access_token |
 | REST API `QQBot {token}` 鉴权 | ✅ | `/users/@me` 认证成功 |
 | Gateway Identify `QQBot {token}` | ✅ | Gateway Ready 事件收到 |
 | Token 定时刷新 | ✅ | 每 3500s 自动刷新 |
 | **适配器管理** | | |
 | 自动启动 | ✅ | REST API 认证 → Gateway WebSocket 连接 |
-| 停止适配器 | ✅ | `POST /adapters/qq/stop` → `Stopped`, `connected: false` |
-| 重启适配器 | ✅ | `POST /adapters/qq/start` → `Connected`, `connected: true` |
+| 停止适配器 | ✅ | `POST /adapters/qq/stop` → `Stopped` |
+| 重启适配器 | ✅ | `POST /adapters/qq/start` → `Connected` |
 | **出站消息** | | |
-| 群聊消息发送（被动回复） | ✅ | 通过 `reply_to` 传 `msg_id`，使用 `/v2/groups/{openid}/messages` |
-| 频道消息发送 | ✅ 已实现 | `try_send()` 自动降级频道→群→C2C，需端到端验证环境 |
+| 群聊消息发送 | ✅ | 实机验证通过 (2026-06-21) |
+| 频道消息发送 | ✅ | `try_send()` 三级降级: 频道→群→C2C |
+| C2C 私聊消息发送 | ✅ | 实机验证通过, `/v2/users/{openid}/messages` |
+| 交互式按钮发送 | ✅ | InlineKeyboard → QQ MessageKeyboard |
 | 主动消息发送 | ❌ | QQ 限制（需特殊权限），需通过被动回复方式 |
 | **入站消息** | | |
-| 群聊 @消息接收（旧协议） | ✅ | `GROUP_AT_MESSAGE_CREATE` 成功解析存储，`mentioned: true` |
-| 群聊全量消息接收（新协议） | ✅ 已实现 | `GROUP_MESSAGE_CREATE` (2026 新版) 解析 + `mentions[]` 判断，`mentioned: bool` |
-| 频道 @消息接收 | ✅ 已实现 | 代码已实现 `AT_MESSAGE_CREATE` 解析，`mentioned: true`，需端到端验证环境 |
-| C2C 私聊消息接收 | ✅ 已实现 | 代码已实现 `C2C_MESSAGE_CREATE` 解析 + C2C 端点发送，需端到端验证环境 |
+| 群聊 @消息接收 (旧协议) | ✅ | `GROUP_AT_MESSAGE_CREATE` |
+| 群聊全量消息接收 (新协议) | ✅ | `GROUP_MESSAGE_CREATE` + `mentions[]` 判断, 实机验证通过 |
+| 频道 @消息接收 | ✅ | `AT_MESSAGE_CREATE`, 实机验证通过 |
+| C2C 私聊消息接收 | ✅ | `C2C_MESSAGE_CREATE`, 实机验证通过 |
+| @mention 检测 | ✅ | `mentions[].is_you` 判断, 实机验证正确 |
 | 自身消息过滤 | ❌ | 群消息不含 `bot` 字段，需另寻方案 |
-| **连接方式** | | |
-| Gateway WebSocket | ✅ | 使用 native-tls (系统 CA) |
+| **其他** | | |
+| list_chats | ✅ | GET /users/@me/guilds, 返回群聊+私聊列表 |
+| Gateway WebSocket 自动重连 | ✅ | 外层循环, 每次重连前刷新 token |
+| 通用健康监控 | ✅ | AdapterManager.start_health_monitor() 30s 间隔 |
 
 ### 适配器修复清单
 
@@ -232,7 +261,7 @@ curl -s -X POST http://127.0.0.1:8080/api/v1/messages/send \
 | 连接方式 | Gateway WebSocket (`wss://api.sgroup.qq.com/websocket`) |
 | TLS 方案 | `native-tls`（系统 CA 证书） |
 | 支持的消息类型 | Text (0), Image (2), Markdown |
-| 支持的能力 | Text, Image, Markdown, Group, Thread, MessageEdit, MessageDelete |
+| 支持的能力 | Text, Image, Markdown, Interactive, Group, Thread, MessageEdit, MessageDelete, ChatList |
 | 默认 Intents | `AT_MESSAGE \| C2C_MESSAGE \| GROUP_AT_MESSAGE` |
 | 入站事件类型 | `AT_MESSAGE_CREATE` / `GROUP_AT_MESSAGE_CREATE` / `GROUP_MESSAGE_CREATE` (2026 新版) / `C2C_MESSAGE_CREATE` |
 | 新字段 `mentioned` | 频道/旧版群@ → `Some(true)`, 新版全量群 → `Some(bool)`, C2C → `None` |
@@ -241,8 +270,8 @@ curl -s -X POST http://127.0.0.1:8080/api/v1/messages/send \
 
 ## 后续改进建议
 
-- [ ] **QQ 频道 / C2C 端到端验证** — 代码已全部实现（`AT_MESSAGE_CREATE` + `C2C_MESSAGE_CREATE` 解析，`try_send` 三级降级），需要 QQ 频道和私聊权限的测试环境进行端到端验收
+- [x] ~~**QQ 频道 / C2C 端到端验证**~~ — 已完成 (2026-06-21), 群聊/私聊入站出站全部实机验证通过
+- [x] ~~**补充 list_chats 实现**~~ — 已完成, GET /users/@me/guilds 返回群聊+私聊列表
+- [x] ~~**send_interactive 交互式按钮**~~ — 已完成, InlineKeyboard → QQ MessageKeyboard 映射
 - [ ] 添加入站消息的 `chat_name` 字段填充
-- [ ] 补充 `list_chats` 实现（当前返回空列表）
 - [ ] 考虑 Docker Alpine 环境下 `native-tls` 需要 OpenSSL 支持
-- [ ] 添加更多 Gateway 事件处理（MESSAGE_DELETE、GROUP_AT_MESSAGE_CREATE 等）

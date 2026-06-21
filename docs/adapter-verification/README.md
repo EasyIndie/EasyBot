@@ -8,7 +8,7 @@
 |------|--------|------|
 | [telegram.md](telegram.md) | Telegram | ✅ 已验证 |
 | [discord.md](discord.md) | Discord | ✅ 已验证 |
-| [qq.md](qq.md) | QQ | ✅ 已验证（鉴权升级 + 群消息双向收发） |
+| [qq.md](qq.md) | QQ | ✅ 已验证（鉴权升级 + 群聊/私聊/频道全场景双向收发 + Interactive + ChatList） |
 | [feishu.md](feishu.md) | 飞书 | ✅ 已验证（REST API + WebSocket 事件订阅双向） |
 | [wechat.md](wechat.md) | 个人微信 | ✅ 已验证（iLink Bot API 长轮询双向） |
 

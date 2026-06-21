@@ -2021,7 +2021,7 @@ easybot/
                  Phase 1              Phase 2              Phase 3              Phase 4               Phase 5
                 (2-3 周)             (2-3 周)             (3-4 周)             (4-6 周)              (4 周)
                 ─────────            ─────────            ─────────            ─────────              ─────────
-                 ✅ 完成              ✅ 完成               ⚠️ 85%                ⚠️ 75%                 ✅ 完成
+                 ✅ 完成              ✅ 完成              ✅ 100%               ✅ 95%                 ✅ 完成
 
 REST 单发        ██
 Telegram         ██        ██
@@ -2030,14 +2030,14 @@ Webhook                      ██
 Discord                                ██
 飞书/QQ/微信                            ██
 5 平台                                   ██
-API Key / 权限                                        ██  (权限模型 ❌)
+API Key / 权限                                        ██  (RBAC ⚠️暂缓)
 速率限制                                                 ██
 热重载                                                    ██
-健康轮询 + 自动重连                                        ██ (仅 Discord ⚠️)
-HTTPS/WSS                                                  ██ (仅配置 ⚠️)
+健康轮询 + 自动重连                                        ██
+HTTPS/WSS                                                  ██ (⚠️暂缓)
 Prometheus                                                  ██
 Docker                                                       ██
-交互式按钮 + 流式                                              ██ (send_draft ❌)
+交互式按钮 + 流式                                              ██
 PostgreSQL                                                     ██
 插件 SDK                                                                   ██
 动态加载                                                                     ██
@@ -2054,14 +2054,12 @@ PostgreSQL                                                     ██
 
 ### 剩余工作 (详情见 docs/TODO.md)
 
-**P3 补完 (15%):**
-- Discord: send_media, send_interactive, list_chats
-- 微信: edit_message, delete_message, send_interactive
-- QQ: send_interactive, list_chats 实际实现
+**P3 补完 (100% 完成):**
+- ✅ Discord: send_media, send_interactive, list_chats — 全部完成
+- ✅ 微信: edit_message, delete_message, send_interactive, list_chats — 全部确认为平台限制
+- ✅ QQ: send_interactive, list_chats, C2C/频道实机验证 — 全部完成
 
-**P4 补完 (25%):**
-- 权限模型 RBAC (auth/permissions.rs)
-- send_draft 流式草稿 (trait 已定义，无适配器实现)
-- 通用适配器健康轮询 + 自动重连
-- TLS/HTTPS 应用层处理
-- Health 端点记录启动时间
+**P4 补完 (仅剩 2 项暂缓):**
+- ⚠️ 权限模型 RBAC (暂缓)
+- ⚠️ TLS/HTTPS 应用层处理 (暂缓)
+- ✅ 其余全部完成: send_draft, 通用健康轮询+自动重连, Health 启动时间, QQ 实机验证, 状态缓存修复

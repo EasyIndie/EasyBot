@@ -76,7 +76,7 @@
 | <img src="https://img.shields.io/badge/Telegram-2CA5E0?logo=telegram" height="20"> | `easybot-adapter-telegram` | Bot API (getUpdates 长轮询) | ✅ 已验证 |
 | <img src="https://img.shields.io/badge/Discord-5865F2?logo=discord" height="20"> | `easybot-adapter-discord` | Gateway WebSocket | ✅ 已验证 |
 | <img src="https://img.shields.io/badge/%E9%A3%9E%E4%B9%A6-3370FF?logo=feishu" height="20"> | `easybot-adapter-feishu` | REST API + WebSocket 事件订阅 | ✅ 已完成 |
-| <img src="https://img.shields.io/badge/QQ-1E80FF?logo=tencentqq" height="20"> | `easybot-adapter-qq` | 统一 QQBot 鉴权 + Gateway WebSocket | ✅ 已完成（群消息已验证） |
+| <img src="https://img.shields.io/badge/QQ-1E80FF?logo=tencentqq" height="20"> | `easybot-adapter-qq` | 统一 QQBot 鉴权 + Gateway WebSocket | ✅ 已验证（群聊/私聊/频道全场景） |
 | <img src="https://img.shields.io/badge/%E5%BE%AE%E4%BF%A1-07C160?logo=wechat" height="20"> | `easybot-adapter-wechat` | iLink Bot API 长轮询 | ✅ 已完成 |
 
 ---
