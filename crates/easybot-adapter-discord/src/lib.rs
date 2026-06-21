@@ -546,6 +546,7 @@ impl DiscordAdapter {
     }
 
     /// 主事件循环：接收 Dispatch 事件 + 定时发送 Heartbeat
+    #[allow(clippy::too_many_arguments)]
     async fn event_loop(
         read: &mut (impl StreamExt<Item = Result<WsMessage, tokio_tungstenite::tungstenite::Error>>
                   + Unpin),
