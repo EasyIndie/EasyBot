@@ -11,6 +11,7 @@ use axum::{
     response::IntoResponse,
 };
 use futures::{SinkExt, StreamExt};
+use std::time::Instant;
 use tracing::{info, warn};
 
 /// WebSocket 实时事件流
@@ -49,6 +50,19 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
     let mut event_seq: u64 = 0;
     let mut dropped_events: u32 = 0;
     const MAX_DROPPED_EVENTS: u32 = 50; // 连续丢弃超过 N 个事件则断开
+
+    // 心跳配置
+    let heartbeat_secs = state.config.api.websocket.heartbeat_interval_secs.max(5);
+    let hb_duration = std::time::Duration::from_secs(heartbeat_secs);
+    let mut heartbeat_timer = tokio::time::interval(hb_duration);
+    heartbeat_timer.tick().await; // 跳过第一次立即触发
+    let mut last_pong = Instant::now();
+    let pong_timeout = hb_duration * 2; // 2 倍心跳间隔内无 pong 则断开
+
+    // 追踪活跃连接数
+    if let Some(ref metrics) = state.metrics {
+        metrics.active_websocket_connections.inc();
+    }
 
     info!("WebSocket client connected");
 
@@ -92,8 +106,36 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
                             handle_client_frame(&text, &state).await;
                         }
                     }
+                    Some(Ok(Message::Ping(data))) => {
+                        // RFC 6455: 回复 Pong（底层 tungstenite 通常自动处理，显式处理更安全）
+                        if sender.send(Message::Pong(data)).await.is_err() {
+                            break;
+                        }
+                        last_pong = Instant::now();
+                    }
+                    Some(Ok(Message::Pong(_))) => {
+                        last_pong = Instant::now();
+                    }
                     Some(Ok(Message::Close(_))) | None => break,
+                    Some(Err(e)) => {
+                        warn!("WebSocket protocol error: {}", e);
+                        break;
+                    }
                     _ => {}
+                }
+            }
+
+            // 心跳定时器：定期发送 Ping，检测客户端存活
+            _ = heartbeat_timer.tick() => {
+                if last_pong.elapsed() > pong_timeout {
+                    warn!(
+                        "WebSocket client timed out (no pong for {:?})",
+                        pong_timeout
+                    );
+                    break;
+                }
+                if sender.send(Message::Ping(axum::body::Bytes::new())).await.is_err() {
+                    break;
                 }
             }
 
@@ -140,6 +182,10 @@ async fn handle_ws(socket: WebSocket, state: AppState) {
                 }
             }
         }
+    }
+
+    if let Some(ref metrics) = state.metrics {
+        metrics.active_websocket_connections.dec();
     }
 
     info!("WebSocket client disconnected");

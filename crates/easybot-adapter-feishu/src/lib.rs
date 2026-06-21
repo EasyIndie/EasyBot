@@ -15,6 +15,8 @@ use async_trait::async_trait;
 use easybot_core::bus::EventBus;
 use easybot_core::types::adapter::*;
 use easybot_core::types::error::GatewayError;
+use easybot_core::types::event::event_types;
+use easybot_core::types::event::GatewayEvent;
 use easybot_core::types::message::*;
 use larksuite_oapi_sdk_rs::{Client, EventDispatcher};
 use tokio::sync::broadcast;
@@ -286,6 +288,28 @@ impl FeishuAdapter {
     }
 }
 
+fn publish_send_event(
+    event_bus: &Option<Arc<EventBus>>,
+    event_type: &str,
+    chat_id: &str,
+    result: &SendResult,
+) {
+    if let Some(ref bus) = event_bus {
+        bus.publish(GatewayEvent::new(
+            event_type,
+            "feishu",
+            serde_json::json!({
+                "platform": "feishu",
+                "chat_id": chat_id,
+                "message_id": result.message_id,
+                "success": result.success,
+                "error": result.error,
+                "error_code": result.error_code,
+            }),
+        ));
+    }
+}
+
 #[async_trait]
 impl PlatformAdapter for FeishuAdapter {
     fn platform_name(&self) -> &str {
@@ -515,23 +539,34 @@ impl PlatformAdapter for FeishuAdapter {
             "content": content.to_string(),
         });
 
-        match self.api_post::<FeishuSendMessageData>(&path, &body).await {
+        let send_result = match self.api_post::<FeishuSendMessageData>(&path, &body).await {
             Ok(data) => {
                 self.messages_out.fetch_add(1, Ordering::Relaxed);
-                Ok(SendResult {
+                SendResult {
                     success: true,
                     message_id: Some(data.message_id),
                     timestamp: Some(chrono::Utc::now().timestamp_millis()),
                     error: None,
                     error_code: None,
                     retryable: false,
-                })
+                }
             }
             Err(e) => {
                 self.errors.fetch_add(1, Ordering::Relaxed);
-                Ok(SendResult::fail(e.to_string(), true))
+                SendResult::fail(e.to_string(), true)
             }
-        }
+        };
+        publish_send_event(
+            &self.event_bus,
+            if send_result.success {
+                event_types::MESSAGE_SENT
+            } else {
+                event_types::MESSAGE_FAILED
+            },
+            &params.chat_id,
+            &send_result,
+        );
+        Ok(send_result)
     }
 
     async fn send_media(&self, params: SendMediaParams) -> Result<SendResult, GatewayError> {
@@ -558,23 +593,34 @@ impl PlatformAdapter for FeishuAdapter {
             "content": content.to_string(),
         });
 
-        match self.api_post::<FeishuSendMessageData>(&path, &body).await {
+        let send_result = match self.api_post::<FeishuSendMessageData>(&path, &body).await {
             Ok(data) => {
                 self.messages_out.fetch_add(1, Ordering::Relaxed);
-                Ok(SendResult {
+                SendResult {
                     success: true,
                     message_id: Some(data.message_id),
                     timestamp: Some(chrono::Utc::now().timestamp_millis()),
                     error: None,
                     error_code: None,
                     retryable: false,
-                })
+                }
             }
             Err(e) => {
                 self.errors.fetch_add(1, Ordering::Relaxed);
-                Ok(SendResult::fail(e.to_string(), true))
+                SendResult::fail(e.to_string(), true)
             }
-        }
+        };
+        publish_send_event(
+            &self.event_bus,
+            if send_result.success {
+                event_types::MESSAGE_SENT
+            } else {
+                event_types::MESSAGE_FAILED
+            },
+            &params.chat_id,
+            &send_result,
+        );
+        Ok(send_result)
     }
 
     async fn send_interactive(
@@ -613,23 +659,34 @@ impl PlatformAdapter for FeishuAdapter {
             "content": serde_json::to_string(&content).unwrap_or_default(),
         });
 
-        match self.api_post::<FeishuSendMessageData>(&path, &body).await {
+        let send_result = match self.api_post::<FeishuSendMessageData>(&path, &body).await {
             Ok(data) => {
                 self.messages_out.fetch_add(1, Ordering::Relaxed);
-                Ok(SendResult {
+                SendResult {
                     success: true,
                     message_id: Some(data.message_id),
                     timestamp: Some(chrono::Utc::now().timestamp_millis()),
                     error: None,
                     error_code: None,
                     retryable: false,
-                })
+                }
             }
             Err(e) => {
                 self.errors.fetch_add(1, Ordering::Relaxed);
-                Ok(SendResult::fail(e.to_string(), true))
+                SendResult::fail(e.to_string(), true)
             }
-        }
+        };
+        publish_send_event(
+            &self.event_bus,
+            if send_result.success {
+                event_types::MESSAGE_SENT
+            } else {
+                event_types::MESSAGE_FAILED
+            },
+            &params.chat_id,
+            &send_result,
+        );
+        Ok(send_result)
     }
 
     async fn edit_message(&self, params: EditMessageParams) -> Result<EditResult, GatewayError> {

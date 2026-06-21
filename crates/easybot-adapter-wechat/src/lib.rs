@@ -734,6 +734,28 @@ async fn resolve_media_data(
     }
 }
 
+fn publish_send_event(
+    event_bus: &Option<Arc<EventBus>>,
+    event_type: &str,
+    chat_id: &str,
+    result: &SendResult,
+) {
+    if let Some(ref bus) = event_bus {
+        bus.publish(easybot_core::types::event::GatewayEvent::new(
+            event_type,
+            "wechat",
+            serde_json::json!({
+                "platform": "wechat",
+                "chat_id": chat_id,
+                "message_id": result.message_id,
+                "success": result.success,
+                "error": result.error,
+                "error_code": result.error_code,
+            }),
+        ));
+    }
+}
+
 #[async_trait]
 impl PlatformAdapter for WeChatAdapter {
     fn platform_name(&self) -> &str {
@@ -1089,14 +1111,21 @@ impl PlatformAdapter for WeChatAdapter {
 
         if !status.is_success() {
             self.errors.fetch_add(1, Ordering::Relaxed);
-            return Ok(SendResult::fail(
+            let fail = SendResult::fail(
                 format!(
                     "WeChat send HTTP {}: {}",
                     status.as_u16(),
                     &resp_text[..resp_text.len().min(200)]
                 ),
                 false,
-            ));
+            );
+            publish_send_event(
+                &self.event_bus,
+                easybot_core::types::event::event_types::MESSAGE_FAILED,
+                &params.chat_id,
+                &fail,
+            );
+            return Ok(fail);
         }
 
         let resp: SendMessageResponse = serde_json::from_str(&resp_text).map_err(|e| {
@@ -1113,10 +1142,17 @@ impl PlatformAdapter for WeChatAdapter {
                 self.errors.fetch_add(1, Ordering::Relaxed);
                 let err_detail = resp.errmsg.as_deref().unwrap_or("unknown error");
                 tracing::warn!("WeChat send API error: ret={}, errmsg={}", ret, err_detail);
-                return Ok(SendResult::fail(
+                let fail = SendResult::fail(
                     format!("WeChat API error (ret={}): {}", ret, err_detail),
                     false,
-                ));
+                );
+                publish_send_event(
+                    &self.event_bus,
+                    easybot_core::types::event::event_types::MESSAGE_FAILED,
+                    &params.chat_id,
+                    &fail,
+                );
+                return Ok(fail);
             }
         }
 
@@ -1129,14 +1165,21 @@ impl PlatformAdapter for WeChatAdapter {
             .or(resp.local_id)
             .or(resp.seq.map(|s| s.to_string()));
 
-        Ok(SendResult {
+        let send_result = SendResult {
             success: true,
             message_id: msg_id,
             timestamp: Some(chrono::Utc::now().timestamp_millis()),
             error: None,
             error_code: None,
             retryable: false,
-        })
+        };
+        publish_send_event(
+            &self.event_bus,
+            easybot_core::types::event::event_types::MESSAGE_SENT,
+            &params.chat_id,
+            &send_result,
+        );
+        Ok(send_result)
     }
 
     async fn send_media(&self, params: SendMediaParams) -> Result<SendResult, GatewayError> {
@@ -1276,14 +1319,21 @@ impl PlatformAdapter for WeChatAdapter {
 
         if !status.is_success() {
             self.errors.fetch_add(1, Ordering::Relaxed);
-            return Ok(SendResult::fail(
+            let fail = SendResult::fail(
                 format!(
                     "WeChat send_media HTTP {}: {}",
                     status.as_u16(),
                     &resp_text[..resp_text.len().min(200)]
                 ),
                 false,
-            ));
+            );
+            publish_send_event(
+                &self.event_bus,
+                easybot_core::types::event::event_types::MESSAGE_FAILED,
+                &params.chat_id,
+                &fail,
+            );
+            return Ok(fail);
         }
 
         let resp: SendMessageResponse = serde_json::from_str(&resp_text).map_err(|e| {
@@ -1303,10 +1353,17 @@ impl PlatformAdapter for WeChatAdapter {
                     ret,
                     err_detail
                 );
-                return Ok(SendResult::fail(
+                let fail = SendResult::fail(
                     format!("WeChat API error (ret={}): {}", ret, err_detail),
                     false,
-                ));
+                );
+                publish_send_event(
+                    &self.event_bus,
+                    easybot_core::types::event::event_types::MESSAGE_FAILED,
+                    &params.chat_id,
+                    &fail,
+                );
+                return Ok(fail);
             }
         }
 
@@ -1319,14 +1376,21 @@ impl PlatformAdapter for WeChatAdapter {
             .or(resp.local_id)
             .or(resp.seq.map(|s| s.to_string()));
 
-        Ok(SendResult {
+        let send_result = SendResult {
             success: true,
             message_id: msg_id,
             timestamp: Some(chrono::Utc::now().timestamp_millis()),
             error: None,
             error_code: None,
             retryable: false,
-        })
+        };
+        publish_send_event(
+            &self.event_bus,
+            easybot_core::types::event::event_types::MESSAGE_SENT,
+            &params.chat_id,
+            &send_result,
+        );
+        Ok(send_result)
     }
 
     async fn get_chat_info(&self, chat_id: &str) -> Result<ChatInfo, GatewayError> {

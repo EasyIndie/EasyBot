@@ -17,6 +17,7 @@ use async_trait::async_trait;
 use easybot_core::bus::EventBus;
 use easybot_core::types::adapter::*;
 use easybot_core::types::error::GatewayError;
+use easybot_core::types::event::event_types;
 use easybot_core::types::event::GatewayEvent;
 use easybot_core::types::message::*;
 use futures::{SinkExt, StreamExt};
@@ -642,6 +643,28 @@ impl Default for DiscordAdapter {
     }
 }
 
+fn publish_send_event(
+    event_bus: &Option<Arc<EventBus>>,
+    event_type: &str,
+    chat_id: &str,
+    result: &SendResult,
+) {
+    if let Some(ref bus) = event_bus {
+        bus.publish(GatewayEvent::new(
+            event_type,
+            "discord",
+            serde_json::json!({
+                "platform": "discord",
+                "chat_id": chat_id,
+                "message_id": result.message_id,
+                "success": result.success,
+                "error": result.error,
+                "error_code": result.error_code,
+            }),
+        ));
+    }
+}
+
 #[async_trait]
 impl PlatformAdapter for DiscordAdapter {
     fn platform_name(&self) -> &str {
@@ -770,19 +793,30 @@ impl PlatformAdapter for DiscordAdapter {
 
         let endpoint = format!("/channels/{}/messages", params.chat_id);
 
-        match self
+        let result = match self
             .api_call::<DiscordMessage>(reqwest::Method::POST, &endpoint, Some(body))
             .await
         {
             Ok(msg) => {
                 self.messages_out.fetch_add(1, Ordering::Relaxed);
-                Ok(SendResult::ok(msg.id))
+                SendResult::ok(msg.id)
             }
             Err(e) => {
                 self.errors.fetch_add(1, Ordering::Relaxed);
-                Ok(SendResult::fail(e.to_string(), true))
+                SendResult::fail(e.to_string(), true)
             }
-        }
+        };
+        publish_send_event(
+            &self.event_bus,
+            if result.success {
+                event_types::MESSAGE_SENT
+            } else {
+                event_types::MESSAGE_FAILED
+            },
+            &params.chat_id,
+            &result,
+        );
+        Ok(result)
     }
 
     async fn send_typing(&self, chat_id: &str) -> Result<(), GatewayError> {
@@ -893,10 +927,14 @@ impl PlatformAdapter for DiscordAdapter {
                 .unwrap_or_else(|| "file".to_string());
             (data.to_vec(), fname, ct)
         } else {
-            return Ok(SendResult::fail(
-                "No media data or URL provided".to_string(),
-                false,
-            ));
+            let fail = SendResult::fail("No media data or URL provided".to_string(), false);
+            publish_send_event(
+                &self.event_bus,
+                event_types::MESSAGE_FAILED,
+                &params.chat_id,
+                &fail,
+            );
+            return Ok(fail);
         };
 
         // Build the multipart file part
@@ -942,16 +980,27 @@ impl PlatformAdapter for DiscordAdapter {
         if !status.is_success() {
             let error_text = resp.text().await.unwrap_or_default();
             if status.as_u16() == 429 {
-                return Ok(SendResult::fail(
-                    format!("Rate limited: {}", error_text),
-                    true,
-                ));
+                let fail = SendResult::fail(format!("Rate limited: {}", error_text), true);
+                publish_send_event(
+                    &self.event_bus,
+                    event_types::MESSAGE_FAILED,
+                    &params.chat_id,
+                    &fail,
+                );
+                return Ok(fail);
             }
             self.errors.fetch_add(1, Ordering::Relaxed);
-            return Ok(SendResult::fail(
+            let fail = SendResult::fail(
                 format!("Discord API {}: {}", status.as_u16(), error_text),
                 false,
-            ));
+            );
+            publish_send_event(
+                &self.event_bus,
+                event_types::MESSAGE_FAILED,
+                &params.chat_id,
+                &fail,
+            );
+            return Ok(fail);
         }
 
         let msg: DiscordMessage = resp
@@ -960,7 +1009,14 @@ impl PlatformAdapter for DiscordAdapter {
             .map_err(|e| GatewayError::Internal(format!("Discord API JSON parse failed: {}", e)))?;
 
         self.messages_out.fetch_add(1, Ordering::Relaxed);
-        Ok(SendResult::ok(msg.id))
+        let send_result = SendResult::ok(msg.id);
+        publish_send_event(
+            &self.event_bus,
+            event_types::MESSAGE_SENT,
+            &params.chat_id,
+            &send_result,
+        );
+        Ok(send_result)
     }
 
     async fn send_interactive(
@@ -1016,19 +1072,30 @@ impl PlatformAdapter for DiscordAdapter {
 
         let endpoint = format!("/channels/{}/messages", params.chat_id);
 
-        match self
+        let result = match self
             .api_call::<DiscordMessage>(reqwest::Method::POST, &endpoint, Some(body))
             .await
         {
             Ok(msg) => {
                 self.messages_out.fetch_add(1, Ordering::Relaxed);
-                Ok(SendResult::ok(msg.id))
+                SendResult::ok(msg.id)
             }
             Err(e) => {
                 self.errors.fetch_add(1, Ordering::Relaxed);
-                Ok(SendResult::fail(e.to_string(), true))
+                SendResult::fail(e.to_string(), true)
             }
-        }
+        };
+        publish_send_event(
+            &self.event_bus,
+            if result.success {
+                event_types::MESSAGE_SENT
+            } else {
+                event_types::MESSAGE_FAILED
+            },
+            &params.chat_id,
+            &result,
+        );
+        Ok(result)
     }
 
     async fn get_chat_info(&self, chat_id: &str) -> Result<ChatInfo, GatewayError> {

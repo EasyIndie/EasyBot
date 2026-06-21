@@ -17,6 +17,7 @@ use async_trait::async_trait;
 use easybot_core::bus::EventBus;
 use easybot_core::types::adapter::*;
 use easybot_core::types::error::GatewayError;
+use easybot_core::types::event::event_types;
 use easybot_core::types::event::GatewayEvent;
 use easybot_core::types::message::*;
 use tokio::sync::broadcast;
@@ -359,6 +360,29 @@ impl Default for TelegramAdapter {
     }
 }
 
+/// Publish send result event via event bus
+fn publish_send_event(
+    event_bus: &Option<Arc<EventBus>>,
+    event_type: &str,
+    chat_id: &str,
+    result: &SendResult,
+) {
+    if let Some(ref bus) = event_bus {
+        bus.publish(GatewayEvent::new(
+            event_type,
+            "telegram",
+            serde_json::json!({
+                "platform": "telegram",
+                "chat_id": chat_id,
+                "message_id": result.message_id,
+                "success": result.success,
+                "error": result.error,
+                "error_code": result.error_code,
+            }),
+        ));
+    }
+}
+
 #[async_trait]
 impl PlatformAdapter for TelegramAdapter {
     fn platform_name(&self) -> &str {
@@ -530,20 +554,34 @@ impl PlatformAdapter for TelegramAdapter {
             Ok(msg) => msg,
             Err(e) => {
                 self.errors.fetch_add(1, Ordering::Relaxed);
-                return Ok(SendResult::fail(e.to_string(), true));
+                let fail = SendResult::fail(e.to_string(), true);
+                publish_send_event(
+                    &self.event_bus,
+                    event_types::MESSAGE_FAILED,
+                    &params.chat_id,
+                    &fail,
+                );
+                return Ok(fail);
             }
         };
 
         self.messages_out.fetch_add(1, Ordering::Relaxed);
 
-        Ok(SendResult {
+        let send_result = SendResult {
             success: true,
             message_id: Some(result.message_id.to_string()),
             timestamp: Some(result.date * 1000),
             error: None,
             error_code: None,
             retryable: false,
-        })
+        };
+        publish_send_event(
+            &self.event_bus,
+            event_types::MESSAGE_SENT,
+            &params.chat_id,
+            &send_result,
+        );
+        Ok(send_result)
     }
 
     async fn send_media(&self, params: SendMediaParams) -> Result<SendResult, GatewayError> {
@@ -591,20 +629,34 @@ impl PlatformAdapter for TelegramAdapter {
                 Ok(msg) => msg,
                 Err(e) => {
                     self.errors.fetch_add(1, Ordering::Relaxed);
-                    return Ok(SendResult::fail(e.to_string(), true));
+                    let fail = SendResult::fail(e.to_string(), true);
+                    publish_send_event(
+                        &self.event_bus,
+                        event_types::MESSAGE_FAILED,
+                        &params.chat_id,
+                        &fail,
+                    );
+                    return Ok(fail);
                 }
             };
 
             self.messages_out.fetch_add(1, Ordering::Relaxed);
 
-            Ok(SendResult {
+            let send_result = SendResult {
                 success: true,
                 message_id: Some(result.message_id.to_string()),
                 timestamp: Some(result.date * 1000),
                 error: None,
                 error_code: None,
                 retryable: false,
-            })
+            };
+            publish_send_event(
+                &self.event_bus,
+                event_types::MESSAGE_SENT,
+                &params.chat_id,
+                &send_result,
+            );
+            Ok(send_result)
         } else if let Some(data_b64) = &params.media.data {
             // Base64 数据 → multipart/form-data 上传
             use base64::Engine;
@@ -655,15 +707,32 @@ impl PlatformAdapter for TelegramAdapter {
             if api_resp.ok {
                 if let Some(result) = api_resp.result {
                     self.messages_out.fetch_add(1, Ordering::Relaxed);
-                    Ok(SendResult {
+                    let send_result = SendResult {
                         success: true,
                         message_id: Some(result.message_id.to_string()),
                         timestamp: Some(result.date * 1000),
                         error: None,
                         error_code: None,
                         retryable: false,
-                    })
+                    };
+                    publish_send_event(
+                        &self.event_bus,
+                        event_types::MESSAGE_SENT,
+                        &params.chat_id,
+                        &send_result,
+                    );
+                    Ok(send_result)
                 } else {
+                    let fail = SendResult::fail(
+                        "Telegram API returned ok but no result".to_string(),
+                        false,
+                    );
+                    publish_send_event(
+                        &self.event_bus,
+                        event_types::MESSAGE_FAILED,
+                        &params.chat_id,
+                        &fail,
+                    );
                     Err(GatewayError::Internal(
                         "Telegram API returned ok but no result".to_string(),
                     ))
@@ -673,17 +742,25 @@ impl PlatformAdapter for TelegramAdapter {
                     .description
                     .unwrap_or_else(|| "Unknown error".to_string());
                 self.errors.fetch_add(1, Ordering::Relaxed);
-                Ok(SendResult::fail(
-                    format!("Telegram API upload error: {}", desc),
-                    true,
-                ))
+                let fail = SendResult::fail(format!("Telegram API upload error: {}", desc), true);
+                publish_send_event(
+                    &self.event_bus,
+                    event_types::MESSAGE_FAILED,
+                    &params.chat_id,
+                    &fail,
+                );
+                Ok(fail)
             }
         } else {
             self.errors.fetch_add(1, Ordering::Relaxed);
-            Ok(SendResult::fail(
-                "No media URL or data provided".to_string(),
-                false,
-            ))
+            let fail = SendResult::fail("No media URL or data provided".to_string(), false);
+            publish_send_event(
+                &self.event_bus,
+                event_types::MESSAGE_FAILED,
+                &params.chat_id,
+                &fail,
+            );
+            Ok(fail)
         }
     }
 
@@ -732,20 +809,34 @@ impl PlatformAdapter for TelegramAdapter {
             Ok(msg) => msg,
             Err(e) => {
                 self.errors.fetch_add(1, Ordering::Relaxed);
-                return Ok(SendResult::fail(e.to_string(), true));
+                let fail = SendResult::fail(e.to_string(), true);
+                publish_send_event(
+                    &self.event_bus,
+                    event_types::MESSAGE_FAILED,
+                    &params.chat_id,
+                    &fail,
+                );
+                return Ok(fail);
             }
         };
 
         self.messages_out.fetch_add(1, Ordering::Relaxed);
 
-        Ok(SendResult {
+        let send_result = SendResult {
             success: true,
             message_id: Some(result.message_id.to_string()),
             timestamp: Some(result.date * 1000),
             error: None,
             error_code: None,
             retryable: false,
-        })
+        };
+        publish_send_event(
+            &self.event_bus,
+            event_types::MESSAGE_SENT,
+            &params.chat_id,
+            &send_result,
+        );
+        Ok(send_result)
     }
 
     async fn send_typing(&self, chat_id: &str) -> Result<(), GatewayError> {

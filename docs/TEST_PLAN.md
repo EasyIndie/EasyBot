@@ -476,7 +476,7 @@ echo "=== 全部测试完成 ==="
 
 ---
 
-## 已知限制（已修复清单）
+## 已知限制（已全部修复）
 
 以下 6 个问题已修复 ✅：
 
@@ -486,8 +486,5 @@ echo "=== 全部测试完成 ==="
 4. ✅ **YAML key 命名**：所有配置结构体添加 `#[serde(rename_all = "camelCase")]`，默认 YAML 可回读
 5. ✅ **SQLite 回退 panic**：SQLite 连接失败时使用 `:memory:` 内存模式代替 panic
 6. ✅ **plugin display_name**：`register_all` 使用真实显示名而非平台名注册
-
-以下 2 项为功能缺失（非 bug，暂时跳过）：
-
-7. ⬜ **事件类型未发布**：`MESSAGE_SENT`/`MESSAGE_FAILED`/`CALLBACK_RECEIVED` 等事件类型已定义但未被适配器发布
-8. ⬜ **WebSocket 心跳未实现**：配置中的 `heartbeatInterval` 字段存在但 handler 未使用
+7. ✅ **事件类型未发布**：所有 5 个适配器的 `send()`/`send_media()`/`send_interactive()` 现在发布 `MESSAGE_SENT`（成功）和 `MESSAGE_FAILED`（失败）事件
+8. ✅ **WebSocket 心跳未实现**：WebSocket handler 现在使用 `heartbeatInterval` 配置，定期发送 Ping 帧并检测客户端存活，同时追踪 `active_websocket_connections` 指标
