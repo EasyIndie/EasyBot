@@ -166,7 +166,7 @@ The `AdapterRegistry` holds factory functions keyed by platform name, each with 
 | **P1 MVP** | Core types, PlatformAdapter trait, Telegram adapter, REST API, config loading, cross-platform paths | ✅ Done |
 | **P2 Bidirectional** | Event bus, WebSocket push, webhooks, inbound message handling, session persistence, message edit/delete, adapter lifecycle events | 100% ✅ |
 | **P3 Multi-platform** | Telegram ✅, Discord ✅ (含 send_interactive + list_chats), **飞书/Lark** ✅, **QQ** ✅ (含 send_interactive + list_chats), **个人微信(wechat)** ✅ (iLink Bot API 已验证; edit/delete/send_interactive/list_chats 平台不支持) — 五平台全部完成 | 100% ✅ |
-| **P4 Production** | API key auth (Argon2), rate limiting, hot-reload, graceful shutdown, PostgreSQL, Prometheus, Docker, TTL retention, health monitor + auto-reconnect, send_draft streaming, health uptime | 90% ✅ |
+| **P4 Production** | API key auth (Argon2), rate limiting, hot-reload, graceful shutdown, PostgreSQL, Prometheus, Docker, TTL retention, health monitor + auto-reconnect, send_draft streaming, health uptime, QQ real-env verification, status cache fix | 95% ✅ |
 
 > **P3 完成**: 所有可实现功能已交付，微信平台限制项 (edit/delete/send_interactive/list_chats) 已确认关闭。
 > **P4 未完成项**: 权限模型 RBAC (`auth/permissions.rs`)、TLS 仅配置层未在应用层处理（均暂缓）。
@@ -191,15 +191,11 @@ The `AdapterRegistry` holds factory functions keyed by platform name, each with 
 
 Detailed tracking: see `docs/TODO.md` for the full prioritized checklist.
 
-### P3: Multi-Platform (85% → target: 100%)
-
-| Gap | Platform | File | Description |
-|-----|----------|------|-------------|
 ### P3: Multi-Platform (100% complete)
 
 All P3 features are delivered. WeChat platform limitations (edit/delete/send_interactive/list_chats) confirmed and documented.
 
-### P4: Production (85% → target: 100%)
+### P4: Production (95% complete — 2 items deferred)
 
 | Gap | File | Description |
 |-----|------|-------------|
