@@ -107,23 +107,39 @@ impl DiscordAdapter {
                 },
                 Capability {
                     name: CapabilityName::Image,
-                    supported: false,
-                    limits: None,
+                    supported: true,
+                    limits: Some(CapabilityLimits {
+                        max_text_length: None,
+                        max_file_size: Some(8 * 1024 * 1024),
+                        max_buttons: None,
+                    }),
                 },
                 Capability {
                     name: CapabilityName::Audio,
-                    supported: false,
-                    limits: None,
+                    supported: true,
+                    limits: Some(CapabilityLimits {
+                        max_text_length: None,
+                        max_file_size: Some(8 * 1024 * 1024),
+                        max_buttons: None,
+                    }),
                 },
                 Capability {
                     name: CapabilityName::Video,
-                    supported: false,
-                    limits: None,
+                    supported: true,
+                    limits: Some(CapabilityLimits {
+                        max_text_length: None,
+                        max_file_size: Some(8 * 1024 * 1024),
+                        max_buttons: None,
+                    }),
                 },
                 Capability {
                     name: CapabilityName::Document,
-                    supported: false,
-                    limits: None,
+                    supported: true,
+                    limits: Some(CapabilityLimits {
+                        max_text_length: None,
+                        max_file_size: Some(8 * 1024 * 1024),
+                        max_buttons: None,
+                    }),
                 },
                 Capability {
                     name: CapabilityName::ChatList,
@@ -768,6 +784,125 @@ impl PlatformAdapter for DiscordAdapter {
         )
         .await?;
         Ok(())
+    }
+
+    async fn send_media(&self, params: SendMediaParams) -> Result<SendResult, GatewayError> {
+        let client = self.http_client();
+        let url = format!(
+            "{}/channels/{}/messages",
+            self.api_base_url(),
+            params.chat_id
+        );
+
+        // Resolve file data and filename from base64 data or URL
+        let (file_data, filename, content_type) = if let Some(data_b64) = &params.media.data {
+            use base64::Engine;
+            let decoded = base64::engine::general_purpose::STANDARD
+                .decode(data_b64)
+                .map_err(|e| {
+                    GatewayError::Internal(format!("Base64 decode failed: {}", e))
+                })?;
+            let fname = params
+                .media
+                .filename
+                .clone()
+                .unwrap_or_else(|| "file".to_string());
+            (decoded, fname, params.media.mime_type.clone())
+        } else if let Some(file_url) = &params.media.url {
+            let resp = client
+                .get(file_url)
+                .send()
+                .await
+                .map_err(|e| GatewayError::Internal(format!("Download failed: {}", e)))?;
+            let ct = resp
+                .headers()
+                .get("content-type")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("application/octet-stream")
+                .to_string();
+            let data = resp
+                .bytes()
+                .await
+                .map_err(|e| GatewayError::Internal(format!("Download read failed: {}", e)))?;
+            let fname = params
+                .media
+                .filename
+                .clone()
+                .or_else(|| {
+                    file_url
+                        .split('/')
+                        .next_back()
+                        .map(|s| s.to_string())
+                })
+                .unwrap_or_else(|| "file".to_string());
+            (data.to_vec(), fname, ct)
+        } else {
+            return Ok(SendResult::fail(
+                "No media data or URL provided".to_string(),
+                false,
+            ));
+        };
+
+        // Build the multipart file part
+        let mut file_part = reqwest::multipart::Part::bytes(file_data).file_name(filename);
+        if !content_type.is_empty() {
+            file_part = file_part
+                .mime_str(&content_type)
+                .map_err(|e| GatewayError::Internal(format!("Invalid mime type: {}", e)))?;
+        }
+
+        // Build payload_json with optional content and reply
+        let mut payload = serde_json::Map::new();
+        let caption = params.text.or(params.media.caption);
+        if let Some(ref text) = caption {
+            payload.insert(
+                "content".to_string(),
+                serde_json::Value::String(text.clone()),
+            );
+        }
+        if let Some(ref reply_to) = params.reply_to {
+            payload.insert(
+                "message_reference".to_string(),
+                serde_json::json!({"message_id": reply_to}),
+            );
+        }
+
+        let form = reqwest::multipart::Form::new()
+            .text("payload_json", serde_json::Value::Object(payload).to_string())
+            .part("files[0]", file_part);
+
+        let resp = client
+            .post(&url)
+            .header("Authorization", self.auth_header())
+            .multipart(form)
+            .send()
+            .await
+            .map_err(|e| {
+                GatewayError::Internal(format!("Discord API upload failed: {}", e))
+            })?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let error_text = resp.text().await.unwrap_or_default();
+            if status.as_u16() == 429 {
+                return Ok(SendResult::fail(
+                    format!("Rate limited: {}", error_text),
+                    true,
+                ));
+            }
+            self.errors.fetch_add(1, Ordering::Relaxed);
+            return Ok(SendResult::fail(
+                format!("Discord API {}: {}", status.as_u16(), error_text),
+                false,
+            ));
+        }
+
+        let msg: DiscordMessage = resp.json().await.map_err(|e| {
+            GatewayError::Internal(format!("Discord API JSON parse failed: {}", e))
+        })?;
+
+        self.messages_out.fetch_add(1, Ordering::Relaxed);
+        Ok(SendResult::ok(msg.id))
     }
 
     async fn get_chat_info(&self, chat_id: &str) -> Result<ChatInfo, GatewayError> {

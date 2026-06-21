@@ -13,6 +13,7 @@ members = [
     "tests/plugins/mock-adapter",
     "tests/integration",
     "tests/e2e",
+    "tests/fixtures",
 ]
 
 [workspace.package]

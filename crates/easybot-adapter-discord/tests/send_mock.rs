@@ -3,7 +3,10 @@
 //! 使用 wiremock 模拟 Discord REST API，验证 send() 方法正确构造请求并解析响应。
 
 use easybot_core::types::adapter::{AdapterConfig, AdapterState, PlatformAdapter};
-use easybot_core::types::message::{EditMessageParams, OutboundMessage, ParseMode, SendTextParams};
+use easybot_core::types::message::{
+    EditMessageParams, MediaAttachment, MediaType, OutboundMessage, ParseMode, SendMediaParams,
+    SendTextParams,
+};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -374,6 +377,178 @@ async fn test_delete_message_not_found() {
         !result.success,
         "delete should fail for nonexistent message"
     );
+
+    mock_server.verify().await;
+}
+
+// ── send_media() 测试 ──
+
+fn send_media_params() -> SendMediaParams {
+    fixtures::send_image_params("98765")
+}
+
+fn send_media_params_with_caption() -> SendMediaParams {
+    let mut params = send_media_params();
+    params.text = Some("Check out this image!".to_string());
+    params
+}
+
+fn send_media_success_response() -> serde_json::Value {
+    serde_json::json!({
+        "id": "msg-999",
+        "channel_id": "98765",
+        "content": "Check out this image!",
+        "timestamp": "2024-01-15T10:30:00Z",
+        "author": {
+            "id": "1",
+            "username": "TestBot",
+            "global_name": "Test Bot",
+            "bot": true
+        },
+        "attachments": [{
+            "id": "att-001",
+            "filename": "test.png",
+            "size": 1024,
+            "url": "https://cdn.discord.com/attachments/98765/msg-999/test.png",
+            "content_type": "image/png"
+        }]
+    })
+}
+
+#[tokio::test]
+async fn test_send_media_success() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/channels/98765/messages"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(send_media_success_response()))
+        .expect(1..)
+        .mount(&mock_server)
+        .await;
+
+    let adapter = make_adapter(mock_server.address().port()).await;
+    let result = adapter.send_media(send_media_params()).await.unwrap();
+
+    assert!(result.success, "send_media should succeed");
+    assert_eq!(result.message_id, Some("msg-999".to_string()));
+
+    mock_server.verify().await;
+}
+
+#[tokio::test]
+async fn test_send_media_with_caption() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/channels/98765/messages"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(send_media_success_response()))
+        .expect(1..)
+        .mount(&mock_server)
+        .await;
+
+    let adapter = make_adapter(mock_server.address().port()).await;
+    let result = adapter
+        .send_media(send_media_params_with_caption())
+        .await
+        .unwrap();
+
+    assert!(result.success, "send_media with caption should succeed");
+    assert_eq!(result.message_id, Some("msg-999".to_string()));
+
+    mock_server.verify().await;
+}
+
+#[tokio::test]
+async fn test_send_media_http_error() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/channels/98765/messages"))
+        .respond_with(ResponseTemplate::new(413).set_body_string("Payload Too Large"))
+        .expect(1..)
+        .mount(&mock_server)
+        .await;
+
+    let adapter = make_adapter(mock_server.address().port()).await;
+    let result = adapter.send_media(send_media_params()).await.unwrap();
+
+    assert!(!result.success, "send_media should fail with 413");
+    assert!(!result.retryable, "413 should not be retryable");
+
+    mock_server.verify().await;
+}
+
+#[tokio::test]
+async fn test_send_media_rate_limited() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/channels/98765/messages"))
+        .respond_with(ResponseTemplate::new(429).set_body_string("Rate limited"))
+        .expect(1..)
+        .mount(&mock_server)
+        .await;
+
+    let adapter = make_adapter(mock_server.address().port()).await;
+    let result = adapter.send_media(send_media_params()).await.unwrap();
+
+    assert!(!result.success, "send_media should fail with 429");
+    assert!(result.retryable, "rate limit should be retryable");
+
+    mock_server.verify().await;
+}
+
+#[tokio::test]
+async fn test_send_media_no_data() {
+    let mock_server = MockServer::start().await;
+    let adapter = make_adapter(mock_server.address().port()).await;
+
+    let params = SendMediaParams {
+        chat_id: "98765".to_string(),
+        media: MediaAttachment {
+            media_type: MediaType::Image,
+            url: None,
+            data: None,
+            mime_type: "image/png".to_string(),
+            filename: None,
+            caption: None,
+            thumbnail_url: None,
+            file_size: None,
+            duration: None,
+        },
+        text: None,
+        reply_to: None,
+    };
+
+    let result = adapter.send_media(params).await.unwrap();
+    assert!(!result.success, "send_media with no data/url should fail");
+    assert!(
+        !result.retryable,
+        "missing data should not be retryable"
+    );
+}
+
+// ── 本地文件上传测试 ──
+
+#[tokio::test]
+async fn test_send_media_from_local_file() {
+    // 使用 fixtures crate 提供的编译期嵌入测试文件（无需运行时文件 I/O）
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/channels/98765/messages"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(send_media_success_response()))
+        .expect(1..)
+        .mount(&mock_server)
+        .await;
+
+    let adapter = make_adapter(mock_server.address().port()).await;
+
+    let params = fixtures::send_document_params("98765");
+
+    let result = adapter.send_media(params).await.unwrap();
+    assert!(result.success, "document send_media should succeed");
+    assert_eq!(result.message_id, Some("msg-999".to_string()));
 
     mock_server.verify().await;
 }

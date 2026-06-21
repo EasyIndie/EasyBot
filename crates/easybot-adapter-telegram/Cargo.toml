@@ -20,3 +20,4 @@ base64.workspace = true
 wiremock = "0.6"
 serde = { workspace = true, features = ["derive"] }
 rstest = "0.22"
+fixtures = { path = "../../tests/fixtures" }

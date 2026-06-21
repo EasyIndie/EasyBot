@@ -9,9 +9,8 @@
 
 ### Discord 适配器 (`crates/easybot-adapter-discord/src/lib.rs`)
 
-- [ ] **send_media** — 发送图片/音频/视频/文件
-  - Discord REST API: `POST /channels/{channel.id}/messages` with multipart form-data
-  - 参考: Telegram 适配器的 `send_media` 实现 (1145 行)
+- [x] **send_media** — 发送图片/音频/视频/文件
+  - ✅ 已完成: 支持 base64 数据和 URL 下载两种模式, multipart/form-data 上传
   - 文件: `crates/easybot-adapter-discord/src/lib.rs`
 
 - [ ] **send_interactive** — 交互式按钮/键盘消息

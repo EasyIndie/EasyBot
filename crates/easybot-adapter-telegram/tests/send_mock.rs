@@ -604,6 +604,72 @@ async fn test_send_media_document_type() {
     mock_server.verify().await;
 }
 
+#[tokio::test]
+async fn test_send_media_sticker_type() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/bottest-token/sendSticker"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(send_media_success_body()))
+        .expect(1..)
+        .mount(&mock_server)
+        .await;
+
+    let adapter = make_adapter(mock_server.address().port()).await;
+    let params = SendMediaParams {
+        chat_id: "12345".to_string(),
+        text: None,
+        media: MediaAttachment {
+            media_type: MediaType::Sticker,
+            url: Some("https://example.com/sticker.webp".to_string()),
+            data: None,
+            mime_type: fixtures::sticker_attachment().mime_type,
+            filename: fixtures::sticker_attachment().filename,
+            caption: None,
+            thumbnail_url: None,
+            file_size: None,
+            duration: None,
+        },
+        reply_to: None,
+    };
+    let result = adapter.send_media(params).await.unwrap();
+    assert!(result.success, "sticker send_media should succeed");
+    mock_server.verify().await;
+}
+
+#[tokio::test]
+async fn test_send_media_animation_type() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/bottest-token/sendAnimation"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(send_media_success_body()))
+        .expect(1..)
+        .mount(&mock_server)
+        .await;
+
+    let adapter = make_adapter(mock_server.address().port()).await;
+    let params = SendMediaParams {
+        chat_id: "12345".to_string(),
+        text: None,
+        media: MediaAttachment {
+            media_type: MediaType::Animation,
+            url: Some("https://example.com/animation.gif".to_string()),
+            data: None,
+            mime_type: fixtures::animation_attachment().mime_type,
+            filename: fixtures::animation_attachment().filename,
+            caption: None,
+            thumbnail_url: None,
+            file_size: None,
+            duration: None,
+        },
+        reply_to: None,
+    };
+    let result = adapter.send_media(params).await.unwrap();
+    assert!(result.success, "animation send_media should succeed");
+    mock_server.verify().await;
+}
+
 // ── send_interactive() 测试 ──
 
 fn interactive_params() -> SendInteractiveParams {

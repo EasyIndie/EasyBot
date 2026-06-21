@@ -1,0 +1,9 @@
+[package]
+name = "fixtures"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[dependencies]
+easybot-core = { path = "../../crates/easybot-core" }
+base64.workspace = true

@@ -20,6 +20,7 @@ native-tls = "0.2.18"
 
 [dev-dependencies]
 wiremock = "0.6"
+fixtures = { path = "../../tests/fixtures" }
 
 [features]
 default = []

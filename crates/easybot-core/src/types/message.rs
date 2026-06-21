@@ -201,7 +201,7 @@ pub struct MediaAttachment {
 }
 
 /// 媒体类型
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, ToSchema, PartialEq)]
 pub enum MediaType {
     Image,
     Audio,
