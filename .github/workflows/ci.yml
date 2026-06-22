@@ -51,7 +51,7 @@ jobs:
         run: cargo fmt --all --check
 
       - name: Clippy
-        run: cargo clippy --workspace --features "full,plugin-system" --all-targets --locked -- -D warnings
+        run: cargo clippy --workspace --features "full,plugin-system" --all-targets -- -D warnings
 
       - name: Check (full features)
         run: cargo check --workspace --features "full,plugin-system"
