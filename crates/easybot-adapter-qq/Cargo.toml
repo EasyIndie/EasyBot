@@ -14,9 +14,7 @@ tracing.workspace = true
 chrono.workspace = true
 reqwest = { workspace = true }
 futures.workspace = true
-tokio-tungstenite = { version = "0.24", default-features = false, features = ["connect", "__rustls-tls", "native-tls"] }
-tokio-native-tls = "0.3.1"
-native-tls = "0.2.18"
+tokio-tungstenite = { version = "0.24", default-features = false, features = ["connect", "__rustls-tls"] }
 
 [dev-dependencies]
 wiremock = "0.6"

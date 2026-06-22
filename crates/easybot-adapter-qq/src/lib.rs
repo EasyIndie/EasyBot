@@ -414,42 +414,14 @@ impl QqAdapter {
 // ── Gateway WebSocket 事件循环 ──
 
 impl QqAdapter {
-    /// 建立到 QQ Gateway 的 WebSocket 连接（使用 native-tls / 系统 CA 证书）
+    /// 建立到 QQ Gateway 的 WebSocket 连接（使用 rustls）
     async fn connect_gateway(
         ws_url: &str,
     ) -> Result<
         tokio_tungstenite::WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>,
         Box<dyn std::error::Error + Send + Sync>,
     > {
-        use native_tls::TlsConnector as NativeTlsBuilder;
-        use tokio::net::TcpStream;
-        use tokio_native_tls::TlsConnector;
-
-        // 解析 URL 获取 hostname
-        let uri = ws_url.parse::<tokio_tungstenite::tungstenite::http::Uri>()?;
-        let host = uri.host().ok_or("No host in gateway URL")?.to_string();
-        let port = uri.port_u16().unwrap_or(443);
-
-        // DNS 解析
-        let addr = tokio::net::lookup_host((host.clone(), port))
-            .await?
-            .next()
-            .ok_or("DNS resolution failed")?;
-
-        // TCP 连接
-        let tcp = TcpStream::connect(addr).await?;
-
-        // TLS 配置（使用系统 CA 证书 — macOS SecureTransport / Linux OpenSSL）
-        let native_tls = NativeTlsBuilder::new()
-            .map_err(|e| format!("Failed to build native-tls connector: {}", e))?;
-        let connector = TlsConnector::from(native_tls);
-        let tls = connector.connect(&host, tcp).await?;
-
-        // 包装为 MaybeTlsStream
-        let stream = MaybeTlsStream::NativeTls(tls);
-
-        // 升级到 WebSocket
-        let (ws_stream, _) = tokio_tungstenite::client_async(uri, stream).await?;
+        let (ws_stream, _) = tokio_tungstenite::connect_async(ws_url).await?;
         Ok(ws_stream)
     }
 

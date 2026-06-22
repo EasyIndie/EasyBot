@@ -16,8 +16,8 @@ reqwest = { workspace = true }
 base64.workspace = true
 futures.workspace = true
 tokio-tungstenite = { version = "0.24", default-features = false, features = ["connect", "__rustls-tls"] }
-rustls = "0.23"
-aws-lc-rs = "1.6"
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
+
 webpki-roots = "1.0"
 tokio-rustls = "0.26"
 

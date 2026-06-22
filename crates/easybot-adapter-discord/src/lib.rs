@@ -330,7 +330,7 @@ impl DiscordAdapter {
         use tokio_rustls::TlsConnector;
 
         // 注册默认 CryptoProvider（rustls 0.23 需要显式指定）
-        let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+        let _ = rustls::crypto::ring::default_provider().install_default();
 
         // DNS 解析
         let addr = tokio::net::lookup_host((DISCORD_GATEWAY_HOST, 443))
