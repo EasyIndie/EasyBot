@@ -238,7 +238,9 @@ fn test_openapi_has_security_scheme() {
                 }
             }
         }
-        last_err.map(|e| panic!("failed to connect to {url} after 10s: {e}")).unwrap_or_else(|| unreachable!())
+        last_err
+            .map(|e| panic!("failed to connect to {url} after 10s: {e}"))
+            .unwrap_or_else(|| unreachable!())
     };
 
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
