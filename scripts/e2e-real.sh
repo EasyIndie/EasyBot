@@ -30,6 +30,7 @@ API_BASE="$BASE_URL/api/v1"
 LOG_FILE="/tmp/easybot-e2e.log"
 SUMMARY_FILE="/tmp/easybot-e2e-summary.txt"
 WAIT_TIMEOUT="${E2E_TIMEOUT:-30}"
+START_TIMEOUT="${E2E_START_TIMEOUT:-60}"  # 服务启动等待（秒）
 POLL_INTERVAL=2  # 每 2 秒轮询一次
 QUICK_MODE=false
 
@@ -75,13 +76,30 @@ phase1_build_and_start() {
     cargo run --features full -- --debug > "$LOG_FILE" 2>&1 &
     E2E_PID=$!
 
-    # 等待服务就绪
-    for i in $(seq 1 15); do
-        sleep 1
-        if curl -s "$BASE_URL/api/v1/health" > /dev/null 2>&1; then
+    # 等待服务就绪（带可变间隔轮询 + 超时诊断）
+    local _start_ts
+    _start_ts=$(date +%s)
+    while true; do
+        if curl -s -o /dev/null -w "%{http_code}" "$BASE_URL/api/v1/health" 2>/dev/null | grep -q 200; then
             break
         fi
-        [ "$i" -eq 15 ] && { fail "服务启动超时"; exit 1; }
+        local _now
+        _now=$(date +%s)
+        local _elapsed=$((_now - _start_ts))
+        if [ "$_elapsed" -ge "$START_TIMEOUT" ]; then
+            fail "服务启动超时 (${START_TIMEOUT}s) — 查看最后 30 行日志:"
+            tail -30 "$LOG_FILE" | sed 's/^/  /'
+            info "提示: 设置 E2E_START_TIMEOUT=120 可延长超时时间"
+            exit 1
+        fi
+        # 可变间隔
+        if [ "$_elapsed" -lt 5 ]; then
+            sleep 0.5
+        elif [ "$_elapsed" -lt 20 ]; then
+            sleep 1
+        else
+            sleep 2
+        fi
     done
     pass "服务已启动 (PID=$E2E_PID)"
 
