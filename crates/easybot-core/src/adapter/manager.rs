@@ -1006,8 +1006,10 @@ mod tests {
             .register("test", "Test", factory, &["TEST_APP_ID", "TEST_APP_SECRET"])
             .await;
 
-        std::env::set_var("TEST_APP_ID", "app-id-123");
-        std::env::set_var("TEST_APP_SECRET", "secret-456");
+        // SAFETY: 测试环境，单线程执行
+        unsafe { std::env::set_var("TEST_APP_ID", "app-id-123") };
+        // SAFETY: 测试环境，单线程执行
+        unsafe { std::env::set_var("TEST_APP_SECRET", "secret-456") };
 
         let mut config = AdapterConfig {
             enabled: None,
@@ -1025,8 +1027,10 @@ mod tests {
         assert_eq!(config.extra["app_id"], "app-id-123");
         assert_eq!(config.extra["app_secret"], "secret-456");
 
-        std::env::remove_var("TEST_APP_ID");
-        std::env::remove_var("TEST_APP_SECRET");
+        // SAFETY: 测试环境，单线程执行
+        unsafe { std::env::remove_var("TEST_APP_ID") };
+        // SAFETY: 测试环境，单线程执行
+        unsafe { std::env::remove_var("TEST_APP_SECRET") };
     }
 
     #[tokio::test]
@@ -1043,7 +1047,8 @@ mod tests {
             .register("toktest", "TokTest", factory, &["TOKTEST_TOKEN"])
             .await;
 
-        std::env::set_var("TOKTEST_TOKEN", "from-env");
+        // SAFETY: 测试环境，单线程执行
+        unsafe { std::env::set_var("TOKTEST_TOKEN", "from-env") };
 
         let mut config = AdapterConfig {
             enabled: None,
@@ -1060,7 +1065,8 @@ mod tests {
         // extra 仍会被填充，key 为去前缀后的小写: TOKTEST_TOKEN → strip TOKTEST_ → TOKEN → lowercase → token
         assert_eq!(config.extra["token"], "from-env");
 
-        std::env::remove_var("TOKTEST_TOKEN");
+        // SAFETY: 测试环境，单线程执行
+        unsafe { std::env::remove_var("TOKTEST_TOKEN") };
     }
 
     #[tokio::test]
@@ -1082,7 +1088,8 @@ mod tests {
             .register("autotest", "AutoTest", factory, &["AUTOTEST_TOKEN"])
             .await;
 
-        std::env::set_var("AUTOTEST_TOKEN", "my-token");
+        // SAFETY: 测试环境，单线程执行
+        unsafe { std::env::set_var("AUTOTEST_TOKEN", "my-token") };
 
         // 不传入任何 config — start_all 应自动检测并注入凭据
         let result = manager.start_all(HashMap::new()).await;
@@ -1092,7 +1099,8 @@ mod tests {
             result
         );
 
-        std::env::remove_var("AUTOTEST_TOKEN");
+        // SAFETY: 测试环境，单线程执行
+        unsafe { std::env::remove_var("AUTOTEST_TOKEN") };
     }
 
     // ── compute_backoff 测试 ───────────────────────────────────

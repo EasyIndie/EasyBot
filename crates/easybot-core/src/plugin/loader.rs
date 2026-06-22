@@ -89,7 +89,7 @@ impl PluginLibrary {
     ///
     /// 返回的 `Box<dyn PlatformAdapter>` 包含指向本库代码段的函数指针。
     /// 本 `PluginLibrary` 实例必须比所有适配器存活得更久。
-    pub unsafe fn create_adapter(&self) -> Result<Box<dyn PlatformAdapter>, PluginError> {
+    pub unsafe fn create_adapter(&self) -> Result<Box<dyn PlatformAdapter>, PluginError> { unsafe {
         let create: Symbol<unsafe extern "C" fn() -> *mut std::ffi::c_void> = self
             .inner
             .get(b"easybot_plugin_create")
@@ -111,7 +111,7 @@ impl PluginLibrary {
             Box::from_raw(ptr as *mut Box<dyn PlatformAdapter>);
         let adapter: Box<dyn PlatformAdapter> = *inner;
         Ok(adapter)
-    }
+    }}
 
     /// 验证插件 ABI 版本与主机匹配
     fn check_abi_version(&self) -> Result<(), PluginError> {

@@ -237,10 +237,12 @@ mod tests {
 
     #[test]
     fn test_resolve_env_vars() {
-        std::env::set_var("TEST_VAR", "hello");
+        // SAFETY: 测试环境，单线程执行
+        unsafe { std::env::set_var("TEST_VAR", "hello") };
         let result = resolve_env_vars("prefix_${TEST_VAR}_suffix");
         assert_eq!(result, "prefix_hello_suffix");
-        std::env::remove_var("TEST_VAR");
+        // SAFETY: 测试环境，单线程执行
+        unsafe { std::env::remove_var("TEST_VAR") };
     }
 
     #[test]
@@ -251,7 +253,8 @@ mod tests {
 
     #[test]
     fn test_resolve_env_vars_skips_comments() {
-        std::env::set_var("MY_VAR", "hello");
+        // SAFETY: 测试环境，单线程执行
+        unsafe { std::env::set_var("MY_VAR", "hello") };
         // 注释行中的 ${MY_VAR} 不应被解析
         let content = "# ${MY_VAR}\nkey: \"${MY_VAR}\"\n# secret: \"${WEBHOOK_SECRET}\"\n";
         let result = resolve_env_vars(content);
@@ -269,7 +272,8 @@ mod tests {
             result.contains("key: \"hello\""),
             "non-comment line should be resolved"
         );
-        std::env::remove_var("MY_VAR");
+        // SAFETY: 测试环境，单线程执行
+        unsafe { std::env::remove_var("MY_VAR") };
     }
 
     #[test]
@@ -317,7 +321,8 @@ adapters:
         assert!(load_env(&paths).is_ok());
         assert_eq!(std::env::var("TEST_ENV_VAR").unwrap(), "from_file");
 
-        std::env::remove_var("TEST_ENV_VAR");
+        // SAFETY: 测试环境，单线程执行
+        unsafe { std::env::remove_var("TEST_ENV_VAR") };
         let _ = fs::remove_dir_all(&dir);
     }
 
@@ -339,14 +344,16 @@ adapters:
         fs::write(dir.join(".env"), "OVERRIDE_ME=file_value\n").unwrap();
 
         // 但环境变量已被设置为 "shell_value"
-        std::env::set_var("OVERRIDE_ME", "shell_value");
+        // SAFETY: 测试环境，单线程执行
+        unsafe { std::env::set_var("OVERRIDE_ME", "shell_value") };
 
         let paths = EasyBotPaths::new(dir.clone()).unwrap();
         assert!(load_env(&paths).is_ok());
         // dotenvy 默认不覆盖已有变量
         assert_eq!(std::env::var("OVERRIDE_ME").unwrap(), "shell_value");
 
-        std::env::remove_var("OVERRIDE_ME");
+        // SAFETY: 测试环境，单线程执行
+        unsafe { std::env::remove_var("OVERRIDE_ME") };
         let _ = fs::remove_dir_all(&dir);
     }
 

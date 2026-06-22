@@ -121,18 +121,22 @@ mod tests {
 
     #[test]
     fn test_resolve_with_env_var() {
-        env::set_var("EASYBOT_HOME", "/tmp/test-easybot");
+        // SAFETY: 单线程测试
+        unsafe { env::set_var("EASYBOT_HOME", "/tmp/test-easybot") };
         let home = resolve_home(None);
         assert_eq!(home, PathBuf::from("/tmp/test-easybot"));
-        env::remove_var("EASYBOT_HOME");
+        // SAFETY: 单线程测试
+        unsafe { env::remove_var("EASYBOT_HOME") };
     }
 
     #[test]
     fn test_cli_override_takes_precedence() {
-        env::set_var("EASYBOT_HOME", "/tmp/should-not-use");
+        // SAFETY: 单线程测试
+        unsafe { env::set_var("EASYBOT_HOME", "/tmp/should-not-use") };
         let home = resolve_home(Some(PathBuf::from("/opt/easybot")));
         assert_eq!(home, PathBuf::from("/opt/easybot"));
-        env::remove_var("EASYBOT_HOME");
+        // SAFETY: 单线程测试
+        unsafe { env::remove_var("EASYBOT_HOME") };
     }
 
     #[test]

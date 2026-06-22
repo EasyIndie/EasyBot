@@ -367,7 +367,7 @@ fn publish_send_event(
     chat_id: &str,
     result: &SendResult,
 ) {
-    if let Some(ref bus) = event_bus {
+    if let Some(bus) = event_bus {
         bus.publish(GatewayEvent::new(
             event_type,
             "telegram",

@@ -34,12 +34,12 @@ pub const EASYBOT_PLUGIN_ABI_VERSION: u32 = 1;
 #[macro_export]
 macro_rules! declare_plugin {
     ($plugin_type:ty, $constructor:path) => {
-        #[no_mangle]
+        #[unsafe(no_mangle)]
         pub extern "C" fn easybot_abi_version() -> u32 {
             $crate::EASYBOT_PLUGIN_ABI_VERSION
         }
 
-        #[no_mangle]
+        #[unsafe(no_mangle)]
         pub extern "C" fn easybot_plugin_create() -> *mut std::ffi::c_void {
             let adapter: Box<dyn $crate::PlatformAdapter> = Box::new($constructor());
             // Box<dyn PlatformAdapter> 是胖指针，包装一层 Box 变成瘦指针
@@ -47,11 +47,13 @@ macro_rules! declare_plugin {
             Box::into_raw(boxed) as *mut std::ffi::c_void
         }
 
-        #[no_mangle]
+        #[unsafe(no_mangle)]
         pub unsafe extern "C" fn easybot_plugin_destroy(ptr: *mut std::ffi::c_void) {
             if !ptr.is_null() {
-                let inner: Box<Box<dyn $crate::PlatformAdapter>> =
-                    Box::from_raw(ptr as *mut Box<dyn $crate::PlatformAdapter>);
+                // SAFETY: ptr 由 easybot_plugin_create() 的 Box::into_raw 生成，类型匹配
+                let inner: Box<Box<dyn $crate::PlatformAdapter>> = unsafe {
+                    Box::from_raw(ptr as *mut Box<dyn $crate::PlatformAdapter>)
+                };
                 drop(inner);
             }
         }
