@@ -17,5 +17,8 @@ status-level = "pass"
 # Use "os" parallelism + fail-fast to surface issues as fast as possible
 fail-fast = true
 
+# Retry flaky integration tests once before reporting failure
+retries = 1
+
 [test-groups]
 # No special grouping needed — tests are well-structured

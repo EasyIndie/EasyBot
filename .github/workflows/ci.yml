@@ -172,11 +172,14 @@ jobs:
         with:
           tool: cargo-llvm-cov
 
+      - name: Build workspace (for integration tests)
+        run: cargo build --workspace --features "full,plugin-system" --locked
+
       - name: Build mock-adapter
         run: cargo build -p mock-adapter --locked
 
       - name: Generate code coverage
-        run: cargo llvm-cov --workspace --lcov --output-path lcov.info --locked
+        run: cargo llvm-cov --workspace --features "full,plugin-system" --lcov --output-path lcov.info --locked
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v6
