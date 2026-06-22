@@ -4,7 +4,7 @@
 //! 包含建表迁移和连接池初始化。
 
 use async_trait::async_trait;
-use sqlx::SqlitePool;
+use sqlx::{AssertSqlSafe, SqlitePool};
 
 use super::{MessageFilter, MessageRole, MessageStore, SessionStore, StoreError, StoredMessage};
 use crate::types::message::{InboundMessage, SendResult};
@@ -254,7 +254,7 @@ impl SessionStore for SqliteSessionStore {
             sql.push_str(&format!(" OFFSET {}", offset));
         }
 
-        let mut query = sqlx::query(&sql);
+        let mut query = sqlx::query(AssertSqlSafe(&sql));
         if let Some(ref platform) = filter.platform {
             query = query.bind(platform);
         }
@@ -442,7 +442,7 @@ impl MessageStore for SqliteMessageStore {
         }
 
         // 使用低阶 API 动态绑定参数
-        let mut q = sqlx::query(&sql);
+        let mut q = sqlx::query(AssertSqlSafe(&sql));
         for p in &params {
             q = q.bind(p);
         }
