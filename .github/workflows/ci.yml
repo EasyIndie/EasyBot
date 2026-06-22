@@ -54,8 +54,7 @@ jobs:
         run: cargo clippy --workspace --features "full,plugin-system" --all-targets --locked -- -D warnings
 
       - name: Check (full features)
-        run: cargo check --workspace --features "full,plugin-system" --locked
-
+        run: cargo check --workspace --features "full,plugin-system"
   # ── Test: default features ──────────────────────────────────────────
   test-default:
     runs-on: ubuntu-latest
@@ -85,11 +84,9 @@ jobs:
           tool: cargo-nextest
 
       - name: Build
-        run: cargo build --workspace --locked
-
+        run: cargo build --workspace
       - name: Test (default features)
-        run: cargo nextest run --workspace --locked
-
+        run: cargo nextest run --workspace
   # ── Test: full features + plugin system ─────────────────────────────
   test-full:
     runs-on: ubuntu-latest
@@ -119,14 +116,11 @@ jobs:
           tool: cargo-nextest
 
       - name: Build (full features)
-        run: cargo build --workspace --features "full,plugin-system" --locked
-
+        run: cargo build --workspace --features "full,plugin-system"
       - name: Build mock-adapter
-        run: cargo build -p mock-adapter --locked
-
+        run: cargo build -p mock-adapter
       - name: Test (full features + plugin-system)
-        run: cargo nextest run --workspace --features "full,plugin-system" --locked
-
+        run: cargo nextest run --workspace --features "full,plugin-system"
   # ── Feature matrix: validate edge feature combinations ─────────────
   test-feature-matrix:
     runs-on: ubuntu-latest
@@ -150,8 +144,7 @@ jobs:
         uses: mozilla-actions/sccache-action@v0.0.10
 
       - name: Check (${{ matrix.features }})
-        run: cargo check --workspace ${{ matrix.features }} --locked
-
+        run: cargo check --workspace ${{ matrix.features }}
   # ── Code coverage ───────────────────────────────────────────────────
   coverage:
     runs-on: ubuntu-latest
@@ -173,14 +166,11 @@ jobs:
           tool: cargo-llvm-cov
 
       - name: Build workspace (for integration tests)
-        run: cargo build --workspace --features "full,plugin-system" --locked
-
+        run: cargo build --workspace --features "full,plugin-system"
       - name: Build mock-adapter
-        run: cargo build -p mock-adapter --locked
-
+        run: cargo build -p mock-adapter
       - name: Generate code coverage
-        run: cargo llvm-cov --workspace --features "full,plugin-system" --lcov --output-path lcov.info --locked
-
+        run: cargo llvm-cov --workspace --features "full,plugin-system" --lcov --output-path lcov.info
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v7
         with:
