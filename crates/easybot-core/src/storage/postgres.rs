@@ -446,7 +446,7 @@ impl MessageStore for PgMessageStore {
 #[cfg(feature = "integration-test")]
 mod tests {
     use super::*;
-    use crate::types::message::{ChatType, MessageAuthor};
+    use crate::types::message::{ChatType, InboundMessage, MessageAuthor};
     use crate::types::session::{ResetPolicy, SessionSource};
 
     /// 创建测试用 PostgreSQL 连接池
