@@ -26,11 +26,16 @@ COPY Cargo.toml Cargo.lock ./
 COPY crates/ ./crates/
 COPY bin/ ./bin/
 
+# Test crates are workspace members — copy them so Cargo can resolve the
+# workspace. Since we only build --bin easybot, the test source won't be
+# compiled (it is not in the dependency tree).
+COPY tests/ ./tests/
+
 # Build (use --mount for cache persistence across builds)
 # --features "full,plugin-system" 启用所有内置适配器 + 插件系统
 RUN --mount=type=cache,target=/app/target \
     --mount=type=cache,target=/usr/local/cargo/registry \
-    cargo build --release --features "full,plugin-system" --bin easybot && \
+    cargo build --locked --release --features "full,plugin-system" --bin easybot && \
     cp target/release/easybot /easybot
 
 # ── Runtime Stage ──
@@ -38,6 +43,7 @@ FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y \
     ca-certificates \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy the compiled binary
