@@ -182,7 +182,7 @@ jobs:
         run: cargo llvm-cov --workspace --features "full,plugin-system" --lcov --output-path lcov.info --locked
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v6
+        uses: codecov/codecov-action@v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: lcov.info
