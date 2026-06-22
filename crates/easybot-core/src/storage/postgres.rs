@@ -4,7 +4,7 @@
 //! 与 SQLite 后端保持相同的 trait 接口和行映射模式。
 
 use async_trait::async_trait;
-use sqlx::PgPool;
+use sqlx::{AssertSqlSafe, PgPool};
 
 use super::{MessageFilter, MessageRole, MessageStore, SessionStore, StoreError, StoredMessage};
 use crate::types::session::{ResetPolicy, Session, SessionFilter, SessionSource};
@@ -220,7 +220,7 @@ impl SessionStore for PgSessionStore {
             sql.push_str(&format!(" OFFSET {}", offset));
         }
 
-        let mut query = sqlx::query(&sql);
+        let mut query = sqlx::query(AssertSqlSafe(&sql));
         if let Some(ref platform) = filter.platform {
             query = query.bind(platform);
         }
@@ -409,7 +409,7 @@ impl MessageStore for PgMessageStore {
             sql.push_str(&format!(" OFFSET {}", offset));
         }
 
-        let mut q = sqlx::query(&sql);
+        let mut q = sqlx::query(AssertSqlSafe(&sql));
         for p in &param_values {
             q = q.bind(p);
         }
