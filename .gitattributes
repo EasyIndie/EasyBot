@@ -1,0 +1,31 @@
+# Auto-detect text files and normalize to LF
+* text=auto
+
+# Shell scripts MUST have LF line endings (shebang #! requires it on Linux)
+*.sh text eol=lf
+
+# Rust source files
+*.rs text
+
+# Markdown
+*.md text
+
+# Config files
+*.toml text
+*.yml text
+*.yaml text
+*.json text
+
+# Docker
+Dockerfile text
+
+# Git files
+.gitignore text
+
+# Binary files — never modify
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
