@@ -254,7 +254,7 @@ impl SessionStore for SqliteSessionStore {
             sql.push_str(&format!(" OFFSET {}", offset));
         }
 
-        let mut query = sqlx::query(AssertSqlSafe(&sql));
+        let mut query = sqlx::query(AssertSqlSafe(sql.as_str()));
         if let Some(ref platform) = filter.platform {
             query = query.bind(platform);
         }
@@ -442,7 +442,7 @@ impl MessageStore for SqliteMessageStore {
         }
 
         // 使用低阶 API 动态绑定参数
-        let mut q = sqlx::query(AssertSqlSafe(&sql));
+        let mut q = sqlx::query(AssertSqlSafe(sql.as_str()));
         for p in &params {
             q = q.bind(p);
         }

@@ -220,7 +220,7 @@ impl SessionStore for PgSessionStore {
             sql.push_str(&format!(" OFFSET {}", offset));
         }
 
-        let mut query = sqlx::query(AssertSqlSafe(&sql));
+        let mut query = sqlx::query(AssertSqlSafe(sql.as_str()));
         if let Some(ref platform) = filter.platform {
             query = query.bind(platform);
         }
@@ -409,7 +409,7 @@ impl MessageStore for PgMessageStore {
             sql.push_str(&format!(" OFFSET {}", offset));
         }
 
-        let mut q = sqlx::query(AssertSqlSafe(&sql));
+        let mut q = sqlx::query(AssertSqlSafe(sql.as_str()));
         for p in &param_values {
             q = q.bind(p);
         }
