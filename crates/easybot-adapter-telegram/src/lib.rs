@@ -293,8 +293,8 @@ impl TelegramAdapter {
                                 if update.update_id >= offset {
                                     offset = update.update_id + 1;
                                 }
-                                if let Some(tg_msg) = update.message {
-                                    if let Some(inbound) = Self::convert_message(tg_msg) {
+                                if let Some(tg_msg) = update.message
+                                    && let Some(inbound) = Self::convert_message(tg_msg) {
                                         let event = GatewayEvent::new(
                                             easybot_core::types::event::event_types::MESSAGE_INBOUND,
                                             "telegram",
@@ -302,7 +302,6 @@ impl TelegramAdapter {
                                         );
                                         event_bus.publish(event);
                                     }
-                                }
                             }
                         }
                         Err(e) => {
@@ -542,13 +541,12 @@ impl PlatformAdapter for TelegramAdapter {
         }
 
         // 平台特定参数
-        if let Some(meta) = &params.metadata {
-            if let Some(obj) = meta.as_object() {
+        if let Some(meta) = &params.metadata
+            && let Some(obj) = meta.as_object() {
                 for (k, v) in obj {
                     body[k] = v.clone();
                 }
             }
-        }
 
         let result: TelegramMessage = match self.api_call("sendMessage", Some(body)).await {
             Ok(msg) => msg,

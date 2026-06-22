@@ -103,11 +103,10 @@ impl SessionManager {
     /// 从 DashMap 和持久化存储中同时删除。
     pub async fn delete(&self, key: &str) -> bool {
         let removed = self.sessions.remove(key).is_some();
-        if removed {
-            if let Some(ref store) = self.store {
+        if removed
+            && let Some(ref store) = self.store {
                 let _ = store.delete_session(key).await;
             }
-        }
         removed
     }
 

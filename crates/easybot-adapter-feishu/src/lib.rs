@@ -149,11 +149,10 @@ impl FeishuAdapter {
         let now_ms = chrono::Utc::now().timestamp_millis();
 
         // 如果 token 还在有效期内（含刷新余量），直接返回
-        if expires_at > now_ms + (TOKEN_REFRESH_MARGIN as i64 * 1000) {
-            if let Some(token) = self.access_token.read().await.clone() {
+        if expires_at > now_ms + (TOKEN_REFRESH_MARGIN as i64 * 1000)
+            && let Some(token) = self.access_token.read().await.clone() {
                 return Ok(token);
             }
-        }
 
         // 刷新 token
         self.refresh_token().await
