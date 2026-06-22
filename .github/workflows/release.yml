@@ -1,0 +1,179 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+env:
+  CARGO_TERM_COLOR: always
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  # ── Verify: run full CI checks before releasing ─────────────────
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          components: clippy, rustfmt
+
+      - name: Install protoc
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq protobuf-compiler
+
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.10
+
+      - name: Format
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --features "full,plugin-system" --all-targets -- -D warnings
+
+      - name: Build
+        run: cargo build --workspace --features "full,plugin-system"
+
+      - name: Build mock-adapter
+        run: cargo build -p mock-adapter
+
+      - name: Test
+        run: cargo test --workspace --features "full,plugin-system"
+
+  # ── Cross-compile release binaries ────────────────────────────
+  build-binaries:
+    needs: verify
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            suffix: ""
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            suffix: ""
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            suffix: ""
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            suffix: ""
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            suffix: ".exe"
+      fail-fast: false
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          target: ${{ matrix.target }}
+
+      - name: Install protoc
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq protobuf-compiler
+        if: runner.os == 'Linux'
+
+      - name: Install cross-compilation dependencies (aarch64-linux)
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: sudo apt-get install -y -qq gcc-aarch64-linux-gnu
+
+      - name: Build release binary
+        run: cargo build --release --features "full,plugin-system" --target ${{ matrix.target }}
+
+      - name: Prepare artifact
+        shell: bash
+        run: |
+          BINARY="target/${{ matrix.target }}/release/easybot${{ matrix.suffix }}"
+          ARCHIVE="easybot-${{ matrix.target }}${{ matrix.suffix }}"
+          cp "$BINARY" "$ARCHIVE"
+          echo "sha256=$(sha256sum "$ARCHIVE" | cut -d' ' -f1)" >> $GITHUB_ENV
+          echo "archive=$ARCHIVE" >> $GITHUB_ENV
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: easybot-${{ matrix.target }}
+          path: easybot-${{ matrix.target }}${{ matrix.suffix }}
+          if-no-files-found: error
+
+  # ── Create GitHub Release ──────────────────────────────────────
+  create-release:
+    needs: build-binaries
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+
+      - name: Generate checksums
+        run: |
+          cd easybot-x86_64-unknown-linux-gnu && sha256sum easybot-x86_64-unknown-linux-gnu* >> ../checksums.txt
+          cd ../easybot-aarch64-unknown-linux-gnu && sha256sum easybot-aarch64-unknown-linux-gnu* >> ../checksums.txt
+          cd ../easybot-x86_64-apple-darwin && sha256sum easybot-x86_64-apple-darwin* >> ../checksums.txt
+          cd ../easybot-aarch64-apple-darwin && sha256sum easybot-aarch64-apple-darwin* >> ../checksums.txt
+          cd ../easybot-x86_64-pc-windows-msvc && sha256sum easybot-x86_64-pc-windows-msvc* >> ../checksums.txt
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v3
+        with:
+          name: EasyBot ${{ github.ref_name }}
+          body_path: CHANGELOG.md
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          files: |
+            easybot-*/easybot-*
+            checksums.txt
+          generate_release_notes: true
+
+  # ── Build and push Docker image ────────────────────────────────
+  docker:
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

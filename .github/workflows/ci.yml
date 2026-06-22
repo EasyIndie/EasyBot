@@ -9,11 +9,17 @@ on:
 env:
   CARGO_TERM_COLOR: always
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  # ── Check: fmt, clippy, cargo-deny, cargo check ──────────────────
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           components: clippy, rustfmt
@@ -21,9 +27,26 @@ jobs:
       - name: Install protoc
         run: sudo apt-get update -qq && sudo apt-get install -y -qq protobuf-compiler
 
-      # Check with all features so plugin-system code & all adapters are validated
-      - name: Check
-        run: cargo check --workspace --features "full,plugin-system"
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.10
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny
+
+      - name: cargo-deny (advisories + licenses)
+        run: cargo-deny check advisories licenses --hide-inclusion-graph
+        continue-on-error: true
 
       - name: Format
         run: cargo fmt --all --check
@@ -31,53 +54,118 @@ jobs:
       - name: Clippy
         run: cargo clippy --workspace --features "full,plugin-system" --all-targets -- -D warnings
 
-  test:
+      - name: Check (full features)
+        run: cargo check --workspace --features "full,plugin-system"
+
+  # ── Test: default features ───────────────────────────────────────
+  test-default:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+
       - uses: actions-rust-lang/setup-rust-toolchain@v1
 
       - name: Install protoc
         run: sudo apt-get update -qq && sudo apt-get install -y -qq protobuf-compiler
 
-      # Build and test with default features
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.10
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
       - name: Build
         run: cargo build --workspace
 
       - name: Test (default features)
         run: cargo test --workspace
 
-      # Build mock-adapter (required by plugin integration tests)
-      - name: Build mock-adapter
-        run: cargo build -p mock-adapter
-
-      # Test with all adapters + plugin system enabled.
-      # Note: e2e tests use wiremock (no real credentials needed).
-      - name: Test (full features + plugin-system)
-        run: cargo test --workspace --features "full,plugin-system"
-
-  coverage:
+  # ── Test: full features + plugin system ──────────────────────────
+  test-full:
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
+
       - uses: actions-rust-lang/setup-rust-toolchain@v1
 
       - name: Install protoc
         run: sudo apt-get update -qq && sudo apt-get install -y -qq protobuf-compiler
 
-      - name: Install cargo-tarpaulin
-        run: cargo install cargo-tarpaulin
-        continue-on-error: true
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.10
+
+      - name: Cache Cargo registry
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Build mock-adapter
+        run: cargo build -p mock-adapter
+
+      - name: Test (full features + plugin-system)
+        run: cargo test --workspace --features "full,plugin-system"
+
+  # ── Feature matrix: validate edge feature combinations ──────────
+  test-feature-matrix:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        features:
+          - "--no-default-features"
+          - "--no-default-features --features adapter-telegram"
+          - "--no-default-features --features adapter-discord"
+          - "--features adapter-telegram,adapter-discord"
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Install protoc
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq protobuf-compiler
+
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.10
+
+      - name: Check (${{ matrix.features }})
+        run: cargo check --workspace ${{ matrix.features }}
+
+  # ── Code coverage ─────────────────────────────────────────────────
+  coverage:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Install protoc
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq protobuf-compiler
+
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.10
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
 
       - name: Generate code coverage
-        run: cargo tarpaulin --workspace --out xml --engine llvm
-        continue-on-error: true
+        run: cargo llvm-cov --workspace --lcov --output-path lcov.info
 
       - name: Upload coverage to Codecov
-        if: always()
-        uses: codecov/codecov-action@v5
+        uses: codecov/codecov-action@v6
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
-          files: cobertura.xml
+          files: lcov.info
           fail_ci_if_error: false

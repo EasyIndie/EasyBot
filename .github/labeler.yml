@@ -1,0 +1,54 @@
+core:
+  - changed-files:
+      - any-glob-to-any-file: crates/easybot-core/**/*
+
+api:
+  - changed-files:
+      - any-glob-to-any-file: crates/easybot-api/**/*
+
+adapter-telegram:
+  - changed-files:
+      - any-glob-to-any-file: crates/easybot-adapter-telegram/**/*
+
+adapter-discord:
+  - changed-files:
+      - any-glob-to-any-file: crates/easybot-adapter-discord/**/*
+
+adapter-feishu:
+  - changed-files:
+      - any-glob-to-any-file: crates/easybot-adapter-feishu/**/*
+
+adapter-qq:
+  - changed-files:
+      - any-glob-to-any-file: crates/easybot-adapter-qq/**/*
+
+adapter-wechat:
+  - changed-files:
+      - any-glob-to-any-file: crates/easybot-adapter-wechat/**/*
+
+plugin-system:
+  - changed-files:
+      - any-glob-to-any-file:
+          - crates/easybot-plugin-sdk/**/*
+          - plugins/**/*
+
+ci:
+  - changed-files:
+      - any-glob-to-any-file: .github/workflows/**/*
+
+documentation:
+  - changed-files:
+      - any-glob-to-any-file: docs/**/*
+
+docker:
+  - changed-files:
+      - any-glob-to-any-file:
+          - Dockerfile
+          - .dockerignore
+          - docker-compose.yml
+
+dependencies:
+  - changed-files:
+      - any-glob-to-any-file:
+          - Cargo.toml
+          - Cargo.lock
