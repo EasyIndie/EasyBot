@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
     tags: ["v*"]
+    paths: [Dockerfile, .dockerignore, Cargo.toml, Cargo.lock, "crates/**", "bin/**"]
   pull_request:
     branches: [main]
     paths: [Dockerfile, .dockerignore, Cargo.toml, Cargo.lock, "crates/**", "bin/**"]
@@ -17,17 +18,39 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  build:
+  # ── PR 验证：仅编译 release mode + amd64 ──
+  build-pr:
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      packages: write
 
     steps:
       - uses: actions/checkout@v7
 
-      - name: Set up QEMU (multi-arch)
-        uses: docker/setup-qemu-action@v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build (validation only — no push)
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: false
+          platforms: linux/amd64
+          cache-from: type=gha
+
+  # ── amd64: 原生 x64 构建 ──
+  build-amd64:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+
+    steps:
+      - uses: actions/checkout@v7
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -46,19 +69,118 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
             type=ref,event=branch
-            type=ref,event=pr
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=sha,prefix=,suffix=,format=short
             type=raw,value=latest,enable={{is_default_branch}}
 
-      - name: Build and push Docker image
+      - name: Build and push by digest
+        id: build
         uses: docker/build-push-action@v7
         with:
           context: .
-          push: ${{ github.event_name != 'pull_request' }}
-          platforms: linux/amd64,linux/arm64
-          tags: ${{ steps.meta.outputs.tags }}
+          push: true
+          platforms: linux/amd64
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true
+
+  # ── arm64: 原生 ARM 构建（GitHub 原生 ARM runner） ──
+  build-arm64:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata (tags, labels)
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix=,suffix=,format=short
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: true
+          platforms: linux/arm64
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true
+
+  # ── Merge: 组合 multi-arch manifest 并打标签推送 ──
+  merge:
+    needs: [build-amd64, build-arm64]
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata (tags, labels)
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix=,suffix=,format=short
+            type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Create and push multi-arch manifest
+        shell: bash
+        run: |
+          REGISTRY="${{ env.REGISTRY }}"
+          IMAGE="${{ env.IMAGE_NAME }}"
+          DIGEST_AMD64="${{ needs.build-amd64.outputs.digest }}"
+          DIGEST_ARM64="${{ needs.build-arm64.outputs.digest }}"
+          TAGS="${{ steps.meta.outputs.tags }}"
+
+          while IFS= read -r tag; do
+            [ -z "$tag" ] && continue
+            echo "Creating manifest: $tag"
+            docker buildx imagetools create \
+              -t "$tag" \
+              "${REGISTRY}/${IMAGE}@${DIGEST_AMD64}" \
+              "${REGISTRY}/${IMAGE}@${DIGEST_ARM64}"
+          done <<< "$TAGS"
