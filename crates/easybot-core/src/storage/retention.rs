@@ -111,7 +111,7 @@ impl RetentionWorker {
 mod tests {
     use crate::storage::retention::{RetentionConfig, RetentionWorker};
     use crate::storage::sqlite::{
-        create_pool, run_migrations, SqliteMessageStore, SqliteSessionStore,
+        SqliteMessageStore, SqliteSessionStore, create_pool, run_migrations,
     };
     use crate::storage::{MessageFilter, MessageRole, MessageStore, SessionStore, StoredMessage};
     use crate::types::message::ChatType;

@@ -7,16 +7,16 @@
 mod event;
 mod types;
 
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use async_trait::async_trait;
 use easybot_core::bus::EventBus;
 use easybot_core::types::adapter::*;
 use easybot_core::types::error::GatewayError;
-use easybot_core::types::event::event_types;
 use easybot_core::types::event::GatewayEvent;
+use easybot_core::types::event::event_types;
 use easybot_core::types::message::*;
 use larksuite_oapi_sdk_rs::{Client, EventDispatcher};
 use tokio::sync::broadcast;
@@ -149,10 +149,10 @@ impl FeishuAdapter {
         let now_ms = chrono::Utc::now().timestamp_millis();
 
         // 如果 token 还在有效期内（含刷新余量），直接返回
-        if expires_at > now_ms + (TOKEN_REFRESH_MARGIN as i64 * 1000) {
-            if let Some(token) = self.access_token.read().await.clone() {
-                return Ok(token);
-            }
+        if expires_at > now_ms + (TOKEN_REFRESH_MARGIN as i64 * 1000)
+            && let Some(token) = self.access_token.read().await.clone()
+        {
+            return Ok(token);
         }
 
         // 刷新 token
@@ -294,7 +294,7 @@ fn publish_send_event(
     chat_id: &str,
     result: &SendResult,
 ) {
-    if let Some(ref bus) = event_bus {
+    if let Some(bus) = event_bus {
         bus.publish(GatewayEvent::new(
             event_type,
             "feishu",
@@ -910,15 +910,18 @@ mod tests {
     fn test_capabilities() {
         let adapter = FeishuAdapter::new();
         let caps = adapter.capabilities();
-        assert!(caps
-            .iter()
-            .any(|c| c.name == CapabilityName::Text && c.supported));
-        assert!(caps
-            .iter()
-            .any(|c| c.name == CapabilityName::Group && c.supported));
-        assert!(caps
-            .iter()
-            .any(|c| c.name == CapabilityName::MessageEdit && c.supported));
+        assert!(
+            caps.iter()
+                .any(|c| c.name == CapabilityName::Text && c.supported)
+        );
+        assert!(
+            caps.iter()
+                .any(|c| c.name == CapabilityName::Group && c.supported)
+        );
+        assert!(
+            caps.iter()
+                .any(|c| c.name == CapabilityName::MessageEdit && c.supported)
+        );
     }
 
     #[test]

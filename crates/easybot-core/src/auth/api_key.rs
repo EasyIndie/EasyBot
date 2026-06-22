@@ -5,8 +5,8 @@
 //! Phase 4: 从 SHA-256 升级到 argon2id (PHC 格式)
 
 use argon2::password_hash::SaltString;
+use argon2::password_hash::rand_core::OsRng;
 use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
-use rand_core::OsRng;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use tokio::sync::RwLock;
@@ -124,10 +124,10 @@ impl ApiKeyManager {
             return Err("API key has been revoked".to_string());
         }
 
-        if let Some(expires) = stored.info.expires_at {
-            if chrono::Utc::now().timestamp_millis() > expires {
-                return Err("API key has expired".to_string());
-            }
+        if let Some(expires) = stored.info.expires_at
+            && chrono::Utc::now().timestamp_millis() > expires
+        {
+            return Err("API key has expired".to_string());
         }
 
         // 提前克隆所需数据，释放锁

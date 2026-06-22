@@ -8,22 +8,22 @@
 
 mod types;
 
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use async_trait::async_trait;
 use easybot_core::bus::EventBus;
 use easybot_core::types::adapter::*;
 use easybot_core::types::error::GatewayError;
-use easybot_core::types::event::event_types;
 use easybot_core::types::event::GatewayEvent;
+use easybot_core::types::event::event_types;
 use easybot_core::types::message::*;
 use futures::{SinkExt, StreamExt};
 use tokio::sync::broadcast;
-use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 use types::*;
 
 /// Discord REST API 基础 URL (v10)
@@ -468,8 +468,9 @@ impl DiscordAdapter {
 
     /// 接收 Hello 并返回 HeartbeatInterval
     async fn recv_hello(
-        read: &mut (impl StreamExt<Item = Result<WsMessage, tokio_tungstenite::tungstenite::Error>>
-                  + Unpin),
+        read: &mut (
+                 impl StreamExt<Item = Result<WsMessage, tokio_tungstenite::tungstenite::Error>> + Unpin
+             ),
     ) -> Option<HelloData> {
         match read.next().await? {
             Ok(WsMessage::Text(text)) => {
@@ -497,8 +498,9 @@ impl DiscordAdapter {
 
     /// 等待 Ready 事件（验证 Identify 成功）
     async fn wait_for_ready(
-        read: &mut (impl StreamExt<Item = Result<WsMessage, tokio_tungstenite::tungstenite::Error>>
-                  + Unpin),
+        read: &mut (
+                 impl StreamExt<Item = Result<WsMessage, tokio_tungstenite::tungstenite::Error>> + Unpin
+             ),
         _write: &mut (impl SinkExt<WsMessage, Error = tokio_tungstenite::tungstenite::Error> + Unpin),
         seq: &mut Option<u64>,
         cancel_rx: &broadcast::Receiver<()>,
@@ -546,8 +548,9 @@ impl DiscordAdapter {
     /// 主事件循环：接收 Dispatch 事件 + 定时发送 Heartbeat
     #[allow(clippy::too_many_arguments)]
     async fn event_loop(
-        read: &mut (impl StreamExt<Item = Result<WsMessage, tokio_tungstenite::tungstenite::Error>>
-                  + Unpin),
+        read: &mut (
+                 impl StreamExt<Item = Result<WsMessage, tokio_tungstenite::tungstenite::Error>> + Unpin
+             ),
         write: &mut (impl SinkExt<WsMessage, Error = tokio_tungstenite::tungstenite::Error> + Unpin),
         seq: &mut Option<u64>,
         hb_interval: Duration,
@@ -649,7 +652,7 @@ fn publish_send_event(
     chat_id: &str,
     result: &SendResult,
 ) {
-    if let Some(ref bus) = event_bus {
+    if let Some(bus) = event_bus {
         bus.publish(GatewayEvent::new(
             event_type,
             "discord",
@@ -1288,10 +1291,12 @@ mod tests {
     #[test]
     fn test_capabilities() {
         let adapter = DiscordAdapter::new();
-        assert!(adapter
-            .capabilities()
-            .iter()
-            .any(|c| c.name == CapabilityName::Text));
+        assert!(
+            adapter
+                .capabilities()
+                .iter()
+                .any(|c| c.name == CapabilityName::Text)
+        );
     }
 
     #[test]

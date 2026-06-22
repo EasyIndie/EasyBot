@@ -1,7 +1,7 @@
 //! 健康检查路由
 
 use crate::AppState;
-use axum::{extract::State, Json};
+use axum::{Json, extract::State};
 use serde::Serialize;
 use utoipa::ToSchema;
 

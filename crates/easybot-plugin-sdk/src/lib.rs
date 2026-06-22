@@ -27,12 +27,13 @@ pub use async_trait::async_trait;
 /// 插件开发者一站式导入
 pub mod prelude {
     pub use crate::{
-        declare_plugin, AdapterConfig, AdapterRuntimeConfig, AdapterState, AdapterStatusSummary,
-        BotInfo, CallbackEvent, Capability, CapabilityLimits, CapabilityName, ChatFilter, ChatInfo,
-        ChatType, ConnectResult, DeleteResult, EditMessageParams, EditResult, GatewayError,
-        HealthReport, HealthStatus, InboundMessage, InitResult, MediaAttachment, MediaType,
-        MessageAuthor, OutboundMessage, ParseMode, PlatformAdapter, SendInteractiveParams,
-        SendMediaParams, SendResult, SendTextParams, SessionSource, EASYBOT_PLUGIN_ABI_VERSION,
+        AdapterConfig, AdapterRuntimeConfig, AdapterState, AdapterStatusSummary, BotInfo,
+        CallbackEvent, Capability, CapabilityLimits, CapabilityName, ChatFilter, ChatInfo,
+        ChatType, ConnectResult, DeleteResult, EASYBOT_PLUGIN_ABI_VERSION, EditMessageParams,
+        EditResult, GatewayError, HealthReport, HealthStatus, InboundMessage, InitResult,
+        MediaAttachment, MediaType, MessageAuthor, OutboundMessage, ParseMode, PlatformAdapter,
+        SendInteractiveParams, SendMediaParams, SendResult, SendTextParams, SessionSource,
+        declare_plugin,
     };
     pub use async_trait::async_trait;
 }

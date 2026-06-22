@@ -90,27 +90,29 @@ impl PluginLibrary {
     /// 返回的 `Box<dyn PlatformAdapter>` 包含指向本库代码段的函数指针。
     /// 本 `PluginLibrary` 实例必须比所有适配器存活得更久。
     pub unsafe fn create_adapter(&self) -> Result<Box<dyn PlatformAdapter>, PluginError> {
-        let create: Symbol<unsafe extern "C" fn() -> *mut std::ffi::c_void> = self
-            .inner
-            .get(b"easybot_plugin_create")
-            .map_err(|e| PluginError::SymbolNotFound {
-                path: PathBuf::from("<plugin>"),
-                symbol: "easybot_plugin_create".into(),
-                detail: e.to_string(),
-            })?;
+        unsafe {
+            let create: Symbol<unsafe extern "C" fn() -> *mut std::ffi::c_void> = self
+                .inner
+                .get(b"easybot_plugin_create")
+                .map_err(|e| PluginError::SymbolNotFound {
+                    path: PathBuf::from("<plugin>"),
+                    symbol: "easybot_plugin_create".into(),
+                    detail: e.to_string(),
+                })?;
 
-        let ptr = create();
-        if ptr.is_null() {
-            return Err(PluginError::NullAdapter);
+            let ptr = create();
+            if ptr.is_null() {
+                return Err(PluginError::NullAdapter);
+            }
+
+            // `Box<dyn PlatformAdapter>` 是胖指针（128 bits），不能直接存为 `*mut c_void`
+            // 插件方通过 `Box<Box<dyn PlatformAdapter>>` 做了一层包装（瘦指针）
+            // 这里解一层 Box 即可
+            let inner: Box<Box<dyn PlatformAdapter>> =
+                Box::from_raw(ptr as *mut Box<dyn PlatformAdapter>);
+            let adapter: Box<dyn PlatformAdapter> = *inner;
+            Ok(adapter)
         }
-
-        // `Box<dyn PlatformAdapter>` 是胖指针（128 bits），不能直接存为 `*mut c_void`
-        // 插件方通过 `Box<Box<dyn PlatformAdapter>>` 做了一层包装（瘦指针）
-        // 这里解一层 Box 即可
-        let inner: Box<Box<dyn PlatformAdapter>> =
-            Box::from_raw(ptr as *mut Box<dyn PlatformAdapter>);
-        let adapter: Box<dyn PlatformAdapter> = *inner;
-        Ok(adapter)
     }
 
     /// 验证插件 ABI 版本与主机匹配

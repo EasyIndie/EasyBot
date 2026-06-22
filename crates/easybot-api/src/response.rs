@@ -3,8 +3,8 @@
 //! 使用 newtype 模式包装 GatewayError，实现 axum IntoResponse。
 
 use axum::{
-    response::{IntoResponse, Response},
     Json,
+    response::{IntoResponse, Response},
 };
 use easybot_core::types::error::GatewayError;
 

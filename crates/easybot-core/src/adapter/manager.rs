@@ -5,8 +5,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
-use tokio::sync::broadcast;
 use tokio::sync::RwLock;
+use tokio::sync::broadcast;
 use tokio::time::Duration;
 use tracing::{error, info, warn};
 
@@ -14,8 +14,8 @@ use crate::adapter::registry::AdapterRegistry;
 use crate::bus::EventBus;
 use crate::types::adapter::*;
 use crate::types::error::GatewayError;
-use crate::types::event::event_types;
 use crate::types::event::GatewayEvent;
+use crate::types::event::event_types;
 
 /// 适配器管理器
 ///
@@ -392,14 +392,12 @@ impl AdapterManager {
         }
 
         // 最后一个凭据变量 → token（惯例：ID 在前，Secret/Token 在后）
-        if config.token.is_none() {
-            if let Some(last_var) = env_vars.last() {
-                if let Ok(val) = std::env::var(last_var) {
-                    if !val.is_empty() {
-                        config.token = Some(val);
-                    }
-                }
-            }
+        if config.token.is_none()
+            && let Some(last_var) = env_vars.last()
+            && let Ok(val) = std::env::var(last_var)
+            && !val.is_empty()
+        {
+            config.token = Some(val);
         }
 
         // 所有凭据变量 → extra（key: 去掉平台前缀，小写）
@@ -413,12 +411,12 @@ impl AdapterManager {
                 .strip_prefix(&prefix)
                 .unwrap_or(var_name)
                 .to_lowercase();
-            if let Ok(val) = std::env::var(var_name) {
-                if !val.is_empty() {
-                    extra_map
-                        .entry(key)
-                        .or_insert(serde_json::Value::String(val));
-                }
+            if let Ok(val) = std::env::var(var_name)
+                && !val.is_empty()
+            {
+                extra_map
+                    .entry(key)
+                    .or_insert(serde_json::Value::String(val));
             }
         }
         config.extra = serde_json::Value::Object(extra_map);
@@ -527,10 +525,10 @@ impl AdapterManager {
             let state = reconnect_state.entry(platform.clone()).or_default();
 
             // Respect backoff window
-            if let Some(until) = state.backoff_until {
-                if Instant::now() < until {
-                    continue;
-                }
+            if let Some(until) = state.backoff_until
+                && Instant::now() < until
+            {
+                continue;
             }
 
             // Check current adapter health
@@ -1006,8 +1004,10 @@ mod tests {
             .register("test", "Test", factory, &["TEST_APP_ID", "TEST_APP_SECRET"])
             .await;
 
-        std::env::set_var("TEST_APP_ID", "app-id-123");
-        std::env::set_var("TEST_APP_SECRET", "secret-456");
+        // SAFETY: 测试环境，单线程执行
+        unsafe { std::env::set_var("TEST_APP_ID", "app-id-123") };
+        // SAFETY: 测试环境，单线程执行
+        unsafe { std::env::set_var("TEST_APP_SECRET", "secret-456") };
 
         let mut config = AdapterConfig {
             enabled: None,
@@ -1025,8 +1025,10 @@ mod tests {
         assert_eq!(config.extra["app_id"], "app-id-123");
         assert_eq!(config.extra["app_secret"], "secret-456");
 
-        std::env::remove_var("TEST_APP_ID");
-        std::env::remove_var("TEST_APP_SECRET");
+        // SAFETY: 测试环境，单线程执行
+        unsafe { std::env::remove_var("TEST_APP_ID") };
+        // SAFETY: 测试环境，单线程执行
+        unsafe { std::env::remove_var("TEST_APP_SECRET") };
     }
 
     #[tokio::test]
@@ -1043,7 +1045,8 @@ mod tests {
             .register("toktest", "TokTest", factory, &["TOKTEST_TOKEN"])
             .await;
 
-        std::env::set_var("TOKTEST_TOKEN", "from-env");
+        // SAFETY: 测试环境，单线程执行
+        unsafe { std::env::set_var("TOKTEST_TOKEN", "from-env") };
 
         let mut config = AdapterConfig {
             enabled: None,
@@ -1060,7 +1063,8 @@ mod tests {
         // extra 仍会被填充，key 为去前缀后的小写: TOKTEST_TOKEN → strip TOKTEST_ → TOKEN → lowercase → token
         assert_eq!(config.extra["token"], "from-env");
 
-        std::env::remove_var("TOKTEST_TOKEN");
+        // SAFETY: 测试环境，单线程执行
+        unsafe { std::env::remove_var("TOKTEST_TOKEN") };
     }
 
     #[tokio::test]
@@ -1082,7 +1086,8 @@ mod tests {
             .register("autotest", "AutoTest", factory, &["AUTOTEST_TOKEN"])
             .await;
 
-        std::env::set_var("AUTOTEST_TOKEN", "my-token");
+        // SAFETY: 测试环境，单线程执行
+        unsafe { std::env::set_var("AUTOTEST_TOKEN", "my-token") };
 
         // 不传入任何 config — start_all 应自动检测并注入凭据
         let result = manager.start_all(HashMap::new()).await;
@@ -1092,7 +1097,8 @@ mod tests {
             result
         );
 
-        std::env::remove_var("AUTOTEST_TOKEN");
+        // SAFETY: 测试环境，单线程执行
+        unsafe { std::env::remove_var("AUTOTEST_TOKEN") };
     }
 
     // ── compute_backoff 测试 ───────────────────────────────────

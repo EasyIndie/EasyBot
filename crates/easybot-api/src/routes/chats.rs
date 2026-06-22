@@ -2,8 +2,8 @@
 
 use crate::AppState;
 use axum::{
-    extract::{Path, State},
     Json,
+    extract::{Path, State},
 };
 
 /// 获取指定平台的聊天列表

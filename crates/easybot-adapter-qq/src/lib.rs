@@ -7,22 +7,22 @@
 
 mod types;
 
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use async_trait::async_trait;
 use easybot_core::bus::EventBus;
 use easybot_core::types::adapter::*;
 use easybot_core::types::error::GatewayError;
-use easybot_core::types::event::event_types;
 use easybot_core::types::event::GatewayEvent;
+use easybot_core::types::event::event_types;
 use easybot_core::types::message::*;
 use futures::{SinkExt, StreamExt};
 use tokio::sync::broadcast;
-use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::MaybeTlsStream;
+use tokio_tungstenite::tungstenite::Message;
 use types::*;
 
 /// QQ API 基础 URL（正式环境）
@@ -465,12 +465,12 @@ impl QqAdapter {
     ) {
         loop {
             // 每次重连前刷新 access token
-            if token_store.needs_refresh() {
-                if let Err(e) = token_store.refresh().await {
-                    tracing::error!("QQ token refresh failed: {}, retry 30s", e);
-                    tokio::time::sleep(Duration::from_secs(30)).await;
-                    continue;
-                }
+            if token_store.needs_refresh()
+                && let Err(e) = token_store.refresh().await
+            {
+                tracing::error!("QQ token refresh failed: {}, retry 30s", e);
+                tokio::time::sleep(Duration::from_secs(30)).await;
+                continue;
             }
 
             // 获取 Gateway URL
@@ -507,12 +507,11 @@ impl QqAdapter {
                             Ok(p) => p,
                             Err(_) => continue,
                         };
-                        if p.op == 10 {
-                            if let Some(d) = p.d {
-                                if let Ok(h) = serde_json::from_value::<HelloData>(d) {
-                                    break h;
-                                }
-                            }
+                        if p.op == 10
+                            && let Some(d) = p.d
+                            && let Ok(h) = serde_json::from_value::<HelloData>(d)
+                        {
+                            break h;
                         }
                     }
                     _ => {
@@ -886,7 +885,7 @@ fn publish_send_event(
     chat_id: &str,
     result: &SendResult,
 ) {
-    if let Some(ref bus) = event_bus {
+    if let Some(bus) = event_bus {
         bus.publish(GatewayEvent::new(
             event_type,
             "qq",
@@ -1457,10 +1456,12 @@ mod tests {
     #[test]
     fn test_capabilities() {
         let adapter = QqAdapter::new();
-        assert!(adapter
-            .capabilities()
-            .iter()
-            .any(|c| c.name == CapabilityName::Text && c.supported));
+        assert!(
+            adapter
+                .capabilities()
+                .iter()
+                .any(|c| c.name == CapabilityName::Text && c.supported)
+        );
     }
 
     #[tokio::test]

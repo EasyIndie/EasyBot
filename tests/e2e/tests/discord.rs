@@ -10,8 +10,8 @@ use e2e_tests::{
     auth_get, auth_post, build_router, create_core, default_gateway_config, public_get,
     start_and_connect,
 };
-use easybot_core::types::adapter::AdapterConfig;
 use easybot_core::PlatformAdapter;
+use easybot_core::types::adapter::AdapterConfig;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 

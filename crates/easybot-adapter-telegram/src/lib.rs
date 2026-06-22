@@ -8,17 +8,17 @@
 
 mod types;
 
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use async_trait::async_trait;
 use easybot_core::bus::EventBus;
 use easybot_core::types::adapter::*;
 use easybot_core::types::error::GatewayError;
-use easybot_core::types::event::event_types;
 use easybot_core::types::event::GatewayEvent;
+use easybot_core::types::event::event_types;
 use easybot_core::types::message::*;
 use tokio::sync::broadcast;
 use types::*;
@@ -293,8 +293,8 @@ impl TelegramAdapter {
                                 if update.update_id >= offset {
                                     offset = update.update_id + 1;
                                 }
-                                if let Some(tg_msg) = update.message {
-                                    if let Some(inbound) = Self::convert_message(tg_msg) {
+                                if let Some(tg_msg) = update.message
+                                    && let Some(inbound) = Self::convert_message(tg_msg) {
                                         let event = GatewayEvent::new(
                                             easybot_core::types::event::event_types::MESSAGE_INBOUND,
                                             "telegram",
@@ -302,7 +302,6 @@ impl TelegramAdapter {
                                         );
                                         event_bus.publish(event);
                                     }
-                                }
                             }
                         }
                         Err(e) => {
@@ -367,7 +366,7 @@ fn publish_send_event(
     chat_id: &str,
     result: &SendResult,
 ) {
-    if let Some(ref bus) = event_bus {
+    if let Some(bus) = event_bus {
         bus.publish(GatewayEvent::new(
             event_type,
             "telegram",
@@ -542,11 +541,11 @@ impl PlatformAdapter for TelegramAdapter {
         }
 
         // 平台特定参数
-        if let Some(meta) = &params.metadata {
-            if let Some(obj) = meta.as_object() {
-                for (k, v) in obj {
-                    body[k] = v.clone();
-                }
+        if let Some(meta) = &params.metadata
+            && let Some(obj) = meta.as_object()
+        {
+            for (k, v) in obj {
+                body[k] = v.clone();
             }
         }
 
@@ -1047,10 +1046,12 @@ mod tests {
     #[test]
     fn test_capabilities() {
         let adapter = TelegramAdapter::new();
-        assert!(adapter
-            .capabilities()
-            .iter()
-            .any(|c| c.name == CapabilityName::Text));
+        assert!(
+            adapter
+                .capabilities()
+                .iter()
+                .any(|c| c.name == CapabilityName::Text)
+        );
     }
 
     #[test]

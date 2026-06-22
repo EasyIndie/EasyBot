@@ -83,7 +83,7 @@ pub trait MessageStore: Send + Sync {
 
     /// 列出消息（支持过滤/分页）
     async fn list_messages(&self, filter: &MessageFilter)
-        -> Result<Vec<StoredMessage>, StoreError>;
+    -> Result<Vec<StoredMessage>, StoreError>;
 
     /// 删除单条消息
     async fn delete_message(&self, id: &str) -> Result<bool, StoreError>;

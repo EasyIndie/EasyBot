@@ -264,10 +264,10 @@ mod tests {
 
         let mut data = make_event_data("group", "text", r#"{"text":"fallback"}"#);
         // 非法时间戳
-        if let Some(msg) = data.get_mut("message") {
-            if let Some(obj) = msg.as_object_mut() {
-                obj.insert("create_time".to_string(), serde_json::json!("not_a_number"));
-            }
+        if let Some(msg) = data.get_mut("message")
+            && let Some(obj) = msg.as_object_mut()
+        {
+            obj.insert("create_time".to_string(), serde_json::json!("not_a_number"));
         }
         handle_message_receive(data, &bus, "bot_id").await;
 

@@ -149,10 +149,11 @@ impl WebhookDispatcher {
             }
 
             // 检查平台是否匹配
-            if let Some(ref platforms) = wh.platforms {
-                if !platforms.is_empty() && !platforms.contains(&platform.to_string()) {
-                    continue;
-                }
+            if let Some(ref platforms) = wh.platforms
+                && !platforms.is_empty()
+                && !platforms.contains(&platform.to_string())
+            {
+                continue;
             }
 
             // 构造签名头
@@ -183,10 +184,7 @@ impl WebhookDispatcher {
                     if status.is_success() {
                         trace!(
                             "Webhook '{}' delivered event '{}' to {} (status {})",
-                            wh.name,
-                            event_type,
-                            wh.url,
-                            status,
+                            wh.name, event_type, wh.url, status,
                         );
                     } else {
                         warn!(
@@ -213,10 +211,10 @@ mod tests {
     use wiremock::matchers::{header, method};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    use super::{hex_encode, WebhookDispatcher};
+    use super::{WebhookDispatcher, hex_encode};
     use crate::types::config::WebhookConfig;
-    use crate::types::event::event_types::MESSAGE_INBOUND;
     use crate::types::event::GatewayEvent;
+    use crate::types::event::event_types::MESSAGE_INBOUND;
 
     /// 辅助：创建测试事件
     fn test_event() -> GatewayEvent {

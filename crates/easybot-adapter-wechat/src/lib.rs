@@ -25,8 +25,8 @@
 //! - 仅支持 DM（一对一聊天），不支持群聊
 //! - 不支持 Markdown、贴纸、小程序消息
 
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -623,7 +623,7 @@ fn pkcs7_pad(data: &[u8], block_size: usize) -> Vec<u8> {
 
 /// AES-128-ECB 加密
 fn aes_128_ecb_encrypt(plaintext: &[u8], key: &[u8; 16]) -> Vec<u8> {
-    use aes::cipher::{generic_array::GenericArray, BlockEncrypt, KeyInit};
+    use aes::cipher::{BlockEncrypt, KeyInit, generic_array::GenericArray};
 
     let cipher = aes::Aes128::new_from_slice(key).expect("AES-128 key must be 16 bytes");
     let padded = pkcs7_pad(plaintext, 16);
@@ -740,7 +740,7 @@ fn publish_send_event(
     chat_id: &str,
     result: &SendResult,
 ) {
-    if let Some(ref bus) = event_bus {
+    if let Some(bus) = event_bus {
         bus.publish(easybot_core::types::event::GatewayEvent::new(
             event_type,
             "wechat",
@@ -792,13 +792,13 @@ impl PlatformAdapter for WeChatAdapter {
         }
 
         // 如果配置中没有但磁盘上有保存的凭据，自动加载
-        if self.bot_token.read().await.is_none() {
-            if let Some(creds) = load_credentials_from_disk() {
-                tracing::info!("个人微信适配器：从磁盘加载保存的凭据");
-                *self.bot_token.write().await = Some(creds.bot_token);
-                *self.ilink_bot_id.write().await = Some(creds.ilink_bot_id);
-                *self.ilink_user_id.write().await = Some(creds.ilink_user_id);
-            }
+        if self.bot_token.read().await.is_none()
+            && let Some(creds) = load_credentials_from_disk()
+        {
+            tracing::info!("个人微信适配器：从磁盘加载保存的凭据");
+            *self.bot_token.write().await = Some(creds.bot_token);
+            *self.ilink_bot_id.write().await = Some(creds.ilink_bot_id);
+            *self.ilink_user_id.write().await = Some(creds.ilink_user_id);
         }
 
         self.state = AdapterState::Starting;
@@ -1137,23 +1137,23 @@ impl PlatformAdapter for WeChatAdapter {
         })?;
 
         // ret 存在且非 0 时报告错误
-        if let Some(ret) = resp.ret {
-            if ret != 0 {
-                self.errors.fetch_add(1, Ordering::Relaxed);
-                let err_detail = resp.errmsg.as_deref().unwrap_or("unknown error");
-                tracing::warn!("WeChat send API error: ret={}, errmsg={}", ret, err_detail);
-                let fail = SendResult::fail(
-                    format!("WeChat API error (ret={}): {}", ret, err_detail),
-                    false,
-                );
-                publish_send_event(
-                    &self.event_bus,
-                    easybot_core::types::event::event_types::MESSAGE_FAILED,
-                    &params.chat_id,
-                    &fail,
-                );
-                return Ok(fail);
-            }
+        if let Some(ret) = resp.ret
+            && ret != 0
+        {
+            self.errors.fetch_add(1, Ordering::Relaxed);
+            let err_detail = resp.errmsg.as_deref().unwrap_or("unknown error");
+            tracing::warn!("WeChat send API error: ret={}, errmsg={}", ret, err_detail);
+            let fail = SendResult::fail(
+                format!("WeChat API error (ret={}): {}", ret, err_detail),
+                false,
+            );
+            publish_send_event(
+                &self.event_bus,
+                easybot_core::types::event::event_types::MESSAGE_FAILED,
+                &params.chat_id,
+                &fail,
+            );
+            return Ok(fail);
         }
 
         self.messages_out.fetch_add(1, Ordering::Relaxed);
@@ -1344,27 +1344,27 @@ impl PlatformAdapter for WeChatAdapter {
             ))
         })?;
 
-        if let Some(ret) = resp.ret {
-            if ret != 0 {
-                self.errors.fetch_add(1, Ordering::Relaxed);
-                let err_detail = resp.errmsg.as_deref().unwrap_or("unknown error");
-                tracing::warn!(
-                    "WeChat send_media API error: ret={}, errmsg={}",
-                    ret,
-                    err_detail
-                );
-                let fail = SendResult::fail(
-                    format!("WeChat API error (ret={}): {}", ret, err_detail),
-                    false,
-                );
-                publish_send_event(
-                    &self.event_bus,
-                    easybot_core::types::event::event_types::MESSAGE_FAILED,
-                    &params.chat_id,
-                    &fail,
-                );
-                return Ok(fail);
-            }
+        if let Some(ret) = resp.ret
+            && ret != 0
+        {
+            self.errors.fetch_add(1, Ordering::Relaxed);
+            let err_detail = resp.errmsg.as_deref().unwrap_or("unknown error");
+            tracing::warn!(
+                "WeChat send_media API error: ret={}, errmsg={}",
+                ret,
+                err_detail
+            );
+            let fail = SendResult::fail(
+                format!("WeChat API error (ret={}): {}", ret, err_detail),
+                false,
+            );
+            publish_send_event(
+                &self.event_bus,
+                easybot_core::types::event::event_types::MESSAGE_FAILED,
+                &params.chat_id,
+                &fail,
+            );
+            return Ok(fail);
         }
 
         self.messages_out.fetch_add(1, Ordering::Relaxed);
@@ -1417,11 +1417,11 @@ impl Default for WeChatAdapter {
 
 /// 清除保存的凭据（检测到 session 过期时调用）
 fn clear_credentials() {
-    if let Some(path) = credential_path() {
-        if path.exists() {
-            let _ = std::fs::remove_file(&path);
-            tracing::warn!("个人微信凭据已清除（可能已过期），文件: {:?}", path);
-        }
+    if let Some(path) = credential_path()
+        && path.exists()
+    {
+        let _ = std::fs::remove_file(&path);
+        tracing::warn!("个人微信凭据已清除（可能已过期），文件: {:?}", path);
     }
 }
 
@@ -1870,10 +1870,12 @@ mod tests {
             })
             .await;
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Not authenticated"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Not authenticated")
+        );
     }
 
     #[tokio::test]
@@ -2081,10 +2083,12 @@ mod tests {
             })
             .await;
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Not authenticated"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Not authenticated")
+        );
     }
 
     // ── AES-128-ECB 加密工具函数测试 ──
@@ -2117,7 +2121,7 @@ mod tests {
 
     #[test]
     fn test_aes_128_ecb_encrypt_decrypt_roundtrip() {
-        use aes::cipher::{generic_array::GenericArray, BlockDecrypt, KeyInit};
+        use aes::cipher::{BlockDecrypt, KeyInit, generic_array::GenericArray};
 
         let key: [u8; 16] = [
             0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e,

@@ -8,9 +8,9 @@
 //!   easybot init
 
 use clap::Parser;
-use easybot_core::types::event::{event_types, GatewayEvent};
 #[allow(unused_imports)]
 use easybot_core::PlatformAdapter;
+use easybot_core::types::event::{GatewayEvent, event_types};
 use std::sync::Arc;
 use tracing_subscriber::EnvFilter;
 
@@ -634,6 +634,8 @@ async fn register_builtin_adapters(
     )))]
     {
         let _ = event_bus;
-        tracing::warn!("No adapters enabled (compile with features to enable: adapter-telegram, adapter-discord, adapter-feishu, adapter-qq, adapter-wechat)");
+        tracing::warn!(
+            "No adapters enabled (compile with features to enable: adapter-telegram, adapter-discord, adapter-feishu, adapter-qq, adapter-wechat)"
+        );
     }
 }

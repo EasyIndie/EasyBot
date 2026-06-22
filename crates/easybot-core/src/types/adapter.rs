@@ -3,8 +3,8 @@
 //! 定义 PlatformAdapter trait，所有 IM 平台连接器必须实现此接口。
 //! 包含适配器生命周期、能力声明、消息发送、健康检查等。
 
-use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicI64, Ordering};
 
 use crate::types::error::GatewayError;
 use crate::types::message::*;
@@ -271,10 +271,10 @@ pub trait PlatformAdapter: Send + Sync {
     /// Override this if your adapter needs custom health logic.
     fn health_status(&self) -> HealthStatus {
         if self.state() == AdapterState::Connected {
-            if let Some(age_ms) = self.heartbeat_age_ms() {
-                if age_ms > DEFAULT_LIVENESS_THRESHOLD_MS {
-                    return HealthStatus::Degraded;
-                }
+            if let Some(age_ms) = self.heartbeat_age_ms()
+                && age_ms > DEFAULT_LIVENESS_THRESHOLD_MS
+            {
+                return HealthStatus::Degraded;
             }
             HealthStatus::Healthy
         } else {

@@ -1,7 +1,7 @@
 //! 配置管理路由
 
 use crate::AppState;
-use axum::{extract::State, Json};
+use axum::{Json, extract::State};
 
 /// 获取当前配置
 #[utoipa::path(
