@@ -37,7 +37,7 @@ serde_json = "1"
 serde_yaml = "0.9"
 
 # 数据库
-sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite", "postgres", "chrono", "uuid"] }
+sqlx = { version = "0.9", features = ["runtime-tokio", "sqlite", "postgres", "chrono", "uuid"] }
 
 # 日志
 tracing = "0.1"
