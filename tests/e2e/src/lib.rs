@@ -85,6 +85,7 @@ pub async fn create_core() -> (
 ) {
     let event_bus = Arc::new(EventBus::new());
     let adapter_manager = Arc::new(AdapterManager::new());
+    AdapterManager::init_self_ref(&adapter_manager).await;
     let session_manager = Arc::new(SessionManager::new());
     let pool = SqlitePool::connect(":memory:").await.unwrap();
     run_migrations(&pool).await.unwrap();

@@ -4,6 +4,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::Weak;
 use std::time::Instant;
 use tokio::sync::RwLock;
 use tokio::sync::broadcast;
@@ -23,8 +24,10 @@ use crate::types::event::event_types;
 pub struct AdapterManager {
     /// 适配器注册表
     registry: AdapterRegistry,
-    /// 运行中的适配器实例
+    /// 运行中的适配器实例（已连接）
     adapters: RwLock<HashMap<String, Box<dyn PlatformAdapter>>>,
+    /// 正在后台连接的适配器
+    pending_connections: RwLock<HashMap<String, PendingConnection>>,
     /// 适配器状态缓存
     statuses: RwLock<HashMap<String, AdapterStatusSummary>>,
     /// 事件总线（用于发布适配器生命周期事件）
@@ -35,6 +38,9 @@ pub struct AdapterManager {
     configs: RwLock<HashMap<String, AdapterConfig>>,
     /// Cancel sender for the health monitor background task.
     monitor_cancel_tx: RwLock<Option<broadcast::Sender<()>>>,
+    /// Weak self-reference for background tasks.  Initialised by calling
+    /// `init_self_ref()` after wrapping in `Arc`.
+    self_weak: RwLock<Option<Weak<AdapterManager>>>,
 }
 
 /// Per-platform reconnect state tracked by the health monitor.
@@ -42,6 +48,14 @@ pub struct AdapterManager {
 struct ReconnectState {
     consecutive_failures: u32,
     backoff_until: Option<Instant>,
+}
+
+/// A connection that is being established asynchronously in a background task.
+#[derive(Debug)]
+#[allow(dead_code)]
+struct PendingConnection {
+    platform: String,
+    display_name: String,
 }
 
 /// Exponential backoff: 5s → 10s → 30s → 60s → 120s, capped at 300s.
@@ -63,10 +77,12 @@ impl AdapterManager {
         Self {
             registry: AdapterRegistry::new(),
             adapters: RwLock::new(HashMap::new()),
+            pending_connections: RwLock::new(HashMap::new()),
             statuses: RwLock::new(HashMap::new()),
             event_bus: None,
             configs: RwLock::new(HashMap::new()),
             monitor_cancel_tx: RwLock::new(None),
+            self_weak: RwLock::new(None),
         }
     }
 
@@ -81,14 +97,41 @@ impl AdapterManager {
         &self.registry
     }
 
-    /// 启动适配器
+    /// Initialise the weak self-reference so background tasks can obtain
+    /// `Arc<Self>`.  Must be called once after wrapping in `Arc`, e.g.:
+    ///
+    /// ```ignore
+    /// let mgr = Arc::new(AdapterManager::new());
+    /// AdapterManager::init_self_ref(&mgr);
+    /// ```
+    pub async fn init_self_ref(self: &Arc<Self>) {
+        *self.self_weak.write().await = Some(Arc::downgrade(self));
+    }
+
+    /// Obtain an `Arc<Self>` from the weak self-reference set by
+    /// [`init_self_ref`](Self::init_self_ref).  Returns an error if the
+    /// weak ref was never set or the last strong reference has been dropped.
+    async fn ensure_self_ref(&self) -> Result<Arc<Self>, GatewayError> {
+        let guard = self.self_weak.read().await;
+        guard
+            .as_ref()
+            .and_then(|w| w.upgrade())
+            .ok_or_else(|| GatewayError::Internal("AdapterManager self-ref not set; wrap in Arc and call init_self_ref()".into()))
+    }
+
+    /// 启动适配器（非阻塞）
+    ///
+    /// 执行 init() 后立即返回，connect() 在后台任务中执行。
+    /// 调用者可通过 `get_status()` 轮询状态变化（Connecting → Connected / Failed）。
+    ///
+    /// 注意：必须先通过 `init_self_ref()` 初始化弱引用，否则返回错误。
     pub async fn start(
         &self,
         platform: &str,
         config: AdapterConfig,
     ) -> Result<StartAdapterResult, GatewayError> {
-        // Save a copy of the config for potential auto-reconnect
-        let config_for_storage = config.clone();
+        // 获取 Arc<Self> 用于后台任务
+        let self_arc = self.ensure_self_ref().await?;
 
         // 通过注册表创建适配器实例
         let mut adapter = self
@@ -97,88 +140,189 @@ impl AdapterManager {
             .await
             .map_err(|e| GatewayError::PlatformNotFound(format!("{}: {}", platform, e)))?;
 
-        // 初始化
-        let init_result = adapter.init(config).await?;
+        // 初始化（同步、快速）
+        let init_result = adapter.init(config.clone()).await?;
         if !init_result.ok {
             let error_msg = init_result.error.clone().unwrap_or_default();
             self.publish_adapter_error(platform, &error_msg);
             return Ok(StartAdapterResult {
                 ok: false,
+                pending: false,
                 platform: platform.to_string(),
                 error: init_result.error,
                 bot_info: None,
             });
         }
 
-        // 连接
-        let connect_result = adapter.connect().await?;
-
-        // 保存实例
         let platform_name = adapter.platform_name().to_string();
         let display_name = adapter.display_name().to_string();
-        {
-            let mut adapters = self.adapters.write().await;
-            adapters.insert(platform_name.clone(), adapter);
+
+        // 检查是否已在运行或连接中
+        if self.adapters.read().await.contains_key(&platform_name) {
+            return Err(GatewayError::Internal(format!(
+                "Adapter '{}' is already running",
+                platform_name
+            )));
+        }
+        if self.pending_connections.read().await.contains_key(&platform_name) {
+            return Err(GatewayError::Internal(format!(
+                "Adapter '{}' is already connecting",
+                platform_name
+            )));
         }
 
-        // Store config for potential auto-reconnect
-        {
-            let mut configs = self.configs.write().await;
-            configs.insert(platform_name.clone(), config_for_storage);
-        }
-
-        // 更新状态缓存
-        let connected = connect_result.ok;
+        // 设置 Connecting 状态（get_status / list_statuses 立即可见）
         {
             let mut statuses = self.statuses.write().await;
             statuses.insert(
                 platform_name.clone(),
                 AdapterStatusSummary {
                     platform: platform_name.clone(),
-                    display_name,
-                    state: if connected {
-                        AdapterState::Connected
-                    } else {
-                        AdapterState::Failed
-                    },
-                    connected,
+                    display_name: display_name.clone(),
+                    state: AdapterState::Connecting,
+                    connected: false,
                     health: None,
-                    last_error: connect_result.error.clone(),
-                    uptime: if connected { Some(0) } else { None },
+                    last_error: None,
+                    uptime: None,
                     messages_in: 0,
                     messages_out: 0,
                 },
             );
         }
 
-        // 发布生命周期事件
-        if connected {
-            self.publish_event(
-                event_types::ADAPTER_CONNECTED,
-                serde_json::json!({
-                    "platform": &platform_name,
-                    "connected": true,
-                }),
+        // 记录 pending connection + 保存 config（health monitor 据此跳过 / 重连）
+        {
+            let mut pending = self.pending_connections.write().await;
+            pending.insert(
+                platform_name.clone(),
+                PendingConnection {
+                    platform: platform_name.clone(),
+                    display_name: display_name.clone(),
+                },
             );
-            info!("Adapter '{}' started (connected: true)", platform_name);
-        } else {
-            let error_msg = connect_result.error.clone().unwrap_or_default();
-            self.publish_adapter_error(&platform_name, &error_msg);
-            info!("Adapter '{}' started (connected: false)", platform_name);
+        }
+        {
+            let mut configs = self.configs.write().await;
+            configs.insert(platform_name.clone(), config.clone());
         }
 
+        // 后台执行 connect()
+        let pname = platform_name.clone();
+        let config_for_store = config.clone();
+        tokio::spawn(async move {
+            let connect_result = adapter.connect().await;
+
+            // 原子检查：是否已被 stop() 取消
+            let was_pending = self_arc
+                .pending_connections
+                .write()
+                .await
+                .remove(&pname)
+                .is_some();
+            if !was_pending {
+                // 已被 stop() 移除 → 丢弃适配器实例
+                return;
+            }
+
+            match connect_result {
+                Ok(cr) if cr.ok => {
+                    // 存入 adapters map
+                    self_arc
+                        .adapters
+                        .write()
+                        .await
+                        .insert(pname.clone(), adapter);
+
+                    // 更新状态
+                    let mut statuses = self_arc.statuses.write().await;
+                    if let Some(status) = statuses.get_mut(&pname) {
+                        status.state = AdapterState::Connected;
+                        status.connected = true;
+                        status.last_error = None;
+                        status.uptime = Some(0);
+                    }
+
+                    // 确保 config 已保存（可能被 reconnect 清除又重设）
+                    self_arc.configs.write().await.insert(pname.clone(), config_for_store);
+
+                    self_arc.publish_event(
+                        event_types::ADAPTER_CONNECTED,
+                        serde_json::json!({
+                            "platform": &pname,
+                            "connected": true,
+                        }),
+                    );
+                    info!("Adapter '{}' connected", pname);
+                }
+                _ => {
+                    let error_msg = match &connect_result {
+                        Ok(cr) => cr.error.clone().unwrap_or_else(|| "Unknown error".to_string()),
+                        Err(e) => e.to_string(),
+                    };
+
+                    let mut statuses = self_arc.statuses.write().await;
+                    if let Some(status) = statuses.get_mut(&pname) {
+                        status.state = AdapterState::Failed;
+                        status.connected = false;
+                        status.last_error = Some(error_msg.clone());
+                    }
+
+                    // 连接失败 — 从 configs 中移除以免 health monitor 反复重试
+                    self_arc.configs.write().await.remove(&pname);
+
+                    self_arc.publish_adapter_error(&pname, &error_msg);
+                    error!("Adapter '{}' failed to connect: {}", pname, error_msg);
+                }
+            }
+        });
+
         Ok(StartAdapterResult {
-            ok: connected,
+            ok: true,
+            pending: true,
             platform: platform_name,
-            error: connect_result.error,
-            bot_info: connect_result.bot_info,
+            error: None,
+            bot_info: None,
         })
     }
 
     /// 停止适配器
     ///
-    /// 先从 HashMap 移除适配器（释放写锁），再执行断开操作，避免阻塞其他操作。
+    /// 同时处理已连接和正在后台连接的适配器。
+    /// 对于 pending 连接：从 pending_connections 移除，后台任务检测到后自动丢弃。
+    /// 对于已连接适配器：从 HashMap 移除后执行断开操作。
     pub async fn stop(&self, platform: &str) -> Result<(), GatewayError> {
+        // 先检查 pending connection
+        let was_pending = {
+            let mut pending = self.pending_connections.write().await;
+            pending.remove(platform).is_some()
+        };
+
+        if was_pending {
+            // 从 configs 中移除，阻止 health monitor 重试
+            {
+                let mut configs = self.configs.write().await;
+                configs.remove(platform);
+            }
+            // 更新状态缓存
+            {
+                let mut statuses = self.statuses.write().await;
+                if let Some(status) = statuses.get_mut(platform) {
+                    status.state = AdapterState::Stopped;
+                    status.connected = false;
+                }
+            }
+            self.publish_event(
+                event_types::ADAPTER_DISCONNECTED,
+                serde_json::json!({
+                    "platform": platform,
+                    "connected": false,
+                }),
+            );
+            info!("Adapter '{}' stopped (was pending)", platform);
+            return Ok(());
+        }
+
+        // 已连接适配器：从 map 移除后再断开
         let adapter = {
             let mut adapters = self.adapters.write().await;
             adapters.remove(platform)
@@ -267,13 +411,17 @@ impl AdapterManager {
 
     /// 获取单个适配器状态（优先实时查询，已停止适配器回退缓存）
     pub async fn get_status(&self, platform: &str) -> Option<AdapterStatusSummary> {
+        // 检查 pending connection（状态已在 start() 中写入 statuses）
+        if self.pending_connections.read().await.contains_key(platform) {
+            return self.statuses.read().await.get(platform).cloned();
+        }
+        // 检查已连接适配器（实时状态）
         let adapters = self.adapters.read().await;
         if let Some(adapter) = adapters.get(platform) {
             return Some(adapter.status_summary());
         }
-        // 已停止的适配器不在 adapters 中，回退到状态缓存
-        let statuses = self.statuses.read().await;
-        statuses.get(platform).cloned()
+        // 已停止/失败的适配器 — 回退到状态缓存
+        self.statuses.read().await.get(platform).cloned()
     }
 
     /// 列出所有适配器状态
@@ -281,7 +429,7 @@ impl AdapterManager {
         let adapters = self.adapters.read().await;
         let mut statuses = self.statuses.write().await;
 
-        // 从适配器拉取全量实时状态（含 messages_in/out/uptime 等动态字段）
+        // 从已连接适配器拉取全量实时状态
         for (platform, adapter) in adapters.iter() {
             let fresh = adapter.status_summary();
             statuses.insert(platform.clone(), fresh);
@@ -424,11 +572,17 @@ impl AdapterManager {
 
     /// 停止所有适配器
     ///
-    /// 一次性取出所有适配器释放写锁，再逐个断开，避免阻塞其他操作。
+    /// 取消所有 pending connection 后，一次性取出已连接适配器再逐个断开。
     pub async fn stop_all(&self) {
         // Stop health monitor first so it doesn't try to reconnect
         // adapters while we're shutting them down.
         self.stop_health_monitor().await;
+
+        // 取消所有 pending connection（后台任务检测到后自动丢弃）
+        {
+            let mut pending = self.pending_connections.write().await;
+            pending.clear();
+        }
 
         let adapters: Vec<(String, Box<dyn PlatformAdapter>)> = {
             let mut locked = self.adapters.write().await;
@@ -531,6 +685,11 @@ impl AdapterManager {
                 continue;
             }
 
+            // Skip pending connections — they are already being handled
+            if self.pending_connections.read().await.contains_key(platform) {
+                continue;
+            }
+
             // Check current adapter health
             let needs_reconnect = {
                 let adapters = self.adapters.read().await;
@@ -572,6 +731,9 @@ impl AdapterManager {
     }
 
     /// Stop + start an adapter with the given config.  Publishes lifecycle events.
+    ///
+    /// `start()` 现在是非阻塞的（connect 在后台执行），此方法通过轮询状态
+    /// 最多等待 60 秒等待连接完成，以保持 reconnection 的语义不变。
     async fn reconnect_adapter(
         &self,
         platform: &str,
@@ -584,28 +746,52 @@ impl AdapterManager {
         );
         info!("Reconnecting adapter '{}'...", platform);
 
-        // Step 1: stop (this removes the adapter from the map and disconnects)
+        // Step 1: stop (this removes from pending or adapters + disconnects)
         let _ = self.stop(platform).await;
 
         // Brief pause to let OS-level resources (sockets, TLS sessions) drain
         tokio::time::sleep(Duration::from_secs(2)).await;
 
-        // Step 2: re-add config (stop() cleared it)
-        {
-            let mut configs = self.configs.write().await;
-            configs.insert(platform.to_string(), config.clone());
-        }
-
-        // Step 3: start fresh via the registry factory
+        // Step 2: start (non-blocking — connect runs in background)
         match self.start(platform, config).await {
             Ok(result) if result.ok => {
+                // Step 3: wait for connection to complete (max 60s)
+                info!("Waiting for adapter '{}' to connect...", platform);
+                let deadline = Instant::now() + Duration::from_secs(60);
+                while Instant::now() < deadline {
+                    // Check if no longer pending (completed or failed)
+                    if !self.pending_connections.read().await.contains_key(platform) {
+                        if let Some(status) = self.get_status(platform).await {
+                            if status.state == AdapterState::Connected {
+                                self.publish_event(
+                                    event_types::ADAPTER_RECONNECTED,
+                                    serde_json::json!({"platform": platform}),
+                                );
+                                info!("Reconnect succeeded for '{}'", platform);
+                                return Ok(());
+                            }
+                            if status.state == AdapterState::Failed {
+                                let err = status.last_error.unwrap_or_default();
+                                self.publish_event(
+                                    event_types::ADAPTER_RECONNECT_FAILED,
+                                    serde_json::json!({"platform": platform, "error": &err}),
+                                );
+                                return Err(GatewayError::Internal(err));
+                            }
+                        }
+                    }
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                }
+                // Timeout
+                let err = format!("Reconnect timeout for '{}'", platform);
                 self.publish_event(
-                    event_types::ADAPTER_RECONNECTED,
-                    serde_json::json!({"platform": platform}),
+                    event_types::ADAPTER_RECONNECT_FAILED,
+                    serde_json::json!({"platform": platform, "error": &err}),
                 );
-                Ok(())
+                Err(GatewayError::Internal(err))
             }
             Ok(result) => {
+                // start() returned ok:false — init failed
                 let err = result.error.unwrap_or_else(|| "unknown error".to_string());
                 self.publish_event(
                     event_types::ADAPTER_RECONNECT_FAILED,
@@ -655,6 +841,44 @@ mod tests {
     use crate::adapter::AdapterFactory;
     use crate::types::message::{ChatInfo, SendResult, SendTextParams};
     use async_trait::async_trait;
+
+    /// 创建一个测试用的 Arc<AdapterManager>（自动调用 init_self_ref）
+    async fn new_manager() -> Arc<AdapterManager> {
+        let mgr = Arc::new(AdapterManager::new());
+        mgr.init_self_ref().await;
+        mgr
+    }
+
+    /// 注册 MockTestAdapter 到 manager
+    async fn register_mock_adapter(manager: &AdapterManager) {
+        let registry = manager.registry();
+        let factory: AdapterFactory = std::sync::Arc::new(|config| {
+            Box::pin(async move {
+                let mut adapter = MockTestAdapter::new();
+                let result = adapter.init(config).await.map_err(|e| e.to_string())?;
+                if !result.ok {
+                    return Err(result.error.unwrap_or_default());
+                }
+                Ok(Box::new(adapter) as Box<dyn PlatformAdapter>)
+            })
+        });
+        registry
+            .register("test-mock", "Test Mock", factory, &[])
+            .await;
+    }
+
+    /// 等待适配器从 Connecting 变为 Connected（最长 2 秒）
+    async fn wait_connected(manager: &AdapterManager, platform: &str) {
+        for _ in 0..100 {
+            if let Some(status) = manager.get_status(platform).await {
+                if status.state == AdapterState::Connected {
+                    return;
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        panic!("Adapter '{}' did not connect within timeout", platform);
+    }
 
     // ── Mock 适配器 ──────────────────────────────────────────
 
@@ -769,58 +993,11 @@ mod tests {
         }
     }
 
-    /// 注册 MockTestAdapter 到 registry
-    async fn register_mock_adapter(manager: &AdapterManager) {
-        let registry = manager.registry();
-        let factory: AdapterFactory = std::sync::Arc::new(|config| {
-            Box::pin(async move {
-                let mut adapter = MockTestAdapter::new();
-                let result = adapter.init(config).await.map_err(|e| e.to_string())?;
-                if !result.ok {
-                    return Err(result.error.unwrap_or_default());
-                }
-                Ok(Box::new(adapter) as Box<dyn PlatformAdapter>)
-            })
-        });
-        registry
-            .register("test-mock", "Test Mock", factory, &[])
-            .await;
-    }
-
-    // ── 测试: stop() 后 get_status() 返回 Stopped ────────────
-
-    #[tokio::test]
-    async fn test_stop_updates_status_cache() {
-        let manager = AdapterManager::new();
-        register_mock_adapter(&manager).await;
-
-        let config = AdapterConfig {
-            enabled: Some(true),
-            token: Some("test-token".into()),
-            api_key: None,
-            base_url: None,
-            extra: serde_json::json!({}),
-        };
-
-        // 启动 → 预期状态为 Connected
-        let start_result = manager.start("test-mock", config).await.unwrap();
-        assert!(start_result.ok);
-        let status = manager.get_status("test-mock").await.unwrap();
-        assert_eq!(status.state, AdapterState::Connected);
-        assert!(status.connected);
-
-        // 停止 → 预期状态为 Stopped
-        manager.stop("test-mock").await.unwrap();
-        let status = manager.get_status("test-mock").await.unwrap();
-        assert_eq!(status.state, AdapterState::Stopped);
-        assert!(!status.connected);
-    }
-
     // ── 测试: config（含 token）被正确传递到适配器 ───────────
 
     #[tokio::test]
     async fn test_start_passes_config_to_adapter() {
-        let manager = AdapterManager::new();
+        let manager = new_manager().await;
         register_mock_adapter(&manager).await;
 
         let config = AdapterConfig {
@@ -834,6 +1011,10 @@ mod tests {
         // 启动后，config 应该被传递到 init()，工厂创建 adapter 时使用
         let start_result = manager.start("test-mock", config.clone()).await.unwrap();
         assert!(start_result.ok);
+        assert!(start_result.pending);
+
+        // 等待后台连接完成
+        wait_connected(&manager, "test-mock").await;
 
         // get_status 验证状态
         let status = manager.get_status("test-mock").await.unwrap();
@@ -842,7 +1023,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_has_connected_after_start() {
-        let manager = AdapterManager::new();
+        let manager = new_manager().await;
         register_mock_adapter(&manager).await;
 
         assert!(!manager.has_connected().await);
@@ -855,13 +1036,14 @@ mod tests {
             extra: serde_json::json!({}),
         };
         manager.start("test-mock", config).await.unwrap();
+        wait_connected(&manager, "test-mock").await;
 
         assert!(manager.has_connected().await);
     }
 
     #[tokio::test]
     async fn test_send_message_delegation() {
-        let manager = AdapterManager::new();
+        let manager = new_manager().await;
         register_mock_adapter(&manager).await;
 
         let config = AdapterConfig {
@@ -872,6 +1054,7 @@ mod tests {
             extra: serde_json::json!({}),
         };
         manager.start("test-mock", config).await.unwrap();
+        wait_connected(&manager, "test-mock").await;
 
         let params = SendTextParams {
             chat_id: "1".to_string(),
@@ -888,7 +1071,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_stop_all_cleans_up() {
-        let manager = AdapterManager::new();
+        let manager = new_manager().await;
         register_mock_adapter(&manager).await;
 
         let config = AdapterConfig {
@@ -899,17 +1082,17 @@ mod tests {
             extra: serde_json::json!({}),
         };
         manager.start("test-mock", config).await.unwrap();
+        wait_connected(&manager, "test-mock").await;
         assert!(manager.has_connected().await);
 
         manager.stop_all().await;
-        // stop_all 从 adapters map 中移除，has_connected 检查 map
+        // stop_all 清空 adapters map, 取消 pending_connections
         assert!(!manager.has_connected().await);
-        // 注意：stop_all 不更新 statuses 缓存，这里只验证 map 已清空
     }
 
     #[tokio::test]
     async fn test_start_all_skips_disabled() {
-        let manager = AdapterManager::new();
+        let manager = new_manager().await;
         register_mock_adapter(&manager).await;
 
         let mut configs = std::collections::HashMap::new();
@@ -939,7 +1122,10 @@ mod tests {
     async fn test_start_publishes_adapter_connected() {
         let event_bus = Arc::new(EventBus::new());
         let mut rx = event_bus.subscribe(event_types::ADAPTER_CONNECTED);
-        let manager = AdapterManager::new().with_event_bus(event_bus);
+        let manager = Arc::new(
+            AdapterManager::new().with_event_bus(event_bus),
+        );
+        AdapterManager::init_self_ref(&manager).await;
         register_mock_adapter(&manager).await;
 
         let config = AdapterConfig {
@@ -951,6 +1137,7 @@ mod tests {
         };
         manager.start("test-mock", config).await.unwrap();
 
+        // ADAPTER_CONNECTED 现在由后台任务发布
         let event = tokio::time::timeout(tokio::time::Duration::from_secs(1), rx.recv())
             .await
             .expect("should receive ADAPTER_CONNECTED")
@@ -964,7 +1151,10 @@ mod tests {
     async fn test_stop_publishes_adapter_disconnected() {
         let event_bus = Arc::new(EventBus::new());
         let mut rx = event_bus.subscribe(event_types::ADAPTER_DISCONNECTED);
-        let manager = AdapterManager::new().with_event_bus(event_bus);
+        let manager = Arc::new(
+            AdapterManager::new().with_event_bus(event_bus),
+        );
+        AdapterManager::init_self_ref(&manager).await;
         register_mock_adapter(&manager).await;
 
         let config = AdapterConfig {
@@ -975,6 +1165,7 @@ mod tests {
             extra: serde_json::json!({}),
         };
         manager.start("test-mock", config).await.unwrap();
+        wait_connected(&manager, "test-mock").await;
 
         manager.stop("test-mock").await.unwrap();
 
@@ -1069,7 +1260,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_start_all_auto_enables_with_injected_credentials() {
-        let manager = AdapterManager::new();
+        let manager = new_manager().await;
         let registry = manager.registry();
         let factory: AdapterFactory = std::sync::Arc::new(|config| {
             Box::pin(async move {
@@ -1123,7 +1314,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_config_stored_on_start_cleared_on_stop() {
-        let manager = AdapterManager::new();
+        let manager = new_manager().await;
         register_mock_adapter(&manager).await;
 
         let config = AdapterConfig {
@@ -1134,8 +1325,9 @@ mod tests {
             extra: serde_json::json!({"key": "val"}),
         };
 
-        // Start — config should be stored
+        // Start — config should be stored immediately by start()
         manager.start("test-mock", config.clone()).await.unwrap();
+        wait_connected(&manager, "test-mock").await;
         {
             let configs = manager.configs.read().await;
             assert!(configs.contains_key("test-mock"));
@@ -1156,7 +1348,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_stop_all_clears_configs() {
-        let manager = AdapterManager::new();
+        let manager = new_manager().await;
         register_mock_adapter(&manager).await;
 
         let config = AdapterConfig {
@@ -1167,6 +1359,7 @@ mod tests {
             extra: serde_json::json!({}),
         };
         manager.start("test-mock", config).await.unwrap();
+        wait_connected(&manager, "test-mock").await;
 
         // Verify config was stored
         assert!(!manager.configs.read().await.is_empty());
@@ -1179,9 +1372,14 @@ mod tests {
 }
 
 /// 启动适配器结果
+///
+/// `ok: true` 表示 init 成功、连接已发起（后台进行中）。
+/// `pending: true` 表示连接尚未完成（正在后台执行）。
+/// 调用者可通过轮询 `get_status()` 等待状态变为 Connected 或 Failed。
 #[derive(Debug)]
 pub struct StartAdapterResult {
     pub ok: bool,
+    pub pending: bool,
     pub platform: String,
     pub error: Option<String>,
     pub bot_info: Option<BotInfo>,

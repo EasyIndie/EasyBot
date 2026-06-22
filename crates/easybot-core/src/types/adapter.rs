@@ -55,6 +55,7 @@ pub struct CapabilityLimits {
 pub enum AdapterState {
     Created,
     Starting,
+    Connecting,
     Connected,
     Reconnecting,
     Failed,

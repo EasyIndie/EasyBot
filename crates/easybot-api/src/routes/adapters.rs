@@ -84,6 +84,7 @@ pub async fn start_adapter(
     match state.adapter_manager.start(&platform, adapter_config).await {
         Ok(result) => Json(serde_json::json!({
             "ok": result.ok,
+            "pending": result.pending,
             "platform": result.platform,
             "error": result.error,
         })),

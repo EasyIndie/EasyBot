@@ -216,6 +216,8 @@ async fn main() -> anyhow::Result<()> {
 
     let adapter_manager =
         Arc::new(easybot_core::adapter::AdapterManager::new().with_event_bus(event_bus.clone()));
+    // 初始化自引用，使后台任务能安全持有 Arc<AdapterManager>
+    easybot_core::adapter::AdapterManager::init_self_ref(&adapter_manager).await;
     let auth_manager = Arc::new(easybot_core::auth::ApiKeyManager::new());
 
     // 注册内置适配器
@@ -234,21 +236,6 @@ async fn main() -> anyhow::Result<()> {
             Err(e) => tracing::warn!("Failed to create dev API key: {}", e),
         }
     }
-
-    // 启动适配器
-    let start_result = adapter_manager.start_all(config.adapters.clone()).await;
-    if !start_result.succeeded.is_empty() {
-        tracing::info!("Started adapters: {:?}", start_result.succeeded);
-    }
-    if !start_result.failed.is_empty() {
-        tracing::warn!("Failed adapters: {:?}", start_result.failed);
-    }
-
-    // 启动适配器健康监控（30 秒间隔自动检测并重连不健康的适配器）
-    adapter_manager
-        .start_health_monitor(tokio::time::Duration::from_secs(30))
-        .await;
-    tracing::info!("Adapter health monitor started");
 
     // 启动会话桥接器（入站消息 → 自动创建会话）
     easybot_core::session::SessionBridge::start(event_bus.clone(), session_manager.clone());
@@ -276,6 +263,9 @@ async fn main() -> anyhow::Result<()> {
         tracing::info!("Prometheus metrics disabled");
         None
     };
+
+    // 提前暂存适配器配置（config 稍后会被移动进 AppState）
+    let adapters_config = config.adapters.clone();
 
     // 创建配置管理器（用于热重载）
     // 优先使用 --config 指定的路径，否则使用默认配置路径
@@ -327,6 +317,21 @@ async fn main() -> anyhow::Result<()> {
         60,
     );
     tracing::info!("Config file watcher started (polling every 60s)");
+
+    // 后台启动适配器和健康监控（不阻塞 HTTP 服务）
+    let am = adapter_manager.clone();
+    let cfg = adapters_config;
+    tokio::spawn(async move {
+        let start_result = am.start_all(cfg).await;
+        if !start_result.succeeded.is_empty() {
+            tracing::info!("Started adapters: {:?}", start_result.succeeded);
+        }
+        if !start_result.failed.is_empty() {
+            tracing::warn!("Failed adapters: {:?}", start_result.failed);
+        }
+        am.start_health_monitor(tokio::time::Duration::from_secs(30)).await;
+        tracing::info!("Adapter health monitor started");
+    });
 
     // 启动 TTL 保留清理 worker（服务器启动后运行，避免启动时争用）
     if let Some(session_store) = ttl_session_store {
