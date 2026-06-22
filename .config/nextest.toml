@@ -5,7 +5,7 @@
 [profile.default]
 # Run tests in parallel (default: max 1 test per binary at a time)
 # "os" = number of logical CPUs
-test-threads = "os"
+test-threads = "num-cpus"
 
 # Show slowest tests after run
 slow-timeout = { period = "60s", max-occurrences = 5 }

@@ -169,6 +169,9 @@ jobs:
         with:
           tool: cargo-llvm-cov
 
+      - name: Build mock-adapter
+        run: cargo build -p mock-adapter --locked
+
       - name: Generate code coverage
         run: cargo llvm-cov --workspace --lcov --output-path lcov.info --locked
 

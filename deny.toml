@@ -6,7 +6,11 @@
 vulnerability = "deny"
 unmaintained = "warn"
 notice = "warn"
-ignore = []
+ignore = [
+    # rustls-pemfile is unmaintained (RUSTSEC-2025-0134)
+    # Pinned by transitive deps (rustls, aws-lc-rs); awaiting upstream migration
+    "RUSTSEC-2025-0134",
+]
 
 [licenses]
 unlicensed = "deny"
