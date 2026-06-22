@@ -118,6 +118,9 @@ jobs:
         with:
           tool: cargo-nextest
 
+      - name: Build (full features)
+        run: cargo build --workspace --features "full,plugin-system" --locked
+
       - name: Build mock-adapter
         run: cargo build -p mock-adapter --locked
 
