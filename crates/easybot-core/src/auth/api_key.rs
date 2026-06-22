@@ -125,9 +125,10 @@ impl ApiKeyManager {
         }
 
         if let Some(expires) = stored.info.expires_at
-            && chrono::Utc::now().timestamp_millis() > expires {
-                return Err("API key has expired".to_string());
-            }
+            && chrono::Utc::now().timestamp_millis() > expires
+        {
+            return Err("API key has expired".to_string());
+        }
 
         // 提前克隆所需数据，释放锁
         let auth_info = AuthInfo {

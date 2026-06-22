@@ -25,6 +25,8 @@ dotenvy.workspace = true
 anyhow.workspace = true
 argon2.workspace = true
 rand_core = { version = "0.9", features = ["os_rng"] }
+# rand_core 0.6 via password-hash: OsRng needs getrandom feature
+rand_core_06 = { package = "rand_core", version = "0.6", features = ["getrandom"] }
 sha2.workspace = true
 hmac.workspace = true
 reqwest.workspace = true

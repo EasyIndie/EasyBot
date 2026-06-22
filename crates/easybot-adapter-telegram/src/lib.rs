@@ -542,11 +542,12 @@ impl PlatformAdapter for TelegramAdapter {
 
         // 平台特定参数
         if let Some(meta) = &params.metadata
-            && let Some(obj) = meta.as_object() {
-                for (k, v) in obj {
-                    body[k] = v.clone();
-                }
+            && let Some(obj) = meta.as_object()
+        {
+            for (k, v) in obj {
+                body[k] = v.clone();
             }
+        }
 
         let result: TelegramMessage = match self.api_call("sendMessage", Some(body)).await {
             Ok(msg) => msg,

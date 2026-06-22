@@ -394,10 +394,11 @@ impl AdapterManager {
         // 最后一个凭据变量 → token（惯例：ID 在前，Secret/Token 在后）
         if config.token.is_none()
             && let Some(last_var) = env_vars.last()
-                && let Ok(val) = std::env::var(last_var)
-                    && !val.is_empty() {
-                        config.token = Some(val);
-                    }
+            && let Ok(val) = std::env::var(last_var)
+            && !val.is_empty()
+        {
+            config.token = Some(val);
+        }
 
         // 所有凭据变量 → extra（key: 去掉平台前缀，小写）
         let prefix = platform.to_uppercase() + "_";
@@ -411,11 +412,12 @@ impl AdapterManager {
                 .unwrap_or(var_name)
                 .to_lowercase();
             if let Ok(val) = std::env::var(var_name)
-                && !val.is_empty() {
-                    extra_map
-                        .entry(key)
-                        .or_insert(serde_json::Value::String(val));
-                }
+                && !val.is_empty()
+            {
+                extra_map
+                    .entry(key)
+                    .or_insert(serde_json::Value::String(val));
+            }
         }
         config.extra = serde_json::Value::Object(extra_map);
     }
@@ -524,9 +526,10 @@ impl AdapterManager {
 
             // Respect backoff window
             if let Some(until) = state.backoff_until
-                && Instant::now() < until {
-                    continue;
-                }
+                && Instant::now() < until
+            {
+                continue;
+            }
 
             // Check current adapter health
             let needs_reconnect = {

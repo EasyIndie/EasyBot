@@ -793,12 +793,13 @@ impl PlatformAdapter for WeChatAdapter {
 
         // 如果配置中没有但磁盘上有保存的凭据，自动加载
         if self.bot_token.read().await.is_none()
-            && let Some(creds) = load_credentials_from_disk() {
-                tracing::info!("个人微信适配器：从磁盘加载保存的凭据");
-                *self.bot_token.write().await = Some(creds.bot_token);
-                *self.ilink_bot_id.write().await = Some(creds.ilink_bot_id);
-                *self.ilink_user_id.write().await = Some(creds.ilink_user_id);
-            }
+            && let Some(creds) = load_credentials_from_disk()
+        {
+            tracing::info!("个人微信适配器：从磁盘加载保存的凭据");
+            *self.bot_token.write().await = Some(creds.bot_token);
+            *self.ilink_bot_id.write().await = Some(creds.ilink_bot_id);
+            *self.ilink_user_id.write().await = Some(creds.ilink_user_id);
+        }
 
         self.state = AdapterState::Starting;
         Ok(InitResult {
@@ -1137,22 +1138,23 @@ impl PlatformAdapter for WeChatAdapter {
 
         // ret 存在且非 0 时报告错误
         if let Some(ret) = resp.ret
-            && ret != 0 {
-                self.errors.fetch_add(1, Ordering::Relaxed);
-                let err_detail = resp.errmsg.as_deref().unwrap_or("unknown error");
-                tracing::warn!("WeChat send API error: ret={}, errmsg={}", ret, err_detail);
-                let fail = SendResult::fail(
-                    format!("WeChat API error (ret={}): {}", ret, err_detail),
-                    false,
-                );
-                publish_send_event(
-                    &self.event_bus,
-                    easybot_core::types::event::event_types::MESSAGE_FAILED,
-                    &params.chat_id,
-                    &fail,
-                );
-                return Ok(fail);
-            }
+            && ret != 0
+        {
+            self.errors.fetch_add(1, Ordering::Relaxed);
+            let err_detail = resp.errmsg.as_deref().unwrap_or("unknown error");
+            tracing::warn!("WeChat send API error: ret={}, errmsg={}", ret, err_detail);
+            let fail = SendResult::fail(
+                format!("WeChat API error (ret={}): {}", ret, err_detail),
+                false,
+            );
+            publish_send_event(
+                &self.event_bus,
+                easybot_core::types::event::event_types::MESSAGE_FAILED,
+                &params.chat_id,
+                &fail,
+            );
+            return Ok(fail);
+        }
 
         self.messages_out.fetch_add(1, Ordering::Relaxed);
 
@@ -1343,26 +1345,27 @@ impl PlatformAdapter for WeChatAdapter {
         })?;
 
         if let Some(ret) = resp.ret
-            && ret != 0 {
-                self.errors.fetch_add(1, Ordering::Relaxed);
-                let err_detail = resp.errmsg.as_deref().unwrap_or("unknown error");
-                tracing::warn!(
-                    "WeChat send_media API error: ret={}, errmsg={}",
-                    ret,
-                    err_detail
-                );
-                let fail = SendResult::fail(
-                    format!("WeChat API error (ret={}): {}", ret, err_detail),
-                    false,
-                );
-                publish_send_event(
-                    &self.event_bus,
-                    easybot_core::types::event::event_types::MESSAGE_FAILED,
-                    &params.chat_id,
-                    &fail,
-                );
-                return Ok(fail);
-            }
+            && ret != 0
+        {
+            self.errors.fetch_add(1, Ordering::Relaxed);
+            let err_detail = resp.errmsg.as_deref().unwrap_or("unknown error");
+            tracing::warn!(
+                "WeChat send_media API error: ret={}, errmsg={}",
+                ret,
+                err_detail
+            );
+            let fail = SendResult::fail(
+                format!("WeChat API error (ret={}): {}", ret, err_detail),
+                false,
+            );
+            publish_send_event(
+                &self.event_bus,
+                easybot_core::types::event::event_types::MESSAGE_FAILED,
+                &params.chat_id,
+                &fail,
+            );
+            return Ok(fail);
+        }
 
         self.messages_out.fetch_add(1, Ordering::Relaxed);
 
@@ -1415,10 +1418,11 @@ impl Default for WeChatAdapter {
 /// 清除保存的凭据（检测到 session 过期时调用）
 fn clear_credentials() {
     if let Some(path) = credential_path()
-        && path.exists() {
-            let _ = std::fs::remove_file(&path);
-            tracing::warn!("个人微信凭据已清除（可能已过期），文件: {:?}", path);
-        }
+        && path.exists()
+    {
+        let _ = std::fs::remove_file(&path);
+        tracing::warn!("个人微信凭据已清除（可能已过期），文件: {:?}", path);
+    }
 }
 
 #[allow(clippy::too_many_arguments)]

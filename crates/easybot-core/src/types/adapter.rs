@@ -272,9 +272,10 @@ pub trait PlatformAdapter: Send + Sync {
     fn health_status(&self) -> HealthStatus {
         if self.state() == AdapterState::Connected {
             if let Some(age_ms) = self.heartbeat_age_ms()
-                && age_ms > DEFAULT_LIVENESS_THRESHOLD_MS {
-                    return HealthStatus::Degraded;
-                }
+                && age_ms > DEFAULT_LIVENESS_THRESHOLD_MS
+            {
+                return HealthStatus::Degraded;
+            }
             HealthStatus::Healthy
         } else {
             HealthStatus::Down

@@ -466,11 +466,12 @@ impl QqAdapter {
         loop {
             // 每次重连前刷新 access token
             if token_store.needs_refresh()
-                && let Err(e) = token_store.refresh().await {
-                    tracing::error!("QQ token refresh failed: {}, retry 30s", e);
-                    tokio::time::sleep(Duration::from_secs(30)).await;
-                    continue;
-                }
+                && let Err(e) = token_store.refresh().await
+            {
+                tracing::error!("QQ token refresh failed: {}, retry 30s", e);
+                tokio::time::sleep(Duration::from_secs(30)).await;
+                continue;
+            }
 
             // 获取 Gateway URL
             let gw_url = match Self::fetch_gateway_url(&token_store, &base_url).await {
@@ -508,9 +509,10 @@ impl QqAdapter {
                         };
                         if p.op == 10
                             && let Some(d) = p.d
-                                && let Ok(h) = serde_json::from_value::<HelloData>(d) {
-                                    break h;
-                                }
+                            && let Ok(h) = serde_json::from_value::<HelloData>(d)
+                        {
+                            break h;
+                        }
                     }
                     _ => {
                         tokio::time::sleep(Duration::from_secs(1)).await;

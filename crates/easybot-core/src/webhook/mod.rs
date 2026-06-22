@@ -150,9 +150,11 @@ impl WebhookDispatcher {
 
             // 检查平台是否匹配
             if let Some(ref platforms) = wh.platforms
-                && !platforms.is_empty() && !platforms.contains(&platform.to_string()) {
-                    continue;
-                }
+                && !platforms.is_empty()
+                && !platforms.contains(&platform.to_string())
+            {
+                continue;
+            }
 
             // 构造签名头
             let signature = wh.secret.as_ref().map(|secret| {
