@@ -56,10 +56,10 @@ mod tests {
     use std::time::Duration;
 
     use crate::bus::EventBus;
+    use crate::session::SessionManager;
     use crate::session::bridge::SessionBridge;
     use crate::session::message_persister::MessagePersister;
-    use crate::session::SessionManager;
-    use crate::storage::sqlite::{run_migrations, SqliteMessageStore};
+    use crate::storage::sqlite::{SqliteMessageStore, run_migrations};
     use crate::storage::{MessageFilter, MessageStore};
     use crate::types::event::event_types::MESSAGE_INBOUND;
     use crate::types::message::{ChatType, InboundMessage, MessageAuthor};

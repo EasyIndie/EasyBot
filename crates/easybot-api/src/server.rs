@@ -3,12 +3,12 @@
 //! 基于 axum 构建的 HTTP 服务器，提供 REST API 和 WebSocket 端点。
 
 use axum::{
+    Router,
     extract::State,
     http::Request,
     middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::{delete, get, post, put},
-    Router,
 };
 use std::future::Future;
 use std::sync::Arc;
@@ -18,10 +18,10 @@ use tracing::info;
 use utoipa::OpenApi;
 use utoipa_swagger_ui::SwaggerUi;
 
+use crate::AppState;
 use crate::openapi::ApiDoc;
 use crate::response::ApiError;
 use crate::routes;
-use crate::AppState;
 use easybot_core::types::error::GatewayError;
 
 /// API 服务器
@@ -97,7 +97,9 @@ impl Server {
         let addr = format!("{}:{}", self.config.host, self.config.port);
 
         if self.config.tls.enabled {
-            info!("TLS enabled in config. TLS termination should be handled by reverse proxy (nginx/caddy/traefik).");
+            info!(
+                "TLS enabled in config. TLS termination should be handled by reverse proxy (nginx/caddy/traefik)."
+            );
             info!(
                 "Cert: {}, Key: {}",
                 self.config.tls.cert_file, self.config.tls.key_file

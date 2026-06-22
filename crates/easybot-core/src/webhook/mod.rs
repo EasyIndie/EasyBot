@@ -183,10 +183,7 @@ impl WebhookDispatcher {
                     if status.is_success() {
                         trace!(
                             "Webhook '{}' delivered event '{}' to {} (status {})",
-                            wh.name,
-                            event_type,
-                            wh.url,
-                            status,
+                            wh.name, event_type, wh.url, status,
                         );
                     } else {
                         warn!(
@@ -213,10 +210,10 @@ mod tests {
     use wiremock::matchers::{header, method};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    use super::{hex_encode, WebhookDispatcher};
+    use super::{WebhookDispatcher, hex_encode};
     use crate::types::config::WebhookConfig;
-    use crate::types::event::event_types::MESSAGE_INBOUND;
     use crate::types::event::GatewayEvent;
+    use crate::types::event::event_types::MESSAGE_INBOUND;
 
     /// 辅助：创建测试事件
     fn test_event() -> GatewayEvent {

@@ -2,13 +2,13 @@
 //!
 //! 提供创建测试用 AppState 的通用函数。
 
-use easybot_api::{config_manager::ConfigManager, AppState};
+use easybot_api::{AppState, config_manager::ConfigManager};
 use easybot_core::{
     adapter::AdapterManager,
     auth::ApiKeyManager,
     bus::EventBus,
     session::SessionManager,
-    storage::sqlite::{run_migrations, SqliteMessageStore},
+    storage::sqlite::{SqliteMessageStore, run_migrations},
     types::config::{
         ApiConfig, GatewayConfig, MetricsConfig, RateLimitConfig, ServerConfig, TlsConfig,
         WebSocketConfig,

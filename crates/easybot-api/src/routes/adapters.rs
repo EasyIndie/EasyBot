@@ -2,9 +2,9 @@
 
 use crate::AppState;
 use axum::{
+    Json,
     extract::{Path, State},
     http::StatusCode,
-    Json,
 };
 use serde::Serialize;
 use utoipa::ToSchema;

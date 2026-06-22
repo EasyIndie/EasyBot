@@ -7,22 +7,22 @@
 
 mod types;
 
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use async_trait::async_trait;
 use easybot_core::bus::EventBus;
 use easybot_core::types::adapter::*;
 use easybot_core::types::error::GatewayError;
-use easybot_core::types::event::event_types;
 use easybot_core::types::event::GatewayEvent;
+use easybot_core::types::event::event_types;
 use easybot_core::types::message::*;
 use futures::{SinkExt, StreamExt};
 use tokio::sync::broadcast;
-use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::MaybeTlsStream;
+use tokio_tungstenite::tungstenite::Message;
 use types::*;
 
 /// QQ API 基础 URL（正式环境）
@@ -1457,10 +1457,12 @@ mod tests {
     #[test]
     fn test_capabilities() {
         let adapter = QqAdapter::new();
-        assert!(adapter
-            .capabilities()
-            .iter()
-            .any(|c| c.name == CapabilityName::Text && c.supported));
+        assert!(
+            adapter
+                .capabilities()
+                .iter()
+                .any(|c| c.name == CapabilityName::Text && c.supported)
+        );
     }
 
     #[tokio::test]

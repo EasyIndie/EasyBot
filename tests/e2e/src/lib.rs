@@ -11,7 +11,7 @@ use easybot_core::adapter::AdapterManager;
 use easybot_core::auth::ApiKeyManager;
 use easybot_core::bus::EventBus;
 use easybot_core::session::SessionManager;
-use easybot_core::storage::sqlite::{run_migrations, SqliteMessageStore};
+use easybot_core::storage::sqlite::{SqliteMessageStore, run_migrations};
 use easybot_core::types::config::{
     ApiConfig, GatewayConfig, MetricsConfig, RateLimitConfig, ServerConfig, TlsConfig,
     WebSocketConfig,

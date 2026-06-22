@@ -51,9 +51,8 @@ macro_rules! declare_plugin {
         pub unsafe extern "C" fn easybot_plugin_destroy(ptr: *mut std::ffi::c_void) {
             if !ptr.is_null() {
                 // SAFETY: ptr 由 easybot_plugin_create() 的 Box::into_raw 生成，类型匹配
-                let inner: Box<Box<dyn $crate::PlatformAdapter>> = unsafe {
-                    Box::from_raw(ptr as *mut Box<dyn $crate::PlatformAdapter>)
-                };
+                let inner: Box<Box<dyn $crate::PlatformAdapter>> =
+                    unsafe { Box::from_raw(ptr as *mut Box<dyn $crate::PlatformAdapter>) };
                 drop(inner);
             }
         }

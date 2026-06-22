@@ -8,7 +8,7 @@
 
 use easybot_core::bus::EventBus;
 use easybot_core::types::config::GatewayConfig;
-use easybot_core::types::event::{event_types, GatewayEvent};
+use easybot_core::types::event::{GatewayEvent, event_types};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::SystemTime;

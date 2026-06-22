@@ -7,16 +7,16 @@
 mod event;
 mod types;
 
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use async_trait::async_trait;
 use easybot_core::bus::EventBus;
 use easybot_core::types::adapter::*;
 use easybot_core::types::error::GatewayError;
-use easybot_core::types::event::event_types;
 use easybot_core::types::event::GatewayEvent;
+use easybot_core::types::event::event_types;
 use easybot_core::types::message::*;
 use larksuite_oapi_sdk_rs::{Client, EventDispatcher};
 use tokio::sync::broadcast;
@@ -910,15 +910,18 @@ mod tests {
     fn test_capabilities() {
         let adapter = FeishuAdapter::new();
         let caps = adapter.capabilities();
-        assert!(caps
-            .iter()
-            .any(|c| c.name == CapabilityName::Text && c.supported));
-        assert!(caps
-            .iter()
-            .any(|c| c.name == CapabilityName::Group && c.supported));
-        assert!(caps
-            .iter()
-            .any(|c| c.name == CapabilityName::MessageEdit && c.supported));
+        assert!(
+            caps.iter()
+                .any(|c| c.name == CapabilityName::Text && c.supported)
+        );
+        assert!(
+            caps.iter()
+                .any(|c| c.name == CapabilityName::Group && c.supported)
+        );
+        assert!(
+            caps.iter()
+                .any(|c| c.name == CapabilityName::MessageEdit && c.supported)
+        );
     }
 
     #[test]

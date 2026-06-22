@@ -5,8 +5,8 @@
 //! Phase 4: 从 SHA-256 升级到 argon2id (PHC 格式)
 
 use argon2::password_hash::SaltString;
-use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
 use argon2::password_hash::rand_core::OsRng;
+use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use tokio::sync::RwLock;

@@ -4,8 +4,8 @@
 //! 通过 utoipa 的宏标注自动收集所有端点和类型定义。
 
 use crate::routes;
-use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
 use utoipa::openapi::SecurityRequirement;
+use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
 use utoipa::{Modify, OpenApi};
 
 /// OpenAPI 修改器：添加 Bearer Token 安全方案

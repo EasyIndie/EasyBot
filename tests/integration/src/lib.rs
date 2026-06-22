@@ -7,10 +7,10 @@ mod cli;
 
 #[cfg(test)]
 mod tests {
-    use easybot_core::bus::EventBus;
-    use easybot_core::plugin::*;
     use easybot_core::AdapterConfig;
     use easybot_core::AdapterState;
+    use easybot_core::bus::EventBus;
+    use easybot_core::plugin::*;
     use std::path::PathBuf;
     use std::sync::Arc;
 

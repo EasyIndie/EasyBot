@@ -7,8 +7,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use crate::types::adapter::*;
 use crate::types::BoxFuture;
+use crate::types::adapter::*;
 
 /// 适配器工厂
 ///

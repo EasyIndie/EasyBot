@@ -8,17 +8,17 @@
 
 mod types;
 
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use async_trait::async_trait;
 use easybot_core::bus::EventBus;
 use easybot_core::types::adapter::*;
 use easybot_core::types::error::GatewayError;
-use easybot_core::types::event::event_types;
 use easybot_core::types::event::GatewayEvent;
+use easybot_core::types::event::event_types;
 use easybot_core::types::message::*;
 use tokio::sync::broadcast;
 use types::*;
@@ -1047,10 +1047,12 @@ mod tests {
     #[test]
     fn test_capabilities() {
         let adapter = TelegramAdapter::new();
-        assert!(adapter
-            .capabilities()
-            .iter()
-            .any(|c| c.name == CapabilityName::Text));
+        assert!(
+            adapter
+                .capabilities()
+                .iter()
+                .any(|c| c.name == CapabilityName::Text)
+        );
     }
 
     #[test]

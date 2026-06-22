@@ -25,8 +25,8 @@
 //! - 仅支持 DM（一对一聊天），不支持群聊
 //! - 不支持 Markdown、贴纸、小程序消息
 
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -623,7 +623,7 @@ fn pkcs7_pad(data: &[u8], block_size: usize) -> Vec<u8> {
 
 /// AES-128-ECB 加密
 fn aes_128_ecb_encrypt(plaintext: &[u8], key: &[u8; 16]) -> Vec<u8> {
-    use aes::cipher::{generic_array::GenericArray, BlockEncrypt, KeyInit};
+    use aes::cipher::{BlockEncrypt, KeyInit, generic_array::GenericArray};
 
     let cipher = aes::Aes128::new_from_slice(key).expect("AES-128 key must be 16 bytes");
     let padded = pkcs7_pad(plaintext, 16);
@@ -1870,10 +1870,12 @@ mod tests {
             })
             .await;
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Not authenticated"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Not authenticated")
+        );
     }
 
     #[tokio::test]
@@ -2081,10 +2083,12 @@ mod tests {
             })
             .await;
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Not authenticated"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Not authenticated")
+        );
     }
 
     // ── AES-128-ECB 加密工具函数测试 ──
@@ -2117,7 +2121,7 @@ mod tests {
 
     #[test]
     fn test_aes_128_ecb_encrypt_decrypt_roundtrip() {
-        use aes::cipher::{generic_array::GenericArray, BlockDecrypt, KeyInit};
+        use aes::cipher::{BlockDecrypt, KeyInit, generic_array::GenericArray};
 
         let key: [u8; 16] = [
             0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e,

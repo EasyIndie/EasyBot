@@ -3,8 +3,8 @@
 //! 定义 PlatformAdapter trait，所有 IM 平台连接器必须实现此接口。
 //! 包含适配器生命周期、能力声明、消息发送、健康检查等。
 
-use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicI64, Ordering};
 
 use crate::types::error::GatewayError;
 use crate::types::message::*;

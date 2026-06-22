@@ -5,8 +5,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
-use tokio::sync::broadcast;
 use tokio::sync::RwLock;
+use tokio::sync::broadcast;
 use tokio::time::Duration;
 use tracing::{error, info, warn};
 
@@ -14,8 +14,8 @@ use crate::adapter::registry::AdapterRegistry;
 use crate::bus::EventBus;
 use crate::types::adapter::*;
 use crate::types::error::GatewayError;
-use crate::types::event::event_types;
 use crate::types::event::GatewayEvent;
+use crate::types::event::event_types;
 
 /// 适配器管理器
 ///
