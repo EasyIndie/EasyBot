@@ -30,16 +30,16 @@ jobs:
         run: cargo fmt --all --check
 
       - name: Clippy
-        run: cargo clippy --workspace --features "full,plugin-system" --all-targets -- -D warnings
+        run: cargo clippy --workspace --features "full,plugin-system" --all-targets --locked -- -D warnings
 
       - name: Build
-        run: cargo build --workspace --features "full,plugin-system"
+        run: cargo build --workspace --features "full,plugin-system" --locked
 
       - name: Build mock-adapter
-        run: cargo build -p mock-adapter
+        run: cargo build -p mock-adapter --locked
 
       - name: Test
-        run: cargo test --workspace --features "full,plugin-system"
+        run: cargo test --workspace --features "full,plugin-system" --locked
 
   # ── Cross-compile release binaries ────────────────────────────
   build-binaries:
@@ -81,7 +81,7 @@ jobs:
         run: sudo apt-get install -y -qq gcc-aarch64-linux-gnu
 
       - name: Build release binary
-        run: cargo build --release --features "full,plugin-system" --target ${{ matrix.target }}
+        run: cargo build --release --features "full,plugin-system" --target ${{ matrix.target }} --locked
 
       - name: Prepare artifact
         shell: bash

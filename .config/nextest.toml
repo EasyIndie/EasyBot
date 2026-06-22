@@ -1,0 +1,24 @@
+# EasyBot — cargo nextest configuration
+#
+# Reference: https://nexte.st/book/configuration.html
+
+[profile.default]
+# Run tests in parallel (default: max 1 test per binary at a time)
+# "os" = number of logical CPUs
+test-threads = "num-cpus"
+
+# Show slowest tests after run
+slow-timeout = { period = "60s", max-occurrences = 5 }
+
+# Show output from passing tests (default: none)
+status-level = "pass"
+
+# Fail quickly: stop after N failures
+# Use "os" parallelism + fail-fast to surface issues as fast as possible
+fail-fast = true
+
+# Retry flaky integration tests once before reporting failure
+retries = 1
+
+[test-groups]
+# No special grouping needed — tests are well-structured

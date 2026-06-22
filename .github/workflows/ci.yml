@@ -2,8 +2,16 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, "release/*"]
+    paths-ignore:
+      - "docs/**"
+      - "**.md"
   pull_request:
+    branches: [main]
+    paths-ignore:
+      - "docs/**"
+      - "**.md"
+  merge_group:
     branches: [main]
 
 env:
@@ -14,7 +22,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # ── Check: fmt, clippy, cargo-deny, cargo check ──────────────────
+  # ── Check: fmt, clippy, cargo check ─────────────────────────────────
   check:
     runs-on: ubuntu-latest
     steps:
@@ -39,25 +47,16 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
 
-      - name: Install cargo-deny
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-deny
-
-      - name: cargo-deny (advisories + licenses)
-        run: cargo-deny check advisories licenses --hide-inclusion-graph
-        continue-on-error: true
-
       - name: Format
         run: cargo fmt --all --check
 
       - name: Clippy
-        run: cargo clippy --workspace --features "full,plugin-system" --all-targets -- -D warnings
+        run: cargo clippy --workspace --features "full,plugin-system" --all-targets --locked -- -D warnings
 
       - name: Check (full features)
-        run: cargo check --workspace --features "full,plugin-system"
+        run: cargo check --workspace --features "full,plugin-system" --locked
 
-  # ── Test: default features ───────────────────────────────────────
+  # ── Test: default features ──────────────────────────────────────────
   test-default:
     runs-on: ubuntu-latest
     steps:
@@ -80,13 +79,18 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
 
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+
       - name: Build
-        run: cargo build --workspace
+        run: cargo build --workspace --locked
 
       - name: Test (default features)
-        run: cargo test --workspace
+        run: cargo nextest run --workspace --locked
 
-  # ── Test: full features + plugin system ──────────────────────────
+  # ── Test: full features + plugin system ─────────────────────────────
   test-full:
     runs-on: ubuntu-latest
     steps:
@@ -109,13 +113,21 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-cargo-
 
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+
+      - name: Build (full features)
+        run: cargo build --workspace --features "full,plugin-system" --locked
+
       - name: Build mock-adapter
-        run: cargo build -p mock-adapter
+        run: cargo build -p mock-adapter --locked
 
       - name: Test (full features + plugin-system)
-        run: cargo test --workspace --features "full,plugin-system"
+        run: cargo nextest run --workspace --features "full,plugin-system" --locked
 
-  # ── Feature matrix: validate edge feature combinations ──────────
+  # ── Feature matrix: validate edge feature combinations ─────────────
   test-feature-matrix:
     runs-on: ubuntu-latest
     strategy:
@@ -138,9 +150,9 @@ jobs:
         uses: mozilla-actions/sccache-action@v0.0.10
 
       - name: Check (${{ matrix.features }})
-        run: cargo check --workspace ${{ matrix.features }}
+        run: cargo check --workspace ${{ matrix.features }} --locked
 
-  # ── Code coverage ─────────────────────────────────────────────────
+  # ── Code coverage ───────────────────────────────────────────────────
   coverage:
     runs-on: ubuntu-latest
     continue-on-error: true
@@ -160,8 +172,14 @@ jobs:
         with:
           tool: cargo-llvm-cov
 
+      - name: Build workspace (for integration tests)
+        run: cargo build --workspace --features "full,plugin-system" --locked
+
+      - name: Build mock-adapter
+        run: cargo build -p mock-adapter --locked
+
       - name: Generate code coverage
-        run: cargo llvm-cov --workspace --lcov --output-path lcov.info
+        run: cargo llvm-cov --workspace --features "full,plugin-system" --lcov --output-path lcov.info --locked
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v6

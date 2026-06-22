@@ -225,14 +225,16 @@ fn test_openapi_has_security_scheme() {
         .spawn()
         .expect("failed to start easybot");
 
-    // Wait for server to start, then fetch openapi.json
-    std::thread::sleep(std::time::Duration::from_secs(2));
+    // Wait for server to start with retry (handles parallel test runner slowdown)
+    let url = format!("http://localhost:{}/openapi.json", port);
+    let resp = loop {
+        match ureq::get(&url).call() {
+            Ok(r) => break r,
+            Err(_) => std::thread::sleep(std::time::Duration::from_millis(1000)),
+        }
+    };
 
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let url = format!("http://localhost:{}/openapi.json", port);
-        let resp = ureq::get(&url)
-            .call()
-            .expect("failed to fetch openapi.json");
         assert_eq!(resp.status(), 200, "openapi.json should return 200");
 
         let mut body = String::new();
