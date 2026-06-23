@@ -7,8 +7,8 @@ use std::sync::Arc;
 
 use axum::Router;
 use e2e_tests::{
-    auth_get, auth_post, build_router, create_core, default_gateway_config, public_get,
-    start_and_connect,
+    auth_delete, auth_get, auth_post, auth_put, build_router, create_core, default_gateway_config,
+    public_get, start_and_connect,
 };
 use easybot_core::PlatformAdapter;
 use easybot_core::types::adapter::AdapterConfig;
@@ -99,6 +99,52 @@ async fn mock_discord_send(mock_server: &MockServer, channel_id: &str, msg_id: &
             "author": { "id": "bot", "username": "Bot", "discriminator": "0000", "bot": true },
             "timestamp": "2026-06-20T12:00:00+00:00"
         })))
+        .expect(0..)
+        .mount(mock_server)
+        .await;
+}
+
+async fn mock_discord_send_media(mock_server: &MockServer, channel_id: &str, msg_id: &str) {
+    Mock::given(method("POST"))
+        .and(path(format!("/channels/{}/messages", channel_id)))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": msg_id,
+            "channel_id": channel_id,
+            "content": "Check this out",
+            "author": { "id": "bot", "username": "Bot", "discriminator": "0000", "bot": true },
+            "timestamp": "2026-06-20T12:00:00+00:00",
+            "attachments": [{"id": "att-1", "filename": "photo.jpg", "url": "https://cdn.discord.com/att/photo.jpg"}]
+        })))
+        .expect(0..)
+        .mount(mock_server)
+        .await;
+}
+
+async fn mock_discord_edit_message(mock_server: &MockServer, channel_id: &str, msg_id: &str) {
+    Mock::given(method("PATCH"))
+        .and(path(format!(
+            "/channels/{}/messages/{}",
+            channel_id, msg_id
+        )))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": msg_id,
+            "channel_id": channel_id,
+            "content": "edited",
+            "author": {"id": "bot", "username": "Bot", "discriminator": "0000", "bot": true},
+            "timestamp": "2026-06-20T12:05:00+00:00"
+        })))
+        .expect(0..)
+        .mount(mock_server)
+        .await;
+}
+
+async fn mock_discord_delete_message(mock_server: &MockServer, channel_id: &str, msg_id: &str) {
+    Mock::given(method("DELETE"))
+        .and(path(format!(
+            "/channels/{}/messages/{}",
+            channel_id, msg_id
+        )))
+        .respond_with(ResponseTemplate::new(204))
         .expect(0..)
         .mount(mock_server)
         .await;
@@ -196,4 +242,130 @@ async fn test_e2e_discord_auth_failure() {
         json["connected"], true,
         "discord should not connect with invalid token"
     );
+}
+
+// ── 媒体消息 ──
+
+#[tokio::test]
+async fn test_e2e_discord_send_media() {
+    let (router, key, mock_server) = setup().await;
+
+    mock_discord_users_me(&mock_server).await;
+    mock_discord_send_media(&mock_server, "dm_channel_123", "msg_discord_media_001").await;
+
+    let conn = start_and_connect(&router, &key, "discord").await;
+    assert!(conn, "discord should connect");
+
+    let (status, json) = auth_post(
+        &router,
+        "/api/v1/messages/send",
+        &key,
+        Some(serde_json::json!({
+            "target": "discord:dm_channel_123",
+            "text": "Check this out",
+            "media": {
+                "media_type": "Image",
+                "data": fixtures::image_base64(),
+                "mime_type": "image/png",
+                "filename": "photo.png"
+            }
+        })),
+    )
+    .await;
+    assert_eq!(status, 200);
+    assert_eq!(json["status"], "sent");
+    assert_eq!(json["messageId"], "msg_discord_media_001");
+}
+
+// ── 交互式消息 ──
+
+#[tokio::test]
+async fn test_e2e_discord_send_interactive() {
+    let (router, key, mock_server) = setup().await;
+
+    mock_discord_users_me(&mock_server).await;
+    mock_discord_send(&mock_server, "dm_channel_123", "msg_interactive_001").await;
+
+    let conn = start_and_connect(&router, &key, "discord").await;
+    assert!(conn, "discord should connect");
+
+    let (status, json) = auth_post(
+        &router,
+        "/api/v1/messages/send",
+        &key,
+        Some(serde_json::json!({
+            "target": "discord:dm_channel_123",
+            "text": "Choose an option:",
+            "keyboard": {
+                "rows": [
+                    {
+                        "buttons": [
+                            {"text": "Yes", "callback_data": "yes"},
+                            {"text": "No", "callback_data": "no"}
+                        ]
+                    },
+                    {
+                        "buttons": [
+                            {"text": "Open Link", "url": "https://example.com"}
+                        ]
+                    }
+                ]
+            }
+        })),
+    )
+    .await;
+    assert_eq!(status, 200);
+    assert_eq!(json["status"], "sent");
+    assert_eq!(json["messageId"], "msg_interactive_001");
+}
+
+// ── 编辑消息 ──
+
+#[tokio::test]
+async fn test_e2e_discord_edit_message() {
+    let (router, key, mock_server) = setup().await;
+
+    mock_discord_users_me(&mock_server).await;
+    mock_discord_edit_message(&mock_server, "dm_channel_123", "msg_to_edit").await;
+
+    let conn = start_and_connect(&router, &key, "discord").await;
+    assert!(conn, "discord should connect");
+
+    let (status, json) = auth_put(
+        &router,
+        "/api/v1/messages/msg_to_edit",
+        &key,
+        Some(serde_json::json!({
+            "target": "discord:dm_channel_123",
+            "text": "edited content"
+        })),
+    )
+    .await;
+    assert_eq!(status, 200);
+    assert_eq!(json["ok"], true);
+}
+
+// ── 删除消息 ──
+
+#[tokio::test]
+async fn test_e2e_discord_delete_message() {
+    let (router, key, mock_server) = setup().await;
+
+    mock_discord_users_me(&mock_server).await;
+    mock_discord_delete_message(&mock_server, "dm_channel_123", "msg_to_delete").await;
+
+    let conn = start_and_connect(&router, &key, "discord").await;
+    assert!(conn, "discord should connect");
+
+    let (status, json) = auth_delete(
+        &router,
+        "/api/v1/messages/msg_to_delete",
+        &key,
+        Some(serde_json::json!({
+            "target": "discord:dm_channel_123"
+        })),
+    )
+    .await;
+    assert_eq!(status, 200);
+    assert_eq!(json["ok"], true);
 }
