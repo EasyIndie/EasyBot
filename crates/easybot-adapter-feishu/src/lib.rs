@@ -286,6 +286,111 @@ impl FeishuAdapter {
             GatewayError::Internal(format!("Feishu API returned no data for POST {}", path))
         })
     }
+
+    /// 飞书 API PATCH 请求（用于编辑卡片消息）
+    #[allow(dead_code)]
+    async fn api_patch<T: serde::de::DeserializeOwned>(
+        &self,
+        path: &str,
+        body: &serde_json::Value,
+    ) -> Result<T, GatewayError> {
+        let token = self.ensure_token().await?;
+        let client = self.client()?;
+        let url = format!("{}{}", self.api_base_url(), path);
+
+        let resp = client
+            .patch(&url)
+            .header("Authorization", format!("Bearer {}", token))
+            .json(body)
+            .send()
+            .await
+            .map_err(|e| GatewayError::Internal(format!("Feishu PATCH failed: {}", e)))?;
+
+        let result: FeishuApiResponse<T> = resp
+            .json()
+            .await
+            .map_err(|e| GatewayError::Internal(format!("Feishu PATCH parse failed: {}", e)))?;
+
+        if result.code != 0 {
+            return Err(GatewayError::Internal(format!(
+                "Feishu API error (PATCH {}): {} (code {})",
+                path,
+                result.msg.unwrap_or_default(),
+                result.code
+            )));
+        }
+
+        result.data.ok_or_else(|| {
+            GatewayError::Internal(format!("Feishu API returned no data for PATCH {}", path))
+        })
+    }
+
+    /// 飞书 API PUT 请求
+    async fn api_put<T: serde::de::DeserializeOwned>(
+        &self,
+        path: &str,
+        body: &serde_json::Value,
+    ) -> Result<T, GatewayError> {
+        let token = self.ensure_token().await?;
+        let client = self.client()?;
+        let url = format!("{}{}", self.api_base_url(), path);
+
+        let resp = client
+            .put(&url)
+            .header("Authorization", format!("Bearer {}", token))
+            .json(body)
+            .send()
+            .await
+            .map_err(|e| GatewayError::Internal(format!("Feishu PUT failed: {}", e)))?;
+
+        let result: FeishuApiResponse<T> = resp
+            .json()
+            .await
+            .map_err(|e| GatewayError::Internal(format!("Feishu PUT parse failed: {}", e)))?;
+
+        if result.code != 0 {
+            return Err(GatewayError::Internal(format!(
+                "Feishu API error (PUT {}): {} (code {})",
+                path,
+                result.msg.unwrap_or_default(),
+                result.code
+            )));
+        }
+
+        result.data.ok_or_else(|| {
+            GatewayError::Internal(format!("Feishu API returned no data for PUT {}", path))
+        })
+    }
+
+    /// 飞书 API DELETE 请求
+    async fn api_delete(&self, path: &str) -> Result<(), GatewayError> {
+        let token = self.ensure_token().await?;
+        let client = self.client()?;
+        let url = format!("{}{}", self.api_base_url(), path);
+
+        let resp = client
+            .delete(&url)
+            .header("Authorization", format!("Bearer {}", token))
+            .send()
+            .await
+            .map_err(|e| GatewayError::Internal(format!("Feishu DELETE failed: {}", e)))?;
+
+        let result: FeishuApiResponse<serde_json::Value> = resp
+            .json()
+            .await
+            .map_err(|e| GatewayError::Internal(format!("Feishu DELETE parse failed: {}", e)))?;
+
+        if result.code != 0 {
+            return Err(GatewayError::Internal(format!(
+                "Feishu API error (DELETE {}): {} (code {})",
+                path,
+                result.msg.unwrap_or_default(),
+                result.code
+            )));
+        }
+
+        Ok(())
+    }
 }
 
 fn publish_send_event(
@@ -690,17 +795,18 @@ impl PlatformAdapter for FeishuAdapter {
     }
 
     async fn edit_message(&self, params: EditMessageParams) -> Result<EditResult, GatewayError> {
-        // 飞书支持编辑文本消息
-        let path = format!("/im/v1/messages/{}/patch", params.message_id);
+        // 飞书 open-api: PUT /im/v1/messages/{message_id} (文本编辑)
+        // 消息卡片编辑用 PATCH，文本编辑用 PUT
+        let path = format!("/im/v1/messages/{}", params.message_id);
         let content = serde_json::json!({
             "text": params.message.text,
         });
         let body = serde_json::json!({
             "content": content.to_string(),
+            "msg_type": "text",
         });
 
-        // api_post 已解包 FeishuApiResponse.data，此处只需 Value
-        let _: serde_json::Value = self.api_post(&path, &body).await?;
+        let _: serde_json::Value = self.api_put(&path, &body).await?;
 
         Ok(EditResult {
             success: true,
@@ -712,13 +818,21 @@ impl PlatformAdapter for FeishuAdapter {
     async fn delete_message(
         &self,
         _chat_id: &str,
-        _message_id: &str,
+        message_id: &str,
     ) -> Result<DeleteResult, GatewayError> {
-        // 飞书没有真正的删除消息 API，直接返回不支持
-        Ok(DeleteResult {
-            success: false,
-            error: Some("飞书不支持删除消息".to_string()),
-        })
+        // 飞书开放平台支持撤回自己的消息（24h 内）
+        // DELETE /im/v1/messages/{message_id}
+        let path = format!("/im/v1/messages/{}", message_id);
+        match self.api_delete(&path).await {
+            Ok(()) => Ok(DeleteResult {
+                success: true,
+                error: None,
+            }),
+            Err(e) => Ok(DeleteResult {
+                success: false,
+                error: Some(e.to_string()),
+            }),
+        }
     }
 
     async fn get_chat_info(&self, chat_id: &str) -> Result<ChatInfo, GatewayError> {
@@ -1023,11 +1137,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_delete_message_unsupported() {
+    async fn test_delete_message_before_connect() {
         let adapter = FeishuAdapter::new();
         let result = adapter.delete_message("oc_test", "om_test").await.unwrap();
+        // 未初始化时，删除应返回失败（token refresh 失败）
         assert!(!result.success);
-        assert_eq!(result.error.as_deref(), Some("飞书不支持删除消息"));
     }
 
     #[test]

@@ -427,8 +427,8 @@ async fn test_edit_message_success() {
     let mock_server = MockServer::start().await;
     mock_token_endpoint(&mock_server).await;
 
-    Mock::given(method("POST"))
-        .and(path("/im/v1/messages/om_test_msg/patch"))
+    Mock::given(method("PUT"))
+        .and(path("/im/v1/messages/om_test_msg"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "code": 0,
             "msg": "ok",
@@ -463,8 +463,8 @@ async fn test_edit_message_api_error() {
     let mock_server = MockServer::start().await;
     mock_token_endpoint(&mock_server).await;
 
-    Mock::given(method("POST"))
-        .and(path("/im/v1/messages/om_nonexistent/patch"))
+    Mock::given(method("PUT"))
+        .and(path("/im/v1/messages/om_nonexistent"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "code": 123456,
             "msg": "message not found",
@@ -497,8 +497,8 @@ async fn test_edit_message_http_error() {
     let mock_server = MockServer::start().await;
     mock_token_endpoint(&mock_server).await;
 
-    Mock::given(method("POST"))
-        .and(path("/im/v1/messages/om_test_msg/patch"))
+    Mock::given(method("PUT"))
+        .and(path("/im/v1/messages/om_test_msg"))
         .respond_with(ResponseTemplate::new(500))
         .expect(1..)
         .mount(&mock_server)

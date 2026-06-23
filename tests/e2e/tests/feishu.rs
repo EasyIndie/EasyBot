@@ -7,8 +7,8 @@ use std::sync::Arc;
 
 use axum::Router;
 use e2e_tests::{
-    auth_get, auth_post, build_router, create_core, default_gateway_config, public_get,
-    start_and_connect,
+    auth_delete, auth_get, auth_post, auth_put, build_router, create_core,
+    default_gateway_config, public_get, start_and_connect,
 };
 use easybot_core::PlatformAdapter;
 use easybot_core::types::adapter::AdapterConfig;
@@ -83,6 +83,32 @@ async fn mock_feishu_token(mock_server: &MockServer) {
             "msg": "ok",
             "tenant_access_token": "t-access-token-67890",
             "expire": 7200
+        })))
+        .expect(0..)
+        .mount(mock_server)
+        .await;
+}
+
+async fn mock_feishu_send(mock_server: &MockServer) {
+    Mock::given(method("POST"))
+        .and(path("/im/v1/messages"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "code": 0,
+            "msg": "ok",
+            "data": { "message_id": "om_feishu_001" }
+        })))
+        .expect(0..)
+        .mount(mock_server)
+        .await;
+}
+
+async fn mock_feishu_edit_message(mock_server: &MockServer, msg_id: &str) {
+    Mock::given(method("PUT"))
+        .and(path(format!("/im/v1/messages/{}", msg_id)))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "code": 0,
+            "msg": "ok",
+            "data": {}
         })))
         .expect(0..)
         .mount(mock_server)
@@ -207,4 +233,100 @@ async fn test_e2e_feishu_auth_failure() {
     }
     // 无论如何 API 应返回有效响应
     assert!(status.is_success() || status.is_server_error());
+}
+
+// ── 交互式消息 ──
+
+#[tokio::test]
+async fn test_e2e_feishu_send_interactive() {
+    let (router, key, mock_server) = setup().await;
+
+    mock_feishu_token(&mock_server).await;
+    mock_feishu_send(&mock_server).await;
+
+    assert!(start_and_connect(&router, &key, "feishu").await);
+
+    let (status, json) = auth_post(
+        &router,
+        "/api/v1/messages/send",
+        &key,
+        Some(serde_json::json!({
+            "target": "feishu:oc_test123",
+            "text": "Choose an option:",
+            "keyboard": {
+                "rows": [
+                    {
+                        "buttons": [
+                            {"text": "Confirm", "callback_data": "confirm"},
+                            {"text": "Cancel", "callback_data": "cancel"}
+                        ]
+                    }
+                ]
+            }
+        })),
+    )
+    .await;
+    assert_eq!(status, 200);
+    assert_eq!(json["status"], "sent");
+}
+
+// ── 编辑消息 ──
+
+#[tokio::test]
+async fn test_e2e_feishu_edit_message() {
+    let (router, key, mock_server) = setup().await;
+
+    mock_feishu_token(&mock_server).await;
+    mock_feishu_edit_message(&mock_server, "om_test_msg").await;
+
+    assert!(start_and_connect(&router, &key, "feishu").await);
+
+    let (status, json) = auth_put(
+        &router,
+        "/api/v1/messages/om_test_msg",
+        &key,
+        Some(serde_json::json!({
+            "target": "feishu:oc_test123",
+            "text": "edited content"
+        })),
+    )
+    .await;
+    assert_eq!(status, 200);
+    assert_eq!(json["ok"], true);
+}
+
+// ── 删除消息 ──
+
+async fn mock_feishu_delete_message(mock_server: &MockServer, msg_id: &str) {
+    Mock::given(method("DELETE"))
+        .and(path(format!("/im/v1/messages/{}", msg_id)))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "code": 0,
+            "msg": "ok"
+        })))
+        .expect(0..)
+        .mount(mock_server)
+        .await;
+}
+
+#[tokio::test]
+async fn test_e2e_feishu_delete_message() {
+    let (router, key, mock_server) = setup().await;
+
+    mock_feishu_token(&mock_server).await;
+    mock_feishu_delete_message(&mock_server, "om_del_msg").await;
+
+    assert!(start_and_connect(&router, &key, "feishu").await);
+
+    let (status, json) = auth_delete(
+        &router,
+        "/api/v1/messages/om_del_msg",
+        &key,
+        Some(serde_json::json!({
+            "target": "feishu:oc_test123"
+        })),
+    )
+    .await;
+    assert_eq!(status, 200);
+    assert_eq!(json["ok"], true);
 }
