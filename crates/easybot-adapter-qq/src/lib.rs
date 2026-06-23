@@ -589,7 +589,7 @@ impl QqAdapter {
 
         // With srv_send_msg=true, QQ uploads the file and sends it as a message
         // If there's text to include, use the send_c2c_media_via_upload two-step approach
-        if text.as_ref().map_or(false, |t| !t.is_empty()) {
+        if text.as_ref().is_some_and(|t| !t.is_empty()) {
             self.send_c2c_media_via_upload(chat_id, file_data, &filename, &mime_type, text)
                 .await
         } else {
