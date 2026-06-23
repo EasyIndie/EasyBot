@@ -941,14 +941,14 @@ impl PlatformAdapter for DiscordAdapter {
         };
 
         // Build the multipart file part
-        let mut file_part = reqwest::multipart::Part::bytes(file_data).file_name(filename);
+        let mut file_part = reqwest::multipart::Part::bytes(file_data).file_name(filename.clone());
         if !content_type.is_empty() {
             file_part = file_part
                 .mime_str(&content_type)
                 .map_err(|e| GatewayError::Internal(format!("Invalid mime type: {}", e)))?;
         }
 
-        // Build payload_json with optional content and reply
+        // Build payload_json with optional content, reply, and attachment reference
         let mut payload = serde_json::Map::new();
         let caption = params.text.or(params.media.caption);
         if let Some(ref text) = caption {
@@ -963,6 +963,11 @@ impl PlatformAdapter for DiscordAdapter {
                 serde_json::json!({"message_id": reply_to}),
             );
         }
+        // Discord multipart requires attachments array linking files[0] to the message
+        payload.insert(
+            "attachments".to_string(),
+            serde_json::json!([{"id": "0", "filename": filename.clone()}]),
+        );
 
         let form = reqwest::multipart::Form::new()
             .text(

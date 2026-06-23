@@ -1130,7 +1130,7 @@ impl PlatformAdapter for QqAdapter {
             Err(e) => {
                 let err_str = e.to_string();
                 // C2C 私聊不支持 msg_type: 2（11255），降级为纯图片 msg_type: 1
-                if err_str.contains("/v2/users/") && err_str.contains("parse failed") {
+                if err_str.contains("11255") || (err_str.contains("/v2/users/") && err_str.contains("parse failed")) {
                     tracing::warn!(
                         "QQ C2C does not support msg_type: 2, retrying with msg_type: 1 (image only)"
                     );
