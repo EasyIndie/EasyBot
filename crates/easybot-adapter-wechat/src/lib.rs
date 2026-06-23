@@ -843,11 +843,23 @@ impl PlatformAdapter for WeChatAdapter {
                 .qrcode
                 .ok_or_else(|| GatewayError::Internal("No qrcode in response".to_string()))?;
 
-            // 打印 QR 码（终端 ASCII + URL 备用）
+            // 显示 QR 码（可能是 URL 链接或 ASCII 二维码）
             if let Some(img) = &qr_resp.qrcode_img {
-                tracing::info!("扫描以下二维码登录个人微信（或访问备用 URL）：");
-                // 简易终端打印 QR ASCII
-                println!("\n{}", img);
+                if img.starts_with("http://") || img.starts_with("https://") {
+                    // iLink API 返回的是微信 liteapp 链接（浏览器打开后扫码）
+                    tracing::info!("微信登录链接请在浏览器打开后扫码：");
+                    println!("\n    {}\n", img);
+                    tracing::info!("微信登录链接: {}", img);
+                } else {
+                    // 旧格式：ASCII 二维码
+                    tracing::info!("扫描以下二维码登录个人微信：");
+                    println!("\n{}", img);
+                }
+                // 将 token 写入日志（stderr），供脚本/Docker/headless 场景提取
+                tracing::info!(
+                    "微信登录 qrcode_token={}，扫码后凭据将自动保存到 ~/.easybot/.wechat-credentials.json",
+                    qrcode
+                );
             }
 
             // 轮询扫码状态（最多 120 秒）

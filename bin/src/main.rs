@@ -43,6 +43,7 @@ async fn main() -> anyhow::Result<()> {
     let log_level = if cli.debug { "debug" } else { "info" };
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::new(format!("easybot={}", log_level)))
+        .with_writer(std::io::stderr)
         .init();
 
     // 处理 init 命令
