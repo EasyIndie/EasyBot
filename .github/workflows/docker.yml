@@ -11,7 +11,7 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ github.repository }}
+  IMAGE_NAME: ${{ lower(github.repository) }}
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
