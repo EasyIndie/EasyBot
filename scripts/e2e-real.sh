@@ -556,8 +556,8 @@ phase4_auto_reply() {
         target=$(echo "$targets" | { grep "^${plat}:" || true; } | head -1)
         [ -z "$target" ] && { warn "$(adapter_display_name "$plat") 无活跃会话，跳过媒体消息"; continue; }
 
-        # 1x1 透明 PNG (最小有效 PNG，~68 bytes base64)
-        local png_b64="iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+        # 32x32 蓝色不透明 PNG（在各平台均可见，~108 bytes base64）
+        local png_b64="iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAM0lEQVR4nO3OMQEAMAjEwKfSaq6KmYsMlouBXN3XP4udzTkAAAAAAAAAAAAAAAAAAECSDDZHAv1rAtQFAAAAAElFTkSuQmCC"
 
         # 所有平台统一使用 base64 数据（含 QQ 通过 send_c2c_media_upload_only 上传）
         payload=$(jq -n --arg t "$target" --arg text "[E2E] $plat media - $ts" --arg data "$png_b64" \

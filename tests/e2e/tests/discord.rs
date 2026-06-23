@@ -115,7 +115,7 @@ async fn mock_discord_send_media(mock_server: &MockServer, channel_id: &str, msg
             "timestamp": "2026-06-20T12:00:00+00:00",
             "attachments": [{"id": "att-1", "filename": "photo.jpg", "url": "https://cdn.discord.com/att/photo.jpg"}]
         })))
-        .expect(0..)
+        .expect(1..)  // 必须至少调用一次
         .mount(mock_server)
         .await;
 }
