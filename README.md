@@ -189,7 +189,7 @@ curl http://localhost:8080/health
 ```yaml
 # gateway.yaml — 默认配置，一般无需修改
 server:
-  host: "0.0.0.0"          # 监听地址
+  host: "127.0.0.1"        # 监听地址
   port: 8080               # 监听端口
 
 api:
@@ -199,7 +199,7 @@ api:
     maxClients: 1000        # 最大连接数
 
 storage:
-  type: "sqlite"            # sqlite / postgres
+  storageType: "sqlite"       # sqlite / postgres
 
 logging:
   level: "info"             # debug / info / warn / error
@@ -234,8 +234,8 @@ QQ_CLIENT_SECRET=your_secret
 | `/adapters/{platform}/status` | GET | 适配器健康详情 |
 | `/messages/send` | POST | 发送消息（`target: "platform:chatId"`） |
 | `/messages/batch-send` | POST | 批量发送 |
-| `/messages/{id}` | PUT | 编辑消息 |
-| `/messages/{id}` | DELETE | 删除消息 |
+| `/messages/{message_id}` | PUT | 编辑消息 |
+| `/messages/{message_id}` | DELETE | 删除消息 |
 | `/messages` | GET | 消息历史（支持 `?platform=` 过滤） |
 | `/sessions` | GET | 活跃会话列表 |
 | `/sessions/{key}` | GET | 会话详情 |
@@ -244,12 +244,16 @@ QQ_CLIENT_SECRET=your_secret
 | `/chats/{platform}/{chat_id}` | GET | 获取聊天详情 |
 | `/config` | GET | 获取当前配置 |
 | `/config` | PUT | 热更新配置 |
-| `/ws` | GET | WebSocket 实时事件流 |
+| `/ws` | GET | WebSocket 实时事件流（需 `Authorization` 头 + 连接后发送 `{"token":"..."}`） |
 | `/metrics` | GET | Prometheus 指标 |
+| `/swagger` | GET | Swagger UI (OpenAPI 文档浏览器) |
+| `/openapi.json` | GET | OpenAPI 3.1 JSON schema |
 
 ### WebSocket 事件
 
-通过 WebSocket 连接后，首先发送认证消息：
+WebSocket 端点有**两层认证**：
+1. **HTTP 升级请求**必须携带 `Authorization: Bearer <api-key>` 头
+2. 连接成功后，发送 JSON 认证帧：
 
 ```json
 {"token": "your-api-key"}
@@ -320,7 +324,8 @@ easybot/
 ├── tests/
 │   ├── integration/              # 集成测试
 │   ├── e2e/                      # 端到端测试
-│   └── plugins/                  # 插件测试（mock-adapter）
+│   ├── plugins/                  # 插件测试（mock-adapter）
+│   └── fixtures/                 # 共享测试 fixture
 ├── docs/                        # 文档
 ├── scripts/                     # 工具脚本
 ├── Dockerfile                   # Docker 多阶段构建

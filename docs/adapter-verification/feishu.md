@@ -71,8 +71,8 @@ adapters:
 | 文本消息发送 | ✅ 通过 | 使用 `im/v1/messages` API |
 | 媒体消息发送 | ✅ 通过 | 上传文件 + 获取 file_key |
 | 交互式消息（按钮） | ✅ 通过 | 支持单按钮行 / 多按钮 action 组 |
-| 消息编辑 | ✅ 通过 | 使用 `im/v1/messages/{id}/patch` |
-| 消息删除 | ✅ 通过 | 返回"飞书不支持删除消息" |
+| 消息编辑 | ✅ 通过 | 使用 `PUT /im/v1/messages/{id}` |
+| 消息删除 | ✅ 通过 | `DELETE /im/v1/messages/{id}` (24h 内可撤回) |
 | 入站消息接收 | ✅ 通过 | WebSocket 事件订阅 + SDK |
 | 消息持久化 | ✅ 通过 | SQLite 存储发送和接收消息 |
 | 会话管理 | ✅ 通过 | 自动创建 feishu 会话 |

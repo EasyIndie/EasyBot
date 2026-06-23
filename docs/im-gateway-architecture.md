@@ -1,6 +1,12 @@
 # 即时通信网关架构设计说明书
 
 > **摘要：** 一份语言无关的即时通信网关（EasyBot）架构设计。该网关作为独立服务运行，连接多种即时通信平台，对外暴露统一的 API 供第三方客户端调用，支持消息发送与接收的双向通信。设计遵循契约驱动、分层隔离、插件扩展的原则，可方便地翻译为任意编程语言的具体实现。
+>
+> **⚠️ 本文档为架构设计规范，与当前 Rust 实现存在以下已知差异：**
+> - 入站消息处理使用 `set_event_bus(Arc<EventBus>)` 而非 IDL 中的 `onMessage`/`onCallback` 回调注册
+> - 适配器 trait 未包含 `supportsDraftStreaming()` 方法，流式草稿通过 `send_draft()` 返回 `Result<DraftResult, GatewayError>` 实现
+> - 存储后端目前支持 SQLite 和 PostgreSQL，不支持 MySQL
+> - 平台示例中引用的 Slack/WhatsApp 未在 EasyBot 中实现（已由飞书/QQ/微信替代）
 
 ---
 
@@ -1347,7 +1353,7 @@ api:
 
 # 数据存储
 storage:
-  type: "sqlite"             # sqlite | postgres | mysql
+  type: "sqlite"             # sqlite | postgres
   path: "./data/gateway.db"  # sqlite 路径
   # postgres 时:
   # connectionString: "postgres://user:pass@localhost:5432/gateway"

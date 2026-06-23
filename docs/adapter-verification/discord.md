@@ -201,7 +201,7 @@ curl -s -X POST http://127.0.0.1:8080/api/v1/messages/send \
   -d "{\"target\": \"discord:<channelId>\", \"text\": \"回复消息\", \"reply_to\": \"$MSG_ID\"}" | jq .
 ```
 
-> 注意：当前 Discord `send()` 实现中 `reply_to` 字段未被映射到 Discord API 的 `message_reference`。这是已知缺失功能。
+> `reply_to` 字段已映射到 Discord API 的 `message_reference`，支持回复消息引用。
 
 #### 3.6 消息编辑
 
@@ -308,8 +308,8 @@ wscat -c "ws://localhost:8080/api/v1/ws" \
 | 自动重连 | ✅ 外层 loop 无限重试（5s 延迟，支持 cancel 信号） |
 | parse_mode 支持 | ❌ 忽略（Discord 不支持，客户端自行渲染 Markdown） |
 | 入站消息过滤 | 按 `author.id == bot_user_id` 过滤自身消息 |
-| 能力声明 | Text、Markdown、Group、TypingIndicator、MessageEdit、MessageDelete |
-| 不支持的能力 | Html、Interactive、Image、Audio、Video、Document、ChatList、Streaming |
+| 能力声明 | Text、Image、Audio、Video、Document、Interactive、Markdown、Group、TypingIndicator、MessageEdit、MessageDelete |
+| 不支持的能力 | Html、ChatList、Streaming |
 
 ## 与 Telegram 适配器的关键差异
 
@@ -319,15 +319,15 @@ wscat -c "ws://localhost:8080/api/v1/ws" \
 | 心跳 | 无（HTTP 轮询天然无心跳） | Gateway 心跳（Hello 指定间隔） |
 | 自动重连 | 轮询失败 5 秒后重试 | ✅ 外层 loop 无限重连（5s） |
 | parse_mode | 支持 `markdown`/`html`/`none` | 不支持（直接发纯文本） |
-| reply_to 支持 | ✅ 完整（`reply_to_message_id`） | ❌ `message_reference` 未映射 |
+| reply_to 支持 | ✅ 完整（`reply_to_message_id`） | ✅ `message_reference` API |
 | chat_name 来源 | `chat.title` 或 `chat.first_name` | 查询时不可用（需额外 API 查询） |
-| 发送 typing | `sendChatAction` | `POST /channels/{id}/typing` ✅ |
 | 自身消息过滤 | ❌ 未实现（无 bot_user_id 检查） | ✅ 按 `author.id` 过滤 |
+| 发送 typing | ✅ `sendChatAction` | ✅ `POST /channels/{id}/typing` |
 
 ## 后续改进建议
 
 - [ ] 引入 `wiremock` 或 `mockito` 为 Discord REST API 编写 mock 测试
-- [ ] 实现 `reply_to` 字段到 Discord `message_reference` API 参数的映射
+- [x] ~~实现 `reply_to` 字段到 Discord `message_reference` API 参数的映射~~ — 已完成
 - [ ] 支持更多 Intents 从配置读取（当前硬编码）
 - [ ] 补充 `chat_name` 的获取（从 Gateway Ready 的 guild 信息或独立查询）
 - [ ] 增加更多 Gateway 事件类型的处理（MESSAGE_UPDATE、MESSAGE_DELETE 等）

@@ -355,6 +355,14 @@ declare_plugin!(MyAdapter, MyAdapter::new);
 | `runtime_config()` | `fn runtime_config(&self) -> AdapterRuntimeConfig` | 返回运行时配置状态 |
 | `status_summary()` | `fn status_summary(&self) -> AdapterStatusSummary` | 返回适配器状态摘要 |
 
+### 辅助方法（有默认实现，通常无需覆盖）
+
+| 方法 | 说明 |
+|------|------|
+| `is_connected()` | 检查适配器是否处于 Connected 状态 |
+| `heartbeat_age_ms()` | 返回上次心跳距今的毫秒数（用于 General Health Monitor） |
+| `health_status()` | 综合连接状态和心跳延迟计算健康等级 (Healthy/Degraded/Unhealthy) |
+
 ### 可选覆盖（默认返回 capability_not_supported 错误）
 
 | 方法 | 说明 |
@@ -364,6 +372,7 @@ declare_plugin!(MyAdapter, MyAdapter::new);
 | `send_typing()` | 发送输入指示器 |
 | `edit_message()` | 编辑消息 |
 | `delete_message()` | 删除消息 |
+| `send_draft()` | 发送流式草稿（AI 回复逐步生成） |
 | `list_chats()` | 列出聊天列表 |
 | `set_event_bus()` | 设置事件总线（用于接收平台消息推送） |
 
@@ -421,6 +430,11 @@ impl PlatformAdapter for MyAdapter {
           │ connect()
           v
      ┌───────────┐
+     │ Connecting│  ← 正在建立网络连接
+     └─────┬─────┘
+           │ (连接成功)
+           v
+     ┌───────────┐
      │ Connected │  ← 正常运行，可收发消息
      └─────┬─────┘
            │ disconnect()
@@ -429,9 +443,9 @@ impl PlatformAdapter for MyAdapter {
      │ Stopped │  ← 已断开，资源已清理
      └─────────┘
 
-     Connected ──(连接断开)──→ Reconnecting ──→ Connected
+     Connected ──(连接断开)──→ Reconnecting ──→ Connecting ──→ Connected
      Connected ──(严重错误)──→ Failed
-     Failed ──(重试恢复)──→ Connected
+     Failed ──(重试恢复)──→ Connecting ──→ Connected
 ```
 
 ---

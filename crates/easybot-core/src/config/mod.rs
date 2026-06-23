@@ -187,7 +187,7 @@ api:
     heartbeatInterval: 30
 
 storage:
-  type: "sqlite"
+  storageType: "sqlite"
   path: ""
 
 logging:

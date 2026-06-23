@@ -97,6 +97,10 @@ EasyBot is an independent **IM Gateway** service connecting multiple instant mes
 | `crates/easybot-adapter-qq` | QQ 机器人适配器（统一 QQBot 鉴权 + Gateway WebSocket） |
 | `crates/easybot-adapter-wechat` | 个人微信 (WeChat) 适配器（iLink Bot API 长轮询） |
 | `crates/easybot-plugin-sdk` | Re-exports core types for third-party plugin devs |
+| `tests/integration` | Integration tests for plugin system |
+| `tests/e2e` | End-to-end tests across adapters |
+| `tests/plugins/mock-adapter` | Mock adapter for plugin system integration testing |
+| `tests/fixtures` | Shared test fixtures for adapter crates |
 
 ### Core Types (`easybot-core/src/types/`)
 
@@ -117,12 +121,15 @@ User-level config stored at `~/.easybot/` (macOS/Linux) or `%APPDATA%\easybot\` 
 ├── gateway.local.yaml        # Local overrides (.gitignore)
 ├── .env                      # Secrets (chmod 600, loaded via dotenvy)
 ├── data/gateway.db           # SQLite database (auto-created)
-└── logs/                     # Log files
+├── logs/                     # Log files
+├── plugins/                  # Third-party adapter plugins
+├── certs/                    # TLS certificates (optional)
+└── secrets/                  # Key storage (optional, chmod 600)
 ```
 
 Config supports `${VAR_NAME}` for environment variable substitution and merges `gateway.local.yaml` on top of `gateway.yaml`.
 Environment variable priority: `export` / Docker `environment:` > `.env` file (loaded via `dotenvy::from_path`, does not override existing vars).
-Run `easybot --init` to create `gateway.yaml` and `.env` (template with all known variables).
+Run `easybot --init` to create `gateway.yaml`, `gateway.local.yaml` (example override), and `.env` (template with all known variables).
 Adapters auto-enable via credential env var detection — no need to manually set `enabled: true` in YAML config.
 
 ### Adapter Lifecycle
@@ -130,7 +137,7 @@ Adapters auto-enable via credential env var detection — no need to manually se
 ```
 init(config) → connect() → send()/send_media()/... → disconnect()
    ↓              ↓
- Created →   Starting → Connected → Reconnecting → Failed → Stopped
+ Created →   Starting → Connecting → Connected → Reconnecting → Failed → Stopped
 ```
 
 The `AdapterRegistry` holds factory functions keyed by platform name, each with declared credential environment variable names. `AdapterManager::start_all()` iterates registered adapters (not config entries), auto-detects credentials via env vars, and starts adapters whose credentials are present. `AdapterConfig.enabled` is `Option<bool>`: `None` auto-detects, `Some(true)` forces enable, `Some(false)` forces disable. Built-in adapters are registered at startup in `bin/main.rs`.
@@ -146,8 +153,8 @@ The `AdapterRegistry` holds factory functions keyed by platform name, each with 
 | `/adapters/{platform}/status` | GET | Adapter health detail |
 | `/messages/send` | POST | Send message to a chat (`target: "platform:chatId"`) |
 | `/messages/batch-send` | POST | Send to multiple targets |
-| `/messages/{id}` | PUT | Edit message |
-| `/messages/{id}` | DELETE | Delete message |
+| `/messages/{message_id}` | PUT | Edit message |
+| `/messages/{message_id}` | DELETE | Delete message |
 | `/messages` | GET | Message history (supports `?platform=` filter) |
 | `/sessions` | GET | List active sessions |
 | `/sessions/{key}` | GET | Get session details |
@@ -156,8 +163,10 @@ The `AdapterRegistry` holds factory functions keyed by platform name, each with 
 | `/chats/{platform}/{chat_id}` | GET | Get chat info |
 | `/config` | GET | Get current config |
 | `/config` | PUT | Update config (hot-reload) |
-| `/ws` | GET | WebSocket real-time event stream (需先发送 `{"token":"..."}` 认证) |
+| `/ws` | GET | WebSocket real-time event stream (HTTP upgrade 需 `Authorization: Bearer <key>` 头，连接后发送 `{"token":"..."}` 二次认证) |
 | `/metrics` | GET | Prometheus metrics |
+| `/swagger` | GET | Swagger UI (OpenAPI 文档浏览器) |
+| `/openapi.json` | GET | OpenAPI 3.1 JSON schema |
 
 ### Implementation Roadmap
 
