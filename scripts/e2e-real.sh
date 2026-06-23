@@ -59,6 +59,11 @@ api_post() {
         -H "Content-Type: application/json" -d "$2" "$1" 2>/dev/null
 }
 
+api_put() {
+    curl -s -X PUT ${E2E_API_KEY:+-H "Authorization: Bearer $E2E_API_KEY"} \
+        -H "Content-Type: application/json" -d "$2" "$1" 2>/dev/null
+}
+
 cleanup() {
     if [ -n "${E2E_PID:-}" ]; then
         kill "$E2E_PID" 2>/dev/null || true
@@ -222,8 +227,8 @@ phase2_wait_for_adapters() {
         _adapters_json=$(api_get "$API_BASE/adapters")
 
         # 安全解析（jq 失败时用默认值）
-        _total=$(echo "$_adapters_json" | jq -r '.adapters | length // 0' 2>/dev/null || echo "0")
-        _connected=$(echo "$_adapters_json" | jq -r '[.adapters[] | select(.connected == true)] | length // 0' 2>/dev/null || echo "0")
+        _total=$(echo "$_adapters_json" | jq -r '.adapters | length' 2>/dev/null || echo "0")
+        _connected=$(echo "$_adapters_json" | jq -r '[.adapters[] | select(.connected == true)] | length' 2>/dev/null || echo "0")
 
         # 无适配器注册
         if [ "$_total" -eq 0 ]; then
@@ -386,7 +391,7 @@ phase3_wait_for_messages() {
 # ── Phase 4: 自动发送回复 ──
 
 phase4_auto_reply() {
-    section "Phase 4: 自动发送 E2E 回复"
+    section "Phase 4: 自动发送 E2E 回复（覆盖全部消息类型）"
     phase_timer_start "Phase 4: 自动发送回复"
 
     local ts
@@ -404,28 +409,169 @@ phase4_auto_reply() {
         return 0
     fi
 
+    # 安全提取 JSON 字段（兼容 jq 1.5+，不使用 // 操作符）
+    _jqr() {
+        local val
+        val=$(echo "$1" | jq -r "$2" 2>/dev/null) || true
+        if [ -z "$val" ] || [ "$val" = "null" ]; then
+            echo "${3:-}"
+        else
+            echo "$val"
+        fi
+    }
+
+    # 收集所有 target 用于 batch send；保存各平台 message_id 用于 edit
+    local all_targets=()
+    local -A msg_ids
+
+    # ═══════════════════════════════════════════
+    # 4a: 文本消息
+    # ═══════════════════════════════════════════
+    echo "  ── 文本消息 ──"
     while IFS= read -r target; do
         [ -z "$target" ] && continue
         local plat="${target%%:*}"
-        local chat="${target#*:}"
+        all_targets+=("$target")
 
         local payload
-        payload=$(jq -n --arg t "$plat:$chat" --arg text "[E2E] $plat test - $ts" \
+        payload=$(jq -n --arg t "$target" --arg text "[E2E] $plat text - $ts" \
             '{target: $t, text: $text}')
 
         local result
         result=$(api_post "$API_BASE/messages/send" "$payload")
         local status
-        status=$(echo "$result" | jq -r '.status // "error"')
+        status=$(_jqr "$result" '.status' 'error')
         local msg_id
-        msg_id=$(echo "$result" | jq -r '.messageId // .id // "N/A"')
+        msg_id=$(_jqr "$result" '.messageId' '')
+        [ -z "$msg_id" ] && msg_id=$(_jqr "$result" '.id' 'N/A')
+        msg_ids["$plat"]="$msg_id"
 
         if [ "$status" = "sent" ]; then
-            pass "$(adapter_display_name "$plat") → sent (id=$msg_id)"
+            pass "$(adapter_display_name "$plat") text → sent (id=$msg_id)"
         else
-            fail "$(adapter_display_name "$plat") → $status ($(echo "$result" | jq -r '.error // "unknown"'))"
+            fail "$(adapter_display_name "$plat") text → $status ($(_jqr "$result" '.error' 'unknown'))"
         fi
     done <<< "$targets"
+
+    # ═══════════════════════════════════════════
+    # 4b: 交互式消息（inline keyboard）
+    #   支持: telegram, feishu
+    # ═══════════════════════════════════════════
+    echo "  ── 交互式消息 ──"
+    local interactive_plats=(telegram feishu)
+    for plat in "${interactive_plats[@]}"; do
+        local target
+        target=$(echo "$targets" | { grep "^${plat}:" || true; } | head -1)
+        [ -z "$target" ] && { warn "$(adapter_display_name "$plat") 无活跃会话，跳过交互式消息"; continue; }
+
+        local payload
+        payload=$(jq -n --arg t "$target" --arg text "[E2E] $plat interactive - $ts" \
+            '{target: $t, text: $text, keyboard: {rows: [{buttons: [{text: "确认", callback_data: "e2e_confirm"}, {text: "取消", callback_data: "e2e_cancel"}]}]}}')
+
+        local result
+        result=$(api_post "$API_BASE/messages/send" "$payload")
+        local status
+        status=$(_jqr "$result" '.status' 'error')
+        local msg_id
+        msg_id=$(_jqr "$result" '.messageId' '')
+        [ -z "$msg_id" ] && msg_id=$(_jqr "$result" '.id' 'N/A')
+
+        if [ "$status" = "sent" ]; then
+            pass "$(adapter_display_name "$plat") interactive → sent (id=$msg_id)"
+        else
+            fail "$(adapter_display_name "$plat") interactive → $status ($(_jqr "$result" '.error' 'unknown'))"
+        fi
+    done
+
+    # ═══════════════════════════════════════════
+    # 4c: 编辑消息（基于 4a 的 message_id）
+    #   支持: telegram, discord, feishu
+    # ═══════════════════════════════════════════
+    echo "  ── 编辑消息 ──"
+    local edit_plats=(telegram discord feishu)
+    for plat in "${edit_plats[@]}"; do
+        local msg_id="${msg_ids[$plat]:-}"
+        [ -z "$msg_id" ] || [ "$msg_id" = "N/A" ] && { warn "$(adapter_display_name "$plat") 无可用消息 ID，跳过编辑"; continue; }
+
+        local target
+        target=$(echo "$targets" | { grep "^${plat}:" || true; } | head -1)
+        [ -z "$target" ] && continue
+
+        local payload
+        payload=$(jq -n --arg t "$target" --arg text "[E2E] $plat edited - $ts" \
+            '{target: $t, text: $text}')
+
+        local result
+        result=$(api_put "$API_BASE/messages/$msg_id" "$payload")
+        local ok
+        ok=$(_jqr "$result" '.ok' 'false')
+
+        if [ "$ok" = "true" ]; then
+            pass "$(adapter_display_name "$plat") edit → ok"
+        else
+            fail "$(adapter_display_name "$plat") edit → $(echo "$result" | $JQ '.error' 2>/dev/null || echo "$result")"
+        fi
+    done
+
+    # ═══════════════════════════════════════════
+    # 4d: 批量发送
+    # ═══════════════════════════════════════════
+    echo "  ── 批量发送 ──"
+    if [ ${#all_targets[@]} -gt 0 ]; then
+        local targets_json
+        targets_json=$(printf '%s\n' "${all_targets[@]}" | jq -R . | jq -s .)
+        local batch_payload
+        batch_payload=$(jq -n --argjson targets "$targets_json" --arg text "[E2E] batch - $ts" \
+            '{targets: $targets, text: $text}')
+
+        local batch_result
+        batch_result=$(api_post "$API_BASE/messages/batch-send" "$batch_payload")
+        local total
+        total=$(_jqr "$batch_result" '.total' '0')
+        local sent_count
+        sent_count=$(echo "$batch_result" | jq -r '[.results[] | select(.status=="sent")] | length' 2>/dev/null || echo "0")
+
+        pass "batch send → $sent_count/$total sent"
+    fi
+
+    # ═══════════════════════════════════════════
+    # 4e: 媒体消息（1x1 透明 PNG base64）
+    #   支持: telegram, discord, qq
+    # ═══════════════════════════════════════════
+    echo "  ── 媒体消息 ──"
+    local media_plats=(telegram discord qq)
+    for plat in "${media_plats[@]}"; do
+        local target
+        target=$(echo "$targets" | { grep "^${plat}:" || true; } | head -1)
+        [ -z "$target" ] && { warn "$(adapter_display_name "$plat") 无活跃会话，跳过媒体消息"; continue; }
+
+        # 1x1 透明 PNG (最小有效 PNG，~68 bytes base64)
+        local png_b64="iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+
+        local payload
+        if [ "$plat" = "qq" ]; then
+            # QQ 适配器仅支持 URL 方式（base64 不适用）
+            payload=$(jq -n --arg t "$target" --arg text "[E2E] $plat media - $ts" \
+                '{target: $t, text: $text, media: {media_type: "Image", url: "https://via.placeholder.com/150", mime_type: "image/png", filename: "placeholder.png"}}')
+        else
+            payload=$(jq -n --arg t "$target" --arg text "[E2E] $plat media - $ts" --arg data "$png_b64" \
+                '{target: $t, text: $text, media: {media_type: "Image", data: $data, mime_type: "image/png", filename: "e2e-test.png"}}')
+        fi
+
+        local result
+        result=$(api_post "$API_BASE/messages/send" "$payload")
+        local status
+        status=$(_jqr "$result" '.status' 'error')
+        local msg_id
+        msg_id=$(_jqr "$result" '.messageId' '')
+        [ -z "$msg_id" ] && msg_id=$(_jqr "$result" '.id' 'N/A')
+
+        if [ "$status" = "sent" ]; then
+            pass "$(adapter_display_name "$plat") media → sent (id=$msg_id)"
+        else
+            fail "$(adapter_display_name "$plat") media → $status ($(_jqr "$result" '.error' 'unknown'))"
+        fi
+    done
 
     phase_timer_end
 }
@@ -441,11 +587,11 @@ phase5_verify_and_report() {
     _all_messages=$(api_get "$API_BASE/messages?limit=200")
 
     local msg_count
-    msg_count=$(echo "$_all_messages" | jq -r '.messages | length // 0')
+    msg_count=$(echo "$_all_messages" | jq -r '.messages | length' 2>/dev/null || echo "0")
     info "消息历史: $msg_count 条"
 
     local session_count
-    session_count=$(api_get "$API_BASE/sessions" | jq -r '.total // 0')
+    session_count=$(api_get "$API_BASE/sessions" | jq -r '.total' 2>/dev/null || echo "0")
     info "活跃会话: $session_count 个"
 
     echo ""
@@ -475,7 +621,7 @@ phase5_verify_and_report() {
             "[.messages[] | select(.platform==\"$p\" and .role==\"Assistant\" and (.text | startswith(\"[E2E]\")))] | length")
 
         # 判断状态
-        local s_icon i_icon o_icon status_text
+        local s_icon i_icon o_icon status_text=""
         if [ "$has_session" -eq 0 ] 2>/dev/null; then
             s_icon="❌"; all_pass=false; status_text="无会话"
         else
