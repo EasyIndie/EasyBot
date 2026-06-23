@@ -11,7 +11,6 @@ on:
 
 env:
   REGISTRY: ghcr.io
-  IMAGE_NAME: ${{ lower(github.repository) }}
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -55,6 +54,10 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
+      - name: Lowercase repository name for GHCR
+        id: lower
+        run: echo "repo=${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
       - name: Log in to GHCR
         uses: docker/login-action@v4
         with:
@@ -66,7 +69,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v6
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          images: ${{ env.REGISTRY }}/${{ steps.lower.outputs.repo }}
           tags: |
             type=ref,event=branch
             type=semver,pattern={{version}}
@@ -84,7 +87,7 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ steps.lower.outputs.repo }},push-by-digest=true
 
   # ── arm64: 原生 ARM 构建（GitHub 原生 ARM runner） ──
   build-arm64:
@@ -102,6 +105,10 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
+      - name: Lowercase repository name for GHCR
+        id: lower
+        run: echo "repo=${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
       - name: Log in to GHCR
         uses: docker/login-action@v4
         with:
@@ -113,7 +120,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v6
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          images: ${{ env.REGISTRY }}/${{ steps.lower.outputs.repo }}
           tags: |
             type=ref,event=branch
             type=semver,pattern={{version}}
@@ -131,7 +138,7 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ steps.lower.outputs.repo }},push-by-digest=true
 
   # ── Merge: 组合 multi-arch manifest 并打标签推送 ──
   merge:
@@ -148,6 +155,10 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
+      - name: Lowercase repository name for GHCR
+        id: lower
+        run: echo "repo=${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
       - name: Log in to GHCR
         uses: docker/login-action@v4
         with:
@@ -159,7 +170,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v6
         with:
-          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          images: ${{ env.REGISTRY }}/${{ steps.lower.outputs.repo }}
           tags: |
             type=ref,event=branch
             type=semver,pattern={{version}}
@@ -171,7 +182,7 @@ jobs:
         shell: bash
         run: |
           REGISTRY="${{ env.REGISTRY }}"
-          IMAGE="${{ env.IMAGE_NAME }}"
+          IMAGE="${{ steps.lower.outputs.repo }}"
           DIGEST_AMD64="${{ needs.build-amd64.outputs.digest }}"
           DIGEST_ARM64="${{ needs.build-arm64.outputs.digest }}"
           TAGS="${{ steps.meta.outputs.tags }}"
