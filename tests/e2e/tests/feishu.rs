@@ -7,8 +7,8 @@ use std::sync::Arc;
 
 use axum::Router;
 use e2e_tests::{
-    auth_delete, auth_get, auth_post, auth_put, build_router, create_core,
-    default_gateway_config, public_get, start_and_connect,
+    auth_delete, auth_get, auth_post, auth_put, build_router, create_core, default_gateway_config,
+    public_get, start_and_connect,
 };
 use easybot_core::PlatformAdapter;
 use easybot_core::types::adapter::AdapterConfig;

@@ -428,9 +428,7 @@ impl QqAdapter {
         let file_part = reqwest::multipart::Part::bytes(file_data)
             .file_name(filename.to_string())
             .mime_str(mime_type)
-            .map_err(|e| {
-                GatewayError::Internal(format!("QQ upload: invalid MIME type: {}", e))
-            })?;
+            .map_err(|e| GatewayError::Internal(format!("QQ upload: invalid MIME type: {}", e)))?;
 
         let form = reqwest::multipart::Form::new()
             .text("srv_send_msg", "true")
@@ -495,9 +493,7 @@ impl QqAdapter {
         let file_part = reqwest::multipart::Part::bytes(file_data)
             .file_name(filename.to_string())
             .mime_str(mime_type)
-            .map_err(|e| {
-                GatewayError::Internal(format!("QQ upload: invalid MIME type: {}", e))
-            })?;
+            .map_err(|e| GatewayError::Internal(format!("QQ upload: invalid MIME type: {}", e)))?;
 
         let form = reqwest::multipart::Form::new()
             .text("srv_send_msg", "false")
@@ -559,9 +555,11 @@ impl QqAdapter {
 
         let (file_data, filename, mime_type) = if let Some(data_b64) = &media.data {
             use base64::Engine;
-            let decoded = base64::engine::general_purpose::STANDARD.decode(data_b64).map_err(|e| {
-                GatewayError::Internal(format!("QQ upload: base64 decode failed: {}", e))
-            })?;
+            let decoded = base64::engine::general_purpose::STANDARD
+                .decode(data_b64)
+                .map_err(|e| {
+                    GatewayError::Internal(format!("QQ upload: base64 decode failed: {}", e))
+                })?;
             let fname = media.filename.clone().unwrap_or_else(|| "file".to_string());
             (decoded, fname, media.mime_type.clone())
         } else if let Some(file_url) = &media.url {
@@ -1301,11 +1299,7 @@ impl PlatformAdapter for QqAdapter {
         // 如果没有 URL 但有 base64 data，直接使用文件上传路径
         if params.media.url.is_none() && params.media.data.is_some() {
             match self
-                .send_c2c_media_upload_only(
-                    &params.chat_id,
-                    &params.media,
-                    params.text.clone(),
-                )
+                .send_c2c_media_upload_only(&params.chat_id, &params.media, params.text.clone())
                 .await
             {
                 Ok(resp) => {
@@ -1318,13 +1312,23 @@ impl PlatformAdapter for QqAdapter {
                         error_code: None,
                         retryable: false,
                     };
-                    publish_send_event(&self.event_bus, event_types::MESSAGE_SENT, &params.chat_id, &send_result);
+                    publish_send_event(
+                        &self.event_bus,
+                        event_types::MESSAGE_SENT,
+                        &params.chat_id,
+                        &send_result,
+                    );
                     return Ok(send_result);
                 }
                 Err(e) => {
                     self.errors.fetch_add(1, Ordering::Relaxed);
                     let send_result = SendResult::fail(e.to_string(), true);
-                    publish_send_event(&self.event_bus, event_types::MESSAGE_FAILED, &params.chat_id, &send_result);
+                    publish_send_event(
+                        &self.event_bus,
+                        event_types::MESSAGE_FAILED,
+                        &params.chat_id,
+                        &send_result,
+                    );
                     return Ok(send_result);
                 }
             }
@@ -1353,7 +1357,9 @@ impl PlatformAdapter for QqAdapter {
             Err(e) => {
                 let err_str = e.to_string();
                 // C2C 私聊不支持 msg_type: 2（11255），降级为纯图片 msg_type: 1
-                if err_str.contains("11255") || (err_str.contains("/v2/users/") && err_str.contains("parse failed")) {
+                if err_str.contains("11255")
+                    || (err_str.contains("/v2/users/") && err_str.contains("parse failed"))
+                {
                     tracing::warn!(
                         "QQ C2C does not support msg_type: 2, retrying with msg_type: 1 (image only)"
                     );
