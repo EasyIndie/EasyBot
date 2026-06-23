@@ -329,7 +329,8 @@ async fn main() -> anyhow::Result<()> {
         if !start_result.failed.is_empty() {
             tracing::warn!("Failed adapters: {:?}", start_result.failed);
         }
-        am.start_health_monitor(tokio::time::Duration::from_secs(30)).await;
+        am.start_health_monitor(tokio::time::Duration::from_secs(30))
+            .await;
         tracing::info!("Adapter health monitor started");
     });
 

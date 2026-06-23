@@ -113,10 +113,11 @@ impl AdapterManager {
     /// weak ref was never set or the last strong reference has been dropped.
     async fn ensure_self_ref(&self) -> Result<Arc<Self>, GatewayError> {
         let guard = self.self_weak.read().await;
-        guard
-            .as_ref()
-            .and_then(|w| w.upgrade())
-            .ok_or_else(|| GatewayError::Internal("AdapterManager self-ref not set; wrap in Arc and call init_self_ref()".into()))
+        guard.as_ref().and_then(|w| w.upgrade()).ok_or_else(|| {
+            GatewayError::Internal(
+                "AdapterManager self-ref not set; wrap in Arc and call init_self_ref()".into(),
+            )
+        })
     }
 
     /// 启动适配器（非阻塞）
@@ -164,7 +165,12 @@ impl AdapterManager {
                 platform_name
             )));
         }
-        if self.pending_connections.read().await.contains_key(&platform_name) {
+        if self
+            .pending_connections
+            .read()
+            .await
+            .contains_key(&platform_name)
+        {
             return Err(GatewayError::Internal(format!(
                 "Adapter '{}' is already connecting",
                 platform_name
@@ -243,7 +249,11 @@ impl AdapterManager {
                     }
 
                     // 确保 config 已保存（可能被 reconnect 清除又重设）
-                    self_arc.configs.write().await.insert(pname.clone(), config_for_store);
+                    self_arc
+                        .configs
+                        .write()
+                        .await
+                        .insert(pname.clone(), config_for_store);
 
                     self_arc.publish_event(
                         event_types::ADAPTER_CONNECTED,
@@ -256,7 +266,10 @@ impl AdapterManager {
                 }
                 _ => {
                     let error_msg = match &connect_result {
-                        Ok(cr) => cr.error.clone().unwrap_or_else(|| "Unknown error".to_string()),
+                        Ok(cr) => cr
+                            .error
+                            .clone()
+                            .unwrap_or_else(|| "Unknown error".to_string()),
                         Err(e) => e.to_string(),
                     };
 
@@ -1122,9 +1135,7 @@ mod tests {
     async fn test_start_publishes_adapter_connected() {
         let event_bus = Arc::new(EventBus::new());
         let mut rx = event_bus.subscribe(event_types::ADAPTER_CONNECTED);
-        let manager = Arc::new(
-            AdapterManager::new().with_event_bus(event_bus),
-        );
+        let manager = Arc::new(AdapterManager::new().with_event_bus(event_bus));
         AdapterManager::init_self_ref(&manager).await;
         register_mock_adapter(&manager).await;
 
@@ -1151,9 +1162,7 @@ mod tests {
     async fn test_stop_publishes_adapter_disconnected() {
         let event_bus = Arc::new(EventBus::new());
         let mut rx = event_bus.subscribe(event_types::ADAPTER_DISCONNECTED);
-        let manager = Arc::new(
-            AdapterManager::new().with_event_bus(event_bus),
-        );
+        let manager = Arc::new(AdapterManager::new().with_event_bus(event_bus));
         AdapterManager::init_self_ref(&manager).await;
         register_mock_adapter(&manager).await;
 
