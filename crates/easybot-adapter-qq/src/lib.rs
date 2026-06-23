@@ -359,6 +359,20 @@ impl QqAdapter {
     }
 }
 
+/// 从 MIME 类型推导 QQ 文件上传所需的 file_type 参数
+/// 1=image, 2=video, 3=voice, 默认 1 (image)
+fn mime_to_file_type(mime_type: &str) -> u32 {
+    if mime_type.starts_with("image/") {
+        1
+    } else if mime_type.starts_with("video/") {
+        2
+    } else if mime_type.starts_with("audio/") {
+        3
+    } else {
+        1 // 默认为图片
+    }
+}
+
 // ── 消息发送（自动判断频道/群聊） ──
 
 impl QqAdapter {
@@ -425,6 +439,8 @@ impl QqAdapter {
         let client = self.client()?;
         let url = format!("{}/v2/users/{}/files", self.api_base_url(), openid);
 
+        let file_type = mime_to_file_type(mime_type);
+
         let file_part = reqwest::multipart::Part::bytes(file_data)
             .file_name(filename.to_string())
             .mime_str(mime_type)
@@ -432,6 +448,7 @@ impl QqAdapter {
 
         let form = reqwest::multipart::Form::new()
             .text("srv_send_msg", "true")
+            .text("file_type", file_type.to_string())
             .part("file", file_part);
 
         let resp = client
@@ -477,6 +494,7 @@ impl QqAdapter {
     ///
     /// 先上传文件获取 file_info，再发送 msg_type: 7 消息。
     /// 适用于 C2C 端点（SMS 不支持直接 image URL）。
+    /// 如果两步上传失败（如 srv_send_msg=false 不支持），降级为直接上传发送。
     async fn send_c2c_media_via_upload(
         &self,
         openid: &str,
@@ -490,13 +508,16 @@ impl QqAdapter {
         let client = self.client()?;
         let upload_url = format!("{}/v2/users/{}/files", self.api_base_url(), openid);
 
-        let file_part = reqwest::multipart::Part::bytes(file_data)
+        let file_type = mime_to_file_type(mime_type);
+
+        let file_part = reqwest::multipart::Part::bytes(file_data.clone())
             .file_name(filename.to_string())
             .mime_str(mime_type)
             .map_err(|e| GatewayError::Internal(format!("QQ upload: invalid MIME type: {}", e)))?;
 
         let form = reqwest::multipart::Form::new()
             .text("srv_send_msg", "false")
+            .text("file_type", file_type.to_string())
             .part("file", file_part);
 
         let upload_resp = client
@@ -512,10 +533,15 @@ impl QqAdapter {
         let status = upload_resp.status();
         if !status.is_success() {
             let body_text = upload_resp.text().await.unwrap_or_default();
-            return Err(GatewayError::Internal(format!(
-                "QQ C2C file upload error (POST /v2/users/{}/files): {} - {}",
-                openid, status, body_text
-            )));
+            // srv_send_msg=false 可能不被部分 QQ 环境支持，
+            // 降级为直接上传发送（srv_send_msg=true，不含文本）
+            tracing::warn!(
+                "QQ C2C two-step upload failed ({}), falling back to direct upload",
+                body_text
+            );
+            return self
+                .upload_c2c_file(openid, file_data, filename, mime_type)
+                .await;
         }
 
         let uploaded: QqFileUploadResponse = upload_resp.json().await.map_err(|e| {
@@ -523,17 +549,39 @@ impl QqAdapter {
         })?;
 
         // Step 2: Send msg_type: 7 with the file_info
+        // Note: msg_type 7 的 content 字段会被 QQ 按 markdown 解析，
+        // 空字符串或包含未配对方括号的文本均会被拒绝（40034011）。
+        // 因此 sanitize 文本中的方括号，若文本为空则使用单个空格作为占位。
+        let content = text
+            .filter(|t| !t.is_empty())
+            .map(|t| t.replace('[', "【").replace(']', "】"))
+            .unwrap_or_else(|| " ".to_string());
+
         let msg_body = serde_json::json!({
             "msg_type": 7,
-            "content": text.unwrap_or_default(),
+            "content": content,
             "media": {
                 "file_info": uploaded.file_info,
             },
         });
 
         let c2c_path = format!("/v2/users/{}/messages", openid);
-        self.api_post::<QqSendMessageResponse>(&c2c_path, &msg_body)
+        match self
+            .api_post::<QqSendMessageResponse>(&c2c_path, &msg_body)
             .await
+        {
+            Ok(resp) => Ok(resp),
+            Err(e) => {
+                // msg_type: 7 发送失败（如 markdown 校验不过或端点不支持），
+                // 降级为直接上传发送（srv_send_msg=true）
+                tracing::warn!(
+                    "QQ C2C msg_type 7 send failed ({}), falling back to direct upload",
+                    e
+                );
+                self.upload_c2c_file(openid, file_data, filename, mime_type)
+                    .await
+            }
+        }
     }
 
     /// 便捷方法：从 URL/base64 获取文件数据后上传到 C2C
@@ -1296,7 +1344,10 @@ impl PlatformAdapter for QqAdapter {
     }
 
     async fn send_media(&self, params: SendMediaParams) -> Result<SendResult, GatewayError> {
-        // 如果没有 URL 但有 base64 data，直接使用文件上传路径
+        // 如果有 base64 data 但没有 URL，优先尝试 C2C 文件上传路径
+        // （QQ API 中只有 C2C 端点支持直接二进制文件上传）。
+        // 如果失败（可能因为 chat_id 是频道/群聊而非 C2C 用户），
+        // 则降级到下方的 try_send 链路（频道→群聊→C2C）。
         if params.media.url.is_none() && params.media.data.is_some() {
             match self
                 .send_c2c_media_upload_only(&params.chat_id, &params.media, params.text.clone())
@@ -1320,16 +1371,13 @@ impl PlatformAdapter for QqAdapter {
                     );
                     return Ok(send_result);
                 }
-                Err(e) => {
-                    self.errors.fetch_add(1, Ordering::Relaxed);
-                    let send_result = SendResult::fail(e.to_string(), true);
-                    publish_send_event(
-                        &self.event_bus,
-                        event_types::MESSAGE_FAILED,
-                        &params.chat_id,
-                        &send_result,
+                Err(c2c_err) => {
+                    // C2C 上传失败 — chat_id 可能是频道/群聊而非 C2C 用户 openid。
+                    // 降级到下方的 try_send 链路继续尝试。
+                    tracing::debug!(
+                        "QQ C2C media upload failed, falling through to try_send: {}",
+                        c2c_err
                     );
-                    return Ok(send_result);
                 }
             }
         }
