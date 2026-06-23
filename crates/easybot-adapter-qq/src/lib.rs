@@ -702,7 +702,7 @@ impl QqAdapter {
                 }
             });
             if write
-                .send(Message::Text(identify.to_string()))
+                .send(Message::Text(identify.to_string().into()))
                 .await
                 .is_err()
             {
@@ -729,7 +729,7 @@ impl QqAdapter {
                     // 定时心跳
                     _ = hb_timer.tick() => {
                         let hb = serde_json::json!({"op": 1, "d": seq});
-                        if write.send(Message::Text(hb.to_string())).await.is_err() {
+                        if write.send(Message::Text(hb.to_string().into())).await.is_err() {
                             tracing::warn!("QQ heartbeat failed");
                             break;
                         }

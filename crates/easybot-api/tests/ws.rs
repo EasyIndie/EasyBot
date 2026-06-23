@@ -35,7 +35,7 @@ impl WsClient {
     /// 发送文本帧
     async fn send_text(&mut self, text: &str) {
         self.write
-            .send(Message::Text(text.to_string()))
+            .send(Message::Text(text.to_string().into()))
             .await
             .expect("send_text failed");
     }

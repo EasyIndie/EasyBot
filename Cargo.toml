@@ -79,7 +79,7 @@ reqwest = { version = "0.13", default-features = false, features = ["json", "mul
 # 异步工具
 futures = "0.3"
 tokio-stream = { version = "0.1", features = ["net"] }
-tokio-tungstenite = "0.24"
+tokio-tungstenite = "0.26"
 dashmap = "6"
 parking_lot = "0.12"
 async-trait = "0.1"

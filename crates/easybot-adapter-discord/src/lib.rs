@@ -11,7 +11,6 @@ mod types;
 use std::sync::Arc;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
 
 use async_trait::async_trait;
 use easybot_core::bus::EventBus;
@@ -20,20 +19,13 @@ use easybot_core::types::error::GatewayError;
 use easybot_core::types::event::GatewayEvent;
 use easybot_core::types::event::event_types;
 use easybot_core::types::message::*;
-use futures::{SinkExt, StreamExt};
 use tokio::sync::broadcast;
-use tokio_tungstenite::tungstenite::Message as WsMessage;
-use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+use twilight_gateway::{CloseFrame, EventTypeFlags, Intents, Shard, ShardId, StreamExt as _};
+use twilight_model::gateway::event::Event;
 use types::*;
 
 /// Discord REST API 基础 URL (v10)
 const DISCORD_API: &str = "https://discord.com/api/v10";
-
-/// Discord Gateway WebSocket URL (v10)
-const DISCORD_GATEWAY: &str = "wss://gateway.discord.gg/?v=10&encoding=json";
-
-/// Discord Gateway 主机名（用于 DNS 解析和 TLS SNI）
-const DISCORD_GATEWAY_HOST: &str = "gateway.discord.gg";
 
 /// Discord 适配器
 pub struct DiscordAdapter {
@@ -243,9 +235,10 @@ impl DiscordAdapter {
     }
 
     /// 将 Discord 消息转换为网关 InboundMessage
-    fn convert_message(msg: DiscordMessage, bot_user_id: &str) -> Option<InboundMessage> {
+    /// 将 twilight_model::channel::Message 转换为 EasyBot InboundMessage
+    fn convert_message(msg: &twilight_model::channel::Message, bot_user_id: &str) -> Option<InboundMessage> {
         // 过滤自身消息，避免回环
-        if msg.author.id == bot_user_id {
+        if msg.author.id.to_string() == bot_user_id {
             return None;
         }
 
@@ -256,22 +249,25 @@ impl DiscordAdapter {
         };
 
         let author = MessageAuthor {
-            id: msg.author.id,
-            name: Some(msg.author.global_name.unwrap_or(msg.author.username)),
-            is_bot: msg.author.bot.unwrap_or(false),
+            id: msg.author.id.to_string(),
+            name: Some(
+                msg.author
+                    .global_name
+                    .clone()
+                    .unwrap_or(msg.author.name.clone()),
+            ),
+            is_bot: msg.author.bot,
         };
 
-        let timestamp = chrono::DateTime::parse_from_rfc3339(&msg.timestamp)
-            .map(|dt| dt.timestamp_millis())
-            .unwrap_or(0);
+        let timestamp = msg.timestamp.as_micros() / 1000;
 
         Some(InboundMessage {
-            id: msg.id,
+            id: msg.id.to_string(),
             platform: "discord".to_string(),
-            chat_id: msg.channel_id,
+            chat_id: msg.channel_id.to_string(),
             chat_name: None, // 消息对象不含频道名称，需额外 API 查询
             chat_type,
-            text: msg.content.filter(|s| !s.is_empty()),
+            text: Some(msg.content.clone()).filter(|s| !s.is_empty()),
             author,
             timestamp,
             media: None,
@@ -285,354 +281,56 @@ impl DiscordAdapter {
         })
     }
 
-    /// 处理 Gateway Dispatch 事件
-    fn handle_dispatch(
-        event_type: &str,
-        data: serde_json::Value,
-        event_bus: &EventBus,
-        bot_user_id: &str,
-    ) {
-        match event_type {
-            "MESSAGE_CREATE" => match serde_json::from_value::<DiscordMessage>(data) {
-                Ok(msg) => {
-                    if let Some(inbound) = Self::convert_message(msg, bot_user_id) {
-                        let event = GatewayEvent::new(
-                            easybot_core::types::event::event_types::MESSAGE_INBOUND,
-                            "discord",
-                            serde_json::to_value(&inbound).unwrap_or_default(),
-                        );
-                        event_bus.publish(event);
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to parse MESSAGE_CREATE: {}", e);
-                }
-            },
-            _ => {
-                tracing::debug!("Unhandled Discord Gateway event: {}", event_type);
-            }
-        }
-    }
-
-    /// 建立到 Discord Gateway 的 WebSocket 连接（使用 webpki-roots 验证 TLS）
-    async fn connect_gateway() -> Result<
-        (
-            tokio_tungstenite::WebSocketStream<
-                tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-            >,
-            tokio_tungstenite::tungstenite::http::Response<Option<Vec<u8>>>,
-        ),
-        Box<dyn std::error::Error + Send + Sync>,
-    > {
-        use rustls::pki_types::ServerName;
-        use std::sync::Arc;
-        use tokio::net::TcpStream;
-        use tokio_rustls::TlsConnector;
-
-        // 注册默认 CryptoProvider（rustls 0.23 需要显式指定）
-        let _ = rustls::crypto::ring::default_provider().install_default();
-
-        // DNS 解析
-        let addr = tokio::net::lookup_host((DISCORD_GATEWAY_HOST, 443))
-            .await?
-            .next()
-            .ok_or("DNS resolution failed")?;
-
-        // TCP 连接
-        let tcp = TcpStream::connect(addr).await?;
-
-        // TLS 配置（使用 webpki-roots 作为根证书）
-        let mut root_store = rustls::RootCertStore::empty();
-        root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-        let config = rustls::ClientConfig::builder()
-            .with_root_certificates(root_store)
-            .with_no_client_auth();
-        let connector = TlsConnector::from(Arc::new(config));
-        let domain = ServerName::try_from(DISCORD_GATEWAY_HOST)?;
-        let tls = connector.connect(domain, tcp).await?;
-
-        // 包装为 MaybeTlsStream
-        let stream = tokio_tungstenite::MaybeTlsStream::Rustls(tls);
-
-        // 升级到 WebSocket
-        let request = DISCORD_GATEWAY.into_client_request()?;
-        let (ws_stream, resp) = tokio_tungstenite::client_async(request, stream).await?;
-        Ok((ws_stream, resp))
-    }
-
-    /// 网关主循环（WebSocket 连接 + 心跳 + 事件接收）
-    /// 外层 loop 提供自动重连：任意阶段断开后 5s 重试
-    async fn gateway_loop(
+    /// Gateway Shard 事件循环（使用 twilight-gateway SDK）
+    async fn gateway_shard_loop(
         token: String,
         event_bus: Arc<EventBus>,
         bot_user_id: String,
         mut cancel_rx: broadcast::Receiver<()>,
         heartbeat: Heartbeat,
     ) {
-        loop {
-            tracing::info!("Discord Gateway connecting...");
+        let intents = Intents::GUILD_MESSAGES | Intents::DIRECT_MESSAGES | Intents::MESSAGE_CONTENT;
+        let mut shard = Shard::new(ShardId::ONE, token, intents);
 
-            let (ws_stream, _) = match Self::connect_gateway().await {
-                Ok(s) => s,
-                Err(e) => {
-                    tracing::error!("Discord Gateway connect failed: {}", e);
-                    if Self::sleep_or_cancel(Duration::from_secs(5), &mut cancel_rx).await {
-                        return;
-                    }
-                    continue;
-                }
-            };
-
-            let (mut write, mut read) = ws_stream.split();
-
-            // Step 1: 等待 Hello
-            let hello_data = match Self::recv_hello(&mut read).await {
-                Some(h) => h,
-                None => {
-                    if Self::sleep_or_cancel(Duration::from_secs(5), &mut cancel_rx).await {
-                        return;
-                    }
-                    continue;
-                }
-            };
-
-            let hb_interval = Duration::from_millis(hello_data.heartbeat_interval);
-            tracing::debug!(
-                "Discord Gateway Hello received, heartbeat interval: {:?}",
-                hb_interval
-            );
-
-            // Step 2: 发送 Identify
-            let identify_msg = serde_json::json!({
-                "op": OP_IDENTIFY,
-                "d": {
-                    "token": token,
-                    "intents": DEFAULT_INTENTS,
-                    "properties": {
-                        "$os": std::env::consts::OS,
-                        "$browser": "easybot",
-                        "$device": "easybot",
-                    },
-                },
-            });
-
-            if let Err(e) = write.send(WsMessage::Text(identify_msg.to_string())).await {
-                tracing::error!("Failed to send Identify: {}", e);
-                if Self::sleep_or_cancel(Duration::from_secs(5), &mut cancel_rx).await {
-                    return;
-                }
-                continue;
-            }
-
-            // Step 3: 等待 Ready
-            let mut seq: Option<u64> = None;
-            if !Self::wait_for_ready(&mut read, &mut write, &mut seq, &cancel_rx).await {
-                if Self::sleep_or_cancel(Duration::from_secs(5), &mut cancel_rx).await {
-                    return;
-                }
-                continue;
-            }
-
-            tracing::info!("Discord Gateway connected");
-
-            // Step 4: 主循环（事件接收 + 心跳发送）
-            Self::event_loop(
-                &mut read,
-                &mut write,
-                &mut seq,
-                hb_interval,
-                &event_bus,
-                &bot_user_id,
-                &cancel_rx,
-                &heartbeat,
-            )
-            .await;
-
-            tracing::info!("Discord Gateway loop ended, reconnecting in 5s...");
-            if Self::sleep_or_cancel(Duration::from_secs(5), &mut cancel_rx).await {
-                return;
-            }
-        }
-    }
-
-    /// 等待指定时长或 cancel 信号。返回 true 表示收到 cancel 信号应退出。
-    async fn sleep_or_cancel(duration: Duration, cancel_rx: &mut broadcast::Receiver<()>) -> bool {
-        tokio::select! {
-            _ = tokio::time::sleep(duration) => false,
-            _ = cancel_rx.recv() => {
-                tracing::info!("Discord Gateway cancelled during reconnect wait");
-                true
-            }
-        }
-    }
-
-    /// 接收 Hello 并返回 HeartbeatInterval
-    async fn recv_hello(
-        read: &mut (
-                 impl StreamExt<Item = Result<WsMessage, tokio_tungstenite::tungstenite::Error>> + Unpin
-             ),
-    ) -> Option<HelloData> {
-        match read.next().await? {
-            Ok(WsMessage::Text(text)) => {
-                let payload: GatewayPayload = serde_json::from_str(&text).ok()?;
-                if payload.op != OP_HELLO {
-                    tracing::error!("Expected Hello (op=10), got op={}", payload.op);
-                    return None;
-                }
-                serde_json::from_value(payload.d?).ok()
-            }
-            Ok(WsMessage::Close(frame)) => {
-                tracing::error!("Gateway closed during Hello: {:?}", frame);
-                None
-            }
-            Ok(_) => {
-                tracing::error!("Unexpected message type during Hello");
-                None
-            }
-            Err(e) => {
-                tracing::error!("Gateway error during Hello: {}", e);
-                None
-            }
-        }
-    }
-
-    /// 等待 Ready 事件（验证 Identify 成功）
-    async fn wait_for_ready(
-        read: &mut (
-                 impl StreamExt<Item = Result<WsMessage, tokio_tungstenite::tungstenite::Error>> + Unpin
-             ),
-        _write: &mut (impl SinkExt<WsMessage, Error = tokio_tungstenite::tungstenite::Error> + Unpin),
-        seq: &mut Option<u64>,
-        cancel_rx: &broadcast::Receiver<()>,
-    ) -> bool {
-        let mut cancel_rx = cancel_rx.resubscribe();
-
-        loop {
-            tokio::select! {
-                _ = cancel_rx.recv() => {
-                    tracing::info!("Discord Gateway cancelled before Ready");
-                    return false;
-                }
-                msg = read.next() => {
-                    match msg {
-                        Some(Ok(WsMessage::Text(text))) => {
-                            match serde_json::from_str::<GatewayPayload>(&text) {
-                                Ok(payload) => {
-                                    *seq = payload.s;
-                                    if payload.op == OP_DISPATCH && payload.t.as_deref() == Some("READY") {
-                                        return true;
-                                    }
-                                }
-                                Err(e) => tracing::warn!("Pre-ready parse error: {}", e),
-                            }
-                        }
-                        Some(Ok(WsMessage::Close(frame))) => {
-                            tracing::error!("Gateway closed before Ready: {:?}", frame);
-                            return false;
-                        }
-                        Some(Err(e)) => {
-                            tracing::error!("Gateway error before Ready: {}", e);
-                            return false;
-                        }
-                        None => {
-                            tracing::error!("Gateway connection ended before Ready");
-                            return false;
-                        }
-                        _ => {}
-                    }
-                }
-            }
-        }
-    }
-
-    /// 主事件循环：接收 Dispatch 事件 + 定时发送 Heartbeat
-    #[allow(clippy::too_many_arguments)]
-    async fn event_loop(
-        read: &mut (
-                 impl StreamExt<Item = Result<WsMessage, tokio_tungstenite::tungstenite::Error>> + Unpin
-             ),
-        write: &mut (impl SinkExt<WsMessage, Error = tokio_tungstenite::tungstenite::Error> + Unpin),
-        seq: &mut Option<u64>,
-        hb_interval: Duration,
-        event_bus: &EventBus,
-        bot_user_id: &str,
-        cancel_rx: &broadcast::Receiver<()>,
-        heartbeat: &Heartbeat,
-    ) {
-        let mut cancel_rx = cancel_rx.resubscribe();
-        let mut heartbeat_timer = tokio::time::interval(hb_interval);
-        heartbeat_timer.tick().await; // 消耗立即触发
+        tracing::info!("Discord Gateway connecting...");
 
         loop {
             tokio::select! {
                 _ = cancel_rx.recv() => {
                     tracing::info!("Discord Gateway cancelled");
-                    let _ = write.close().await;
-                    break;
+                    shard.close(CloseFrame::NORMAL);
+                    return;
                 }
-                _ = heartbeat_timer.tick() => {
-                    let hb = serde_json::json!({
-                        "op": OP_HEARTBEAT,
-                        "d": seq,
-                    });
-                    match write.send(WsMessage::Text(hb.to_string())).await {
-                        Ok(_) => {}
-                        Err(e) => {
-                            tracing::warn!("Discord heartbeat failed: {}", e);
-                            break;
+                event = shard.next_event(EventTypeFlags::all()) => {
+                    match event {
+                        Some(Ok(Event::Ready(_))) => {
+                            heartbeat.beat();
+                            tracing::info!("Discord Gateway connected");
                         }
-                    }
-                }
-                msg = read.next() => {
-                    match msg {
-                        Some(Ok(WsMessage::Text(text))) => {
-                            match serde_json::from_str::<GatewayPayload>(&text) {
-                                Ok(payload) => {
-                                    match payload.op {
-                                        OP_DISPATCH => {
-                                            *seq = payload.s;
-                                            heartbeat.beat(); // liveness: Gateway event received
-                                            if let (Some(event_type), Some(d)) = (payload.t, payload.d) {
-                                                Self::handle_dispatch(
-                                                    &event_type,
-                                                    d,
-                                                    event_bus,
-                                                    bot_user_id,
-                                                );
-                                            }
-                                        }
-                                        OP_HEARTBEAT_ACK => {
-                                            heartbeat.beat(); // liveness: heartbeat ack received
-                                        }
-                                        OP_RECONNECT => {
-                                            tracing::warn!("Discord Gateway requested reconnect");
-                                            break;
-                                        }
-                                        OP_INVALID_SESSION => {
-                                            tracing::warn!("Discord Gateway invalid session, need re-identify");
-                                            break;
-                                        }
-                                        _ => {}
-                                    }
-                                }
-                                Err(e) => {
-                                    tracing::warn!("Failed to parse Gateway payload: {}", e);
-                                }
+                        Some(Ok(Event::MessageCreate(msg))) => {
+                            heartbeat.beat();
+                            if let Some(inbound) = Self::convert_message(&msg.0, &bot_user_id) {
+                                let event = GatewayEvent::new(
+                                    easybot_core::types::event::event_types::MESSAGE_INBOUND,
+                                    "discord",
+                                    serde_json::to_value(&inbound).unwrap_or_default(),
+                                );
+                                event_bus.publish(event);
                             }
                         }
-                        Some(Ok(WsMessage::Close(frame))) => {
-                            tracing::info!("Discord Gateway closed: {:?}", frame);
-                            break;
-                        }
                         Some(Err(e)) => {
-                            tracing::error!("Discord Gateway error: {}", e);
-                            break;
+                            tracing::warn!(error = %e, "Discord Gateway error, shard will auto-reconnect");
+                            // twilight Shard 内部处理重连，继续 poll_next 即可
+                            continue;
+                        }
+                        Some(_) => {
+                            // 其他事件（心跳确认、频道变更等）仅更新存活时间戳
+                            heartbeat.beat();
                         }
                         None => {
-                            tracing::info!("Discord Gateway connection ended");
-                            break;
+                            tracing::info!("Discord Gateway stream ended");
+                            return;
                         }
-                        _ => {}
                     }
                 }
             }
@@ -746,7 +444,7 @@ impl PlatformAdapter for DiscordAdapter {
             let hb = self.heartbeat.clone();
 
             tokio::spawn(async move {
-                Self::gateway_loop(token_clone, eb, bot_id, cancel_rx, hb).await;
+                Self::gateway_shard_loop(token_clone, eb, bot_id, cancel_rx, hb).await;
             });
         }
 
@@ -1299,7 +997,6 @@ impl PlatformAdapter for DiscordAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Arc;
 
     #[test]
     fn test_platform_name() {
@@ -1470,29 +1167,35 @@ mod tests {
         assert!(result.error.is_some());
     }
 
+    /// 测试辅助：从 JSON 构造 twilight Message
+    fn make_msg(channel_id: &str, author_id: &str, author_name: &str,
+                global_name: Option<&str>, bot: bool, content: &str,
+                guild_id: Option<&str>) -> twilight_model::channel::Message {
+        let mut v = serde_json::json!({
+            "id": "111111111",
+            "channel_id": channel_id,
+            "author": {
+                "id": author_id, "username": author_name,
+                "global_name": global_name, "bot": bot, "discriminator": "0000"
+            },
+            "content": content,
+            "timestamp": "2024-06-01T12:00:00.000000+00:00",
+            "tts": false, "mention_everyone": false,
+            "mentions": [], "mention_roles": [], "mention_channels": [],
+            "attachments": [], "embeds": [], "pinned": false, "type": 0
+        });
+        if let Some(gid) = guild_id {
+            v["guild_id"] = serde_json::json!(gid);
+        }
+        serde_json::from_value(v).unwrap()
+    }
+
     #[test]
     fn test_convert_dm_message() {
-        let msg = DiscordMessage {
-            id: "111111111".to_string(),
-            channel_id: "222222222".to_string(),
-            guild_id: None,
-            author: DiscordUser {
-                id: "333333333".to_string(),
-                username: "testuser".to_string(),
-                global_name: Some("TestUser".to_string()),
-                bot: Some(false),
-                avatar: None,
-            },
-            content: Some("Hello from Discord!".to_string()),
-            attachments: vec![],
-            timestamp: "2024-06-01T12:00:00.000000+00:00".to_string(),
-            edited_timestamp: None,
-            mention_everyone: false,
-            tts: false,
-            msg_type: 0,
-        };
+        let msg = make_msg("222222222", "333333333", "testuser",
+                           Some("TestUser"), false, "Hello from Discord!", None);
 
-        let inbound = DiscordAdapter::convert_message(msg, "bot_id").unwrap();
+        let inbound = DiscordAdapter::convert_message(&msg, "999999999").unwrap();
         assert_eq!(inbound.id, "111111111");
         assert_eq!(inbound.platform, "discord");
         assert_eq!(inbound.chat_id, "222222222");
@@ -1505,27 +1208,10 @@ mod tests {
 
     #[test]
     fn test_convert_guild_message() {
-        let msg = DiscordMessage {
-            id: "111111111".to_string(),
-            channel_id: "222222222".to_string(),
-            guild_id: Some("444444444".to_string()),
-            author: DiscordUser {
-                id: "333333333".to_string(),
-                username: "guilduser".to_string(),
-                global_name: None,
-                bot: Some(false),
-                avatar: None,
-            },
-            content: Some("Guild message".to_string()),
-            attachments: vec![],
-            timestamp: "2024-06-01T12:00:00.000000+00:00".to_string(),
-            edited_timestamp: None,
-            mention_everyone: false,
-            tts: false,
-            msg_type: 0,
-        };
+        let msg = make_msg("222222222", "333333333", "guilduser",
+                           None, false, "Guild message", Some("444444444"));
 
-        let inbound = DiscordAdapter::convert_message(msg, "bot_id").unwrap();
+        let inbound = DiscordAdapter::convert_message(&msg, "999999999").unwrap();
         assert_eq!(inbound.chat_type, ChatType::Group);
         assert!(inbound.is_group);
         assert_eq!(inbound.author.name.as_deref(), Some("guilduser"));
@@ -1533,113 +1219,11 @@ mod tests {
 
     #[test]
     fn test_convert_own_message_is_filtered() {
-        let msg = DiscordMessage {
-            id: "111111111".to_string(),
-            channel_id: "222222222".to_string(),
-            guild_id: None,
-            author: DiscordUser {
-                id: "bot_id".to_string(),
-                username: "mybot".to_string(),
-                global_name: None,
-                bot: Some(true),
-                avatar: None,
-            },
-            content: Some("I said this".to_string()),
-            attachments: vec![],
-            timestamp: "2024-06-01T12:00:00.000000+00:00".to_string(),
-            edited_timestamp: None,
-            mention_everyone: false,
-            tts: false,
-            msg_type: 0,
-        };
+        let msg = make_msg("222222222", "888888888", "mybot",
+                           None, true, "I said this", None);
 
-        let result = DiscordAdapter::convert_message(msg, "bot_id");
+        let result = DiscordAdapter::convert_message(&msg, "888888888");
         assert!(result.is_none(), "Should filter bot's own messages");
-    }
-
-    // ── Gateway dispatch 测试 ──
-
-    #[test]
-    fn test_handle_dispatch_message_create() {
-        let event_bus = Arc::new(easybot_core::bus::EventBus::new());
-        // 先订阅确保 publish 能找到 sender
-        let mut rx = event_bus.subscribe(easybot_core::types::event::event_types::MESSAGE_INBOUND);
-
-        let data = serde_json::json!({
-            "id": "12345",
-            "channel_id": "67890",
-            "content": "Hello from Discord",
-            "timestamp": "2024-06-01T12:00:00.000000+00:00",
-            "author": {
-                "id": "user_001",
-                "username": "TestUser",
-                "global_name": "Test User",
-                "bot": false
-            }
-        });
-
-        DiscordAdapter::handle_dispatch("MESSAGE_CREATE", data, &event_bus, "bot_id_001");
-
-        let event = rx.try_recv().ok();
-        assert!(event.is_some(), "Expected MESSAGE_INBOUND event");
-        if let Some(e) = event {
-            assert_eq!(e.event_type, "message.inbound");
-            assert_eq!(e.source, "discord");
-        }
-    }
-
-    #[test]
-    fn test_handle_dispatch_self_message() {
-        let event_bus = Arc::new(easybot_core::bus::EventBus::new());
-        let mut rx = event_bus.subscribe(easybot_core::types::event::event_types::MESSAGE_INBOUND);
-
-        let data = serde_json::json!({
-            "id": "99999",
-            "channel_id": "67890",
-            "content": "I am the bot",
-            "timestamp": "2024-06-01T12:00:00.000000+00:00",
-            "author": {
-                "id": "bot_self",
-                "username": "MyBot",
-                "global_name": "My Bot",
-                "bot": true
-            }
-        });
-
-        DiscordAdapter::handle_dispatch("MESSAGE_CREATE", data, &event_bus, "bot_self");
-
-        let event = rx.try_recv().ok();
-        assert!(event.is_none(), "Self messages should be filtered out");
-    }
-
-    #[test]
-    fn test_handle_dispatch_ignored_event() {
-        let event_bus = Arc::new(easybot_core::bus::EventBus::new());
-        let mut rx = event_bus.subscribe(easybot_core::types::event::event_types::MESSAGE_INBOUND);
-
-        let data = serde_json::json!({"dummy": true});
-
-        DiscordAdapter::handle_dispatch("MESSAGE_UPDATE", data, &event_bus, "bot_id");
-
-        let event = rx.try_recv().ok();
-        assert!(event.is_none(), "Unhandled event type should not publish");
-    }
-
-    #[test]
-    fn test_handle_dispatch_malformed_data() {
-        let event_bus = Arc::new(easybot_core::bus::EventBus::new());
-
-        // 缺少 author/id 等必需字段
-        let data = serde_json::json!({
-            "id": "12345",
-            "content": "partial message"
-        });
-
-        DiscordAdapter::handle_dispatch("MESSAGE_CREATE", data, &event_bus, "bot_id");
-
-        let mut rx = event_bus.subscribe(easybot_core::types::event::event_types::MESSAGE_INBOUND);
-        let event = rx.try_recv().ok();
-        assert!(event.is_none(), "Malformed message should not be published");
     }
 
     #[test]
