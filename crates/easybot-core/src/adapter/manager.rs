@@ -773,24 +773,24 @@ impl AdapterManager {
                 let deadline = Instant::now() + Duration::from_secs(60);
                 while Instant::now() < deadline {
                     // Check if no longer pending (completed or failed)
-                    if !self.pending_connections.read().await.contains_key(platform) {
-                        if let Some(status) = self.get_status(platform).await {
-                            if status.state == AdapterState::Connected {
-                                self.publish_event(
-                                    event_types::ADAPTER_RECONNECTED,
-                                    serde_json::json!({"platform": platform}),
-                                );
-                                info!("Reconnect succeeded for '{}'", platform);
-                                return Ok(());
-                            }
-                            if status.state == AdapterState::Failed {
-                                let err = status.last_error.unwrap_or_default();
-                                self.publish_event(
-                                    event_types::ADAPTER_RECONNECT_FAILED,
-                                    serde_json::json!({"platform": platform, "error": &err}),
-                                );
-                                return Err(GatewayError::Internal(err));
-                            }
+                    if !self.pending_connections.read().await.contains_key(platform)
+                        && let Some(status) = self.get_status(platform).await
+                    {
+                        if status.state == AdapterState::Connected {
+                            self.publish_event(
+                                event_types::ADAPTER_RECONNECTED,
+                                serde_json::json!({"platform": platform}),
+                            );
+                            info!("Reconnect succeeded for '{}'", platform);
+                            return Ok(());
+                        }
+                        if status.state == AdapterState::Failed {
+                            let err = status.last_error.unwrap_or_default();
+                            self.publish_event(
+                                event_types::ADAPTER_RECONNECT_FAILED,
+                                serde_json::json!({"platform": platform, "error": &err}),
+                            );
+                            return Err(GatewayError::Internal(err));
                         }
                     }
                     tokio::time::sleep(Duration::from_millis(500)).await;
@@ -883,10 +883,10 @@ mod tests {
     /// 等待适配器从 Connecting 变为 Connected（最长 2 秒）
     async fn wait_connected(manager: &AdapterManager, platform: &str) {
         for _ in 0..100 {
-            if let Some(status) = manager.get_status(platform).await {
-                if status.state == AdapterState::Connected {
-                    return;
-                }
+            if let Some(status) = manager.get_status(platform).await
+                && status.state == AdapterState::Connected
+            {
+                return;
             }
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
