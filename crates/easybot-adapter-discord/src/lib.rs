@@ -236,7 +236,10 @@ impl DiscordAdapter {
 
     /// 将 Discord 消息转换为网关 InboundMessage
     /// 将 twilight_model::channel::Message 转换为 EasyBot InboundMessage
-    fn convert_message(msg: &twilight_model::channel::Message, bot_user_id: &str) -> Option<InboundMessage> {
+    fn convert_message(
+        msg: &twilight_model::channel::Message,
+        bot_user_id: &str,
+    ) -> Option<InboundMessage> {
         // 过滤自身消息，避免回环
         if msg.author.id.to_string() == bot_user_id {
             return None;
@@ -1168,9 +1171,15 @@ mod tests {
     }
 
     /// 测试辅助：从 JSON 构造 twilight Message
-    fn make_msg(channel_id: &str, author_id: &str, author_name: &str,
-                global_name: Option<&str>, bot: bool, content: &str,
-                guild_id: Option<&str>) -> twilight_model::channel::Message {
+    fn make_msg(
+        channel_id: &str,
+        author_id: &str,
+        author_name: &str,
+        global_name: Option<&str>,
+        bot: bool,
+        content: &str,
+        guild_id: Option<&str>,
+    ) -> twilight_model::channel::Message {
         let mut v = serde_json::json!({
             "id": "111111111",
             "channel_id": channel_id,
@@ -1192,8 +1201,15 @@ mod tests {
 
     #[test]
     fn test_convert_dm_message() {
-        let msg = make_msg("222222222", "333333333", "testuser",
-                           Some("TestUser"), false, "Hello from Discord!", None);
+        let msg = make_msg(
+            "222222222",
+            "333333333",
+            "testuser",
+            Some("TestUser"),
+            false,
+            "Hello from Discord!",
+            None,
+        );
 
         let inbound = DiscordAdapter::convert_message(&msg, "999999999").unwrap();
         assert_eq!(inbound.id, "111111111");
@@ -1208,8 +1224,15 @@ mod tests {
 
     #[test]
     fn test_convert_guild_message() {
-        let msg = make_msg("222222222", "333333333", "guilduser",
-                           None, false, "Guild message", Some("444444444"));
+        let msg = make_msg(
+            "222222222",
+            "333333333",
+            "guilduser",
+            None,
+            false,
+            "Guild message",
+            Some("444444444"),
+        );
 
         let inbound = DiscordAdapter::convert_message(&msg, "999999999").unwrap();
         assert_eq!(inbound.chat_type, ChatType::Group);
@@ -1219,8 +1242,15 @@ mod tests {
 
     #[test]
     fn test_convert_own_message_is_filtered() {
-        let msg = make_msg("222222222", "888888888", "mybot",
-                           None, true, "I said this", None);
+        let msg = make_msg(
+            "222222222",
+            "888888888",
+            "mybot",
+            None,
+            true,
+            "I said this",
+            None,
+        );
 
         let result = DiscordAdapter::convert_message(&msg, "888888888");
         assert!(result.is_none(), "Should filter bot's own messages");
