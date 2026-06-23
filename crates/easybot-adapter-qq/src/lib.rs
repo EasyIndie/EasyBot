@@ -1109,6 +1109,7 @@ impl PlatformAdapter for QqAdapter {
 
     async fn send_media(&self, params: SendMediaParams) -> Result<SendResult, GatewayError> {
         let image_url = params.media.url.unwrap_or_default();
+        // 先试用 msg_type: 2（图文混排），频道/群聊支持此格式
         let body = serde_json::json!({
             "content": params.text.unwrap_or_default(),
             "image": image_url,
@@ -1127,8 +1128,37 @@ impl PlatformAdapter for QqAdapter {
                 }
             }
             Err(e) => {
-                self.errors.fetch_add(1, Ordering::Relaxed);
-                SendResult::fail(e.to_string(), true)
+                let err_str = e.to_string();
+                // C2C 私聊不支持 msg_type: 2（11255），降级为纯图片 msg_type: 1
+                if err_str.contains("/v2/users/") && err_str.contains("parse failed") {
+                    tracing::warn!(
+                        "QQ C2C does not support msg_type: 2, retrying with msg_type: 1 (image only)"
+                    );
+                    let img_body = serde_json::json!({
+                        "msg_type": 1,
+                        "image": image_url,
+                    });
+                    match self.try_send(&params.chat_id, &img_body).await {
+                        Ok(resp) => {
+                            self.messages_out.fetch_add(1, Ordering::Relaxed);
+                            SendResult {
+                                success: true,
+                                message_id: Some(resp.id),
+                                timestamp: resp.timestamp.and_then(|t| t.parse::<i64>().ok()),
+                                error: None,
+                                error_code: None,
+                                retryable: false,
+                            }
+                        }
+                        Err(e2) => {
+                            self.errors.fetch_add(1, Ordering::Relaxed);
+                            SendResult::fail(e2.to_string(), true)
+                        }
+                    }
+                } else {
+                    self.errors.fetch_add(1, Ordering::Relaxed);
+                    SendResult::fail(err_str, true)
+                }
             }
         };
         publish_send_event(
