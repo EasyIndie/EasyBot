@@ -305,38 +305,65 @@ impl DiscordAdapter {
                     return;
                 }
                 event = shard.next_event(EventTypeFlags::all()) => {
-                    match event {
-                        Some(Ok(Event::Ready(_))) => {
-                            heartbeat.beat();
-                            tracing::info!("Discord Gateway connected");
-                        }
-                        Some(Ok(Event::MessageCreate(msg))) => {
-                            heartbeat.beat();
-                            if let Some(inbound) = Self::convert_message(&msg.0, &bot_user_id) {
-                                let event = GatewayEvent::new(
-                                    easybot_core::types::event::event_types::MESSAGE_INBOUND,
-                                    "discord",
-                                    serde_json::to_value(&inbound).unwrap_or_default(),
-                                );
-                                event_bus.publish(event);
-                            }
-                        }
-                        Some(Err(e)) => {
-                            tracing::warn!(error = %e, "Discord Gateway error, shard will auto-reconnect");
-                            // twilight Shard 内部处理重连，继续 poll_next 即可
-                            continue;
-                        }
-                        Some(_) => {
-                            // 其他事件（心跳确认、频道变更等）仅更新存活时间戳
-                            heartbeat.beat();
-                        }
-                        None => {
-                            tracing::info!("Discord Gateway stream ended");
-                            return;
-                        }
+                    match handle_gateway_event(event, &event_bus, &bot_user_id, &heartbeat) {
+                        EventAction::Continue => {}
+                        EventAction::Stop => return,
                     }
                 }
             }
+        }
+    }
+}
+
+/// 处理单个 Gateway 事件的结果
+#[derive(Debug, PartialEq, Eq)]
+enum EventAction {
+    /// 继续事件循环
+    Continue,
+    /// 停止事件循环（流已结束）
+    Stop,
+}
+
+/// 处理单个 Discord Gateway 事件
+///
+/// 从 `gateway_shard_loop` 中提取以便对事件分发逻辑进行单元测试。
+/// 泛型参数 `E: Display` 允许在测试中使用 `String` 作为错误类型，
+/// 而生产代码使用 `twilight_gateway::error::ReceiveMessageError`。
+fn handle_gateway_event<E: std::fmt::Display>(
+    event: Option<Result<Event, E>>,
+    event_bus: &EventBus,
+    bot_user_id: &str,
+    heartbeat: &Heartbeat,
+) -> EventAction {
+    match event {
+        Some(Ok(Event::Ready(_))) => {
+            heartbeat.beat();
+            tracing::info!("Discord Gateway connected");
+            EventAction::Continue
+        }
+        Some(Ok(Event::MessageCreate(msg))) => {
+            heartbeat.beat();
+            if let Some(inbound) = DiscordAdapter::convert_message(&msg.0, bot_user_id) {
+                let event = GatewayEvent::new(
+                    easybot_core::types::event::event_types::MESSAGE_INBOUND,
+                    "discord",
+                    serde_json::to_value(&inbound).unwrap_or_default(),
+                );
+                event_bus.publish(event);
+            }
+            EventAction::Continue
+        }
+        Some(Err(e)) => {
+            tracing::warn!(error = %e, "Discord Gateway error, shard will auto-reconnect");
+            EventAction::Continue
+        }
+        Some(_) => {
+            heartbeat.beat();
+            EventAction::Continue
+        }
+        None => {
+            tracing::info!("Discord Gateway stream ended");
+            EventAction::Stop
         }
     }
 }
@@ -1363,5 +1390,182 @@ mod tests {
                 .len(),
             2
         );
+    }
+
+    // ── convert_message 边界测试 ──
+
+    #[test]
+    fn test_convert_message_empty_content() {
+        let msg = make_msg("222222222", "333333333", "emptyuser", None, false, "", None);
+        let inbound = DiscordAdapter::convert_message(&msg, "999999999").unwrap();
+        assert!(inbound.text.is_none(), "Empty content should yield None");
+    }
+
+    #[test]
+    fn test_convert_message_bot_author_not_self() {
+        // 其他 bot 的消息不应被过滤（仅过滤自身 bot）
+        let msg = make_msg(
+            "111111111",
+            "222222222",
+            "OtherBot",
+            None,
+            true,
+            "I am another bot",
+            None,
+        );
+        let inbound = DiscordAdapter::convert_message(&msg, "999999999").unwrap();
+        assert_eq!(inbound.author.id, "222222222");
+        assert!(inbound.author.is_bot);
+        assert_eq!(inbound.text.as_deref(), Some("I am another bot"));
+    }
+
+    #[test]
+    fn test_convert_message_timestamp_parsing() {
+        let msg = make_msg("111", "222", "user", None, false, "hi", None);
+        // timestamp 字段在 JSON 中为 "2024-06-01T12:00:00.000000+00:00"
+        // as_micros() / 1000 应得到合理的毫秒时间戳
+        let inbound = DiscordAdapter::convert_message(&msg, "999999999").unwrap();
+        assert!(inbound.timestamp > 0, "Timestamp should be positive");
+    }
+
+    // ── Gateway 事件处理测试 ──
+
+    use easybot_core::types::event::event_types::MESSAGE_INBOUND;
+    use twilight_model::gateway::payload::incoming::{MessageCreate, Ready};
+
+    /// 构造一个最小可用的 Ready 事件用于测试
+    fn make_ready_event() -> Event {
+        let json = serde_json::json!({
+            "v": 10,
+            "user": {
+                "id": "123456789",
+                "username": "testbot",
+                "discriminator": "0000",
+                "avatar": null,
+                "bot": true,
+                "mfa_enabled": false
+            },
+            "session_id": "test-session-id",
+            "resume_gateway_url": "wss://gateway.discord.gg",
+            "guilds": [],
+            "application": {"id": "987654321", "flags": 0}
+        });
+        let ready: Ready = serde_json::from_value(json).expect("Failed to deserialize Ready");
+        Event::Ready(ready)
+    }
+
+    #[test]
+    fn test_handle_event_ready_updates_heartbeat() {
+        let event_bus = EventBus::new();
+        let heartbeat = Heartbeat::new();
+        // 先等待一点时间让 heartbeat 变"旧"
+        std::thread::sleep(std::time::Duration::from_millis(5));
+
+        let action = handle_gateway_event::<&str>(
+            Some(Ok(make_ready_event())),
+            &event_bus,
+            "bot_id",
+            &heartbeat,
+        );
+
+        assert_eq!(action, EventAction::Continue);
+        assert!(
+            heartbeat.age_ms() < 100,
+            "Heartbeat should be fresh after Ready (age: {}ms)",
+            heartbeat.age_ms()
+        );
+    }
+
+    #[test]
+    fn test_handle_event_message_create_publishes() {
+        let event_bus = EventBus::new();
+        let mut rx = event_bus.subscribe(MESSAGE_INBOUND);
+        let heartbeat = Heartbeat::new();
+
+        let msg = make_msg(
+            "111111111",
+            "222222222",
+            "TestUser",
+            Some("Test User"),
+            false,
+            "Hello, world!",
+            None,
+        );
+        let event = Event::MessageCreate(Box::new(MessageCreate(msg)));
+
+        let action =
+            handle_gateway_event::<&str>(Some(Ok(event)), &event_bus, "bot_self", &heartbeat);
+
+        assert_eq!(action, EventAction::Continue);
+
+        // 验证事件已发布到总线
+        let published = rx
+            .try_recv()
+            .expect("Expected MESSAGE_INBOUND event to be published");
+        assert_eq!(published.event_type, MESSAGE_INBOUND);
+        assert_eq!(published.source, "discord");
+
+        let inbound: InboundMessage =
+            serde_json::from_value(published.data).expect("Failed to deserialize inbound message");
+        assert_eq!(inbound.text.as_deref(), Some("Hello, world!"));
+        assert_eq!(inbound.author.id, "222222222");
+    }
+
+    #[test]
+    fn test_handle_event_message_create_self_ignored() {
+        let event_bus = EventBus::new();
+        let mut rx = event_bus.subscribe(MESSAGE_INBOUND);
+        let heartbeat = Heartbeat::new();
+
+        let msg = make_msg(
+            "111111111",
+            "888888888",
+            "MyBot",
+            Some("My Bot"),
+            true,
+            "I said this",
+            None,
+        );
+        let event = Event::MessageCreate(Box::new(MessageCreate(msg)));
+
+        let action = handle_gateway_event::<&str>(
+            Some(Ok(event)),
+            &event_bus,
+            "888888888", // same as author → 应被过滤
+            &heartbeat,
+        );
+
+        assert_eq!(action, EventAction::Continue);
+
+        // 自消息不应发布到总线
+        assert!(
+            rx.try_recv().is_err(),
+            "Self messages should NOT be published"
+        );
+    }
+
+    #[test]
+    fn test_handle_event_error_continues() {
+        let event_bus = EventBus::new();
+        let heartbeat = Heartbeat::new();
+
+        let action = handle_gateway_event(
+            Some(Err("simulated gateway error")),
+            &event_bus,
+            "bot_id",
+            &heartbeat,
+        );
+
+        assert_eq!(action, EventAction::Continue);
+    }
+
+    #[test]
+    fn test_handle_event_none_stops() {
+        let event_bus = EventBus::new();
+        let heartbeat = Heartbeat::new();
+
+        let action = handle_gateway_event::<&str>(None, &event_bus, "bot_id", &heartbeat);
+
+        assert_eq!(action, EventAction::Stop);
     }
 }
