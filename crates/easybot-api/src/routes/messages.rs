@@ -27,6 +27,8 @@ pub struct SendMessageRequest {
     pub parse_mode: Option<ParseMode>,
     /// 媒体附件（可选，如果提供则发送媒体消息）
     pub media: Option<MediaAttachment>,
+    /// 行内键盘（可选，如果提供则发送交互式消息，优先级低于 media）
+    pub keyboard: Option<InlineKeyboard>,
     /// 被回复消息 ID（可选）
     pub reply_to: Option<String>,
     /// 平台特有元数据
@@ -82,7 +84,7 @@ pub async fn send_message(
         ))
     })?;
 
-    // 如果有媒体附件，发送媒体消息（文本作为 caption）
+    // 分发：media > keyboard > 纯文本
     let result = if let Some(media) = req.media {
         state
             .adapter_manager
@@ -92,6 +94,20 @@ pub async fn send_message(
                     chat_id: chat_id.clone(),
                     media,
                     text: Some(req.text.clone()),
+                    reply_to: req.reply_to,
+                },
+            )
+            .await
+            .map_err(api_error)?
+    } else if let Some(keyboard) = req.keyboard {
+        state
+            .adapter_manager
+            .send_interactive(
+                &platform,
+                SendInteractiveParams {
+                    chat_id: chat_id.clone(),
+                    text: req.text.clone(),
+                    keyboard,
                     reply_to: req.reply_to,
                 },
             )

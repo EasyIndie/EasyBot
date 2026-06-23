@@ -214,3 +214,45 @@ async fn test_e2e_qq_auth_failure() {
         assert_ne!(status_json["connected"], true);
     }
 }
+
+// ── 媒体消息 ──
+
+#[tokio::test]
+async fn test_e2e_qq_send_media() {
+    let (router, key, mock_server) = setup().await;
+
+    mock_qq_token(&mock_server).await;
+    mock_qq_bot_info(&mock_server).await;
+
+    Mock::given(method("POST"))
+        .and(path("/channels/qq-test-123/messages"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": "msg_qq_media_001",
+            "timestamp": "2026-06-20T12:00:00+00:00"
+        })))
+        .expect(0..)
+        .mount(&mock_server)
+        .await;
+
+    assert!(start_and_connect(&router, &key, "qq").await);
+
+    let (status, json) = auth_post(
+        &router,
+        "/api/v1/messages/send",
+        &key,
+        Some(serde_json::json!({
+            "target": "qq:qq-test-123",
+            "text": "Check this out",
+            "media": {
+                "media_type": "Image",
+                "url": "https://example.com/photo.jpg",
+                "mime_type": "image/jpeg",
+                "filename": "photo.jpg"
+            }
+        })),
+    )
+    .await;
+    assert_eq!(status, 200);
+    assert_eq!(json["status"], "sent");
+    assert_eq!(json["messageId"], "msg_qq_media_001");
+}

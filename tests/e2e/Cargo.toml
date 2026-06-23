@@ -13,6 +13,7 @@ easybot-adapter-feishu = { path = "../../crates/easybot-adapter-feishu" }
 easybot-adapter-qq = { path = "../../crates/easybot-adapter-qq" }
 easybot-adapter-wechat = { path = "../../crates/easybot-adapter-wechat" }
 sqlx = { workspace = true }
+fixtures = { path = "../fixtures" }
 
 tokio.workspace = true
 tower.workspace = true

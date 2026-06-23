@@ -409,6 +409,196 @@ impl QqAdapter {
         self.api_post::<QqSendMessageResponse>(&c2c_path, body)
             .await
     }
+
+    /// 上传文件到 C2C 用户并直接发送（srv_send_msg=true）
+    ///
+    /// QQ C2C 不支持通过 msg_type: 1/2 直接发送媒体消息，
+    /// 需要先通过文件上传端点上传文件，QQ 服务器会自动将文件作为消息发送给用户。
+    async fn upload_c2c_file(
+        &self,
+        openid: &str,
+        file_data: Vec<u8>,
+        filename: &str,
+        mime_type: &str,
+    ) -> Result<QqSendMessageResponse, GatewayError> {
+        let token = self.bot_token()?;
+        let client = self.client()?;
+        let url = format!("{}/v2/users/{}/files", self.api_base_url(), openid);
+
+        let file_part = reqwest::multipart::Part::bytes(file_data)
+            .file_name(filename.to_string())
+            .mime_str(mime_type)
+            .map_err(|e| {
+                GatewayError::Internal(format!("QQ upload: invalid MIME type: {}", e))
+            })?;
+
+        let form = reqwest::multipart::Form::new()
+            .text("srv_send_msg", "true")
+            .part("file", file_part);
+
+        let resp = client
+            .post(&url)
+            .header("Authorization", &token)
+            .multipart(form)
+            .send()
+            .await
+            .map_err(|e| {
+                GatewayError::Internal(format!("QQ C2C file upload request failed: {}", e))
+            })?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let body_text = resp.text().await.unwrap_or_default();
+            return Err(GatewayError::Internal(format!(
+                "QQ C2C file upload error (POST /v2/users/{}/files): {} - {}",
+                openid, status, body_text
+            )));
+        }
+
+        // 当 srv_send_msg=true 时，响应包含消息 id + timestamp
+        // 同时也包含 file_uuid / file_info
+        let parsed: QqFileUploadResponse = resp.json().await.map_err(|e| {
+            GatewayError::Internal(format!("QQ C2C file upload parse failed: {}", e))
+        })?;
+
+        if let Some(msg_id) = parsed.id {
+            Ok(QqSendMessageResponse {
+                id: msg_id,
+                timestamp: parsed.timestamp,
+            })
+        } else {
+            // 上传成功但没有消息 ID（srv_send_msg=false 或未返回 id）
+            Ok(QqSendMessageResponse {
+                id: format!("file:{}", parsed.file_uuid),
+                timestamp: None,
+            })
+        }
+    }
+
+    /// 使用 msg_type: 7 发送媒体消息（通过已上传的 file_info）
+    ///
+    /// 先上传文件获取 file_info，再发送 msg_type: 7 消息。
+    /// 适用于 C2C 端点（SMS 不支持直接 image URL）。
+    async fn send_c2c_media_via_upload(
+        &self,
+        openid: &str,
+        file_data: Vec<u8>,
+        filename: &str,
+        mime_type: &str,
+        text: Option<String>,
+    ) -> Result<QqSendMessageResponse, GatewayError> {
+        // Step 1: Upload file to get file_info
+        let token = self.bot_token()?;
+        let client = self.client()?;
+        let upload_url = format!("{}/v2/users/{}/files", self.api_base_url(), openid);
+
+        let file_part = reqwest::multipart::Part::bytes(file_data)
+            .file_name(filename.to_string())
+            .mime_str(mime_type)
+            .map_err(|e| {
+                GatewayError::Internal(format!("QQ upload: invalid MIME type: {}", e))
+            })?;
+
+        let form = reqwest::multipart::Form::new()
+            .text("srv_send_msg", "false")
+            .part("file", file_part);
+
+        let upload_resp = client
+            .post(&upload_url)
+            .header("Authorization", &token)
+            .multipart(form)
+            .send()
+            .await
+            .map_err(|e| {
+                GatewayError::Internal(format!("QQ C2C file upload request failed: {}", e))
+            })?;
+
+        let status = upload_resp.status();
+        if !status.is_success() {
+            let body_text = upload_resp.text().await.unwrap_or_default();
+            return Err(GatewayError::Internal(format!(
+                "QQ C2C file upload error (POST /v2/users/{}/files): {} - {}",
+                openid, status, body_text
+            )));
+        }
+
+        let uploaded: QqFileUploadResponse = upload_resp.json().await.map_err(|e| {
+            GatewayError::Internal(format!("QQ C2C file upload parse failed: {}", e))
+        })?;
+
+        // Step 2: Send msg_type: 7 with the file_info
+        let msg_body = serde_json::json!({
+            "msg_type": 7,
+            "content": text.unwrap_or_default(),
+            "media": {
+                "file_info": uploaded.file_info,
+            },
+        });
+
+        let c2c_path = format!("/v2/users/{}/messages", openid);
+        self.api_post::<QqSendMessageResponse>(&c2c_path, &msg_body)
+            .await
+    }
+
+    /// 便捷方法：从 URL/base64 获取文件数据后上传到 C2C
+    ///
+    /// 直接使用 QQ 文件上传端点（srv_send_msg=true），
+    /// QQ 服务器会自动将文件作为消息发送给用户。
+    /// 适用于 C2C 不支持 msg_type: 1/2 的场景。
+    async fn send_c2c_media_upload_only(
+        &self,
+        chat_id: &str,
+        media: &MediaAttachment,
+        text: Option<String>,
+    ) -> Result<QqSendMessageResponse, GatewayError> {
+        // Resolve file data from base64 or URL
+        let client = self
+            .http_client
+            .clone()
+            .ok_or_else(|| GatewayError::Internal("HTTP client not initialized".to_string()))?;
+
+        let (file_data, filename, mime_type) = if let Some(data_b64) = &media.data {
+            use base64::Engine;
+            let decoded = base64::engine::general_purpose::STANDARD.decode(data_b64).map_err(|e| {
+                GatewayError::Internal(format!("QQ upload: base64 decode failed: {}", e))
+            })?;
+            let fname = media.filename.clone().unwrap_or_else(|| "file".to_string());
+            (decoded, fname, media.mime_type.clone())
+        } else if let Some(file_url) = &media.url {
+            let resp = client.get(file_url).send().await.map_err(|e| {
+                GatewayError::Internal(format!("QQ upload: download failed: {}", e))
+            })?;
+            let ct = resp
+                .headers()
+                .get("content-type")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("application/octet-stream")
+                .to_string();
+            let data = resp.bytes().await.map_err(|e| {
+                GatewayError::Internal(format!("QQ upload: download read failed: {}", e))
+            })?;
+            let fname = media
+                .filename
+                .clone()
+                .or_else(|| file_url.split('/').next_back().map(|s| s.to_string()))
+                .unwrap_or_else(|| "file".to_string());
+            (data.to_vec(), fname, ct)
+        } else {
+            return Err(GatewayError::Internal(
+                "No media data or URL provided for QQ upload".to_string(),
+            ));
+        };
+
+        // With srv_send_msg=true, QQ uploads the file and sends it as a message
+        // If there's text to include, use the send_c2c_media_via_upload two-step approach
+        if text.as_ref().map_or(false, |t| !t.is_empty()) {
+            self.send_c2c_media_via_upload(chat_id, file_data, &filename, &mime_type, text)
+                .await
+        } else {
+            self.upload_c2c_file(chat_id, file_data, &filename, &mime_type)
+                .await
+        }
+    }
 }
 
 // ── Gateway WebSocket 事件循环 ──
@@ -1108,10 +1298,43 @@ impl PlatformAdapter for QqAdapter {
     }
 
     async fn send_media(&self, params: SendMediaParams) -> Result<SendResult, GatewayError> {
-        let image_url = params.media.url.unwrap_or_default();
+        // 如果没有 URL 但有 base64 data，直接使用文件上传路径
+        if params.media.url.is_none() && params.media.data.is_some() {
+            match self
+                .send_c2c_media_upload_only(
+                    &params.chat_id,
+                    &params.media,
+                    params.text.clone(),
+                )
+                .await
+            {
+                Ok(resp) => {
+                    self.messages_out.fetch_add(1, Ordering::Relaxed);
+                    let send_result = SendResult {
+                        success: true,
+                        message_id: Some(resp.id),
+                        timestamp: resp.timestamp.and_then(|t| t.parse::<i64>().ok()),
+                        error: None,
+                        error_code: None,
+                        retryable: false,
+                    };
+                    publish_send_event(&self.event_bus, event_types::MESSAGE_SENT, &params.chat_id, &send_result);
+                    return Ok(send_result);
+                }
+                Err(e) => {
+                    self.errors.fetch_add(1, Ordering::Relaxed);
+                    let send_result = SendResult::fail(e.to_string(), true);
+                    publish_send_event(&self.event_bus, event_types::MESSAGE_FAILED, &params.chat_id, &send_result);
+                    return Ok(send_result);
+                }
+            }
+        }
+
+        let image_url = params.media.url.clone().unwrap_or_default();
+        let text_content = params.text.clone().unwrap_or_default();
         // 先试用 msg_type: 2（图文混排），频道/群聊支持此格式
         let body = serde_json::json!({
-            "content": params.text.unwrap_or_default(),
+            "content": text_content,
             "image": image_url,
             "msg_type": 2,
         });
@@ -1136,6 +1359,7 @@ impl PlatformAdapter for QqAdapter {
                     );
                     let img_body = serde_json::json!({
                         "msg_type": 1,
+                        "content": "",
                         "image": image_url,
                     });
                     match self.try_send(&params.chat_id, &img_body).await {
@@ -1151,8 +1375,47 @@ impl PlatformAdapter for QqAdapter {
                             }
                         }
                         Err(e2) => {
-                            self.errors.fetch_add(1, Ordering::Relaxed);
-                            SendResult::fail(e2.to_string(), true)
+                            let err2_str = e2.to_string();
+                            // If msg_type: 1 also fails with 11255 on C2C,
+                            // try file upload (C2C only supports uploaded media)
+                            if err2_str.contains("11255")
+                                && (err2_str.contains("/v2/users/")
+                                    || err_str.contains("/v2/users/"))
+                            {
+                                tracing::warn!(
+                                    "QQ C2C does not support msg_type: 1 either, \
+                                     trying file upload for C2C media"
+                                );
+                                match self
+                                    .send_c2c_media_upload_only(
+                                        &params.chat_id,
+                                        &params.media,
+                                        params.text.clone(),
+                                    )
+                                    .await
+                                {
+                                    Ok(resp) => {
+                                        self.messages_out.fetch_add(1, Ordering::Relaxed);
+                                        SendResult {
+                                            success: true,
+                                            message_id: Some(resp.id),
+                                            timestamp: resp
+                                                .timestamp
+                                                .and_then(|t| t.parse::<i64>().ok()),
+                                            error: None,
+                                            error_code: None,
+                                            retryable: false,
+                                        }
+                                    }
+                                    Err(e3) => {
+                                        self.errors.fetch_add(1, Ordering::Relaxed);
+                                        SendResult::fail(e3.to_string(), true)
+                                    }
+                                }
+                            } else {
+                                self.errors.fetch_add(1, Ordering::Relaxed);
+                                SendResult::fail(err2_str, true)
+                            }
                         }
                     }
                 } else {

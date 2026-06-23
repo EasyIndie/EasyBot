@@ -966,14 +966,18 @@ impl PlatformAdapter for DiscordAdapter {
         // Discord multipart requires attachments array linking files[0] to the message
         payload.insert(
             "attachments".to_string(),
-            serde_json::json!([{"id": "0", "filename": filename.clone()}]),
+            serde_json::json!([{"id": 0, "filename": filename.clone()}]),
         );
 
+        let payload_text = serde_json::Value::Object(payload).to_string();
+        let payload_part = reqwest::multipart::Part::text(payload_text.clone())
+            .mime_str("application/json")
+            .map_err(|e| {
+                GatewayError::Internal(format!("Failed to set payload_json MIME: {}", e))
+            })?;
+
         let form = reqwest::multipart::Form::new()
-            .text(
-                "payload_json",
-                serde_json::Value::Object(payload).to_string(),
-            )
+            .part("payload_json", payload_part)
             .part("files[0]", file_part);
 
         let resp = client
@@ -1015,6 +1019,22 @@ impl PlatformAdapter for DiscordAdapter {
             .json()
             .await
             .map_err(|e| GatewayError::Internal(format!("Discord API JSON parse failed: {}", e)))?;
+
+        if msg.attachments.is_empty() {
+            tracing::warn!(
+                "Discord send_media: message {} sent but no attachments returned. \
+                 content={:?}, payload_json text was: {}",
+                msg.id,
+                msg.content,
+                payload_text,
+            );
+        } else {
+            tracing::info!(
+                "Discord send_media: message {} sent with {} attachment(s)",
+                msg.id,
+                msg.attachments.len(),
+            );
+        }
 
         self.messages_out.fetch_add(1, Ordering::Relaxed);
         let send_result = SendResult::ok(msg.id);
@@ -1464,6 +1484,7 @@ mod tests {
                 avatar: None,
             },
             content: Some("Hello from Discord!".to_string()),
+            attachments: vec![],
             timestamp: "2024-06-01T12:00:00.000000+00:00".to_string(),
             edited_timestamp: None,
             mention_everyone: false,
@@ -1496,6 +1517,7 @@ mod tests {
                 avatar: None,
             },
             content: Some("Guild message".to_string()),
+            attachments: vec![],
             timestamp: "2024-06-01T12:00:00.000000+00:00".to_string(),
             edited_timestamp: None,
             mention_everyone: false,
@@ -1523,6 +1545,7 @@ mod tests {
                 avatar: None,
             },
             content: Some("I said this".to_string()),
+            attachments: vec![],
             timestamp: "2024-06-01T12:00:00.000000+00:00".to_string(),
             edited_timestamp: None,
             mention_everyone: false,

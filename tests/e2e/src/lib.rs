@@ -60,6 +60,48 @@ pub async fn auth_post(
     (status, serde_json::from_slice(&body).unwrap_or_default())
 }
 
+pub async fn auth_put(
+    router: &Router,
+    path: &str,
+    key: &str,
+    body: Option<Value>,
+) -> (axum::http::StatusCode, Value) {
+    let req = axum::http::Request::builder()
+        .method("PUT")
+        .uri(path)
+        .header("Authorization", format!("Bearer {}", key))
+        .header("Content-Type", "application/json")
+        .body(axum::body::Body::from(
+            serde_json::to_string(&body.unwrap_or(serde_json::json!({}))).unwrap(),
+        ))
+        .unwrap();
+    let resp = router.clone().oneshot(req).await.unwrap();
+    let status = resp.status();
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    (status, serde_json::from_slice(&body).unwrap_or_default())
+}
+
+pub async fn auth_delete(
+    router: &Router,
+    path: &str,
+    key: &str,
+    body: Option<Value>,
+) -> (axum::http::StatusCode, Value) {
+    let req = axum::http::Request::builder()
+        .method("DELETE")
+        .uri(path)
+        .header("Authorization", format!("Bearer {}", key))
+        .header("Content-Type", "application/json")
+        .body(axum::body::Body::from(
+            serde_json::to_string(&body.unwrap_or(serde_json::json!({}))).unwrap(),
+        ))
+        .unwrap();
+    let resp = router.clone().oneshot(req).await.unwrap();
+    let status = resp.status();
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    (status, serde_json::from_slice(&body).unwrap_or_default())
+}
+
 pub async fn public_get(router: &Router, path: &str) -> (axum::http::StatusCode, Value) {
     let req = axum::http::Request::builder()
         .method("GET")

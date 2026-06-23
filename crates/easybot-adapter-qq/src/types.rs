@@ -291,6 +291,23 @@ pub struct QqApiError {
     pub message: String,
 }
 
+/// 文件上传响应（C2C 文件上传端点）
+#[derive(Debug, Deserialize)]
+pub struct QqFileUploadResponse {
+    /// 文件唯一标识
+    pub file_uuid: String,
+    /// 文件信息，可用于后续发送 msg_type: 7 消息
+    pub file_info: String,
+    /// TTL 秒数
+    pub ttl: Option<u64>,
+    /// 文件 URL
+    pub url: Option<String>,
+    /// 如果 srv_send_msg=true，可能直接返回消息 ID
+    pub id: Option<String>,
+    /// 消息时间戳
+    pub timestamp: Option<String>,
+}
+
 // ── 意图 (Intents) ──
 
 pub mod intents {

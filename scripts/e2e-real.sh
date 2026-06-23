@@ -17,12 +17,23 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$PROJECT_DIR"
 
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-CYAN='\033[0;36m'
-BOLD='\033[1m'
-NC='\033[0m'
+# ── 终端颜色（支持 NO_COLOR / TERM=dumb / CI 环境） ──
+
+if [ -t 2 ] && [ "${NO_COLOR:-}" != "1" ] && [ "${CI:-}" != "true" ] && [ "${TERM:-}" != "dumb" ]; then
+    RED='\033[0;31m'
+    GREEN='\033[0;32m'
+    YELLOW='\033[1;33m'
+    CYAN='\033[0;36m'
+    BOLD='\033[1m'
+    NC='\033[0m'
+else
+    RED=''
+    GREEN=''
+    YELLOW=''
+    CYAN=''
+    BOLD=''
+    NC=''
+fi
 
 # ── 配置 ──
 
@@ -42,13 +53,13 @@ declare -A PHASE_TIMES       # 各阶段耗时
 __CURRENT_PHASE=""
 __PHASE_START_TS=0
 
-# ── 工具函数 ──
+# ── 工具函数（使用 printf 确保跨环境一致） ──
 
-section() { echo -e "\n${BOLD}${CYAN}═══ $1 ═══${NC}"; }
-pass()  { echo -e "  ${GREEN}✅${NC} $1"; }
-fail()  { echo -e "  ${RED}❌${NC} $1"; }
-warn()  { echo -e "  ${YELLOW}⚠️${NC}  $1"; }
-info()  { echo -e "  ${CYAN}ℹ${NC}  $1"; }
+section() { printf "\n${BOLD}${CYAN}═══ %s ═══${NC}\n" "$1"; }
+pass()  { printf "  ${GREEN}✅${NC} %s\n" "$1"; }
+fail()  { printf "  ${RED}❌${NC} %s\n" "$1"; }
+warn()  { printf "  ${YELLOW}⚠️${NC}  %s\n" "$1"; }
+info()  { printf "  ${CYAN}ℹ${NC}  %s\n" "$1"; }
 
 api_get() {
     curl -s ${E2E_API_KEY:+-H "Authorization: Bearer $E2E_API_KEY"} "$1" 2>/dev/null
@@ -86,7 +97,7 @@ phase_timer_end() {
 
 print_phase_timing_summary() {
     echo ""
-    echo -e "${BOLD}${CYAN}═══ 各阶段耗时 ═══${NC}"
+    printf "${BOLD}${CYAN}═══ 各阶段耗时 ═══${NC}\n"
     local _total=0
     local _order=(
         "Phase 0: 登录状态预检"
@@ -548,15 +559,9 @@ phase4_auto_reply() {
         # 1x1 透明 PNG (最小有效 PNG，~68 bytes base64)
         local png_b64="iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
 
-        local payload
-        if [ "$plat" = "qq" ]; then
-            # QQ 适配器仅支持 URL 方式（base64 不适用）
-            payload=$(jq -n --arg t "$target" --arg text "[E2E] $plat media - $ts" \
-                '{target: $t, text: $text, media: {media_type: "Image", url: "https://via.placeholder.com/150", mime_type: "image/png", filename: "placeholder.png"}}')
-        else
-            payload=$(jq -n --arg t "$target" --arg text "[E2E] $plat media - $ts" --arg data "$png_b64" \
-                '{target: $t, text: $text, media: {media_type: "Image", data: $data, mime_type: "image/png", filename: "e2e-test.png"}}')
-        fi
+        # 所有平台统一使用 base64 数据（含 QQ 通过 send_c2c_media_upload_only 上传）
+        payload=$(jq -n --arg t "$target" --arg text "[E2E] $plat media - $ts" --arg data "$png_b64" \
+            '{target: $t, text: $text, media: {media_type: "Image", data: $data, mime_type: "image/png", filename: "e2e-test.png"}}')
 
         local result
         result=$(api_post "$API_BASE/messages/send" "$payload")

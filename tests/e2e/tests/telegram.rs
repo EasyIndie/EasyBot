@@ -7,8 +7,8 @@ use std::sync::Arc;
 
 use axum::Router;
 use e2e_tests::{
-    auth_get, auth_post, build_router, create_core, default_gateway_config, public_get,
-    start_and_connect,
+    auth_delete, auth_get, auth_post, auth_put, build_router, create_core, default_gateway_config,
+    public_get, start_and_connect,
 };
 use easybot_core::types::adapter::AdapterConfig;
 use serde_json::Value;
@@ -77,6 +77,18 @@ fn get_me_response() -> Value {
 
 fn send_message_response() -> Value {
     serde_json::json!({"ok": true, "result": {"message_id": 42, "date": 1000000, "chat": {"id": 123, "type": "private"}, "from": {"id": 1, "is_bot": true, "first_name": "Bot"}, "text": "hello"}})
+}
+
+fn send_photo_response() -> Value {
+    serde_json::json!({"ok": true, "result": {"message_id": 100, "date": 1000003, "chat": {"id": 123, "type": "private"}, "from": {"id": 1, "is_bot": true, "first_name": "Bot"}, "photo": [{"file_id": "abc123", "width": 100, "height": 100}]}})
+}
+
+fn edit_message_response() -> Value {
+    serde_json::json!({"ok": true, "result": {"message_id": 42, "date": 1000004, "chat": {"id": 123, "type": "private"}, "from": {"id": 1, "is_bot": true, "first_name": "Bot"}, "text": "Updated content"}})
+}
+
+fn delete_message_response() -> Value {
+    serde_json::json!({"ok": true, "result": true})
 }
 
 // ── 基础测试 ──
@@ -196,4 +208,209 @@ async fn test_e2e_send_markdown() {
         Some(serde_json::json!({"target": "telegram:12345", "text": "**bold**", "parse_mode": "markdown"})),
     ).await;
     assert_eq!(status, 200);
+}
+
+// ── 媒体消息 ──
+
+#[tokio::test]
+async fn test_e2e_send_media() {
+    let (router, key, mock_server) = setup().await;
+
+    Mock::given(method("GET"))
+        .and(path("/bottest-token/getMe"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(get_me_response()))
+        .expect(0..)
+        .mount(&mock_server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/bottest-token/sendPhoto"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(send_photo_response()))
+        .expect(0..)
+        .mount(&mock_server)
+        .await;
+
+    assert!(start_and_connect(&router, &key, "telegram").await);
+
+    let (status, json) = auth_post(
+        &router,
+        "/api/v1/messages/send",
+        &key,
+        Some(serde_json::json!({
+            "target": "telegram:12345",
+            "text": "Check this out",
+            "media": {
+                "media_type": "Image",
+                "url": "https://example.com/photo.jpg",
+                "mime_type": "image/jpeg",
+                "filename": "photo.jpg"
+            }
+        })),
+    )
+    .await;
+    assert_eq!(status, 200);
+    assert_eq!(json["status"], "sent");
+    assert_eq!(json["messageId"], "100");
+}
+
+// ── 交互式消息 ──
+
+#[tokio::test]
+async fn test_e2e_send_interactive() {
+    let (router, key, mock_server) = setup().await;
+
+    Mock::given(method("GET"))
+        .and(path("/bottest-token/getMe"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(get_me_response()))
+        .expect(0..)
+        .mount(&mock_server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/bottest-token/sendMessage"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(send_message_response()))
+        .expect(0..)
+        .mount(&mock_server)
+        .await;
+
+    assert!(start_and_connect(&router, &key, "telegram").await);
+
+    let (status, json) = auth_post(
+        &router,
+        "/api/v1/messages/send",
+        &key,
+        Some(serde_json::json!({
+            "target": "telegram:12345",
+            "text": "Choose an option:",
+            "keyboard": {
+                "rows": [
+                    {
+                        "buttons": [
+                            {"text": "Yes", "callback_data": "yes"},
+                            {"text": "No", "callback_data": "no"}
+                        ]
+                    },
+                    {
+                        "buttons": [
+                            {"text": "Website", "url": "https://example.com"}
+                        ]
+                    }
+                ]
+            }
+        })),
+    )
+    .await;
+    assert_eq!(status, 200);
+    assert_eq!(json["status"], "sent");
+    assert_eq!(json["messageId"], "42");
+}
+
+// ── 编辑消息 ──
+
+#[tokio::test]
+async fn test_e2e_edit_message() {
+    let (router, key, mock_server) = setup().await;
+
+    Mock::given(method("GET"))
+        .and(path("/bottest-token/getMe"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(get_me_response()))
+        .expect(0..)
+        .mount(&mock_server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/bottest-token/editMessageText"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(edit_message_response()))
+        .expect(0..)
+        .mount(&mock_server)
+        .await;
+
+    assert!(start_and_connect(&router, &key, "telegram").await);
+
+    let (status, json) = auth_put(
+        &router,
+        "/api/v1/messages/msg-to-edit",
+        &key,
+        Some(serde_json::json!({
+            "target": "telegram:12345",
+            "text": "Updated content"
+        })),
+    )
+    .await;
+    assert_eq!(status, 200);
+    assert_eq!(json["ok"], true);
+    assert!(json["updated_at"].is_number());
+}
+
+// ── 删除消息 ──
+
+#[tokio::test]
+async fn test_e2e_delete_message() {
+    let (router, key, mock_server) = setup().await;
+
+    Mock::given(method("GET"))
+        .and(path("/bottest-token/getMe"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(get_me_response()))
+        .expect(0..)
+        .mount(&mock_server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/bottest-token/deleteMessage"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(delete_message_response()))
+        .expect(0..)
+        .mount(&mock_server)
+        .await;
+
+    assert!(start_and_connect(&router, &key, "telegram").await);
+
+    let (status, json) = auth_delete(
+        &router,
+        "/api/v1/messages/msg-to-delete",
+        &key,
+        Some(serde_json::json!({
+            "target": "telegram:12345"
+        })),
+    )
+    .await;
+    assert_eq!(status, 200);
+    assert_eq!(json["ok"], true);
+}
+
+// ── 批量发送 ──
+
+#[tokio::test]
+async fn test_e2e_batch_send() {
+    let (router, key, mock_server) = setup().await;
+
+    Mock::given(method("GET"))
+        .and(path("/bottest-token/getMe"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(get_me_response()))
+        .expect(0..)
+        .mount(&mock_server)
+        .await;
+
+    Mock::given(method("POST"))
+        .and(path("/bottest-token/sendMessage"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(send_message_response()))
+        .expect(0..)
+        .mount(&mock_server)
+        .await;
+
+    assert!(start_and_connect(&router, &key, "telegram").await);
+
+    let (status, json) = auth_post(
+        &router,
+        "/api/v1/messages/batch-send",
+        &key,
+        Some(serde_json::json!({
+            "targets": ["telegram:12345", "telegram:67890"],
+            "text": "Broadcast message"
+        })),
+    )
+    .await;
+    assert_eq!(status, 200);
+    assert_eq!(json["total"], 2);
+    assert_eq!(json["results"]["telegram:12345"]["status"], "sent");
+    assert_eq!(json["results"]["telegram:67890"]["status"], "sent");
 }

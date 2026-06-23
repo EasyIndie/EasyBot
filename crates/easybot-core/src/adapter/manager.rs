@@ -395,6 +395,19 @@ impl AdapterManager {
         adapter.send_media(params).await
     }
 
+    /// 发送交互式消息（含行内键盘）
+    pub async fn send_interactive(
+        &self,
+        platform: &str,
+        params: crate::types::message::SendInteractiveParams,
+    ) -> Result<crate::types::message::SendResult, GatewayError> {
+        let adapters = self.adapters.read().await;
+        let adapter = adapters
+            .get(platform)
+            .ok_or_else(|| GatewayError::AdapterNotConnected(platform.to_string()))?;
+        adapter.send_interactive(params).await
+    }
+
     /// 编辑消息
     pub async fn edit_message(
         &self,

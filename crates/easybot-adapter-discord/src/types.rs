@@ -99,6 +99,23 @@ pub(crate) struct DiscordGuild {
     pub owner: Option<bool>,
 }
 
+/// 附件对象
+#[derive(Debug, Deserialize)]
+pub(crate) struct DiscordAttachment {
+    pub id: String,
+    pub filename: String,
+    #[serde(default)]
+    pub size: Option<u64>,
+    #[serde(default)]
+    pub url: Option<String>,
+    #[serde(default)]
+    pub content_type: Option<String>,
+    #[serde(default)]
+    pub width: Option<u64>,
+    #[serde(default)]
+    pub height: Option<u64>,
+}
+
 /// Discord 消息对象（Gateway MESSAGE_CREATE & REST 响应共用）
 #[derive(Debug, Deserialize)]
 pub(crate) struct DiscordMessage {
@@ -109,6 +126,8 @@ pub(crate) struct DiscordMessage {
     pub author: DiscordUser,
     #[serde(default)]
     pub content: Option<String>,
+    #[serde(default)]
+    pub attachments: Vec<DiscordAttachment>,
     pub timestamp: String,
     #[serde(default)]
     pub edited_timestamp: Option<String>,
