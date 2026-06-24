@@ -17,6 +17,10 @@ members = [
 ]
 
 [workspace.package]
+description = "IM Gateway — 统一多平台即时通讯网关"
+repository = "https://github.com/EasyIndie/EasyBot"
+documentation = "https://github.com/EasyIndie/EasyBot"
+readme = "README.md"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.94"
@@ -79,7 +83,7 @@ reqwest = { version = "0.13", default-features = false, features = ["json", "mul
 # 异步工具
 futures = "0.3"
 tokio-stream = { version = "0.1", features = ["net"] }
-tokio-tungstenite = "0.26"
+tokio-tungstenite = "0.29"
 dashmap = "6"
 parking_lot = "0.12"
 async-trait = "0.1"

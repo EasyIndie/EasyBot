@@ -23,16 +23,67 @@ server:
 
 api:
   basePath: "/api/v1"
+
+  # ── WebSocket 实时事件推送 ──────────────────────────────
   websocket:
     enabled: true
     maxClients: 1000
     heartbeatInterval: 30
 
+  # ── Prometheus 指标 ─────────────────────────────────────
+  # metrics:
+  #   enabled: true           # 默认开启
+  #   path: "/metrics"        # 指标端点路径
+
+  # ── API 速率限制 ────────────────────────────────────────
+  # rateLimit:
+  #   enabled: true           # 默认开启
+  #   requestsPerMinute: 60  # 每分钟允许请求数
+  #   burstSize: 10          # 1 秒内允许的峰值请求
+
 storage:
-  storageType: "sqlite"
-  path: ""
+  storageType: "sqlite"    # sqlite / postgres
+  path: ""                 # 数据库文件路径（空 = 自动使用 ~/.easybot/data/gateway.db）
+  # connectionString: ""   # PostgreSQL 连接字符串（仅 postgres 类型需要）
+  # poolSize: 10           # PostgreSQL 连接池大小
+  # sslMode: "prefer"      # PostgreSQL SSL 模式: disable / prefer / require
+
+  # ── TTL 数据保留策略 ────────────────────────────────────
+  # retention:
+  #   messageTtlDays: 90          # 消息保留天数
+  #   sessionTtlDays: 365         # 会话保留天数
+  #   cleanupIntervalSecs: 3600  # 清理间隔（秒）
 
 logging:
-  level: "info"
-  format: "text"
-  output: "stdout"
+  level: "info"             # debug / info / warn / error
+  format: "text"            # text / json
+  output: "stdout"          # stdout / file
+
+# ── Webhook 回调配置 ────────────────────────────────────
+# webhooks:
+#   - name: "my-service"
+#     url: "https://example.com/webhook"
+#     secret: "your-webhook-secret"    # 可选，HMAC 签名密钥
+#     events:
+#       - "message.inbound"
+#       - "adapter.connected"
+#       - "adapter.disconnected"
+#     platforms:                       # 可选，限定平台
+#       - telegram
+#       - discord
+
+# ── 适配器自定义配置（按需覆盖默认值）──────────────────
+# adapters:
+#   telegram:
+#     apiUrl: "https://api.telegram.org"  # 自定义 API 地址（代理 / 自建）
+#   discord:
+#     gatewayUrl: "wss://gateway.discord.gg"  # Discord Gateway 地址
+#   feishu:
+#     apiUrl: "https://open.feishu.cn"    # 飞书 / Lark API 地址
+#   qq:
+#     sandbox: true                       # QQ 沙箱模式
+
+# ── 插件目录（动态加载第三方适配器）────────────────────
+# plugins:
+#   directory: "plugins"       # 相对于配置目录的插件路径
+#   autoLoad: true            # 启动时自动加载

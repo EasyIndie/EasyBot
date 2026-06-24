@@ -131,6 +131,9 @@ jobs:
           - "--no-default-features --features adapter-telegram"
           - "--no-default-features --features adapter-discord"
           - "--features adapter-telegram,adapter-discord"
+          - "--no-default-features --features adapter-feishu"
+          - "--no-default-features --features adapter-qq"
+          - "--no-default-features --features adapter-wechat"
       fail-fast: false
     steps:
       - uses: actions/checkout@v7
@@ -145,6 +148,36 @@ jobs:
 
       - name: Check (${{ matrix.features }})
         run: cargo check --workspace ${{ matrix.features }}
+  # ── Cross-platform build (Windows / macOS) ──────────────────────────────
+  build-cross-platform:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [windows-latest, macos-latest]
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Install protoc (Windows)
+        if: runner.os == 'Windows'
+        uses: arduino/setup-protoc@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install protoc (macOS)
+        if: runner.os == 'macOS'
+        run: brew install protobuf
+
+      - name: Setup sccache
+        uses: mozilla-actions/sccache-action@v0.0.10
+
+      - name: Check (full features)
+        run: cargo check --workspace --features full
+
+      - name: Build (full features)
+        run: cargo build --workspace --features full
   # ── Code coverage ───────────────────────────────────────────────────
   coverage:
     runs-on: ubuntu-latest

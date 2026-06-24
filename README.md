@@ -103,7 +103,7 @@ sudo pacman -S protobuf
 
 ```bash
 # 克隆项目
-git clone https://github.com/your-org/easybot.git
+git clone https://github.com/EasyIndie/EasyBot.git
 cd easybot
 
 # 默认构建（仅含 Telegram 适配器）

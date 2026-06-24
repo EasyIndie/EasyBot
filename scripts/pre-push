@@ -23,7 +23,7 @@ fi
 FAST=$(git config --bool easybot.pre-push-fast 2>/dev/null || echo false)
 
 if [ "$FAST" = true ]; then
-    echo ">>> [快速模式] 运行验收 (fmt + clippy + check + build)..."
+    echo ">>> [快速模式] 运行验收 (check + matrix + build + test)..."
     if bash "$SCRIPT" --fast; then
         echo ">>> 验收通过，正在推送..."
         exit 0
@@ -33,7 +33,7 @@ if [ "$FAST" = true ]; then
         exit 1
     fi
 else
-    echo ">>> [完整模式] 运行验收 (全部 7 步)..."
+    echo ">>> [完整模式] 运行验收 (全部 8 步: fmt + clippy + check + matrix + build + test)..."
     echo "    （如嫌太慢可切换到快速模式: git config --bool easybot.pre-push-fast true）"
     if bash "$SCRIPT"; then
         echo ">>> 验收通过，正在推送..."
