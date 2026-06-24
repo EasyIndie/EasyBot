@@ -80,6 +80,12 @@ api_put() {
 }
 
 cleanup() {
+    # 先杀 tail（显示 stdout 的后台进程）
+    if [ -n "${TAIL_PID:-}" ]; then
+        kill "$TAIL_PID" 2>/dev/null || true
+        wait "$TAIL_PID" 2>/dev/null || true
+    fi
+    # 再杀服务进程
     if [ -n "${E2E_PID:-}" ]; then
         kill "$E2E_PID" 2>/dev/null || true
         wait "$E2E_PID" 2>/dev/null || true
@@ -178,10 +184,12 @@ phase1_build_and_start() {
     fi
 
     info "启动 easybot --debug（日志: $LOG_FILE）..."
-    # 只重定向 stderr 到日志文件，stdout 保留在终端
-    # 这样 println! 输出（如微信 QR 码）用户可以直接看到
-    cargo run --features full -- --debug 2>"$LOG_FILE" | tee "$STDOUT_FILE" &
+    # stderr → 日志文件（tracing），stdout → 文件（println! 如 QR 码 / API Key）
+    cargo run --features full -- --debug >"$STDOUT_FILE" 2>"$LOG_FILE" &
     E2E_PID=$!
+    # 后台 tail stdout 到终端，让用户可以看到 QR 码等输出
+    tail -f "$STDOUT_FILE" &
+    TAIL_PID=$!
 
     # 等待服务就绪
     local _start_ts _elapsed
