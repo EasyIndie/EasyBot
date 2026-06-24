@@ -278,7 +278,7 @@ phase2_wait_for_adapters() {
             '[.adapters[] | select(.connected == false) | .display_name] | join(", ")' 2>/dev/null || echo "?")
 
         # 进度行（每轮一行，不原地刷新以保证终端兼容性）
-        printf "  ⏳ %d/%d 已连接 (%-20s 仍在连接) [%3ds]\n" \
+        printf "  ⏳ %d/%d 已连接 (%-20s 仍在连接) [%02ds]\n" \
             "$_connected" "$_total" "${_still_connecting:-?}" "$_elapsed"
 
         # 超时检查
@@ -372,7 +372,7 @@ phase3_wait_for_messages() {
         done <<< "$cur_platforms"
 
         # 构建逐平台状态行（固定宽度，保证各轮对齐）
-        printf "  [%3ds]" "$elapsed"
+        printf "  [%02ds]" "$elapsed"
         for p in "${expected_platforms[@]}"; do
             local _found=false
             for f in "${found_platforms[@]}"; do
