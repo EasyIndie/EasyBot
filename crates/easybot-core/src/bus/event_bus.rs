@@ -5,11 +5,15 @@
 
 use crate::types::event::GatewayEvent;
 use dashmap::DashMap;
+use std::time::Duration;
 use tokio::sync::broadcast;
 use tracing::warn;
 
 /// 默认广播通道容量
 const DEFAULT_CHANNEL_CAPACITY: usize = 256;
+
+/// 合并循环空闲时的休眠时间
+const MERGE_POLL_INTERVAL_MS: u64 = 100;
 
 /// 消息总线
 ///
@@ -72,9 +76,11 @@ impl EventBus {
     /// 订阅多个事件类型
     ///
     /// 创建一个合并的接收器，订阅列表中所有事件类型。
-    /// 使用单个后台任务：在一个接收器上阻塞 `recv()` 等待事件，
-    /// 醒来后用 `try_recv()` 排空所有 channel，然后轮换主接收器保证公平。
-    /// 空闲时零 CPU 消耗（不再忙轮询）。
+    /// 使用单个后台任务轮询所有 channel：`try_recv()` 非阻塞排空，
+    /// 有事件时 yield 让出 CPU，无事件时 sleep 100ms 避免忙轮询。
+    ///
+    /// 注意：tokio broadcast `recv()` 不可用于 `select!`（取消不安全），
+    /// 因此采用轮询方案，100ms 延迟对于事件总线是可接受的。
     pub fn subscribe_many(&self, event_types: &[&str]) -> broadcast::Receiver<GatewayEvent> {
         let (global_tx, global_rx) = broadcast::channel(self.capacity);
 
@@ -82,65 +88,43 @@ impl EventBus {
             event_types.iter().map(|et| self.subscribe(et)).collect();
 
         tokio::spawn(async move {
-            let mut primary_idx: usize = 0;
-
             loop {
-                if receivers.is_empty() {
-                    break;
-                }
-                primary_idx %= receivers.len();
+                let mut had_data = false;
 
-                // 在主接收器上阻塞等待（空闲时零 CPU）
-                match receivers[primary_idx].recv().await {
-                    Ok(event) => {
-                        if global_tx.send(event).is_err() {
-                            return; // 下游 receiver 已 drop
-                        }
-                    }
-                    Err(broadcast::error::RecvError::Closed) => {
-                        receivers.remove(primary_idx);
-                        continue; // 不推进 primary_idx
-                    }
-                    Err(broadcast::error::RecvError::Lagged(n)) => {
-                        warn!(
-                            "EventBus merge lagged by {} events on channel {}",
-                            n, primary_idx
-                        );
-                    }
-                }
-
-                // 醒来后排空所有 channel（包括已从主接收器收到一个事件的那个）
-                let mut i = 0;
-                while i < receivers.len() {
+                // 非阻塞排空所有 receiver
+                for i in (0..receivers.len()).rev() {
                     loop {
                         match receivers[i].try_recv() {
                             Ok(event) => {
+                                had_data = true;
                                 if global_tx.send(event).is_err() {
-                                    return;
+                                    return; // 下游 receiver 已 drop
                                 }
                             }
                             Err(broadcast::error::TryRecvError::Empty) => break,
                             Err(broadcast::error::TryRecvError::Closed) => {
-                                receivers.remove(i);
-                                // 如果移除的不是末尾元素，调整 primary_idx
-                                if primary_idx > i {
-                                    primary_idx -= 1;
-                                } else if primary_idx == i {
-                                    primary_idx = primary_idx.saturating_sub(1);
-                                }
+                                receivers.swap_remove(i);
                                 break;
                             }
                             Err(broadcast::error::TryRecvError::Lagged(n)) => {
-                                warn!("EventBus merge lagged by {} events on channel {}", n, i);
-                                // 继续 drain — lagged 后可能还有事件
+                                warn!("EventBus merge lagged by {} events", n);
+                                had_data = true;
                             }
                         }
                     }
-                    i += 1;
                 }
 
-                // 轮换主接收器以保证公平
-                primary_idx = (primary_idx + 1) % receivers.len().max(1);
+                if receivers.is_empty() {
+                    break;
+                }
+
+                if had_data {
+                    // 有数据流动时 yield 而非 sleep，减少延迟
+                    tokio::task::yield_now().await;
+                } else {
+                    // 空闲时 sleep 避免忙轮询
+                    tokio::time::sleep(Duration::from_millis(MERGE_POLL_INTERVAL_MS)).await;
+                }
             }
         });
 
