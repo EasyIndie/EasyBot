@@ -307,7 +307,13 @@ async fn test_connect_http_error() {
     let mut adapter = make_adapter(mock_server.address().port()).await;
     let result = adapter.connect().await;
 
-    assert!(result.is_err(), "HTTP error should return Err");
+    assert!(result.is_ok(), "HTTP error should return Ok");
+    let connect_result = result.unwrap();
+    assert!(!connect_result.ok, "Connect should fail with ok: false");
+    assert!(
+        connect_result.error.is_some(),
+        "Error message should be present"
+    );
 
     mock_server.verify().await;
 }
@@ -330,7 +336,13 @@ async fn test_connect_malformed_response() {
     let mut adapter = make_adapter(mock_server.address().port()).await;
     let result = adapter.connect().await;
 
-    assert!(result.is_err(), "malformed response should return Err");
+    assert!(result.is_ok(), "malformed response should return Ok");
+    let connect_result = result.unwrap();
+    assert!(!connect_result.ok, "Connect should fail with ok: false");
+    assert!(
+        connect_result.error.is_some(),
+        "Error message should be present"
+    );
 
     mock_server.verify().await;
 }
