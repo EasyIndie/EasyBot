@@ -55,11 +55,11 @@ pub async fn update_config(
     // 解析为 GatewayConfig
     let new_config = serde_yaml::from_value::<easybot_core::types::config::GatewayConfig>(merged)
         .map_err(|e| {
-            api_error(GatewayError::ConfigError(format!(
-                "Invalid configuration: {}",
-                e
-            )))
-        })?;
+        api_error(GatewayError::ConfigError(format!(
+            "Invalid configuration: {}",
+            e
+        )))
+    })?;
 
     // ── 安全校验 ──
     // 1. 防止存储路径穿越

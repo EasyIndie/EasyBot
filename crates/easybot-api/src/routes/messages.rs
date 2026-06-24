@@ -135,6 +135,11 @@ pub async fn send_message(
             .map_err(api_error)?
     };
 
+    // 记录出站消息指标
+    if let Some(ref metrics) = state.metrics {
+        metrics.record_outbound_message(&platform);
+    }
+
     // 持久化出站消息
     let stored = StoredMessage::from_outbound(&platform, &chat_id, None, &req.text, &result);
     if let Err(e) = state.message_store.store_message(&stored).await {
@@ -224,6 +229,10 @@ pub async fn batch_send(
 
                     match send_result {
                         Ok(Ok(r)) => {
+                            // 记录出站消息指标
+                            if let Some(ref metrics) = state.metrics {
+                                metrics.record_outbound_message(&platform);
+                            }
                             results.lock().await.insert(
                                 target.clone(),
                                 serde_json::json!({

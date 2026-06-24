@@ -140,7 +140,25 @@ pub fn create_router(state: AppState) -> Router {
         );
     }
 
-    // ── 速率限制器 ──
+    // ── 公共路由速率限制器（宽松：120 req/min，突发 20）──
+    // 公共端点（health/metrics）本身开销极低，但大量请求仍可造成 DoS。
+    // 120 req/min（每秒 2 次）对监控探测足够宽松，同时防止滥用。
+    const PUBLIC_RATE_LIMIT_RPM: u64 = 120;
+    const PUBLIC_RATE_LIMIT_BURST: u32 = 20;
+    let public_rate_limiter = crate::middleware::rate_limit::RateLimiter::new(
+        crate::middleware::rate_limit::RateLimitConfig {
+            enabled: state.config.api.rate_limit.enabled,
+            requests_per_minute: PUBLIC_RATE_LIMIT_RPM,
+            burst_size: PUBLIC_RATE_LIMIT_BURST,
+        },
+    );
+    public_rate_limiter.start_cleanup();
+    public_routes = public_routes.route_layer(middleware::from_fn_with_state(
+        public_rate_limiter,
+        crate::middleware::rate_limit::rate_limit_middleware,
+    ));
+
+    // ── 速率限制器（受保护路由）──
     let rl_config = easybot_core::types::config::RateLimitConfig {
         enabled: state.config.api.rate_limit.enabled,
         requests_per_minute: state.config.api.rate_limit.requests_per_minute,
@@ -213,6 +231,10 @@ pub fn create_router(state: AppState) -> Router {
     // OpenAPI 文档路径（Swagger UI，无需认证）
     let swagger = SwaggerUi::new("/swagger").url("/openapi.json", ApiDoc::openapi());
 
+    // ── HTTP 指标中间件（记录请求计数和耗时）──
+    let metrics_middleware =
+        middleware::from_fn_with_state(state.clone(), crate::metrics::http_metrics_middleware);
+
     // 基础路径
     let base_path = &state.config.api.base_path;
     Router::new()
@@ -220,5 +242,6 @@ pub fn create_router(state: AppState) -> Router {
         .nest(base_path, api_routes)
         .layer(TraceLayer::new_for_http())
         .layer(CorsLayer::permissive())
+        .route_layer(metrics_middleware)
         .with_state(state.clone())
 }

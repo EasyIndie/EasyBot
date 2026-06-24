@@ -75,7 +75,7 @@ async fn handle_ws(socket: WebSocket, state: AppState, _permit: OwnedSemaphorePe
 
     // 追踪活跃连接数
     if let Some(ref metrics) = state.metrics {
-        metrics.active_websocket_connections.inc();
+        metrics.inc_websocket_connections();
     }
 
     info!("WebSocket client connected");
@@ -199,7 +199,7 @@ async fn handle_ws(socket: WebSocket, state: AppState, _permit: OwnedSemaphorePe
     }
 
     if let Some(ref metrics) = state.metrics {
-        metrics.active_websocket_connections.dec();
+        metrics.dec_websocket_connections();
     }
 
     info!("WebSocket client disconnected");

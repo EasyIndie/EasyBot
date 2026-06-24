@@ -12,7 +12,7 @@
 |--------|:----:|------|:----------:|
 | **P0 紧急** | 5 | ✅ 已完成 | ~2h |
 | **P1 高优先级** | 8 | ✅ 已完成 | ~12h |
-| **P2 中优先级** | 10 | ⬜ 待修复 | ~20h |
+| **P2 中优先级** | 10 | ✅ 已完成 | ~20h |
 | **P3 低优先级** | 7 | ⬜ 待修复 | ~16h |
 | **合计** | **30** | — | **~50h** |
 
@@ -396,13 +396,14 @@ assert!(!status.connected, "auth 失败时 adapter 不应连接: {:?}", status);
 
 > 可观测性 + 可靠性 + 测试补齐
 
-### P2-1. Prometheus Metrics 仪器化
+### ✅ P2-1. Prometheus Metrics 仪器化
 
 | 属性 | 内容 |
 |------|------|
 | **文件** | `crates/easybot-api/src/metrics.rs` + `server.rs` + 各适配器 |
 | **严重性** | 中 |
 | **工时** | 6h |
+| **状态** | ✅ 已完成 |
 
 **问题**: 6 个注册的指标中 5 个从未被填充（`http_requests_total`, `http_request_duration_seconds`, `messages_inbound_total`, `messages_outbound_total`, `adapter_status`）。
 

@@ -318,6 +318,12 @@ async fn main() -> anyhow::Result<()> {
         metrics_registry,
     );
 
+    // ── 启动指标事件监听器（自动更新消息计数和适配器状态）──
+    if let Some(ref metrics) = app_state.metrics {
+        easybot_api::metrics::start_metrics_event_listener(metrics.clone(), event_bus.clone());
+        tracing::info!("Metrics event listener started");
+    }
+
     // ── 生产环境安全检查：非 debug 模式下如未启用 TLS 则拒绝启动 ──
     if !server_config.tls.enabled && !cfg!(debug_assertions) {
         tracing::warn!(
@@ -325,9 +331,7 @@ async fn main() -> anyhow::Result<()> {
              设置 tls.enabled = true 或设置环境变量 EASYBOT_ALLOW_PLAINTEXT=true 确认风险"
         );
         if std::env::var("EASYBOT_ALLOW_PLAINTEXT").is_err() {
-            anyhow::bail!(
-                "生产环境必须启用 TLS，或设置 EASYBOT_ALLOW_PLAINTEXT=true 跳过此检查"
-            );
+            anyhow::bail!("生产环境必须启用 TLS，或设置 EASYBOT_ALLOW_PLAINTEXT=true 跳过此检查");
         }
         tracing::warn!("EASYBOT_ALLOW_PLAINTEXT 已设置，跳过 TLS 检查（不推荐）");
     }

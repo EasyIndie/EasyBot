@@ -86,12 +86,57 @@ impl GatewayError {
         }
     }
 
+    /// 返回对外安全的消息文本
+    ///
+    /// 内部错误（Internal / StorageError / ConfigError）可能包含文件路径、
+    /// SQL 错误等敏感信息，对外返回通用消息。
+    /// 其他变体的消息是用户交互中产生的，可安全返回。
+    pub fn external_message(&self) -> String {
+        match self {
+            Self::Internal(_) => "Internal server error".to_string(),
+            Self::StorageError(_) => "Storage error".to_string(),
+            Self::ConfigError(_) => "Configuration error".to_string(),
+            // 以下变体的消息是用户交互中产生的，可安全返回
+            Self::InvalidRequest(msg) => format!("Invalid request: {}", msg),
+            Self::PlatformNotFound(msg) => format!("Platform '{}' not found", msg),
+            Self::ChatNotFound(msg) => format!("Chat '{}' not found", msg),
+            Self::AdapterNotConnected(msg) => format!("Adapter not connected: {}", msg),
+            Self::MessageTooLong { current, max } => {
+                format!("Message too long: {current} > {max}")
+            }
+            Self::RateLimited { retry_after_ms } => {
+                format!("Rate limited by platform, retry after {retry_after_ms}ms")
+            }
+            Self::CapabilityNotSupported(msg) => format!("Capability not supported: {msg}"),
+            Self::AuthFailed(msg) => format!("Authentication failed: {msg}"),
+            Self::Unauthorized(msg) => format!("Unauthorized: {msg}"),
+        }
+    }
+
+    /// 是否为内部错误（不应暴露详情给客户端）
+    pub fn is_internal_error(&self) -> bool {
+        matches!(
+            self,
+            Self::Internal(_) | Self::StorageError(_) | Self::ConfigError(_)
+        )
+    }
+
     /// 序列化为 API 错误响应格式
+    ///
+    /// 内部错误的详情不会暴露给客户端，改用通用消息。
+    /// 完整错误信息通过 tracing 日志记录。
     pub fn to_api_error(&self) -> ApiErrorResponse {
+        let message = self.external_message();
+
+        // 内部错误：将完整信息写入日志，API 响应仅返回通用消息
+        if self.is_internal_error() {
+            tracing::error!(code = self.error_code(), detail = %self, "内部错误已脱敏返回");
+        }
+
         ApiErrorResponse {
             error: ApiErrorDetail {
                 code: self.error_code().to_string(),
-                message: self.to_string(),
+                message,
                 details: None,
             },
         }

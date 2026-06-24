@@ -6,9 +6,10 @@
 
 use easybot_core::types::adapter::{AdapterConfig, AdapterState, PlatformAdapter};
 use easybot_core::types::message::{
-    Button, EditMessageParams, InlineKeyboard, KeyboardRow, OutboundMessage, ParseMode,
-    SendInteractiveParams, SendTextParams,
+    Button, EditMessageParams, InlineKeyboard, KeyboardRow, MediaAttachment, MediaType,
+    OutboundMessage, ParseMode, SendInteractiveParams, SendMediaParams, SendTextParams,
 };
+use std::sync::Arc;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -521,4 +522,154 @@ async fn test_edit_message_http_error() {
         result.is_err(),
         "edit_message should return error with HTTP 500"
     );
+}
+
+// ── P2-10: send_media 测试 ──
+
+/// Mock 飞书文件上传端点: POST /im/v1/files
+async fn mock_upload_endpoint(mock_server: &MockServer) {
+    Mock::given(method("POST"))
+        .and(path("/im/v1/files"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "code": 0,
+            "msg": "ok",
+            "data": {
+                "file_key": "file_key_abc123",
+                "file_name": "test.png"
+            }
+        })))
+        .expect(1..)
+        .mount(mock_server)
+        .await;
+}
+
+fn send_media_params() -> SendMediaParams {
+    SendMediaParams {
+        chat_id: "oc_abc123".to_string(),
+        text: None,
+        media: MediaAttachment {
+            media_type: MediaType::Image,
+            url: None,
+            data: Some("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==".to_string()),
+            mime_type: "image/png".to_string(),
+            filename: Some("test.png".to_string()),
+            caption: None,
+            thumbnail_url: None,
+            file_size: None,
+            duration: None,
+        },
+        reply_to: None,
+    }
+}
+
+#[tokio::test]
+async fn test_send_media_image_success() {
+    let mock_server = MockServer::start().await;
+    mock_token_endpoint(&mock_server).await;
+    mock_upload_endpoint(&mock_server).await;
+
+    // Mock 发送端点
+    Mock::given(method("POST"))
+        .and(path("/im/v1/messages"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(send_success_response()))
+        .expect(1..)
+        .mount(&mock_server)
+        .await;
+
+    let adapter = make_adapter(mock_server.address().port()).await;
+    let result = adapter.send_media(send_media_params()).await.unwrap();
+
+    assert!(
+        result.success,
+        "send_media should succeed: {:?}",
+        result.error
+    );
+    assert_eq!(result.message_id, Some("om_abc123xyz".to_string()));
+
+    mock_server.verify().await;
+}
+
+#[tokio::test]
+async fn test_send_media_no_url_or_data_error() {
+    let mock_server = MockServer::start().await;
+    mock_token_endpoint(&mock_server).await;
+
+    // 不需要 mock upload 端点 — adapter 在发送 HTTP 请求之前就应返回错误
+
+    let adapter = make_adapter(mock_server.address().port()).await;
+    let result = adapter
+        .send_media(SendMediaParams {
+            chat_id: "oc_abc123".to_string(),
+            text: None,
+            media: MediaAttachment {
+                media_type: MediaType::Image,
+                url: None,
+                data: None,
+                mime_type: "image/png".to_string(),
+                filename: None,
+                caption: None,
+                thumbnail_url: None,
+                file_size: None,
+                duration: None,
+            },
+            reply_to: None,
+        })
+        .await;
+
+    assert!(
+        result.is_err(),
+        "send_media should return error when no URL or data"
+    );
+}
+
+#[tokio::test]
+async fn test_send_media_request_body() {
+    let mock_server = MockServer::start().await;
+    mock_token_endpoint(&mock_server).await;
+
+    // Mock 上传端点
+    Mock::given(method("POST"))
+        .and(path("/im/v1/files"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "code": 0,
+            "msg": "ok",
+            "data": {
+                "file_key": "file_key_body_test",
+            }
+        })))
+        .expect(1..)
+        .mount(&mock_server)
+        .await;
+
+    // 捕获发送请求体
+    let captured_body = Arc::new(std::sync::Mutex::new(None::<serde_json::Value>));
+    let captured = captured_body.clone();
+
+    Mock::given(method("POST"))
+        .and(path("/im/v1/messages"))
+        .and(move |req: &wiremock::Request| {
+            if let Ok(body) = serde_json::from_slice::<serde_json::Value>(&req.body) {
+                *captured.lock().unwrap() = Some(body);
+            }
+            true
+        })
+        .respond_with(ResponseTemplate::new(200).set_body_json(send_success_response()))
+        .expect(1..)
+        .mount(&mock_server)
+        .await;
+
+    let adapter = make_adapter(mock_server.address().port()).await;
+    let result = adapter.send_media(send_media_params()).await.unwrap();
+    assert!(result.success);
+
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    let body = captured_body.lock().unwrap().take().unwrap();
+
+    assert_eq!(body["receive_id"], "oc_abc123");
+    assert_eq!(body["msg_type"], "image");
+
+    // content 是 JSON 字符串，包含 file_key
+    let content_str = body["content"].as_str().unwrap();
+    let content: serde_json::Value = serde_json::from_str(content_str).unwrap();
+    assert_eq!(content["file_key"], "file_key_body_test");
 }

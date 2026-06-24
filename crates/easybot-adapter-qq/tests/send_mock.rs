@@ -8,8 +8,10 @@
 
 use easybot_core::types::adapter::{AdapterConfig, AdapterState, PlatformAdapter};
 use easybot_core::types::message::{
-    MediaAttachment, MediaType, OutboundMessage, ParseMode, SendMediaParams, SendTextParams,
+    Button, InlineKeyboard, KeyboardRow, MediaAttachment, MediaType, OutboundMessage, ParseMode,
+    SendInteractiveParams, SendMediaParams, SendTextParams,
 };
+use std::sync::Arc;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -357,4 +359,305 @@ async fn test_connect_disconnect_state_cycle() {
     // 重复 disconnect 应幂等
     let _ = adapter.disconnect().await;
     assert_eq!(adapter.state(), AdapterState::Stopped);
+}
+
+// ── P2-9: send_media 成功 ──
+
+#[tokio::test]
+async fn test_send_media_image_success() {
+    let mock_server = MockServer::start().await;
+    mock_qq_token(&mock_server).await;
+    mock_qq_bot_info(&mock_server).await;
+
+    // Mock 频道消息发送端点（send_media 用 msg_type: 2 + image URL）
+    Mock::given(method("POST"))
+        .and(path("/channels/qq-chat-123/messages"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": "media_msg_001",
+            "timestamp": "2026-06-20T12:00:00+00:00"
+        })))
+        .expect(1..)
+        .mount(&mock_server)
+        .await;
+
+    let mut adapter = easybot_adapter_qq::QqAdapter::new();
+    adapter
+        .init(qq_config_with_auth(mock_server.address().port()))
+        .await
+        .unwrap();
+    adapter.connect().await.unwrap();
+
+    let result = adapter
+        .send_media(SendMediaParams {
+            chat_id: "qq-chat-123".to_string(),
+            media: MediaAttachment {
+                media_type: MediaType::Image,
+                url: Some("https://example.com/photo.jpg".to_string()),
+                data: None,
+                mime_type: "image/jpeg".to_string(),
+                filename: Some("photo.jpg".to_string()),
+                caption: None,
+                thumbnail_url: None,
+                file_size: None,
+                duration: None,
+            },
+            text: Some("Check this out".to_string()),
+            reply_to: None,
+        })
+        .await
+        .unwrap();
+
+    assert!(
+        result.success,
+        "send_media should succeed: {:?}",
+        result.error
+    );
+    assert_eq!(result.message_id, Some("media_msg_001".to_string()));
+    assert_eq!(adapter.state(), AdapterState::Connected);
+}
+
+// ── P2-9: send_media 错误 ──
+
+#[tokio::test]
+async fn test_send_media_error() {
+    let mock_server = MockServer::start().await;
+    mock_qq_token(&mock_server).await;
+    mock_qq_bot_info(&mock_server).await;
+
+    // API 返回 500
+    Mock::given(method("POST"))
+        .and(path("/channels/qq-chat-123/messages"))
+        .respond_with(ResponseTemplate::new(500))
+        .expect(1..)
+        .mount(&mock_server)
+        .await;
+
+    let mut adapter = easybot_adapter_qq::QqAdapter::new();
+    adapter
+        .init(qq_config_with_auth(mock_server.address().port()))
+        .await
+        .unwrap();
+    adapter.connect().await.unwrap();
+
+    let result = adapter
+        .send_media(SendMediaParams {
+            chat_id: "qq-chat-123".to_string(),
+            media: MediaAttachment {
+                media_type: MediaType::Image,
+                url: Some("https://example.com/photo.jpg".to_string()),
+                data: None,
+                mime_type: "image/jpeg".to_string(),
+                filename: None,
+                caption: None,
+                thumbnail_url: None,
+                file_size: None,
+                duration: None,
+            },
+            text: None,
+            reply_to: None,
+        })
+        .await
+        .unwrap();
+
+    assert!(!result.success, "send_media should fail with HTTP 500");
+    assert!(result.retryable, "should be retryable");
+}
+
+// ── P2-9: send_interactive 成功 ──
+
+#[tokio::test]
+async fn test_send_interactive_success() {
+    let mock_server = MockServer::start().await;
+    mock_qq_token(&mock_server).await;
+    mock_qq_bot_info(&mock_server).await;
+
+    Mock::given(method("POST"))
+        .and(path("/channels/qq-chat-123/messages"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": "interactive_001",
+            "timestamp": "2026-06-20T12:00:00+00:00"
+        })))
+        .expect(1..)
+        .mount(&mock_server)
+        .await;
+
+    let mut adapter = easybot_adapter_qq::QqAdapter::new();
+    adapter
+        .init(qq_config_with_auth(mock_server.address().port()))
+        .await
+        .unwrap();
+    adapter.connect().await.unwrap();
+
+    let result = adapter
+        .send_interactive(SendInteractiveParams {
+            chat_id: "qq-chat-123".to_string(),
+            text: "Choose:".to_string(),
+            keyboard: InlineKeyboard {
+                rows: vec![KeyboardRow {
+                    buttons: vec![Button {
+                        text: "Click me".to_string(),
+                        callback_data: Some("cb_1".to_string()),
+                        url: None,
+                    }],
+                }],
+            },
+            reply_to: None,
+        })
+        .await
+        .unwrap();
+
+    assert!(
+        result.success,
+        "send_interactive should succeed: {:?}",
+        result.error
+    );
+    assert_eq!(result.message_id, Some("interactive_001".to_string()));
+}
+
+// ── P2-9: edit_message 成功 ──
+
+#[tokio::test]
+async fn test_edit_message_success() {
+    let mock_server = MockServer::start().await;
+    mock_qq_token(&mock_server).await;
+    mock_qq_bot_info(&mock_server).await;
+
+    // QQ edit_message uses PATCH /channels/{id}/messages/{msg_id}
+    Mock::given(method("PATCH"))
+        .and(path("/channels/qq-chat-123/messages/msg_to_edit"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": "msg_to_edit",
+            "timestamp": "2026-06-20T12:01:00+00:00"
+        })))
+        .expect(1..)
+        .mount(&mock_server)
+        .await;
+
+    let mut adapter = easybot_adapter_qq::QqAdapter::new();
+    adapter
+        .init(qq_config_with_auth(mock_server.address().port()))
+        .await
+        .unwrap();
+    adapter.connect().await.unwrap();
+
+    let result = adapter
+        .edit_message(easybot_core::types::message::EditMessageParams {
+            chat_id: "qq-chat-123".to_string(),
+            message_id: "msg_to_edit".to_string(),
+            message: OutboundMessage {
+                text: "Updated text".to_string(),
+                parse_mode: ParseMode::None,
+            },
+            keyboard: None,
+        })
+        .await
+        .unwrap();
+
+    assert!(
+        result.success,
+        "edit_message should succeed: {:?}",
+        result.error
+    );
+    assert!(
+        result.updated_at.is_some(),
+        "should have updated_at timestamp"
+    );
+}
+
+// ── P2-9: delete_message 成功 ──
+
+#[tokio::test]
+async fn test_delete_message_success() {
+    let mock_server = MockServer::start().await;
+    mock_qq_token(&mock_server).await;
+    mock_qq_bot_info(&mock_server).await;
+
+    // QQ delete_message uses DELETE /channels/{id}/messages/{msg_id}
+    Mock::given(method("DELETE"))
+        .and(path("/channels/qq-chat-123/messages/msg_to_delete"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(1..)
+        .mount(&mock_server)
+        .await;
+
+    let mut adapter = easybot_adapter_qq::QqAdapter::new();
+    adapter
+        .init(qq_config_with_auth(mock_server.address().port()))
+        .await
+        .unwrap();
+    adapter.connect().await.unwrap();
+
+    let result = adapter
+        .delete_message("qq-chat-123", "msg_to_delete")
+        .await
+        .unwrap();
+
+    assert!(
+        result.success,
+        "delete_message should succeed: {:?}",
+        result.error
+    );
+}
+
+// ── P2-9: send_media 请求体验证 ──
+
+#[tokio::test]
+async fn test_send_media_request_body() {
+    let mock_server = MockServer::start().await;
+    mock_qq_token(&mock_server).await;
+    mock_qq_bot_info(&mock_server).await;
+
+    let captured_body = Arc::new(std::sync::Mutex::new(None::<serde_json::Value>));
+    let captured = captured_body.clone();
+
+    Mock::given(method("POST"))
+        .and(path("/channels/qq-chat-123/messages"))
+        .and(move |req: &wiremock::Request| {
+            if let Ok(body) = serde_json::from_slice::<serde_json::Value>(&req.body) {
+                *captured.lock().unwrap() = Some(body);
+            }
+            true
+        })
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": "media_body_test",
+            "timestamp": "2026-06-20T12:00:00+00:00"
+        })))
+        .expect(1..)
+        .mount(&mock_server)
+        .await;
+
+    let mut adapter = easybot_adapter_qq::QqAdapter::new();
+    adapter
+        .init(qq_config_with_auth(mock_server.address().port()))
+        .await
+        .unwrap();
+    adapter.connect().await.unwrap();
+
+    let result = adapter
+        .send_media(SendMediaParams {
+            chat_id: "qq-chat-123".to_string(),
+            media: MediaAttachment {
+                media_type: MediaType::Image,
+                url: Some("https://example.com/cat.png".to_string()),
+                data: None,
+                mime_type: "image/png".to_string(),
+                filename: Some("cat.png".to_string()),
+                caption: None,
+                thumbnail_url: None,
+                file_size: None,
+                duration: None,
+            },
+            text: Some("Look at this cat".to_string()),
+            reply_to: None,
+        })
+        .await
+        .unwrap();
+
+    assert!(result.success);
+
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    let body = captured_body.lock().unwrap().take().unwrap();
+    assert_eq!(body["msg_type"], 2, "should use msg_type:2 for image+text");
+    assert_eq!(body["image"], "https://example.com/cat.png");
+    assert_eq!(body["content"], "Look at this cat");
 }

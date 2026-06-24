@@ -12,9 +12,6 @@ use tracing::warn;
 /// 默认广播通道容量
 const DEFAULT_CHANNEL_CAPACITY: usize = 256;
 
-/// 合并循环空闲时的休眠时间（避免 busy loop）
-const MERGE_POLL_INTERVAL_MS: u64 = 10;
-
 /// 消息总线
 ///
 /// 网关内部的事件枢纽，负责组件间解耦通信。
@@ -76,7 +73,9 @@ impl EventBus {
     /// 订阅多个事件类型
     ///
     /// 创建一个合并的接收器，订阅列表中所有事件类型。
-    /// 使用单个后台任务轮询所有 channel，避免为每个事件类型 spawn 独立 task。
+    /// 使用单个后台任务：在一个接收器上阻塞 `recv()` 等待事件，
+    /// 醒来后用 `try_recv()` 排空所有 channel，然后轮换主接收器保证公平。
+    /// 空闲时零 CPU 消耗（不再忙轮询）。
     pub fn subscribe_many(&self, event_types: &[&str]) -> broadcast::Receiver<GatewayEvent> {
         let (global_tx, global_rx) = broadcast::channel(self.capacity);
 
@@ -84,37 +83,65 @@ impl EventBus {
             event_types.iter().map(|et| self.subscribe(et)).collect();
 
         tokio::spawn(async move {
-            loop {
-                // 尝试从所有 receiver 读取可用事件
-                let mut had_data = false;
-                for i in (0..receivers.len()).rev() {
-                    match receivers[i].try_recv() {
-                        Ok(event) => {
-                            had_data = true;
-                            if global_tx.send(event).is_err() {
-                                return; // 下游 receiver 已 drop
-                            }
-                        }
-                        Err(broadcast::error::TryRecvError::Closed) => {
-                            receivers.swap_remove(i);
-                        }
-                        Err(broadcast::error::TryRecvError::Lagged(n)) => {
-                            warn!("EventBus merge lagged by {} events", n);
-                            had_data = true;
-                        }
-                        Err(broadcast::error::TryRecvError::Empty) => {}
-                    }
-                }
+            let mut primary_idx: usize = 0;
 
+            loop {
                 if receivers.is_empty() {
                     break;
                 }
+                primary_idx %= receivers.len();
 
-                if had_data {
-                    tokio::task::yield_now().await;
-                } else {
-                    tokio::time::sleep(Duration::from_millis(MERGE_POLL_INTERVAL_MS)).await;
+                // 在主接收器上阻塞等待（空闲时零 CPU）
+                match receivers[primary_idx].recv().await {
+                    Ok(event) => {
+                        if global_tx.send(event).is_err() {
+                            return; // 下游 receiver 已 drop
+                        }
+                    }
+                    Err(broadcast::error::RecvError::Closed) => {
+                        receivers.remove(primary_idx);
+                        continue; // 不推进 primary_idx
+                    }
+                    Err(broadcast::error::RecvError::Lagged(n)) => {
+                        warn!(
+                            "EventBus merge lagged by {} events on channel {}",
+                            n, primary_idx
+                        );
+                    }
                 }
+
+                // 醒来后排空所有 channel（包括已从主接收器收到一个事件的那个）
+                let mut i = 0;
+                while i < receivers.len() {
+                    loop {
+                        match receivers[i].try_recv() {
+                            Ok(event) => {
+                                if global_tx.send(event).is_err() {
+                                    return;
+                                }
+                            }
+                            Err(broadcast::error::TryRecvError::Empty) => break,
+                            Err(broadcast::error::TryRecvError::Closed) => {
+                                receivers.remove(i);
+                                // 如果移除的不是末尾元素，调整 primary_idx
+                                if primary_idx > i {
+                                    primary_idx -= 1;
+                                } else if primary_idx == i {
+                                    primary_idx = primary_idx.saturating_sub(1);
+                                }
+                                break;
+                            }
+                            Err(broadcast::error::TryRecvError::Lagged(n)) => {
+                                warn!("EventBus merge lagged by {} events on channel {}", n, i);
+                                // 继续 drain — lagged 后可能还有事件
+                            }
+                        }
+                    }
+                    i += 1;
+                }
+
+                // 轮换主接收器以保证公平
+                primary_idx = (primary_idx + 1) % receivers.len().max(1);
             }
         });
 

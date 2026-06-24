@@ -4,48 +4,155 @@
 //! 与会话桥接器（SessionBridge）协同工作，各自专注：
 //! - SessionBridge：创建/更新会话
 //! - MessagePersister：持久化消息内容
+//!
+//! 消息先进入内存缓冲区，每隔 1 秒或缓冲区满（50 条）时批量写入存储层。
+//! 写入失败时自动重试（最多 3 次，指数退避），重试耗尽后记录错误并丢弃该批次。
 
 use std::sync::Arc;
-use tracing::{info, warn};
+use std::time::Duration;
+use tokio::sync::Mutex;
+use tracing::{error, info, warn};
 
 use crate::bus::EventBus;
 use crate::storage::{MessageStore, StoredMessage};
 use crate::types::message::InboundMessage;
 
+/// 刷新间隔：缓冲区非空时，每隔此间隔写入存储
+const FLUSH_INTERVAL: Duration = Duration::from_secs(1);
+
+/// 缓冲区容量：达到此数量立即刷新（不等定时器）
+const BATCH_SIZE: usize = 50;
+
+/// 最大重试次数
+const MAX_RETRIES: u32 = 3;
+
 /// 消息持久化器
 ///
-/// 订阅 `message.inbound` 事件，将每条入站消息写入 MessageStore。
+/// 订阅 `message.inbound` 事件，将入站消息批量写入 MessageStore。
 pub struct MessagePersister;
 
 impl MessagePersister {
     /// 启动消息持久化后台任务
+    ///
+    /// 单任务设计：用 `try_recv()` 排空事件总线，非空时刷新缓冲区，
+    /// 空闲时等待 FLUSH_INTERVAL 后再检查。事件总线关闭时退出。
     pub fn start(event_bus: Arc<EventBus>, message_store: Arc<dyn MessageStore>) {
         let mut event_rx =
             event_bus.subscribe_many(&[crate::types::event::event_types::MESSAGE_INBOUND]);
 
+        let buffer: Arc<Mutex<Vec<StoredMessage>>> =
+            Arc::new(Mutex::new(Vec::with_capacity(BATCH_SIZE)));
+
         tokio::spawn(async move {
-            info!("Message persister started");
+            info!(
+                "Message persister started (batch mode, {}ms flush, batch={})",
+                FLUSH_INTERVAL.as_millis(),
+                BATCH_SIZE
+            );
+
+            let mut last_flush = tokio::time::Instant::now();
 
             loop {
-                match event_rx.recv().await {
-                    Ok(event) => {
-                        if let Ok(inbound) = serde_json::from_value::<InboundMessage>(event.data) {
-                            let stored = StoredMessage::from_inbound(&inbound);
-                            if let Err(e) = message_store.store_message(&stored).await {
-                                warn!("Failed to persist inbound message: {}", e);
+                // 1. 排空事件总线（非阻塞）
+                let mut had_event = false;
+                loop {
+                    match event_rx.try_recv() {
+                        Ok(event) => {
+                            had_event = true;
+                            if let Ok(inbound) =
+                                serde_json::from_value::<InboundMessage>(event.data)
+                            {
+                                let stored = StoredMessage::from_inbound(&inbound);
+                                let should_flush = {
+                                    let mut buf = buffer.lock().await;
+                                    buf.push(stored);
+                                    buf.len() >= BATCH_SIZE
+                                };
+                                if should_flush {
+                                    flush_batch(&buffer, &message_store).await;
+                                    last_flush = tokio::time::Instant::now();
+                                }
                             }
                         }
+                        Err(tokio::sync::broadcast::error::TryRecvError::Empty) => break,
+                        Err(tokio::sync::broadcast::error::TryRecvError::Closed) => {
+                            // 最终刷新并退出
+                            flush_batch(&buffer, &message_store).await;
+                            info!("Message persister stopped (event bus closed)");
+                            return;
+                        }
+                        Err(tokio::sync::broadcast::error::TryRecvError::Lagged(n)) => {
+                            warn!("Message persister lagged by {} events", n);
+                            had_event = true;
+                        }
                     }
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                        warn!("Message persister lagged by {} events", n);
-                    }
-                    Err(_) => {
-                        info!("Message persister stopped (event bus closed)");
-                        break;
+                }
+
+                // 2. 定时刷新：距上次刷新超过 FLUSH_INTERVAL 且有事件积压
+                if had_event || last_flush.elapsed() >= FLUSH_INTERVAL {
+                    flush_batch(&buffer, &message_store).await;
+                    last_flush = tokio::time::Instant::now();
+                }
+
+                // 3. 等待下次检查（无事件时避免忙轮询）
+                //    有事件刚处理完时 yield 而非 sleep，减少延迟
+                if had_event {
+                    tokio::task::yield_now().await;
+                } else {
+                    // 计算下次需要刷新的时间
+                    let elapsed = last_flush.elapsed();
+                    if elapsed < FLUSH_INTERVAL {
+                        tokio::time::sleep(FLUSH_INTERVAL - elapsed).await;
                     }
                 }
             }
         });
+    }
+}
+
+/// 将缓冲区中的所有消息批量写入存储
+///
+/// 采用原子取出策略：先 `take` 缓冲区，再尝试写入。
+/// 写入失败时最多重试 MAX_RETRIES 次（指数退避）。
+/// 重试耗尽后，消息将丢失并记录错误。
+async fn flush_batch(buffer: &Arc<Mutex<Vec<StoredMessage>>>, store: &Arc<dyn MessageStore>) {
+    let batch: Vec<StoredMessage> = {
+        let mut buf = buffer.lock().await;
+        if buf.is_empty() {
+            return;
+        }
+        std::mem::take(&mut *buf)
+    };
+
+    let count = batch.len();
+
+    for attempt in 1..=MAX_RETRIES {
+        match store.store_messages(&batch).await {
+            Ok(()) => {
+                if attempt > 1 {
+                    info!(
+                        "Message batch ({} msgs) persisted after {} retries",
+                        count,
+                        attempt - 1
+                    );
+                }
+                return;
+            }
+            Err(e) if attempt < MAX_RETRIES => {
+                let delay = Duration::from_millis(100 * attempt as u64);
+                warn!(
+                    "Failed to persist {} messages (attempt {}/{}): {} — retrying in {:?}",
+                    count, attempt, MAX_RETRIES, e, delay,
+                );
+                tokio::time::sleep(delay).await;
+            }
+            Err(e) => {
+                error!(
+                    "Failed to persist {} messages after {} attempts: {} — batch discarded",
+                    count, MAX_RETRIES, e,
+                );
+            }
+        }
     }
 }
 
@@ -117,7 +224,8 @@ mod tests {
         let msg = test_inbound_message();
         publish_inbound(&event_bus, &msg);
 
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        // 等待批量刷新（FLUSH_INTERVAL = 1s，加 200ms 余量）
+        tokio::time::sleep(Duration::from_millis(1500)).await;
 
         let stored_messages = SqliteMessageStore::new(pool)
             .list_messages(&MessageFilter {
@@ -194,7 +302,8 @@ mod tests {
             publish_inbound(&event_bus, &msg);
         }
 
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        // 等待批量刷新
+        tokio::time::sleep(Duration::from_millis(1500)).await;
 
         let stored_messages = SqliteMessageStore::new(pool)
             .list_messages(&MessageFilter {
@@ -258,7 +367,8 @@ mod tests {
         };
         event_bus.publish(event);
 
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        // 等待批量刷新
+        tokio::time::sleep(Duration::from_millis(1500)).await;
 
         // 验证会话已创建
         let session = session_manager.get("test:pipeline-chat");
