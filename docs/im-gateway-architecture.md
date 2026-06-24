@@ -7,6 +7,10 @@
 > - 适配器 trait 未包含 `supportsDraftStreaming()` 方法，流式草稿通过 `send_draft()` 返回 `Result<DraftResult, GatewayError>` 实现
 > - 存储后端目前支持 SQLite 和 PostgreSQL，不支持 MySQL
 > - 平台示例中引用的 Slack/WhatsApp 未在 EasyBot 中实现（已由飞书/QQ/微信替代）
+> - API 路由：不包含独立的 `/messages/send-media` 和 `/messages/inbox` 端点；聊天路由使用路径参数（`/chats/{platform}`）而非查询参数；不包含 `PATCH /config/adapters/{platform}` 端点
+> - 健康检查响应字段简化：不含 `adapters.disconnected`、`sessions.total`、`metrics.*` 字段
+> - 适配器生命周期增加了 `Connecting` 中间状态
+> - CLI 仅支持 `--init` / `--debug` 模式，不包含 `status`/`stop`/`config validate` 子命令
 
 ---
 

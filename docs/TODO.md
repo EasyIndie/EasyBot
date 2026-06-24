@@ -1,6 +1,6 @@
 # EasyBot TODO — 待办事项清单
 
-> 最后更新: 2026-06-21
+> 最后更新: 2026-06-24
 > 基于 docs/rust-implementation-plan.md 分阶段计划
 
 ---
@@ -61,7 +61,7 @@
 | **个人微信** | delete_message | iLink Bot API 无撤回端点 |
 | **个人微信** | send_interactive | 仅 5 种消息类型，无 keyboard/button |
 | **个人微信** | list_chats | 无聊天列表端点 |
-| **个人微信** | 群聊支持 | 仅一对一私聊 |
+| **个人微信** | 群聊支持 | 入站消息可识别群聊（通过 `group_id`），发送群聊消息取决于 iLink Bot API 权限 |
 | **飞书** | ChatList | 平台 API 限制 |
 | **飞书** | Streaming | 平台 API 限制 |
 | **飞书** | TypingIndicator | 平台 API 限制 |
@@ -108,7 +108,7 @@
 | P2-1 (N6) | 🟡 | ✅ webhook serialize 失败日志 | `webhook/mod.rs` |
 | P2-2 (N16) | 🟡 | ✅ HTTP Client 类型统一 OnceLock | `feishu` + `qq` + `wechat` |
 | P2-3 (N17) | 🟡 | ✅ WeChat 构造函数统一 | `wechat` + `bin/main.rs` |
-| P2-4 (N7) | 🟡 | ⏸️ QQ/WeChat 适配器拆分 | `qq/src/` + `wechat/src/` (需编译验证) |
+| P2-4 (N7) | 🟡 | ⏸️ QQ/WeChat 适配器拆分 | `qq/src/` (✅ 已完成: auth.rs, gateway.rs, types.rs) + `wechat/src/` (⏸️ crypto.rs 已拆分，其余待验证) |
 | P3-1 (N18) | 🟢 | ✅ Capability 声明宏去重 | 2/5 适配器 (Telegram + Discord) |
 | P3-2 (N19) | 🟢 | ✅ bin/main.rs 注册宏统一 | `bin/src/main.rs` |
 | P3-3 (N20) | 🟢 | ✅ Plugin 沙箱文档化 | `SECURITY.md` + `plugin/loader.rs` |

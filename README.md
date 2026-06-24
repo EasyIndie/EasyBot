@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/Rust-1.85+-de5c43?logo=rust" alt="Rust"></a>
+  <a href="https://www.rust-lang.org/"><img src="https://img.shields.io/badge/Rust-1.94+-de5c43?logo=rust" alt="Rust"></a>
   <a href="./LICENSE"><img src="https://img.shields.io/badge/license-GPLv3-blue" alt="License"></a>
   <a href="#"><img src="https://img.shields.io/badge/Platform-Telegram%20|%20Discord%20|%20%E9%A3%9E%E4%B9%A6%20|%20QQ%20|%20%E5%BE%AE%E4%BF%A1-green" alt="Platforms"></a>
 </p>
@@ -85,7 +85,7 @@
 
 ### 前置条件
 
-- Rust 1.85+
+- Rust 1.94+
 - Protobuf 编译器（用于飞书 SDK 编译）
 
 ```bash
@@ -173,8 +173,13 @@ curl http://localhost:8080/health
 ├── gateway.yaml              # 基础配置（版本控制，一般无需修改）
 ├── gateway.local.yaml        # 本地覆盖配置（可选，高级用途）
 ├── .env                      # 令牌文件（chmod 600，编辑此文件即可启用适配器）
-├── data/gateway.db           # SQLite 数据库（自动创建）
-└── logs/                     # 日志文件
+├── data/
+│   ├── gateway.db            # SQLite 数据库（自动创建）
+│   └── media_cache/          # 媒体文件缓存
+├── logs/                     # 日志文件
+├── plugins/                  # 第三方适配器插件
+├── certs/                    # TLS 证书（可选）
+└── secrets/                  # 密钥存储（可选，chmod 600）
 ```
 
 ### 配置优先级
@@ -191,12 +196,19 @@ curl http://localhost:8080/health
 server:
   host: "127.0.0.1"        # 监听地址
   port: 8080               # 监听端口
+  tls:
+    enabled: false          # TLS 默认关闭（生产环境推荐反向代理）
 
 api:
   basePath: "/api/v1"
   websocket:
     enabled: true           # 启用 WebSocket
     maxClients: 1000        # 最大连接数
+    heartbeatInterval: 30   # 心跳间隔（秒）
+  # rateLimit:
+  #   enabled: true          # 速率限制（默认开启）
+  #   requestsPerMinute: 60 # 每分钟最大请求数
+  #   burstSize: 10         # 突发峰值
 
 storage:
   storageType: "sqlite"       # sqlite / postgres
@@ -204,6 +216,7 @@ storage:
 logging:
   level: "info"             # debug / info / warn / error
   format: "text"            # text / json
+  output: "stdout"          # stdout / file
 ```
 
 ```bash
@@ -311,10 +324,13 @@ easybot/
 │   │   ├── src/types/           # 核心数据模型
 │   │   └── src/webhook/         # Webhook 支持
 │   ├── easybot-api/             # API 层
-│   │   ├── src/routes/          # 路由处理
-│   │   ├── src/middleware/      # 中间件（auth, rate_limit）
-│   │   ├── src/ws/              # WebSocket 推送
-│   │   └── src/response.rs      # 统一响应格式
+│   │   ├── src/server.rs        # 服务器组装（路由注册、中间件）
+│   │   ├── src/lib.rs           # AppState 定义
+│   │   ├── src/routes/          # 路由处理（含 WebSocket）
+│   │   ├── src/middleware/       # 中间件（rate_limit）
+│   │   ├── src/response.rs      # 统一响应格式
+│   │   ├── src/metrics.rs       # Prometheus 指标
+│   │   └── src/openapi.rs       # OpenAPI 文档定义
 │   ├── easybot-adapter-telegram/ # Telegram 适配器
 │   ├── easybot-adapter-discord/  # Discord 适配器
 │   ├── easybot-adapter-feishu/   # 飞书适配器
@@ -390,10 +406,22 @@ cargo fmt
 ### 适配器生命周期
 
 ```
-init(config) → connect() → send()/send_media() → disconnect()
+init(config) → connect() → send()/send_media()/... → disconnect()
     ↓              ↓
- Created →   Starting → Connected → Reconnecting → Failed → Stopped
+ Created → Starting → Connecting → Connected → Reconnecting → Failed → Stopped
 ```
+
+### 实现路线图
+
+| 阶段 | 范围 | 状态 |
+|------|------|------|
+| **P1 MVP** | 核心类型、PlatformAdapter trait、Telegram 适配器、REST API、配置加载、跨平台路径 | ✅ 完成 |
+| **P2 双向通信** | 事件总线、WebSocket 推送、Webhooks、入站消息处理、会话持久化、消息编辑/删除、适配器生命周期事件 | ✅ 完成 |
+| **P3 多平台** | Telegram ✅、Discord ✅（含 send_interactive + list_chats）、**飞书/Lark** ✅、**QQ** ✅（含 send_interactive + list_chats）、**个人微信** ✅（iLink Bot API 已验证；edit/delete/send_interactive/list_chats 平台不支持）— 五平台全部完成 | ✅ 完成 |
+| **P4 生产就绪** | API 密钥认证（Argon2）、速率限制、热重载、优雅关闭、PostgreSQL、Prometheus、Docker、TTL 保留、健康监控 + 自动重连、send_draft 流式传输、健康运行时间 | ✅ 95% |
+| **P5 插件系统** | 插件 SDK、动态库加载、插件注册、加载器测试、开发者文档 | ✅ 完成 |
+
+> **P4 未完成项**: 权限模型 RBAC（暂缓）、TLS 仅配置层未在应用层处理（暂缓）。
 
 ---
 

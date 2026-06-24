@@ -6,7 +6,7 @@ Thank you for your interest in contributing to EasyBot! This document will help 
 
 ### Prerequisites
 
-- [Rust](https://rustup.rs/) (stable, 1.75+)
+- [Rust](https://rustup.rs/) (stable, 1.94+)
 - Git
 - (Optional) Docker for containerized development
 
@@ -14,7 +14,7 @@ Thank you for your interest in contributing to EasyBot! This document will help 
 
 ```bash
 # Clone the repository
-git clone https://github.com/wangzhizhou/EasyBot.git
+git clone https://github.com/EasyIndie/EasyBot.git
 cd EasyBot
 
 # Run setup (configures git hooks)
@@ -106,7 +106,7 @@ cargo test -p e2e-tests
 1. Fork the repository and create a feature branch.
 2. Make your changes, following the code style guidelines.
 3. Add tests for new functionality.
-4. Ensure all tests pass: `cargo test --features full`
+4. Ensure all tests pass: `cargo test --workspace --features "full,plugin-system"`
 5. Run clippy: `cargo clippy --all-targets --features full`
 6. Run format check: `cargo fmt --all -- --check`
 7. Update documentation if needed.

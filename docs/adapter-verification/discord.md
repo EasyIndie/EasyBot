@@ -308,8 +308,9 @@ wscat -c "ws://localhost:8080/api/v1/ws" \
 | 自动重连 | ✅ 外层 loop 无限重试（5s 延迟，支持 cancel 信号） |
 | parse_mode 支持 | ❌ 忽略（Discord 不支持，客户端自行渲染 Markdown） |
 | 入站消息过滤 | 按 `author.id == bot_user_id` 过滤自身消息 |
-| 能力声明 | Text、Image、Audio、Video、Document、Interactive、Markdown、Group、TypingIndicator、MessageEdit、MessageDelete |
-| 不支持的能力 | Html、ChatList、Streaming |
+| 能力声明 | Text、Image、Audio、Video、Document、Interactive、Markdown、Group、TypingIndicator、MessageEdit、MessageDelete、ChatList、Streaming |
+| 不支持的能力 | Html |
+| 能力限制 | Image/Audio/Video/Document: 最大 8MB；Interactive: 最多 25 个按钮 |
 
 ## 与 Telegram 适配器的关键差异
 

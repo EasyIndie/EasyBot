@@ -1,6 +1,15 @@
 # EasyBot – Rust 实现计划
 
-> ⚠️ **历史文档**: 本文档为 EasyBot 开发初期的实现计划。项目已按此计划完成 P1-P5 全部阶段，但具体实现细节（trait 方法签名、类型结构等）可能与计划中的草图代码有差异。**当前实际实现以源码为准。** 各阶段完成状态见本文档第五章。
+> ⚠️ **历史文档**: 本文档为 EasyBot 开发初期的实现计划。项目已按此计划完成 P1-P5 全部阶段，但具体实现细节与当前代码存在以下已知差异：
+> - 依赖版本已升级（`tower-http` 0.6→0.7, `sqlx` 0.8→0.9, `dirs` 5→6）
+> - 模块路径已调整（部分文件位置与计划不同，如 webhook 在 core 而非 api crate）
+> - CLI 设计已简化：不含 `--daemon`、`status`/`stop`/`config validate` 子命令
+> - `AdapterState` 增加了 `Connecting` 中间状态
+> - `PlatformAdapter` trait 不再要求 `Debug` bound
+> - `GatewayError::http_status()` 返回 `u16` 而非 `axum::http::StatusCode`
+> - `once_cell`、`rstest`、`mimalloc`/`jemalloc` 等计划中的依赖未引入
+>
+> **当前实际实现以源码为准。** 各阶段完成状态见本文档第五章。
 >
 > 本文档将架构设计翻译为 Rust 语言的实现计划，涵盖项目结构、crate 划分、关键类型设计、第三方依赖选型、分阶段实施路径。
 

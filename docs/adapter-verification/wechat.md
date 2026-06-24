@@ -52,11 +52,11 @@ adapters:
 | `test_runtime_config_after_init` | 单元测试 | ❌ | ❌ |
 | `test_health_before_init` | 单元测试 | ❌ | ❌ |
 | `test_get_chat_info_always_dm` | 单元测试 | ❌ | ❌ |
-| `test_new_with_event_bus` | 单元测试 | ❌ | ❌ |
+| ~~`test_new_with_event_bus`~~ | 已移除（P2-3 重构） | — | — |
 | `test_double_disconnect` | 单元测试 | ❌ | ❌ |
 | `test_disconnect_idempotent` | 单元测试 | ❌ | ❌ |
 | `test_send_before_connect_errors` | 单元测试 | ❌ | ❌ |
-| `test_send_media_not_implemented` | 单元测试 | ❌ | ❌ |
+| `test_send_media_before_connect_errors` | 单元测试 | ❌ | ❌ |
 | `test_convert_text_message` | 消息转换 | ❌ | ❌ |
 | `test_convert_image_message` | 消息转换 | ❌ | ❌ |
 | `test_convert_file_message` | 消息转换 | ❌ | ❌ |
@@ -177,7 +177,7 @@ curl -s "http://localhost:8080/api/v1/messages?platform=wechat" \
 
 ## 已知限制
 
-- **仅 DM** — 不支持群聊
+- **入站消息支持群聊** — 群聊消息通过 `group_id` 识别并设置 `is_group: true`，但发送群聊消息的能力取决于 iLink Bot API 权限
 - **无 Markdown** — 微信客户端不渲染
 - **Session 24h 过期** — 过期后需重启服务重新扫码
 - **无历史消息 API** — 仅游标式实时拉取

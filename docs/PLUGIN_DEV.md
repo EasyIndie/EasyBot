@@ -148,7 +148,7 @@ impl PlatformAdapter for MyAdapter {
             status: if self.state == AdapterState::Connected {
                 HealthStatus::Healthy
             } else {
-                HealthStatus::Unhealthy
+                HealthStatus::Down
             },
             connected: self.state == AdapterState::Connected,
             last_connected_at: None,
@@ -361,7 +361,7 @@ declare_plugin!(MyAdapter, MyAdapter::new);
 |------|------|
 | `is_connected()` | 检查适配器是否处于 Connected 状态 |
 | `heartbeat_age_ms()` | 返回上次心跳距今的毫秒数（用于 General Health Monitor） |
-| `health_status()` | 综合连接状态和心跳延迟计算健康等级 (Healthy/Degraded/Unhealthy) |
+| `health_status()` | 综合连接状态和心跳延迟计算健康等级 (Healthy/Degraded/Down) |
 
 ### 可选覆盖（默认返回 capability_not_supported 错误）
 
@@ -583,7 +583,6 @@ run --dir ~/.easybot
 查看 `tests/plugins/mock-adapter/` 这是一个最小可运行的插件示例：
 
 - **[MockAdapter source](../tests/plugins/mock-adapter/src/lib.rs)** — 完整实现
-- **[plugin.yaml](../tests/plugins/mock-adapter/plugin.yaml)** — 清单文件
 - **[Integration test](../tests/integration/src/lib.rs)** — 插件加载与生命周期测试
 
 ### MockAdapter 关键代码

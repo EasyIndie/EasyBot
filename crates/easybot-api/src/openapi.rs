@@ -47,7 +47,7 @@ impl Modify for SecurityAddon {
             认证方式：在 HTTP Header 中添加 `Authorization: Bearer <api-key>`。\n\
             在 Swagger UI 中点击右上角的 **Authorize** 按钮，输入 API Key（如 `eb_xxxxxxxx`）即可。",
         version = env!("CARGO_PKG_VERSION"),
-        license(name = "MIT"),
+        license(name = "GPL-3.0"),
     ),
     modifiers(&SecurityAddon),
     servers(

@@ -28,6 +28,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - QQ adapter: msg_type 7 C2C media message compatibility fix.
 - Discord adapter: media attachment references fix, QQ media 11255 HTTP 500 compatibility.
 - Feishu adapter: `edit_message` now uses correct PUT method, `delete_message` implemented.
+- **Round 2 Audit Fixes (19/20)**: 20 findings (N1-N20) from comprehensive security/quality audit — permission middleware, unwrap removal, SQL injection hardening, CORS conditional, body size limits, WebSocket frame size limits, QQ Mutex migration, storage error logging, webhook error handling, client OnceLock patterns, new_with_event_bus removal, capabilities macro, register_adapter macro, SECURITY.md plugin sandbox docs, QQ/WeChat adapter file splitting, and more.
+- **E2E script robustness**: e2e-real.sh exit handling, API key extraction from redacted logs, WSL cargo auto-detection, git root detection via rev-parse.
+- EventBus subscribe_many race condition fix (try_recv polling fallback).
+- compile fixes: unsafe_code lint exemption, clippy warnings, middleware ordering, register_adapter! macro event_bus move, workspace tokio-tungstenite default-features.
 
 ### Platform Limitations (by design)
 - **WeChat (iLink Bot API)**: No edit/delete/send_interactive/list_chats support (API has only 7 endpoints, one-on-one chat only).
