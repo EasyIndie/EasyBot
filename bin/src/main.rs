@@ -145,7 +145,7 @@ async fn main() -> anyhow::Result<()> {
                         .await
                         .map_err(|e| anyhow::anyhow!("PostgreSQL migration failed: {}", e))?;
                     // 脱敏连接字符串：仅日志 host/db，隐藏 user:password
-                    let safe_conn = conn_str.split('@').last().unwrap_or(&conn_str);
+                    let safe_conn = conn_str.split('@').next_back().unwrap_or(&conn_str);
                     tracing::info!("PostgreSQL storage initialized: {}", safe_conn);
 
                     let store: Arc<dyn easybot_core::storage::SessionStore> = Arc::new(
