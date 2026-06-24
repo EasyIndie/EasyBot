@@ -346,12 +346,15 @@ async fn test_ws_client_clean_disconnect() {
     // 客户端主动发送 Close 帧
     client.close().await;
 
-    // 等待一小段时间，确保服务器处理了关闭
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    // 等待服务器处理关闭帧并释放资源
+    tokio::time::sleep(Duration::from_millis(500)).await;
 
     // 服务器应仍可接受新连接
     let mut client2 = connect_ws(addr, &key).await;
     auth_ws(&mut client2, &key).await;
+
+    // 等待 WS handler 订阅就绪
+    tokio::time::sleep(Duration::from_millis(100)).await;
 
     state
         .event_bus
