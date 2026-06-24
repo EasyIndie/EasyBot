@@ -533,8 +533,9 @@ async fn load_plugin_adapters(
 /// 消除 5 个适配器注册代码的重复模式：创建 factory → 注册到 registry → 日志输出。
 macro_rules! register_adapter {
     ($registry:expr, $eb:expr, $platform:literal, $display:literal, $ty:ty, $creds:expr) => {{
+        let eb_cloned = $eb.clone();
         let factory: easybot_core::adapter::AdapterFactory = std::sync::Arc::new(move |config| {
-            let eb = $eb.clone();
+            let eb = eb_cloned.clone();
             Box::pin(async move {
                 let mut adapter = <$ty>::new();
                 adapter.set_event_bus(eb);
