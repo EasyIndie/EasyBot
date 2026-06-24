@@ -5,7 +5,6 @@
 
 use crate::types::event::GatewayEvent;
 use dashmap::DashMap;
-use std::time::Duration;
 use tokio::sync::broadcast;
 use tracing::warn;
 
@@ -159,6 +158,7 @@ impl Default for EventBus {
 mod tests {
     use super::*;
     use std::sync::Arc;
+    use std::time::Duration;
 
     #[tokio::test]
     async fn test_publish_subscribe() {
