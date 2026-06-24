@@ -35,70 +35,16 @@ use easybot_core::types::adapter::*;
 use easybot_core::types::error::GatewayError;
 use easybot_core::types::message::*;
 
+mod crypto;
+use crypto::{
+    WeChatCredentials, aes_128_ecb_encrypt, aes_padded_size, base64_encode_uin,
+    build_cdn_upload_url, clear_credentials, download_media, encode_aes_key_for_api,
+    generate_filekey, load_credentials_from_disk, md5_hex, pkcs7_pad, resolve_media_data,
+    save_credentials_to_disk, url_encode_for_cdn,
+};
+
 /// iLink Bot API 基础 URL
 const ILINK_API: &str = "https://ilinkai.weixin.qq.com";
-
-/// 凭据文件路径（相对于 home 目录的 .easybot/）
-const CREDENTIALS_FILE: &str = ".easybot/.wechat-credentials.json";
-
-/// 微信凭据（持久化到磁盘）
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-struct WeChatCredentials {
-    bot_token: String,
-    ilink_bot_id: String,
-    ilink_user_id: String,
-    baseurl: String,
-}
-
-/// 获取凭据文件路径
-fn credential_path() -> Option<std::path::PathBuf> {
-    dirs::home_dir().map(|h| h.join(CREDENTIALS_FILE))
-}
-
-/// 从磁盘加载凭据
-fn load_credentials_from_disk() -> Option<WeChatCredentials> {
-    let path = credential_path()?;
-    if !path.exists() {
-        return None;
-    }
-    match std::fs::read_to_string(&path) {
-        Ok(s) => serde_json::from_str(&s).ok(),
-        Err(_) => None,
-    }
-}
-
-/// 保存凭据到磁盘
-fn save_credentials_to_disk(creds: &WeChatCredentials) {
-    let path = match credential_path() {
-        Some(p) => p,
-        None => {
-            tracing::warn!("无法确定凭据文件路径");
-            return;
-        }
-    };
-    // 确保目录存在
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    match serde_json::to_string_pretty(creds) {
-        Ok(json) => {
-            match std::fs::write(&path, &json) {
-                Ok(_) => {
-                    // 设置仅用户可读写（类 Unix）
-                    #[cfg(unix)]
-                    {
-                        use std::os::unix::fs::PermissionsExt;
-                        let _ =
-                            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
-                    }
-                    tracing::info!("个人微信凭据已保存到 {:?}", path);
-                }
-                Err(e) => tracing::warn!("保存凭据失败: {}", e),
-            }
-        }
-        Err(e) => tracing::warn!("序列化凭据失败: {}", e),
-    }
-}
 
 /// 长轮询超时（秒）
 const LONGPOLL_TIMEOUT: u64 = 35;
@@ -597,136 +543,6 @@ impl WeChatAdapter {
             "rawfilemd5": rawfilemd5,
             "rawsize": rawsize,
         }))
-    }
-}
-
-/// Base64 编码 uint32（与官方 SDK 对齐）
-fn base64_encode_uin(uin: u32) -> String {
-    use base64::Engine;
-    base64::engine::general_purpose::STANDARD.encode(uin.to_le_bytes())
-}
-
-// ── AES-128-ECB 媒体加密工具函数 ──
-
-/// PKCS7 填充
-fn pkcs7_pad(data: &[u8], block_size: usize) -> Vec<u8> {
-    let pad_len = block_size - (data.len() % block_size);
-    let mut padded = Vec::with_capacity(data.len() + pad_len);
-    padded.extend_from_slice(data);
-    padded.resize(data.len() + pad_len, pad_len as u8);
-    padded
-}
-
-/// AES-128-ECB 加密
-fn aes_128_ecb_encrypt(plaintext: &[u8], key: &[u8; 16]) -> Vec<u8> {
-    use aes::cipher::{BlockEncrypt, KeyInit, generic_array::GenericArray};
-
-    let cipher = aes::Aes128::new_from_slice(key).expect("AES-128 key must be 16 bytes");
-    let padded = pkcs7_pad(plaintext, 16);
-    let mut result = Vec::with_capacity(padded.len());
-
-    for chunk in padded.chunks(16) {
-        let mut block = GenericArray::clone_from_slice(chunk);
-        cipher.encrypt_block(&mut block);
-        result.extend_from_slice(&block);
-    }
-
-    result
-}
-
-/// 计算 AES 加密后的文件大小（含 PKCS7 填充）
-fn aes_padded_size(raw_size: usize) -> usize {
-    (raw_size + 1).div_ceil(16) * 16
-}
-
-/// 编码 AES key 为 iLink API 期望的格式
-///
-/// **关键**: iLink API 期望 `base64(key.hex().encode())`，而非 `base64(key)`。
-/// 微信客户端的解码链为：base64_decode → 32 ASCII hex chars → bytes.fromhex() → 16-byte AES key。
-fn encode_aes_key_for_api(key: &[u8; 16]) -> String {
-    use base64::Engine;
-    let hex_str: String = key.iter().map(|b| format!("{:02x}", b)).collect();
-    base64::engine::general_purpose::STANDARD.encode(hex_str.as_bytes())
-}
-
-/// 生成新的 32 位十六进制 filekey（用于上传）
-fn generate_filekey() -> String {
-    let uuid = uuid::Uuid::new_v4();
-    let hex_str: String = uuid
-        .as_bytes()
-        .iter()
-        .map(|b| format!("{:02x}", b))
-        .collect();
-    hex_str[..32].to_string()
-}
-
-/// 构建 CDN 上传 URL
-fn build_cdn_upload_url(cdn_base: &str, upload_param: &str, filekey: &str) -> String {
-    let encoded_param = url_encode_for_cdn(upload_param);
-    format!(
-        "{}/upload?encrypted_query_param={}&filekey={}",
-        cdn_base.trim_end_matches('/'),
-        encoded_param,
-        filekey
-    )
-}
-
-/// CDN URL 百分号编码（仅编码 base64 特殊字符）
-fn url_encode_for_cdn(s: &str) -> String {
-    s.chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' || c == '~' {
-                c.to_string()
-            } else {
-                format!("%{:02X}", c as u8)
-            }
-        })
-        .collect()
-}
-
-/// 计算数据的 MD5 并返回十六进制字符串
-fn md5_hex(data: &[u8]) -> String {
-    format!("{:x}", md5::compute(data))
-}
-
-/// 从 URL 下载文件内容
-async fn download_media(url: &str, client: &reqwest::Client) -> Result<Vec<u8>, GatewayError> {
-    let resp =
-        client.get(url).send().await.map_err(|e| {
-            GatewayError::Internal(format!("Failed to download media from URL: {}", e))
-        })?;
-
-    if !resp.status().is_success() {
-        return Err(GatewayError::Internal(format!(
-            "Failed to download media: HTTP {}",
-            resp.status().as_u16()
-        )));
-    }
-
-    resp.bytes()
-        .await
-        .map(|b| b.to_vec())
-        .map_err(|e| GatewayError::Internal(format!("Failed to read media bytes: {}", e)))
-}
-
-/// 从 MediaAttachment 获取文件数据（优先 URL，其次 base64 data）
-async fn resolve_media_data(
-    media: &MediaAttachment,
-    client: &reqwest::Client,
-) -> Result<Vec<u8>, GatewayError> {
-    if let Some(ref url) = media.url {
-        download_media(url, client).await
-    } else if let Some(ref b64_data) = media.data {
-        use base64::Engine;
-        base64::engine::general_purpose::STANDARD
-            .decode(b64_data)
-            .map_err(|e| {
-                GatewayError::Internal(format!("Failed to decode base64 media data: {}", e))
-            })
-    } else {
-        Err(GatewayError::Internal(
-            "Media attachment has neither url nor data".to_string(),
-        ))
     }
 }
 
@@ -1419,16 +1235,6 @@ impl Default for WeChatAdapter {
 }
 
 // ── 长轮询后台任务 ──
-
-/// 清除保存的凭据（检测到 session 过期时调用）
-fn clear_credentials() {
-    if let Some(path) = credential_path()
-        && path.exists()
-    {
-        let _ = std::fs::remove_file(&path);
-        tracing::warn!("个人微信凭据已清除（可能已过期），文件: {:?}", path);
-    }
-}
 
 #[allow(clippy::too_many_arguments)]
 async fn longpoll_loop(
