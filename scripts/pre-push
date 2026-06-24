@@ -8,7 +8,11 @@
 
 set -e
 
-PROJECT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
+PROJECT_DIR="$(git rev-parse --show-toplevel 2>/dev/null || echo '')"
+if [ -z "$PROJECT_DIR" ]; then
+    echo ">>> 不在 git 仓库中，跳过验收"
+    exit 0
+fi
 SCRIPT="$PROJECT_DIR/scripts/verify.sh"
 
 if [ ! -f "$SCRIPT" ]; then
