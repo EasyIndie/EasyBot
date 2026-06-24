@@ -5,14 +5,15 @@
 use axum::{
     Router,
     extract::State,
-    http::Request,
+    http::{Method, Request, header},
     middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::{delete, get, post, put},
 };
 use std::future::Future;
 use std::sync::Arc;
-use tower_http::cors::CorsLayer;
+use tower_http::cors::{AllowOrigin, CorsLayer};
+use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::trace::TraceLayer;
 use tracing::info;
 use utoipa::OpenApi;
@@ -22,6 +23,7 @@ use crate::AppState;
 use crate::openapi::ApiDoc;
 use crate::response::ApiError;
 use crate::routes;
+use easybot_core::auth::permissions::{Permission, require_permission};
 use easybot_core::types::error::GatewayError;
 
 /// API 服务器
@@ -78,6 +80,44 @@ impl Server {
         }
     }
 
+    /// 权限检查中间件
+    ///
+    /// 在认证中间件之后运行，根据请求路径和方法判断所需权限，
+    /// 从 request extensions 中读取 AuthInfo 进行权限校验。
+    /// 认证失败返回 401，权限不足返回 403。
+    async fn permission_middleware(req: Request<axum::body::Body>, next: Next) -> Response {
+        let auth = match req.extensions().get::<easybot_core::auth::AuthInfo>() {
+            Some(auth) => auth.clone(),
+            None => {
+                return ApiError(GatewayError::AuthFailed("Authentication required".into()))
+                    .into_response();
+            }
+        };
+
+        let required = match (req.method(), req.uri().path()) {
+            (&Method::POST, p) if p.ends_with("/start") => Permission::AdaptersManage,
+            (&Method::POST, p) if p.ends_with("/stop") => Permission::AdaptersManage,
+            (&Method::PUT, p) if p.contains("/config") => Permission::ConfigWrite,
+            (&Method::GET, p) if p.contains("/config") => Permission::ConfigRead,
+            (&Method::POST, p) if p.contains("/messages/send") => Permission::MessagesSend,
+            (&Method::POST, p) if p.contains("/messages/batch-send") => Permission::MessagesSend,
+            (&Method::PUT, p) if p.contains("/messages/") => Permission::MessagesSend,
+            (&Method::DELETE, p) if p.contains("/messages/") => Permission::MessagesSend,
+            (&Method::GET, p) if p.contains("/messages") => Permission::MessagesRead,
+            (&Method::DELETE, p) if p.contains("/sessions/") => Permission::SessionsManage,
+            (&Method::GET, p) if p.contains("/sessions") => Permission::SessionsRead,
+            (&Method::GET, p) if p.contains("/adapters") => Permission::AdaptersRead,
+            // WebSocket upgrade
+            (&Method::GET, p) if p.ends_with("/ws") => Permission::WebSocketConnect,
+            _ => return next.run(req).await,
+        };
+
+        match require_permission(&auth, required) {
+            Ok(()) => next.run(req).await,
+            Err(e) => ApiError(e).into_response(),
+        }
+    }
+
     /// 启动服务器（支持优雅关闭）
     ///
     /// `shutdown_signal` 是一个 Future，当它完成时服务器开始优雅关闭：
@@ -130,18 +170,10 @@ pub fn create_router(state: AppState) -> Router {
     // ── 公共路由（无需认证）──
 
     // 健康检查
-    let mut public_routes = Router::new().route("/health", get(routes::health::health_check));
-
-    // ── 指标端点（从 AppState 提取 MetricsRegistry）──
-    if state.metrics.is_some() {
-        public_routes = public_routes.route(
-            &state.config.api.metrics.path,
-            get(crate::metrics::metrics_handler),
-        );
-    }
+    let public_routes = Router::new().route("/health", get(routes::health::health_check));
 
     // ── 公共路由速率限制器（宽松：120 req/min，突发 20）──
-    // 公共端点（health/metrics）本身开销极低，但大量请求仍可造成 DoS。
+    // health 端点开销极低，但大量请求仍可造成 DoS。
     // 120 req/min（每秒 2 次）对监控探测足够宽松，同时防止滥用。
     const PUBLIC_RATE_LIMIT_RPM: u64 = 120;
     const PUBLIC_RATE_LIMIT_BURST: u32 = 20;
@@ -213,7 +245,20 @@ pub fn create_router(state: AppState) -> Router {
         .route("/config", get(routes::config::get_config))
         .route("/config", put(routes::config::update_config))
         // WebSocket
-        .route("/ws", get(routes::ws::ws_handler))
+        .route("/ws", get(routes::ws::ws_handler));
+
+    // ── 指标端点（需认证：Prometheus 抓取可能不支持 Bearer token，
+    // 生产环境建议通过反向代理 IP 白名单控制访问）──
+    let protected_routes = if state.metrics.is_some() {
+        protected_routes.route(
+            &state.config.api.metrics.path,
+            get(crate::metrics::metrics_handler),
+        )
+    } else {
+        protected_routes
+    };
+
+    let protected_routes = protected_routes
         // 速率限制中间件（在认证之前）
         .route_layer(middleware::from_fn_with_state(
             rate_limiter.clone(),
@@ -223,7 +268,9 @@ pub fn create_router(state: AppState) -> Router {
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             Server::auth_middleware,
-        ));
+        ))
+        // 权限中间件（在认证之后，根据路径+方法检查权限）
+        .route_layer(middleware::from_fn(Server::permission_middleware));
 
     // 合并公共 + 受保护路由
     let api_routes = Router::new().merge(public_routes).merge(protected_routes);
@@ -235,13 +282,32 @@ pub fn create_router(state: AppState) -> Router {
     let metrics_middleware =
         middleware::from_fn_with_state(state.clone(), crate::metrics::http_metrics_middleware);
 
+    // ── CORS 配置 ──
+    // debug 模式保持 permissive 方便开发；release 模式使用配置白名单
+    let cors = if cfg!(debug_assertions) {
+        CorsLayer::permissive()
+    } else {
+        let origins: Vec<_> = state
+            .config
+            .server
+            .cors_allowed_origins
+            .iter()
+            .filter_map(|o| o.parse::<axum::http::HeaderValue>().ok())
+            .collect();
+        CorsLayer::new()
+            .allow_origin(AllowOrigin::list(origins))
+            .allow_methods([Method::GET, Method::POST, Method::PUT, Method::DELETE])
+            .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE])
+    };
+
     // 基础路径
     let base_path = &state.config.api.base_path;
     Router::new()
         .merge(swagger)
         .nest(base_path, api_routes)
         .layer(TraceLayer::new_for_http())
-        .layer(CorsLayer::permissive())
+        .layer(RequestBodyLimitLayer::new(10 * 1024 * 1024)) // 10MB
+        .layer(cors)
         .route_layer(metrics_middleware)
         .with_state(state.clone())
 }

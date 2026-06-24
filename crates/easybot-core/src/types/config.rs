@@ -49,6 +49,14 @@ pub struct ServerConfig {
 
     #[serde(default)]
     pub tls: TlsConfig,
+
+    /// CORS 允许的 Origins（生产环境白名单，debug 模式忽略）
+    #[serde(default = "default_cors_origins")]
+    pub cors_allowed_origins: Vec<String>,
+}
+
+fn default_cors_origins() -> Vec<String> {
+    vec!["http://localhost:3000".into()]
 }
 
 fn default_host() -> String {
@@ -333,6 +341,7 @@ impl Default for ServerConfig {
             host: default_host(),
             port: default_port(),
             tls: TlsConfig::default(),
+            cors_allowed_origins: default_cors_origins(),
         }
     }
 }

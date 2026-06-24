@@ -21,3 +21,6 @@ wiremock = "0.6"
 serde = { workspace = true, features = ["derive"] }
 rstest = "0.26"
 fixtures = { path = "../../tests/fixtures" }
+
+[lints]
+workspace = true

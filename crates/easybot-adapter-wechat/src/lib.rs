@@ -290,7 +290,7 @@ pub struct WeChatAdapter {
     messages_out: AtomicU64,
     errors: AtomicU64,
     event_bus: Option<Arc<EventBus>>,
-    http_client: Option<reqwest::Client>,
+    http_client: std::sync::OnceLock<reqwest::Client>,
     /// iLink Bot Token（登录后获取）
     bot_token: tokio::sync::RwLock<Option<String>>,
     /// 长轮询游标
@@ -346,7 +346,7 @@ impl WeChatAdapter {
             messages_out: AtomicU64::new(0),
             errors: AtomicU64::new(0),
             event_bus: None,
-            http_client: None,
+            http_client: std::sync::OnceLock::new(),
             bot_token: tokio::sync::RwLock::new(None),
             updates_buf: tokio::sync::RwLock::new(None),
             cancel_tx: None,
@@ -357,21 +357,17 @@ impl WeChatAdapter {
         }
     }
 
-    /// 创建适配器并设置 EventBus（用于注册时简化）
-    pub fn new_with_event_bus(event_bus: Arc<EventBus>) -> Self {
-        let mut adapter = Self::new();
-        adapter.event_bus = Some(event_bus);
-        adapter
-    }
-
     pub fn set_event_bus(&mut self, event_bus: Arc<EventBus>) {
         self.event_bus = Some(event_bus);
     }
 
-    fn client(&self) -> Result<&reqwest::Client, GatewayError> {
-        self.http_client
-            .as_ref()
-            .ok_or_else(|| GatewayError::Internal("HTTP client not initialized".to_string()))
+    fn client(&self) -> &reqwest::Client {
+        self.http_client.get_or_init(|| {
+            reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(60)) // 长轮询需要较长超时
+                .build()
+                .expect("Failed to create HTTP client")
+        })
     }
 
     /// 返回 API 基础 URL（支持通过 config.base_url 覆盖）
@@ -425,7 +421,7 @@ impl WeChatAdapter {
         let token = self.bot_token.read().await.clone().ok_or_else(|| {
             GatewayError::Internal("Not authenticated (no bot_token)".to_string())
         })?;
-        let client = self.client()?;
+        let client = self.client();
 
         // 1. 获取文件数据
         let file_data = resolve_media_data(media, client).await?;
@@ -770,17 +766,14 @@ impl PlatformAdapter for WeChatAdapter {
 
     async fn init(&mut self, config: AdapterConfig) -> Result<InitResult, GatewayError> {
         self.config = Some(config);
-        self.http_client = Some(
-            reqwest::Client::builder()
-                .timeout(Duration::from_secs(60)) // 长轮询需要较长超时
-                .build()
-                .map_err(|e| {
-                    GatewayError::Internal(format!("Failed to create HTTP client: {}", e))
-                })?,
-        );
 
         // 尝试从配置中恢复凭据
-        let extra = self.config.as_ref().unwrap().extra.clone();
+        let extra = self
+            .config
+            .as_ref()
+            .ok_or_else(|| GatewayError::Internal("config not set after init".into()))?
+            .extra
+            .clone();
         if let Some(token) = extra.get("bot_token").and_then(|v| v.as_str()) {
             *self.bot_token.write().await = Some(token.to_string());
         }
@@ -809,7 +802,7 @@ impl PlatformAdapter for WeChatAdapter {
     }
 
     async fn connect(&mut self) -> Result<ConnectResult, GatewayError> {
-        let client = self.client()?;
+        let client = self.client();
 
         // 如果没有 bot_token，执行 QR 码登录
         if self.bot_token.read().await.is_none() {
@@ -965,7 +958,7 @@ impl PlatformAdapter for WeChatAdapter {
             self.cancel_tx = Some(cancel_tx);
 
             let eb = event_bus.clone();
-            let client = self.client()?.clone();
+            let client = self.client().clone();
             let token = self.bot_token.read().await.clone().unwrap_or_default();
             let buf = self.updates_buf.read().await.clone().unwrap_or_default();
             let base_url = self
@@ -1058,7 +1051,7 @@ impl PlatformAdapter for WeChatAdapter {
         let token = self.bot_token.read().await.clone().ok_or_else(|| {
             GatewayError::Internal("Not authenticated (no bot_token)".to_string())
         })?;
-        let client = self.client()?;
+        let client = self.client();
         let url = format!("{}/ilink/bot/sendmessage", self.api_base_url());
 
         // iLink send API 完整格式：msg 包装 + context_token + 元数据
@@ -1198,7 +1191,7 @@ impl PlatformAdapter for WeChatAdapter {
         let token = self.bot_token.read().await.clone().ok_or_else(|| {
             GatewayError::Internal("Not authenticated (no bot_token)".to_string())
         })?;
-        let client = self.client()?;
+        let client = self.client();
 
         // 将 MediaType 映射到 iLink media_type
         let (media_type, item_type) = match params.media.media_type {

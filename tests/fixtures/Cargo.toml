@@ -7,3 +7,6 @@ publish = false
 [dependencies]
 easybot-core = { path = "../../crates/easybot-core" }
 base64.workspace = true
+
+[lints]
+workspace = true

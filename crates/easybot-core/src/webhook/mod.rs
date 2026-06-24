@@ -167,8 +167,18 @@ impl WebhookDispatcher {
             });
 
             // 发送 POST 请求
-            let payload_json: serde_json::Value =
-                serde_json::from_slice(&payload_bytes).unwrap_or_default();
+            let payload_json: serde_json::Value = match serde_json::from_slice(&payload_bytes) {
+                Ok(v) => v,
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        webhook = %wh.name,
+                        event_type = %event_type,
+                        "Webhook payload 反序列化失败，使用 null"
+                    );
+                    serde_json::Value::Null
+                }
+            };
             let mut req = client
                 .post(&wh.url)
                 .header("Content-Type", "application/json")

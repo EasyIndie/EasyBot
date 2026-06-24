@@ -4,7 +4,7 @@
 //! 与 SQLite 后端保持相同的 trait 接口和行映射模式。
 
 use async_trait::async_trait;
-use sqlx::{AssertSqlSafe, PgPool};
+use sqlx::PgPool;
 
 use super::{MessageFilter, MessageRole, MessageStore, SessionStore, StoreError, StoredMessage};
 use crate::types::session::{ResetPolicy, Session, SessionFilter, SessionSource};
@@ -203,28 +203,24 @@ impl SessionStore for PgSessionStore {
     }
 
     async fn list_sessions(&self, filter: &SessionFilter) -> Result<Vec<Session>, StoreError> {
-        let mut sql = String::from(
-            "SELECT key, platform, chat_id, thread_id, created_at, updated_at, source_json, reset_policy, metadata
-             FROM sessions WHERE 1=1"
+        let mut builder = sqlx::QueryBuilder::new(
+            "SELECT key, platform, chat_id, thread_id, created_at, updated_at, source_json, reset_policy, metadata \
+             FROM sessions WHERE 1=1",
         );
 
-        if filter.platform.is_some() {
-            sql.push_str(" AND platform = $1");
+        if let Some(ref platform) = filter.platform {
+            builder.push(" AND platform = ").push_bind(platform);
         }
-        sql.push_str(" ORDER BY updated_at DESC");
+        builder.push(" ORDER BY updated_at DESC");
 
         if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {}", limit));
+            builder.push(" LIMIT ").push_bind(limit as i64);
         }
         if let Some(offset) = filter.offset {
-            sql.push_str(&format!(" OFFSET {}", offset));
+            builder.push(" OFFSET ").push_bind(offset as i64);
         }
 
-        let mut query = sqlx::query(AssertSqlSafe(sql.as_str()));
-        if let Some(ref platform) = filter.platform {
-            query = query.bind(platform);
-        }
-
+        let query = builder.build();
         let rows = query.fetch_all(&self.pool).await?;
         rows.iter()
             .map(|row| {
@@ -367,54 +363,35 @@ impl MessageStore for PgMessageStore {
         &self,
         filter: &MessageFilter,
     ) -> Result<Vec<StoredMessage>, StoreError> {
-        let mut sql = String::from(
-            "SELECT id, session_key, platform, chat_id, role, text, raw_data, timestamp, created_at
+        let mut builder = sqlx::QueryBuilder::new(
+            "SELECT id, session_key, platform, chat_id, role, text, raw_data, timestamp, created_at \
              FROM messages WHERE 1=1",
         );
 
-        // Build SQL with parameter placeholders
-        let mut param_values: Vec<String> = vec![];
-
         if let Some(ref key) = filter.session_key {
-            sql.push_str(" AND session_key = $");
-            let idx = param_values.len() + 1;
-            sql.push_str(&idx.to_string());
-            param_values.push(key.clone());
+            builder.push(" AND session_key = ").push_bind(key);
         }
         if let Some(ref platform) = filter.platform {
-            sql.push_str(" AND platform = $");
-            let idx = param_values.len() + 1;
-            sql.push_str(&idx.to_string());
-            param_values.push(platform.clone());
+            builder.push(" AND platform = ").push_bind(platform);
         }
         if let Some(ref chat_id) = filter.chat_id {
-            sql.push_str(" AND chat_id = $");
-            let idx = param_values.len() + 1;
-            sql.push_str(&idx.to_string());
-            param_values.push(chat_id.clone());
+            builder.push(" AND chat_id = ").push_bind(chat_id);
         }
         if let Some(before) = filter.before {
-            sql.push_str(" AND timestamp < $");
-            let idx = param_values.len() + 1;
-            sql.push_str(&idx.to_string());
-            param_values.push(before.to_string());
+            builder.push(" AND timestamp < ").push_bind(before);
         }
 
-        sql.push_str(" ORDER BY timestamp DESC");
+        builder.push(" ORDER BY timestamp DESC");
 
         if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {}", limit));
+            builder.push(" LIMIT ").push_bind(limit as i64);
         }
         if let Some(offset) = filter.offset {
-            sql.push_str(&format!(" OFFSET {}", offset));
+            builder.push(" OFFSET ").push_bind(offset as i64);
         }
 
-        let mut q = sqlx::query(AssertSqlSafe(sql.as_str()));
-        for p in &param_values {
-            q = q.bind(p);
-        }
-
-        let rows = q.fetch_all(&self.pool).await?;
+        let query = builder.build();
+        let rows = query.fetch_all(&self.pool).await?;
         rows.iter()
             .map(|row| {
                 let r = row_to_stored_message(row)?;

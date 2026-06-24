@@ -36,6 +36,9 @@ pub enum GatewayError {
     #[error("Unauthorized: {0}")]
     Unauthorized(String),
 
+    #[error("Forbidden: {0}")]
+    Forbidden(String),
+
     #[error("Configuration error: {0}")]
     ConfigError(String),
 
@@ -64,6 +67,7 @@ impl GatewayError {
             GatewayError::CapabilityNotSupported(_) => "CAPABILITY_NOT_SUPPORTED",
             GatewayError::AuthFailed(_) => "AUTH_FAILED",
             GatewayError::Unauthorized(_) => "UNAUTHORIZED",
+            GatewayError::Forbidden(_) => "FORBIDDEN",
             GatewayError::ConfigError(_) => "CONFIG_ERROR",
             GatewayError::StorageError(_) => "STORAGE_ERROR",
             GatewayError::Internal(_) => "INTERNAL_ERROR",
@@ -77,6 +81,7 @@ impl GatewayError {
             | GatewayError::MessageTooLong { .. }
             | GatewayError::CapabilityNotSupported(_) => 400,
             GatewayError::AuthFailed(_) | GatewayError::Unauthorized(_) => 401,
+            GatewayError::Forbidden(_) => 403,
             GatewayError::PlatformNotFound(_) | GatewayError::ChatNotFound(_) => 404,
             GatewayError::RateLimited { .. } => 429,
             GatewayError::AdapterNotConnected(_) => 503,
@@ -110,6 +115,7 @@ impl GatewayError {
             Self::CapabilityNotSupported(msg) => format!("Capability not supported: {msg}"),
             Self::AuthFailed(msg) => format!("Authentication failed: {msg}"),
             Self::Unauthorized(msg) => format!("Unauthorized: {msg}"),
+            Self::Forbidden(msg) => format!("Forbidden: {msg}"),
         }
     }
 

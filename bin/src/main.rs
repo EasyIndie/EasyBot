@@ -528,149 +528,92 @@ async fn load_plugin_adapters(
     tracing::info!("Plugin system not enabled (compile with --features plugin-system to enable)");
 }
 
+/// 注册单个内置适配器的宏
+///
+/// 消除 5 个适配器注册代码的重复模式：创建 factory → 注册到 registry → 日志输出。
+macro_rules! register_adapter {
+    ($registry:expr, $eb:expr, $platform:literal, $display:literal, $ty:ty, $creds:expr) => {{
+        let factory: easybot_core::adapter::AdapterFactory = std::sync::Arc::new(move |config| {
+            let eb = $eb.clone();
+            Box::pin(async move {
+                let mut adapter = <$ty>::new();
+                adapter.set_event_bus(eb);
+                let init_result = adapter
+                    .init(config)
+                    .await
+                    .map_err(|e| format!("{} init failed: {}", $platform, e))?;
+                if !init_result.ok {
+                    return Err(init_result
+                        .error
+                        .unwrap_or_else(|| "unknown init error".to_string()));
+                }
+                Ok(Box::new(adapter) as Box<dyn easybot_core::PlatformAdapter>)
+            })
+        });
+        $registry
+            .register($platform, $display, factory, $creds)
+            .await;
+        tracing::info!("Registered built-in adapter: {}", $platform);
+    }};
+}
+
 /// 注册内置适配器工厂
 #[allow(unused_variables)]
 async fn register_builtin_adapters(
     adapter_manager: &easybot_core::adapter::AdapterManager,
     event_bus: std::sync::Arc<easybot_core::bus::EventBus>,
 ) {
+    let registry = adapter_manager.registry();
+
     #[cfg(feature = "adapter-telegram")]
-    {
-        let registry = adapter_manager.registry();
-        let eb = event_bus.clone();
-        let factory: easybot_core::adapter::AdapterFactory = std::sync::Arc::new(move |config| {
-            let eb = eb.clone();
-            Box::pin(async move {
-                let mut adapter = easybot_adapter_telegram::TelegramAdapter::new();
-                adapter.set_event_bus(eb);
-                let init_result = adapter
-                    .init(config)
-                    .await
-                    .map_err(|e| format!("telegram init failed: {}", e))?;
-                if !init_result.ok {
-                    return Err(init_result
-                        .error
-                        .unwrap_or_else(|| "unknown init error".to_string()));
-                }
-                Ok(Box::new(adapter) as Box<dyn easybot_core::PlatformAdapter>)
-            })
-        });
-        registry
-            .register("telegram", "Telegram", factory, &["TELEGRAM_BOT_TOKEN"])
-            .await;
-        tracing::info!("Registered built-in adapter: telegram");
-    }
+    register_adapter!(
+        registry,
+        event_bus,
+        "telegram",
+        "Telegram",
+        easybot_adapter_telegram::TelegramAdapter,
+        &["TELEGRAM_BOT_TOKEN"]
+    );
 
     #[cfg(feature = "adapter-discord")]
-    {
-        let registry = adapter_manager.registry();
-        let eb = event_bus.clone();
-        let factory: easybot_core::adapter::AdapterFactory = std::sync::Arc::new(move |config| {
-            let eb = eb.clone();
-            Box::pin(async move {
-                let mut adapter = easybot_adapter_discord::DiscordAdapter::new();
-                adapter.set_event_bus(eb);
-                let init_result = adapter
-                    .init(config)
-                    .await
-                    .map_err(|e| format!("discord init failed: {}", e))?;
-                if !init_result.ok {
-                    return Err(init_result
-                        .error
-                        .unwrap_or_else(|| "unknown init error".to_string()));
-                }
-                Ok(Box::new(adapter) as Box<dyn easybot_core::PlatformAdapter>)
-            })
-        });
-        registry
-            .register("discord", "Discord", factory, &["DISCORD_BOT_TOKEN"])
-            .await;
-        tracing::info!("Registered built-in adapter: discord");
-    }
+    register_adapter!(
+        registry,
+        event_bus,
+        "discord",
+        "Discord",
+        easybot_adapter_discord::DiscordAdapter,
+        &["DISCORD_BOT_TOKEN"]
+    );
 
     #[cfg(feature = "adapter-feishu")]
-    {
-        let registry = adapter_manager.registry();
-        let eb = event_bus.clone();
-        let factory: easybot_core::adapter::AdapterFactory = std::sync::Arc::new(move |config| {
-            let eb = eb.clone();
-            Box::pin(async move {
-                let mut adapter = easybot_adapter_feishu::FeishuAdapter::new();
-                adapter.set_event_bus(eb);
-                let init_result = adapter
-                    .init(config)
-                    .await
-                    .map_err(|e| format!("feishu init failed: {}", e))?;
-                if !init_result.ok {
-                    return Err(init_result
-                        .error
-                        .unwrap_or_else(|| "unknown init error".to_string()));
-                }
-                Ok(Box::new(adapter) as Box<dyn easybot_core::PlatformAdapter>)
-            })
-        });
-        registry
-            .register(
-                "feishu",
-                "飞书",
-                factory,
-                &["FEISHU_APP_ID", "FEISHU_APP_SECRET"],
-            )
-            .await;
-        tracing::info!("Registered built-in adapter: feishu");
-    }
+    register_adapter!(
+        registry,
+        event_bus,
+        "feishu",
+        "飞书",
+        easybot_adapter_feishu::FeishuAdapter,
+        &["FEISHU_APP_ID", "FEISHU_APP_SECRET"]
+    );
 
     #[cfg(feature = "adapter-qq")]
-    {
-        let registry = adapter_manager.registry();
-        let eb = event_bus.clone();
-        let factory: easybot_core::adapter::AdapterFactory = std::sync::Arc::new(move |config| {
-            let eb = eb.clone();
-            Box::pin(async move {
-                let mut adapter = easybot_adapter_qq::QqAdapter::new();
-                adapter.set_event_bus(eb);
-                let init_result = adapter
-                    .init(config)
-                    .await
-                    .map_err(|e| format!("qq init failed: {}", e))?;
-                if !init_result.ok {
-                    return Err(init_result
-                        .error
-                        .unwrap_or_else(|| "unknown init error".to_string()));
-                }
-                Ok(Box::new(adapter) as Box<dyn easybot_core::PlatformAdapter>)
-            })
-        });
-        registry
-            .register("qq", "QQ", factory, &["QQ_APP_ID", "QQ_CLIENT_SECRET"])
-            .await;
-        tracing::info!("Registered built-in adapter: qq");
-    }
+    register_adapter!(
+        registry,
+        event_bus,
+        "qq",
+        "QQ",
+        easybot_adapter_qq::QqAdapter,
+        &["QQ_APP_ID", "QQ_CLIENT_SECRET"]
+    );
 
     #[cfg(feature = "adapter-wechat")]
-    {
-        let registry = adapter_manager.registry();
-        let eb = event_bus.clone();
-        let factory: easybot_core::adapter::AdapterFactory = std::sync::Arc::new(move |config| {
-            let eb = eb.clone();
-            Box::pin(async move {
-                let mut adapter = easybot_adapter_wechat::WeChatAdapter::new_with_event_bus(eb);
-                let init_result = adapter
-                    .init(config)
-                    .await
-                    .map_err(|e| format!("wechat init failed: {}", e))?;
-                if !init_result.ok {
-                    return Err(init_result
-                        .error
-                        .unwrap_or_else(|| "unknown init error".to_string()));
-                }
-                Ok(Box::new(adapter) as Box<dyn easybot_core::PlatformAdapter>)
-            })
-        });
-        // 个人微信可通过扫码登录，无需强制凭据。设置 WECHAT_BOT_TOKEN 可启用 iLink Bot API。
-        registry.register("wechat", "个人微信", factory, &[]).await;
-        tracing::info!("Registered built-in adapter: wechat");
-    }
+    register_adapter!(
+        registry,
+        event_bus,
+        "wechat",
+        "个人微信",
+        easybot_adapter_wechat::WeChatAdapter,
+        &[] // 个人微信可通过扫码登录，无需强制凭据
+    );
 
     #[cfg(not(any(
         feature = "adapter-telegram",

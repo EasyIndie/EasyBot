@@ -7,8 +7,8 @@
 
 mod types;
 
+use parking_lot::Mutex;
 use std::sync::Arc;
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
@@ -120,12 +120,10 @@ impl QqTokenStore {
 
     /// 检查是否需要刷新
     fn needs_refresh(&self) -> bool {
-        match self.state.lock() {
-            Ok(guard) => match guard.as_ref() {
-                Some((_, expires_at)) => tokio::time::Instant::now() >= *expires_at,
-                None => true,
-            },
-            Err(_) => true,
+        let guard = self.state.lock();
+        match guard.as_ref() {
+            Some((_, expires_at)) => tokio::time::Instant::now() >= *expires_at,
+            None => true,
         }
     }
 }
@@ -144,7 +142,7 @@ pub struct QqAdapter {
     event_bus: Option<Arc<EventBus>>,
     cancel_tx: Option<broadcast::Sender<()>>,
     heartbeat: Heartbeat,
-    http_client: Option<reqwest::Client>,
+    http_client: std::sync::OnceLock<reqwest::Client>,
     bot_user_id: Option<String>,
     token_store: Option<QqTokenStore>,
 }
@@ -210,7 +208,7 @@ impl QqAdapter {
             event_bus: None,
             cancel_tx: None,
             heartbeat: Heartbeat::new(),
-            http_client: None,
+            http_client: std::sync::OnceLock::new(),
             bot_user_id: None,
             token_store: None,
         }
@@ -236,10 +234,13 @@ impl QqAdapter {
             .unwrap_or(QQ_AUTH_API)
     }
 
-    fn client(&self) -> Result<&reqwest::Client, GatewayError> {
-        self.http_client
-            .as_ref()
-            .ok_or_else(|| GatewayError::Internal("HTTP client not initialized".to_string()))
+    fn client(&self) -> &reqwest::Client {
+        self.http_client.get_or_init(|| {
+            reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(15))
+                .build()
+                .expect("Failed to create HTTP client")
+        })
     }
 
     /// 获取鉴权头字符串：`QQBot {access_token}`
@@ -257,7 +258,7 @@ impl QqAdapter {
     /// QQ API GET
     async fn api_get<T: serde::de::DeserializeOwned>(&self, path: &str) -> Result<T, GatewayError> {
         let token = self.bot_token()?;
-        let client = self.client()?;
+        let client = self.client();
         let url = format!("{}{}", self.api_base_url(), path);
         let resp = client
             .get(&url)
@@ -285,7 +286,7 @@ impl QqAdapter {
         body: &serde_json::Value,
     ) -> Result<T, GatewayError> {
         let token = self.bot_token()?;
-        let client = self.client()?;
+        let client = self.client();
         let url = format!("{}{}", self.api_base_url(), path);
         let resp = client
             .post(&url)
@@ -314,7 +315,7 @@ impl QqAdapter {
         body: &serde_json::Value,
     ) -> Result<T, GatewayError> {
         let token = self.bot_token()?;
-        let client = self.client()?;
+        let client = self.client();
         let url = format!("{}{}", self.api_base_url(), path);
         let resp = client
             .patch(&url)
@@ -339,7 +340,7 @@ impl QqAdapter {
     /// QQ API DELETE
     async fn api_delete(&self, path: &str) -> Result<(), GatewayError> {
         let token = self.bot_token()?;
-        let client = self.client()?;
+        let client = self.client();
         let url = format!("{}{}", self.api_base_url(), path);
         let resp = client
             .delete(&url)
@@ -436,7 +437,7 @@ impl QqAdapter {
         mime_type: &str,
     ) -> Result<QqSendMessageResponse, GatewayError> {
         let token = self.bot_token()?;
-        let client = self.client()?;
+        let client = self.client();
         let url = format!("{}/v2/users/{}/files", self.api_base_url(), openid);
 
         let file_type = mime_to_file_type(mime_type);
@@ -505,7 +506,7 @@ impl QqAdapter {
     ) -> Result<QqSendMessageResponse, GatewayError> {
         // Step 1: Upload file to get file_info
         let token = self.bot_token()?;
-        let client = self.client()?;
+        let client = self.client();
         let upload_url = format!("{}/v2/users/{}/files", self.api_base_url(), openid);
 
         let file_type = mime_to_file_type(mime_type);
@@ -1137,14 +1138,6 @@ impl PlatformAdapter for QqAdapter {
         }
 
         self.config = Some(config);
-        self.http_client = Some(
-            reqwest::Client::builder()
-                .timeout(Duration::from_secs(15))
-                .build()
-                .map_err(|e| {
-                    GatewayError::Internal(format!("Failed to create HTTP client: {}", e))
-                })?,
-        );
         self.state = AdapterState::Starting;
         Ok(InitResult {
             ok: true,

@@ -42,7 +42,9 @@ pub async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> 
                 .into_response();
         }
     };
-    ws.on_upgrade(move |socket| handle_ws(socket, state, permit))
+    ws.max_frame_size(64 * 1024) // 64KB 帧限制
+        .max_message_size(256 * 1024) // 256KB 消息限制
+        .on_upgrade(move |socket| handle_ws(socket, state, permit))
         .into_response()
 }
 

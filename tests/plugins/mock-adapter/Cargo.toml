@@ -10,3 +10,6 @@ crate-type = ["cdylib"]
 [dependencies]
 easybot-plugin-sdk = { path = "../../../crates/easybot-plugin-sdk" }
 serde_json.workspace = true
+
+[lints]
+workspace = true

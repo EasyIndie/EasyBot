@@ -30,3 +30,6 @@ http-body-util = "0.1"
 bytes = "1"
 tokio-tungstenite = { workspace = true, features = ["connect"] }
 insta = { version = "1", features = ["json"] }
+
+[lints]
+workspace = true

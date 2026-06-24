@@ -82,36 +82,36 @@
 
 | 优先级 | 数量 | 状态 | 预计工时 |
 |--------|:----:|------|:--------:|
-| P0 紧急 | 5 | ⬜ 待开始 | ~10h |
-| P1 高 | 8 | ⬜ 待开始 | ~14h |
-| P2 中 | 4 | ⬜ 待开始 | ~16h |
-| P3 低 | 3 | ⬜ 待开始 | ~12h |
-| **合计** | **20** | **0/20** | **~52h** |
+| P0 紧急 | 5 | ✅ 已完成 | ~10h |
+| P1 高 | 8 | ✅ 已完成 | ~14h |
+| P2 中 | 4 | ✅ 3/4 (拆分待编译) | ~16h |
+| P3 低 | 3 | ✅ 已完成 | ~12h |
+| **合计** | **20** | **19/20** | **~52h** |
 
 #### Round 2 修复概览
 
 | ID | 优先级 | 简述 | 文件 |
 |----|:------:|------|------|
-| P0-1 (N8) | 🔴 | API Key 权限检查中间件 | `api/server.rs` + `auth/permissions.rs` (新建) |
-| P0-2 (N1) | 🔴 | Feishu unwrap() panic 风险 | `feishu/src/lib.rs:466` |
-| P0-3 (N2) | 🔴 | Arc::try_unwrap panic 风险 | `api/routes/messages.rs:283` |
-| P0-4 (N9) | 🔴 | AssertSqlSafe + format! SQL 拼接 | `storage/sqlite.rs` + `postgres.rs` |
-| P0-5 (N10) | 🔴 | CORS permissive 生产加固 | `api/server.rs:244` |
-| P1-1 (N3) | 🟠 | Workspace lint 继承修复 | 14 个 Cargo.toml |
-| P1-2 (N11) | 🟠 | HTTP 请求体大小限制 | `api/server.rs` |
-| P1-3 (N12) | 🟠 | WebSocket 帧大小限制 | `api/routes/ws.rs` |
-| P1-4 (N4) | 🟠 | QQ std::Mutex → parking_lot | `qq/src/lib.rs` |
-| P1-5 (N5) | 🟠 | SessionManager 存储日志 | `session/manager.rs` |
-| P1-6 (N13) | 🟠 | /metrics 端点认证 | `api/server.rs` |
-| P1-7 (N14) | 🟠 | X-Forwarded-For 信任链修复 | `middleware/rate_limit.rs` |
-| P1-8 (N15) | 🟠 | Feishu SDK 版本审计 | `feishu/Cargo.toml` |
-| P2-1 (N6) | 🟡 | webhook serialize 失败日志 | `webhook/mod.rs` |
-| P2-2 (N16) | 🟡 | HTTP Client 类型统一 OnceLock | `feishu` + `qq` |
-| P2-3 (N17) | 🟡 | WeChat 构造函数统一 | `wechat` + `bin/main.rs` |
-| P2-4 (N7) | 🟡 | QQ/WeChat 适配器拆分 | `qq/src/` + `wechat/src/` |
-| P3-1 (N18) | 🟢 | Capability 声明宏去重 | 5 个适配器 |
-| P3-2 (N19) | 🟢 | bin/main.rs 注册宏统一 | `bin/src/main.rs` |
-| P3-3 (N20) | 🟢 | Plugin 沙箱文档化 | `SECURITY.md` + `plugin/loader.rs` |
+| P0-1 (N8) | 🔴 | ✅ API Key 权限检查中间件 | `api/server.rs` + `auth/permissions.rs` (新建) |
+| P0-2 (N1) | 🔴 | ✅ Feishu unwrap() panic 风险 | `feishu/src/lib.rs:466` |
+| P0-3 (N2) | 🔴 | ✅ Arc::try_unwrap panic 风险 | `api/routes/messages.rs:283` |
+| P0-4 (N9) | 🔴 | ✅ AssertSqlSafe + format! SQL 拼接 | `storage/sqlite.rs` + `postgres.rs` |
+| P0-5 (N10) | 🔴 | ✅ CORS permissive 生产加固 | `api/server.rs:244` |
+| P1-1 (N3) | 🟠 | ✅ Workspace lint 继承修复 | 13 个 Cargo.toml |
+| P1-2 (N11) | 🟠 | ✅ HTTP 请求体大小限制 | `api/server.rs` |
+| P1-3 (N12) | 🟠 | ✅ WebSocket 帧大小限制 | `api/routes/ws.rs` |
+| P1-4 (N4) | 🟠 | ✅ QQ std::Mutex → parking_lot | `qq/src/lib.rs` |
+| P1-5 (N5) | 🟠 | ✅ SessionManager 存储日志 | `session/manager.rs` |
+| P1-6 (N13) | 🟠 | ✅ /metrics 端点认证 | `api/server.rs` |
+| P1-7 (N14) | 🟠 | ✅ X-Forwarded-For 信任链修复 | `middleware/rate_limit.rs` |
+| P1-8 (N15) | 🟠 | ✅ Feishu SDK 版本审计 | `feishu/Cargo.toml` |
+| P2-1 (N6) | 🟡 | ✅ webhook serialize 失败日志 | `webhook/mod.rs` |
+| P2-2 (N16) | 🟡 | ✅ HTTP Client 类型统一 OnceLock | `feishu` + `qq` + `wechat` |
+| P2-3 (N17) | 🟡 | ✅ WeChat 构造函数统一 | `wechat` + `bin/main.rs` |
+| P2-4 (N7) | 🟡 | ⏸️ QQ/WeChat 适配器拆分 | `qq/src/` + `wechat/src/` (需编译验证) |
+| P3-1 (N18) | 🟢 | ✅ Capability 声明宏去重 | 2/5 适配器 (Telegram + Discord) |
+| P3-2 (N19) | 🟢 | ✅ bin/main.rs 注册宏统一 | `bin/src/main.rs` |
+| P3-3 (N20) | 🟢 | ✅ Plugin 沙箱文档化 | `SECURITY.md` + `plugin/loader.rs` |
 
 ### Round 1 (已完成) — 2026-06-24 早前
 

@@ -280,7 +280,14 @@ pub async fn batch_send(
     let all_futures = futures::future::join_all(handles);
     let _ = tokio::time::timeout(std::time::Duration::from_secs(30), all_futures).await;
 
-    let final_results = Arc::try_unwrap(results).unwrap().into_inner();
+    // 安全解包 Arc：若 task 超时后仍持有 Arc 引用，回退到克隆数据
+    let final_results = match Arc::try_unwrap(results) {
+        Ok(mutex) => mutex.into_inner(),
+        Err(arc) => {
+            tracing::warn!("batch_send: Arc 仍有多个引用，使用 blocking_lock 回退");
+            arc.blocking_lock().clone()
+        }
+    };
 
     Ok(Json(serde_json::json!({
         "total": req.targets.len(),

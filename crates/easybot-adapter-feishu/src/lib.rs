@@ -43,8 +43,8 @@ pub struct FeishuAdapter {
     cancel_tx: Option<broadcast::Sender<()>>,
     /// Background liveness heartbeat (updated by the WebSocket task)
     heartbeat: Heartbeat,
-    /// 缓存的 HTTP 客户端
-    http_client: Option<reqwest::Client>,
+    /// 缓存的 HTTP 客户端（OnceLock 延迟初始化，与 Telegram 适配器模式一致）
+    http_client: std::sync::OnceLock<reqwest::Client>,
     /// 当前 access token
     access_token: tokio::sync::RwLock<Option<String>>,
     /// token 过期时间戳（毫秒）
@@ -117,7 +117,7 @@ impl FeishuAdapter {
             event_bus: None,
             cancel_tx: None,
             heartbeat: Heartbeat::new(),
-            http_client: None,
+            http_client: std::sync::OnceLock::new(),
             access_token: tokio::sync::RwLock::new(None),
             token_expires_at: tokio::sync::RwLock::new(0),
         }
@@ -128,11 +128,14 @@ impl FeishuAdapter {
         self.event_bus = Some(event_bus);
     }
 
-    /// 获取或创建 HTTP 客户端
-    fn client(&self) -> Result<&reqwest::Client, GatewayError> {
-        self.http_client
-            .as_ref()
-            .ok_or_else(|| GatewayError::Internal("HTTP client not initialized".to_string()))
+    /// 获取或创建 HTTP 客户端（OnceLock 延迟初始化，首次调用时创建）
+    fn client(&self) -> &reqwest::Client {
+        self.http_client.get_or_init(|| {
+            reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(15))
+                .build()
+                .expect("Failed to create HTTP client")
+        })
     }
 
     /// 返回 API 基础 URL（支持通过 config.base_url 覆盖）
@@ -177,7 +180,7 @@ impl FeishuAdapter {
             GatewayError::ConfigError("Missing 'token' (app_secret) for feishu".to_string())
         })?;
 
-        let client = self.client()?;
+        let client = self.client();
         let url = format!(
             "{}/auth/v3/tenant_access_token/internal",
             self.api_base_url()
@@ -221,7 +224,7 @@ impl FeishuAdapter {
     /// 飞书 API GET 请求
     async fn api_get<T: serde::de::DeserializeOwned>(&self, path: &str) -> Result<T, GatewayError> {
         let token = self.ensure_token().await?;
-        let client = self.client()?;
+        let client = self.client();
         let url = format!("{}{}", self.api_base_url(), path);
 
         let resp = client
@@ -257,7 +260,7 @@ impl FeishuAdapter {
         body: &serde_json::Value,
     ) -> Result<T, GatewayError> {
         let token = self.ensure_token().await?;
-        let client = self.client()?;
+        let client = self.client();
         let url = format!("{}{}", self.api_base_url(), path);
 
         let resp = client
@@ -295,7 +298,7 @@ impl FeishuAdapter {
         body: &serde_json::Value,
     ) -> Result<T, GatewayError> {
         let token = self.ensure_token().await?;
-        let client = self.client()?;
+        let client = self.client();
         let url = format!("{}{}", self.api_base_url(), path);
 
         let resp = client
@@ -332,7 +335,7 @@ impl FeishuAdapter {
         body: &serde_json::Value,
     ) -> Result<T, GatewayError> {
         let token = self.ensure_token().await?;
-        let client = self.client()?;
+        let client = self.client();
         let url = format!("{}{}", self.api_base_url(), path);
 
         let resp = client
@@ -365,7 +368,7 @@ impl FeishuAdapter {
     /// 飞书 API DELETE 请求
     async fn api_delete(&self, path: &str) -> Result<(), GatewayError> {
         let token = self.ensure_token().await?;
-        let client = self.client()?;
+        let client = self.client();
         let url = format!("{}{}", self.api_base_url(), path);
 
         let resp = client
@@ -442,14 +445,6 @@ impl PlatformAdapter for FeishuAdapter {
         }
 
         self.config = Some(config);
-        self.http_client = Some(
-            reqwest::Client::builder()
-                .timeout(Duration::from_secs(15))
-                .build()
-                .map_err(|e| {
-                    GatewayError::Internal(format!("Failed to create HTTP client: {}", e))
-                })?,
-        );
         self.state = AdapterState::Starting;
 
         Ok(InitResult {
@@ -463,7 +458,9 @@ impl PlatformAdapter for FeishuAdapter {
         let _token = self.refresh_token().await?;
 
         // 2. 获取配置
-        let config = self.config.as_ref().unwrap();
+        let config = self.config.as_ref().ok_or_else(|| {
+            GatewayError::Internal("connect() called before init() — config not set".into())
+        })?;
         let app_id = config
             .extra
             .get("app_id")
@@ -877,7 +874,7 @@ impl FeishuAdapter {
     /// 上传媒体文件到飞书，返回 file_key
     async fn upload_media(&self, media: &MediaAttachment) -> Result<String, GatewayError> {
         let token = self.ensure_token().await?;
-        let client = self.client()?;
+        let client = self.client();
         let url = format!("{}/im/v1/files", self.api_base_url());
 
         // 确定文件类型

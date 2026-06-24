@@ -34,3 +34,6 @@ plugin-system = ["easybot-core/plugin-system"]
 [[bin]]
 name = "easybot"
 path = "src/main.rs"
+
+[lints]
+workspace = true

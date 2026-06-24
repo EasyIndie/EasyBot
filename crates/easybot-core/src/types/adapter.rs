@@ -356,3 +356,58 @@ pub trait PlatformAdapter: Send + Sync {
     /// 返回适配器状态摘要（用于管理 API）
     fn status_summary(&self) -> AdapterStatusSummary;
 }
+
+/// 简化能力声明宏
+///
+/// 用法:
+/// ```ignore
+/// use easybot_core::capabilities;
+///
+/// let caps = capabilities![
+///     Text, Image, Audio,           // supported: true
+///     (Interactive, false),         // supported: false
+///     (Document, true, max_file_size: 50 * 1024 * 1024),  // with limits
+/// ];
+/// ```
+#[macro_export]
+macro_rules! capabilities {
+    // 带 limits: (Name, supported, key: value, ...)
+    (@single $name:ident, $supported:expr, { $($limit_key:ident: $limit_val:expr),* $(,)? }) => {
+        $crate::types::adapter::Capability {
+            name: $crate::types::adapter::CapabilityName::$name,
+            supported: $supported,
+            limits: {
+                let mut limits = $crate::types::adapter::CapabilityLimits::default();
+                $(limits.$limit_key = Some($limit_val);)*
+                Some(limits)
+            },
+        }
+    };
+    // 简单 (Name, supported)
+    (@single $name:ident, $supported:expr) => {
+        $crate::types::adapter::Capability {
+            name: $crate::types::adapter::CapabilityName::$name,
+            supported: $supported,
+            limits: None,
+        }
+    };
+    // 默认 true: Name
+    (@single $name:ident) => {
+        $crate::types::adapter::Capability {
+            name: $crate::types::adapter::CapabilityName::$name,
+            supported: true,
+            limits: None,
+        }
+    };
+
+    // 顶层 entry: 处理各种形式
+    ($(($name:ident, $supported:expr, { $($limit_key:ident: $limit_val:expr),* $(,)? })),* $(,)?) => {
+        vec![$(capabilities!(@single $name, $supported, { $($limit_key: $limit_val),* })),*]
+    };
+    ($(($name:ident, $supported:expr)),* $(,)?) => {
+        vec![$(capabilities!(@single $name, $supported)),*]
+    };
+    ($($name:ident),* $(,)?) => {
+        vec![$(capabilities!(@single $name)),*]
+    };
+}

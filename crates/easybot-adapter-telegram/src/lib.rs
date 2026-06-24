@@ -15,6 +15,7 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use easybot_core::bus::EventBus;
+use easybot_core::capabilities;
 use easybot_core::types::adapter::*;
 use easybot_core::types::error::GatewayError;
 use easybot_core::types::event::GatewayEvent;
@@ -57,77 +58,21 @@ impl TelegramAdapter {
             config: None,
             state: AdapterState::Created,
             bot_info: None,
-            capabilities: vec![
-                Capability {
-                    name: CapabilityName::Text,
-                    supported: true,
-                    limits: None,
-                },
-                Capability {
-                    name: CapabilityName::Image,
-                    supported: true,
-                    limits: None,
-                },
-                Capability {
-                    name: CapabilityName::Audio,
-                    supported: true,
-                    limits: None,
-                },
-                Capability {
-                    name: CapabilityName::Video,
-                    supported: true,
-                    limits: None,
-                },
-                Capability {
-                    name: CapabilityName::Document,
-                    supported: true,
-                    limits: None,
-                },
-                Capability {
-                    name: CapabilityName::Interactive,
-                    supported: true,
-                    limits: None,
-                },
-                Capability {
-                    name: CapabilityName::Markdown,
-                    supported: true,
-                    limits: None,
-                },
-                Capability {
-                    name: CapabilityName::Html,
-                    supported: true,
-                    limits: None,
-                },
-                Capability {
-                    name: CapabilityName::Group,
-                    supported: true,
-                    limits: None,
-                },
-                Capability {
-                    name: CapabilityName::TypingIndicator,
-                    supported: true,
-                    limits: None,
-                },
-                Capability {
-                    name: CapabilityName::MessageEdit,
-                    supported: true,
-                    limits: None,
-                },
-                Capability {
-                    name: CapabilityName::MessageDelete,
-                    supported: true,
-                    limits: None,
-                },
-                Capability {
-                    name: CapabilityName::ChatList,
-                    supported: false,
-                    limits: None,
-                },
-                Capability {
-                    name: CapabilityName::Streaming,
-                    supported: true,
-                    limits: None,
-                },
+            capabilities: capabilities![
+                Text,
+                Image,
+                Audio,
+                Video,
+                Document,
+                Interactive,
+                Markdown,
+                Html,
+                Group,
+                TypingIndicator,
+                MessageEdit,
+                MessageDelete,
+                Streaming,
+                (ChatList, false),
             ],
             messages_in: AtomicU64::new(0),
             messages_out: AtomicU64::new(0),

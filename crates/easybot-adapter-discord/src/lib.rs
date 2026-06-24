@@ -14,6 +14,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use async_trait::async_trait;
 use easybot_core::bus::EventBus;
+use easybot_core::capabilities;
 use easybot_core::types::adapter::*;
 use easybot_core::types::error::GatewayError;
 use easybot_core::types::event::GatewayEvent;
@@ -57,99 +58,17 @@ impl DiscordAdapter {
             config: None,
             state: AdapterState::Created,
             bot_info: None,
-            capabilities: vec![
-                Capability {
-                    name: CapabilityName::Text,
-                    supported: true,
-                    limits: None,
-                },
-                Capability {
-                    name: CapabilityName::Markdown,
-                    supported: true,
-                    limits: None,
-                },
-                Capability {
-                    name: CapabilityName::Group,
-                    supported: true,
-                    limits: None,
-                },
-                Capability {
-                    name: CapabilityName::TypingIndicator,
-                    supported: true,
-                    limits: None,
-                },
-                Capability {
-                    name: CapabilityName::MessageEdit,
-                    supported: true,
-                    limits: None,
-                },
-                Capability {
-                    name: CapabilityName::MessageDelete,
-                    supported: true,
-                    limits: None,
-                },
-                // Discord 不支持 HTML 格式
-                Capability {
-                    name: CapabilityName::Html,
-                    supported: false,
-                    limits: None,
-                },
-                // Discord 支持 Message Components (buttons, select menus)
-                Capability {
-                    name: CapabilityName::Interactive,
-                    supported: true,
-                    limits: Some(CapabilityLimits {
-                        max_text_length: None,
-                        max_file_size: None,
-                        max_buttons: Some(25), // 5 rows × 5 buttons
-                    }),
-                },
-                Capability {
-                    name: CapabilityName::Image,
-                    supported: true,
-                    limits: Some(CapabilityLimits {
-                        max_text_length: None,
-                        max_file_size: Some(8 * 1024 * 1024),
-                        max_buttons: None,
-                    }),
-                },
-                Capability {
-                    name: CapabilityName::Audio,
-                    supported: true,
-                    limits: Some(CapabilityLimits {
-                        max_text_length: None,
-                        max_file_size: Some(8 * 1024 * 1024),
-                        max_buttons: None,
-                    }),
-                },
-                Capability {
-                    name: CapabilityName::Video,
-                    supported: true,
-                    limits: Some(CapabilityLimits {
-                        max_text_length: None,
-                        max_file_size: Some(8 * 1024 * 1024),
-                        max_buttons: None,
-                    }),
-                },
-                Capability {
-                    name: CapabilityName::Document,
-                    supported: true,
-                    limits: Some(CapabilityLimits {
-                        max_text_length: None,
-                        max_file_size: Some(8 * 1024 * 1024),
-                        max_buttons: None,
-                    }),
-                },
-                Capability {
-                    name: CapabilityName::ChatList,
-                    supported: true,
-                    limits: None,
-                },
-                Capability {
-                    name: CapabilityName::Streaming,
-                    supported: true,
-                    limits: None,
-                },
+            capabilities: capabilities![
+                Text, Markdown, Group, TypingIndicator,
+                MessageEdit, MessageDelete, ChatList, Streaming,
+                (Html, false),
+                // Discord 5 rows × 5 buttons
+                (Interactive, true, { max_buttons: 25 }),
+                // 8 MB file size limit
+                (Image, true, { max_file_size: 8 * 1024 * 1024 }),
+                (Audio, true, { max_file_size: 8 * 1024 * 1024 }),
+                (Video, true, { max_file_size: 8 * 1024 * 1024 }),
+                (Document, true, { max_file_size: 8 * 1024 * 1024 }),
             ],
             messages_in: AtomicU64::new(0),
             messages_out: AtomicU64::new(0),

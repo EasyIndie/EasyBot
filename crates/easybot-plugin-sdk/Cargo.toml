@@ -9,3 +9,6 @@ easybot-core = { path = "../easybot-core" }
 serde.workspace = true
 serde_json.workspace = true
 async-trait.workspace = true
+
+[lints]
+workspace = true

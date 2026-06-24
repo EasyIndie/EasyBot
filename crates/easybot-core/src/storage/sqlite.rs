@@ -4,7 +4,7 @@
 //! 包含建表迁移和连接池初始化。
 
 use async_trait::async_trait;
-use sqlx::{AssertSqlSafe, SqlitePool};
+use sqlx::SqlitePool;
 
 use super::{MessageFilter, MessageRole, MessageStore, SessionStore, StoreError, StoredMessage};
 use crate::types::message::{InboundMessage, SendResult};
@@ -237,28 +237,24 @@ impl SessionStore for SqliteSessionStore {
     }
 
     async fn list_sessions(&self, filter: &SessionFilter) -> Result<Vec<Session>, StoreError> {
-        let mut sql = String::from(
-            "SELECT key, platform, chat_id, thread_id, created_at, updated_at, source_json, reset_policy, metadata
-             FROM sessions WHERE 1=1"
+        let mut builder = sqlx::QueryBuilder::new(
+            "SELECT key, platform, chat_id, thread_id, created_at, updated_at, source_json, reset_policy, metadata \
+             FROM sessions WHERE 1=1",
         );
 
-        if filter.platform.is_some() {
-            sql.push_str(" AND platform = ?");
+        if let Some(ref platform) = filter.platform {
+            builder.push(" AND platform = ").push_bind(platform);
         }
-        sql.push_str(" ORDER BY updated_at DESC");
+        builder.push(" ORDER BY updated_at DESC");
 
         if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {}", limit));
+            builder.push(" LIMIT ").push_bind(limit as i64);
         }
         if let Some(offset) = filter.offset {
-            sql.push_str(&format!(" OFFSET {}", offset));
+            builder.push(" OFFSET ").push_bind(offset as i64);
         }
 
-        let mut query = sqlx::query(AssertSqlSafe(sql.as_str()));
-        if let Some(ref platform) = filter.platform {
-            query = query.bind(platform);
-        }
-
+        let query = builder.build();
         let rows = query.fetch_all(&self.pool).await?;
         rows.iter()
             .map(|row| {
@@ -409,45 +405,35 @@ impl MessageStore for SqliteMessageStore {
         &self,
         filter: &MessageFilter,
     ) -> Result<Vec<StoredMessage>, StoreError> {
-        let mut sql = String::from(
-            "SELECT id, session_key, platform, chat_id, role, text, raw_data, timestamp, created_at
+        let mut builder = sqlx::QueryBuilder::new(
+            "SELECT id, session_key, platform, chat_id, role, text, raw_data, timestamp, created_at \
              FROM messages WHERE 1=1",
         );
-        let mut params: Vec<String> = vec![];
 
         if let Some(ref key) = filter.session_key {
-            sql.push_str(" AND session_key = ?");
-            params.push(key.clone());
+            builder.push(" AND session_key = ").push_bind(key);
         }
         if let Some(ref platform) = filter.platform {
-            sql.push_str(" AND platform = ?");
-            params.push(platform.clone());
+            builder.push(" AND platform = ").push_bind(platform);
         }
         if let Some(ref chat_id) = filter.chat_id {
-            sql.push_str(" AND chat_id = ?");
-            params.push(chat_id.clone());
+            builder.push(" AND chat_id = ").push_bind(chat_id);
         }
         if let Some(before) = filter.before {
-            sql.push_str(" AND timestamp < ?");
-            params.push(before.to_string());
+            builder.push(" AND timestamp < ").push_bind(before);
         }
 
-        sql.push_str(" ORDER BY timestamp DESC");
+        builder.push(" ORDER BY timestamp DESC");
 
         if let Some(limit) = filter.limit {
-            sql.push_str(&format!(" LIMIT {}", limit));
+            builder.push(" LIMIT ").push_bind(limit as i64);
         }
         if let Some(offset) = filter.offset {
-            sql.push_str(&format!(" OFFSET {}", offset));
+            builder.push(" OFFSET ").push_bind(offset as i64);
         }
 
-        // 使用低阶 API 动态绑定参数
-        let mut q = sqlx::query(AssertSqlSafe(sql.as_str()));
-        for p in &params {
-            q = q.bind(p);
-        }
-
-        let rows = q.fetch_all(&self.pool).await?;
+        let query = builder.build();
+        let rows = query.fetch_all(&self.pool).await?;
         rows.iter()
             .map(|row| {
                 let r = row_to_stored_message(row)?;
