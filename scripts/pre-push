@@ -1,0 +1,42 @@
+#!/bin/sh
+# EasyBot pre-push hook
+# 安装: cp scripts/pre-push .git/hooks/pre-push && chmod +x .git/hooks/pre-push
+#
+# push 前自动运行验收脚本，失败则阻止推送，避免 CI 不通过。
+# 完整模式（默认）：bash scripts/verify.sh
+# 快速模式：设置 git config easybot.pre-push-fast true
+
+set -e
+
+PROJECT_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
+SCRIPT="$PROJECT_DIR/scripts/verify.sh"
+
+if [ ! -f "$SCRIPT" ]; then
+    echo ">>> 找不到 $SCRIPT，跳过验收"
+    exit 0
+fi
+
+FAST=$(git config --bool easybot.pre-push-fast 2>/dev/null || echo false)
+
+if [ "$FAST" = true ]; then
+    echo ">>> [快速模式] 运行验收 (fmt + clippy + check + build)..."
+    if bash "$SCRIPT" --fast; then
+        echo ">>> 验收通过，正在推送..."
+        exit 0
+    else
+        echo ""
+        echo "❌ 验收未通过，推送已阻止。修复后重试。"
+        exit 1
+    fi
+else
+    echo ">>> [完整模式] 运行验收 (全部 7 步)..."
+    echo "    （如嫌太慢可切换到快速模式: git config --bool easybot.pre-push-fast true）"
+    if bash "$SCRIPT"; then
+        echo ">>> 验收通过，正在推送..."
+        exit 0
+    else
+        echo ""
+        echo "❌ 验收未通过，推送已阻止。修复后重试。"
+        exit 1
+    fi
+fi
