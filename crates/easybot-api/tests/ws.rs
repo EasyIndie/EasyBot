@@ -250,17 +250,31 @@ async fn test_ws_multiple_events_sequential() {
             metadata: None,
         });
 
-    // 接收第一个事件
-    let e1 = client.recv_json().await;
-    assert!(e1.is_some(), "Expected first event");
-    assert_eq!(e1.unwrap()["seq"], 1);
+    // 收集两个事件（不假定跨类型事件顺序，EventBus 使用多 channel 轮询）
+    let mut events: Vec<serde_json::Value> = Vec::new();
+    for _ in 0..2 {
+        let ev = client.recv_json().await;
+        assert!(ev.is_some(), "Expected event");
+        events.push(ev.unwrap());
+    }
 
-    // 接收第二个事件
-    let e2 = client.recv_json().await;
-    assert!(e2.is_some(), "Expected second event");
-    let e2 = e2.unwrap();
-    assert_eq!(e2["seq"], 2);
-    assert_eq!(e2["event"], "adapter.connected");
+    // 验证 seq 递增
+    assert_eq!(events[0]["seq"], 1);
+    assert_eq!(events[1]["seq"], 2);
+
+    // 验证两种事件类型都收到了
+    let types: Vec<&str> = events
+        .iter()
+        .map(|e| e["event"].as_str().unwrap())
+        .collect();
+    assert!(
+        types.contains(&"message.inbound"),
+        "Expected message.inbound event"
+    );
+    assert!(
+        types.contains(&"adapter.connected"),
+        "Expected adapter.connected event"
+    );
 
     client.close().await;
 }
