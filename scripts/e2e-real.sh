@@ -13,8 +13,11 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+PROJECT_DIR="$(git rev-parse --show-toplevel 2>/dev/null || echo '')"
+if [ -z "$PROJECT_DIR" ]; then
+    echo "ERROR: 不在 git 仓库中" >&2
+    exit 1
+fi
 cd "$PROJECT_DIR"
 
 # ── 终端颜色（支持 NO_COLOR / TERM=dumb / CI 环境） ──
