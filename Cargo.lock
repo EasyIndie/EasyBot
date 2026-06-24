@@ -911,6 +911,7 @@ dependencies = [
  "easybot-core",
  "fixtures",
  "futures",
+ "parking_lot",
  "reqwest",
  "serde",
  "serde_json",

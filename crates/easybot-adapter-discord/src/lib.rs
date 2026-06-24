@@ -58,18 +58,53 @@ impl DiscordAdapter {
             config: None,
             state: AdapterState::Created,
             bot_info: None,
-            capabilities: capabilities![
-                Text, Markdown, Group, TypingIndicator,
-                MessageEdit, MessageDelete, ChatList, Streaming,
-                (Html, false),
-                // Discord 5 rows × 5 buttons
-                (Interactive, true, { max_buttons: 25 }),
-                // 8 MB file size limit
-                (Image, true, { max_file_size: 8 * 1024 * 1024 }),
-                (Audio, true, { max_file_size: 8 * 1024 * 1024 }),
-                (Video, true, { max_file_size: 8 * 1024 * 1024 }),
-                (Document, true, { max_file_size: 8 * 1024 * 1024 }),
-            ],
+            capabilities: {
+                let mut caps = capabilities![
+                    (Text, true),
+                    (Markdown, true),
+                    (Group, true),
+                    (TypingIndicator, true),
+                    (MessageEdit, true),
+                    (MessageDelete, true),
+                    (ChatList, true),
+                    (Streaming, true),
+                    (Html, false),
+                ];
+                // 带限制的能力声明（macro_rules! 二参数/三参数模式不可混合）
+                let mb8 = || CapabilityLimits {
+                    max_file_size: Some(8 * 1024 * 1024),
+                    ..Default::default()
+                };
+                caps.push(Capability {
+                    name: CapabilityName::Interactive,
+                    supported: true,
+                    limits: Some(CapabilityLimits {
+                        max_buttons: Some(25), // 5 rows × 5 buttons
+                        ..Default::default()
+                    }),
+                });
+                caps.push(Capability {
+                    name: CapabilityName::Image,
+                    supported: true,
+                    limits: Some(mb8()),
+                });
+                caps.push(Capability {
+                    name: CapabilityName::Audio,
+                    supported: true,
+                    limits: Some(mb8()),
+                });
+                caps.push(Capability {
+                    name: CapabilityName::Video,
+                    supported: true,
+                    limits: Some(mb8()),
+                });
+                caps.push(Capability {
+                    name: CapabilityName::Document,
+                    supported: true,
+                    limits: Some(mb8()),
+                });
+                caps
+            },
             messages_in: AtomicU64::new(0),
             messages_out: AtomicU64::new(0),
             errors: AtomicU64::new(0),

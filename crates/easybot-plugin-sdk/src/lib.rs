@@ -3,6 +3,9 @@
 //! 导出第三方适配器开发者需要的核心类型、trait 和 FFI 宏。
 //! 插件开发者只需依赖此 crate 并使用 `declare_plugin!` 即可导出自定义适配器。
 
+// FFI 模块需要 unsafe（no_mangle, extern "C" 等），豁免 workspace lint
+#![allow(unsafe_code)]
+
 mod ffi;
 pub use ffi::EASYBOT_PLUGIN_ABI_VERSION;
 

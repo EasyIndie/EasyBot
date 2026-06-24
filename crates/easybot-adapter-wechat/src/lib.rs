@@ -1941,9 +1941,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_new_with_event_bus() {
+    async fn test_set_event_bus() {
         let bus = Arc::new(EventBus::new());
-        let adapter = WeChatAdapter::new_with_event_bus(bus.clone());
+        let mut adapter = WeChatAdapter::new();
+        adapter.set_event_bus(bus.clone());
         assert_eq!(adapter.platform_name(), "wechat");
     }
 

@@ -3,6 +3,10 @@
 //! 从 `plugins/` 目录发现并加载动态库插件。
 //! 所有 `unsafe` 代码隔离在此文件中。
 //!
+//! 本文件是唯一需要 `unsafe` 代码的模块（FFI / 动态库加载），
+//! 因此显式允许 unsafe——workspace lint 规则 `unsafe_code = "deny"` 对此文件豁免。
+#![allow(unsafe_code)]
+//!
 //! # 安全性
 //!
 //! - `PluginLibrary` 通过 `Arc<Library>` 管理动态库生命周期
@@ -152,7 +156,7 @@ impl PluginLibrary {
                 })?;
 
             let version = abi_version();
-            let expected = super::EASYBOT_PLUGIN_ABI_VERSION;
+            let expected = EASYBOT_PLUGIN_ABI_VERSION;
             if version != expected {
                 return Err(PluginError::AbiVersionMismatch {
                     expected,

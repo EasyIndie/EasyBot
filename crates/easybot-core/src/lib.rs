@@ -2,6 +2,9 @@
 //!
 //! 包含网关核心逻辑：数据类型、消息总线、会话管理、适配器管理、认证授权、配置加载。
 
+// 测试中允许 unsafe（如 `env::set_var`），非测试代码由 workspace lint 统一拒绝
+#![cfg_attr(test, allow(unsafe_code))]
+
 pub mod adapter;
 pub mod auth;
 pub mod bus;

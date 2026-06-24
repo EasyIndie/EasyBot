@@ -16,6 +16,7 @@ reqwest = { workspace = true }
 futures.workspace = true
 tokio-tungstenite = { workspace = true, features = ["connect", "rustls-tls-webpki-roots"] }
 base64.workspace = true
+parking_lot.workspace = true
 
 [dev-dependencies]
 wiremock = "0.6"

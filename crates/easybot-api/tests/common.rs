@@ -52,6 +52,7 @@ pub async fn test_app_state() -> (AppState, String) {
             host: "127.0.0.1".to_string(),
             port: 0, // 不绑定
             tls: TlsConfig::default(),
+            ..Default::default()
         },
         api: ApiConfig {
             base_path: "/api/v1".to_string(),

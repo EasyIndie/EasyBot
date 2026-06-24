@@ -170,7 +170,7 @@ pub fn create_router(state: AppState) -> Router {
     // ── 公共路由（无需认证）──
 
     // 健康检查
-    let public_routes = Router::new().route("/health", get(routes::health::health_check));
+    let mut public_routes = Router::new().route("/health", get(routes::health::health_check));
 
     // ── 公共路由速率限制器（宽松：120 req/min，突发 20）──
     // health 端点开销极低，但大量请求仍可造成 DoS。

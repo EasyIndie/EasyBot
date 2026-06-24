@@ -143,6 +143,7 @@ pub fn default_gateway_config() -> GatewayConfig {
             host: "127.0.0.1".into(),
             port: 0,
             tls: TlsConfig::default(),
+            ..Default::default()
         },
         api: ApiConfig {
             base_path: "/api/v1".into(),

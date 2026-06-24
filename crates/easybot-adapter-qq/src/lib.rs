@@ -88,10 +88,7 @@ impl QqTokenStore {
         let expires_at =
             tokio::time::Instant::now() + Duration::from_secs(expires_in) - Duration::from_secs(60);
 
-        let mut guard = self
-            .state
-            .lock()
-            .map_err(|e| GatewayError::Internal(format!("Token mutex poisoned: {}", e)))?;
+        let mut guard = self.state.lock();
         *guard = Some((access_token.to_string(), expires_at));
 
         tracing::info!("QQ access token refreshed, expires in {}s", expires_in);
@@ -101,10 +98,7 @@ impl QqTokenStore {
 
     /// 获取 `QQBot {access_token}` 格式的鉴权字符串
     fn get(&self) -> Result<String, GatewayError> {
-        let guard = self
-            .state
-            .lock()
-            .map_err(|e| GatewayError::Internal(format!("Token mutex poisoned: {}", e)))?;
+        let guard = self.state.lock();
         let (token, expires_at) = guard
             .as_ref()
             .ok_or_else(|| GatewayError::Internal("QQ access token not initialized".to_string()))?;
@@ -597,10 +591,7 @@ impl QqAdapter {
         text: Option<String>,
     ) -> Result<QqSendMessageResponse, GatewayError> {
         // Resolve file data from base64 or URL
-        let client = self
-            .http_client
-            .clone()
-            .ok_or_else(|| GatewayError::Internal("HTTP client not initialized".to_string()))?;
+        let client = self.client().clone();
 
         let (file_data, filename, mime_type) = if let Some(data_b64) = &media.data {
             use base64::Engine;

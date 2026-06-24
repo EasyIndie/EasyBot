@@ -43,7 +43,7 @@ pub struct Capability {
 }
 
 /// 能力限制
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, ToSchema)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize, ToSchema)]
 pub struct CapabilityLimits {
     pub max_text_length: Option<usize>,
     pub max_file_size: Option<u64>,
@@ -359,55 +359,44 @@ pub trait PlatformAdapter: Send + Sync {
 
 /// 简化能力声明宏
 ///
-/// 用法:
+/// 统一使用元组语法 `(Name, supported)` 或 `(Name, supported, limits: { key: val })`。
+///
 /// ```ignore
 /// use easybot_core::capabilities;
 ///
 /// let caps = capabilities![
-///     Text, Image, Audio,           // supported: true
-///     (Interactive, false),         // supported: false
-///     (Document, true, max_file_size: 50 * 1024 * 1024),  // with limits
+///     (Text, true),
+///     (Image, true),
+///     (Interactive, false),
+///     (Document, true, limits: { max_file_size: 50 * 1024 * 1024 }),
 /// ];
 /// ```
 #[macro_export]
 macro_rules! capabilities {
-    // 带 limits: (Name, supported, key: value, ...)
-    (@single $name:ident, $supported:expr, { $($limit_key:ident: $limit_val:expr),* $(,)? }) => {
-        $crate::types::adapter::Capability {
-            name: $crate::types::adapter::CapabilityName::$name,
-            supported: $supported,
-            limits: {
-                let mut limits = $crate::types::adapter::CapabilityLimits::default();
-                $(limits.$limit_key = Some($limit_val);)*
-                Some(limits)
-            },
-        }
-    };
-    // 简单 (Name, supported)
-    (@single $name:ident, $supported:expr) => {
-        $crate::types::adapter::Capability {
-            name: $crate::types::adapter::CapabilityName::$name,
-            supported: $supported,
-            limits: None,
-        }
-    };
-    // 默认 true: Name
-    (@single $name:ident) => {
-        $crate::types::adapter::Capability {
-            name: $crate::types::adapter::CapabilityName::$name,
-            supported: true,
-            limits: None,
-        }
-    };
-
-    // 顶层 entry: 处理各种形式
-    ($(($name:ident, $supported:expr, { $($limit_key:ident: $limit_val:expr),* $(,)? })),* $(,)?) => {
-        vec![$(capabilities!(@single $name, $supported, { $($limit_key: $limit_val),* })),*]
-    };
-    ($(($name:ident, $supported:expr)),* $(,)?) => {
-        vec![$(capabilities!(@single $name, $supported)),*]
-    };
-    ($($name:ident),* $(,)?) => {
-        vec![$(capabilities!(@single $name)),*]
-    };
+    // (Name, supported, limits: { key: val, ... })
+    ($(($name:ident, $supported:expr, limits: { $($limit_key:ident: $limit_val:expr),* $(,)? })),* $(,)?) => {{
+        let mut caps = Vec::new();
+        $(
+            let mut limits = easybot_core::types::adapter::CapabilityLimits::default();
+            $(limits.$limit_key = Some($limit_val);)*
+            caps.push(easybot_core::types::adapter::Capability {
+                name: easybot_core::types::adapter::CapabilityName::$name,
+                supported: $supported,
+                limits: Some(limits),
+            });
+        )*
+        caps
+    }};
+    // (Name, supported)
+    ($(($name:ident, $supported:expr)),* $(,)?) => {{
+        let mut caps = Vec::new();
+        $(
+            caps.push(easybot_core::types::adapter::Capability {
+                name: easybot_core::types::adapter::CapabilityName::$name,
+                supported: $supported,
+                limits: None,
+            });
+        )*
+        caps
+    }};
 }
