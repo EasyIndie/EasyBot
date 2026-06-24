@@ -1,6 +1,6 @@
 #!/bin/sh
 # EasyBot pre-push hook
-# 安装: cp scripts/pre-push .git/hooks/pre-push && chmod +x .git/hooks/pre-push
+# 安装: git config core.hooksPath scripts   (或运行 make setup)
 #
 # push 前自动运行验收脚本，失败则阻止推送，避免 CI 不通过。
 # 完整模式（默认）：bash scripts/verify.sh

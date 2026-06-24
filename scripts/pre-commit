@@ -1,6 +1,6 @@
 #!/bin/sh
 # EasyBot pre-commit hook
-# 安装: cp scripts/pre-commit .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
+# 安装: git config core.hooksPath scripts   (或运行 make setup)
 #
 # 提交前自动检查 cargo fmt，不通过则自动格式化后阻止提交，
 # 让你有机会重新 git add 后再 commit。
