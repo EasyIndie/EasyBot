@@ -15,6 +15,16 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$PROJECT_DIR"
 
+# 自动检测 cargo 路径：优先本地 cargo，fallback 到 wsl cargo
+if command -v cargo >/dev/null 2>&1; then
+    CARGO="cargo"
+elif command -v wsl >/dev/null 2>&1; then
+    CARGO="wsl cargo"
+else
+    echo "ERROR: cargo not found (tried 'cargo' and 'wsl cargo')" >&2
+    exit 1
+fi
+
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 CYAN='\033[0;36m'
@@ -90,35 +100,35 @@ echo ""
 
 # ── 1. 编译检查 ──────────────────────────────────────────────────
 run_step "cargo check (workspace + full features)" \
-  cargo check --workspace --features "full,plugin-system"
+  $CARGO check --workspace --features "full,plugin-system"
 
 # ── 2. 格式化检查（全量提交时必做）───────────────────────────────
 if [ "$FAST" = false ]; then
   run_step "cargo fmt --check" \
-    cargo fmt --all --check
+    $CARGO fmt --all --check
 fi
 
 # ── 3. Clippy lint（全量提交时必做）───────────────────────────────
 if [ "$FAST" = false ]; then
   run_step "cargo clippy (all targets + warnings as errors)" \
-    cargo clippy --workspace --features "full,plugin-system" --all-targets -- -D warnings
+    $CARGO clippy --workspace --features "full,plugin-system" --all-targets -- -D warnings
 fi
 
 # ── 4. 构建全部（确保 mock-adapter 可用）──────────────────────────
 run_step "cargo build --workspace" \
-  cargo build --workspace
+  $CARGO build --workspace
 
 # ── 5. 默认特性下的测试 ──────────────────────────────────────────
 run_step "cargo test (default features)" \
-  cargo test --workspace
+  $CARGO test --workspace
 
 # ── 6. 编译 mock-adapter（插件集成测试前置条件）───────────────────
 run_step "cargo build -p mock-adapter" \
-  cargo build -p mock-adapter
+  $CARGO build -p mock-adapter
 
 # ── 7. 全特性测试（验证所有适配器 + 插件系统 + E2E）─────────────
 run_step "cargo test (full features + plugin-system)" \
-  cargo test --workspace --features "full,plugin-system"
+  $CARGO test --workspace --features "full,plugin-system"
 
 # ── 汇总报告 ─────────────────────────────────────────────────────
 echo ""
