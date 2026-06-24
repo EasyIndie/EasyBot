@@ -1,6 +1,7 @@
 //! WebSocket 实时推送路由
 //!
 //! 外部客户端通过 WebSocket 连接接收实时事件推送。
+//! 连接数受 config.api.websocket.max_clients 限制，超出返回 503。
 
 use crate::AppState;
 use axum::{
@@ -8,10 +9,11 @@ use axum::{
         State,
         ws::{Message, WebSocket, WebSocketUpgrade},
     },
-    response::IntoResponse,
+    response::{IntoResponse, Response},
 };
 use futures::{SinkExt, StreamExt};
 use std::time::Instant;
+use tokio::sync::OwnedSemaphorePermit;
 use tracing::{info, warn};
 
 /// WebSocket 实时事件流
@@ -28,11 +30,23 @@ use tracing::{info, warn};
         (status = 400, description = "WebSocket upgrade failed"),
     )
 )]
-pub async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> impl IntoResponse {
-    ws.on_upgrade(move |socket| handle_ws(socket, state))
+pub async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> Response {
+    // 检查并发连接数限制
+    let permit = match state.ws_semaphore.clone().try_acquire_owned() {
+        Ok(permit) => permit,
+        Err(_) => {
+            return (
+                axum::http::StatusCode::SERVICE_UNAVAILABLE,
+                "too many WebSocket connections",
+            )
+                .into_response();
+        }
+    };
+    ws.on_upgrade(move |socket| handle_ws(socket, state, permit))
+        .into_response()
 }
 
-async fn handle_ws(socket: WebSocket, state: AppState) {
+async fn handle_ws(socket: WebSocket, state: AppState, _permit: OwnedSemaphorePermit) {
     let (mut sender, mut receiver) = socket.split();
 
     // 订阅网关事件

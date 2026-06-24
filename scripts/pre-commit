@@ -1,0 +1,32 @@
+#!/bin/sh
+# EasyBot pre-commit hook
+# 安装: cp scripts/pre-commit .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
+#
+# 提交前自动检查 cargo fmt，不通过则自动格式化后阻止提交，
+# 让你有机会重新 git add 后再 commit。
+
+set -e
+
+# 自动检测 cargo 路径：优先 wsl cargo，fallback 到本地 cargo
+if command -v cargo >/dev/null 2>&1; then
+    CARGO="cargo"
+elif command -v wsl >/dev/null 2>&1; then
+    CARGO="wsl cargo"
+else
+    echo ">>> 跳过 cargo fmt（cargo 不可用）"
+    exit 0
+fi
+
+# 仅在有 .rs 文件变更时才检查
+if git diff --cached --name-only --diff-filter=ACMR | grep -q '\.rs$'; then
+    echo ">>> 检查 cargo fmt..."
+    if ! $CARGO fmt --check 2>/dev/null; then
+        echo ""
+        echo ">>> cargo fmt 未通过，正在自动格式化..."
+        $CARGO fmt
+        echo ">>> 格式化完成。请执行: git add -u && git commit"
+        echo "    （变更的文件需要重新暂存）"
+        exit 1
+    fi
+    echo ">>> cargo fmt 通过"
+fi

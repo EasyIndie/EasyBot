@@ -114,7 +114,19 @@ async fn main() -> anyhow::Result<()> {
 
     // 初始化持久化存储
     let db_path = if !config.storage.path.is_empty() {
-        std::path::PathBuf::from(&config.storage.path)
+        let p = std::path::PathBuf::from(&config.storage.path);
+        // 安全检查：拒绝含 .. 的路径穿越
+        if p.components().any(|c| c == std::path::Component::ParentDir) {
+            anyhow::bail!("storage.path 包含非法 '..' 组件: {}", config.storage.path);
+        }
+        // 相对路径解析到 EasyBot 配置目录下
+        if p.is_relative() {
+            paths.home.join(p)
+        } else {
+            // 绝对路径：显式记录
+            tracing::info!("使用自定义绝对路径 storage.path: {}", p.display());
+            p
+        }
     } else {
         paths.db_path.clone()
     };
@@ -132,7 +144,9 @@ async fn main() -> anyhow::Result<()> {
                     easybot_core::storage::postgres::run_migrations(&pool)
                         .await
                         .map_err(|e| anyhow::anyhow!("PostgreSQL migration failed: {}", e))?;
-                    tracing::info!("PostgreSQL storage initialized: {}", conn_str);
+                    // 脱敏连接字符串：仅日志 host/db，隐藏 user:password
+                    let safe_conn = conn_str.split('@').last().unwrap_or(&conn_str);
+                    tracing::info!("PostgreSQL storage initialized: {}", safe_conn);
 
                     let store: Arc<dyn easybot_core::storage::SessionStore> = Arc::new(
                         easybot_core::storage::postgres::PgSessionStore::new(pool.clone()),
@@ -233,7 +247,11 @@ async fn main() -> anyhow::Result<()> {
             .create_key("dev", vec!["*".to_string()], None)
             .await
         {
-            Ok((id, key)) => tracing::info!("Dev API Key created: id={}, key={}", id, key),
+            Ok((id, key)) => tracing::info!(
+                "Dev API Key created: id={}, key_prefix={}...",
+                id,
+                &key[..key.len().min(8)]
+            ),
             Err(e) => tracing::warn!("Failed to create dev API key: {}", e),
         }
     }

@@ -226,12 +226,17 @@ impl PluginLoader {
         })?;
         let manifest: PluginManifest =
             serde_yaml::from_str(&content).map_err(|e| PluginError::ManifestParseError {
-                path: manifest_path,
+                path: manifest_path.clone(),
                 detail: e.to_string(),
             })?;
 
-        // 2. 定位动态库
-        let lib_path = manifest.library_path(dir);
+        // 2. 定位动态库（含路径穿越安全检查）
+        let lib_path = manifest
+            .library_path(dir)
+            .map_err(|e| PluginError::ManifestParseError {
+                path: manifest_path.clone(),
+                detail: e,
+            })?;
         if !lib_path.exists() {
             return Err(PluginError::LibraryNotFound(lib_path));
         }

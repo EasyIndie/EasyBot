@@ -11,6 +11,7 @@ use easybot_core::session::SessionManager;
 use easybot_core::storage::MessageStore;
 use easybot_core::types::config::GatewayConfig;
 use std::sync::Arc;
+use tokio::sync::Semaphore;
 
 pub mod config_manager;
 pub mod metrics;
@@ -33,6 +34,8 @@ pub struct AppState {
     /// 配置管理器（支持原子替换和文件监听）
     pub config_manager: ConfigManager,
     pub metrics: Option<Arc<metrics::MetricsRegistry>>,
+    /// WebSocket 并发连接数信号量（基于 config.api.websocket.max_clients）
+    pub ws_semaphore: Arc<Semaphore>,
     /// 进程启动时间
     pub started_at: std::time::Instant,
 }
@@ -50,6 +53,7 @@ impl AppState {
         config_manager: ConfigManager,
         metrics: Option<Arc<metrics::MetricsRegistry>>,
     ) -> Self {
+        let max_clients = config.api.websocket.max_clients.max(1);
         let config_arc = Arc::new(config);
         Self {
             event_bus,
@@ -60,6 +64,7 @@ impl AppState {
             config: config_arc,
             config_manager,
             metrics,
+            ws_semaphore: Arc::new(Semaphore::new(max_clients)),
             started_at: std::time::Instant::now(),
         }
     }

@@ -42,29 +42,40 @@ impl PluginManifest {
     }
 
     /// 计算动态库的完整路径
-    pub fn library_path(&self, plugin_dir: &Path) -> std::path::PathBuf {
-        if let Some(ref lib) = self.library {
-            plugin_dir.join(lib)
-        } else {
-            // 按平台规则推断默认库文件名
-            let lib_name = format!("lib{}", self.name);
-            #[cfg(target_os = "linux")]
-            {
-                plugin_dir.join(format!("{}.so", lib_name))
+    ///
+    /// 安全检查：拒绝绝对路径和含 `..` 的路径穿越。
+    pub fn library_path(&self, plugin_dir: &Path) -> Result<std::path::PathBuf, String> {
+        let lib = match self.library {
+            Some(ref lib) => lib.clone(),
+            None => {
+                // 按平台规则推断默认库文件名
+                let lib_name = format!("lib{}", self.name);
+                if cfg!(target_os = "linux") {
+                    format!("{}.so", lib_name)
+                } else if cfg!(target_os = "macos") {
+                    format!("{}.dylib", lib_name)
+                } else if cfg!(target_os = "windows") {
+                    format!("{}.dll", self.name)
+                } else {
+                    format!("{}.so", lib_name)
+                }
             }
-            #[cfg(target_os = "macos")]
-            {
-                plugin_dir.join(format!("{}.dylib", lib_name))
-            }
-            #[cfg(target_os = "windows")]
-            {
-                plugin_dir.join(format!("{}.dll", self.name))
-            }
-            #[cfg(not(any(target_os = "linux", target_os = "macos", target_os = "windows")))]
-            {
-                plugin_dir.join(format!("{}.so", lib_name))
-            }
+        };
+
+        // 安全检查：绝对路径可绕过插件目录
+        if std::path::Path::new(&lib).is_absolute() {
+            return Err(format!("插件 library 路径不允许使用绝对路径: {}", lib));
         }
+
+        // 安全检查：拒绝含 .. 的目录穿越
+        if std::path::Path::new(&lib)
+            .components()
+            .any(|c| c == std::path::Component::ParentDir)
+        {
+            return Err(format!("插件 library 路径包含非法 '..' 组件: {}", lib));
+        }
+
+        Ok(plugin_dir.join(&lib))
     }
 }
 
@@ -110,7 +121,7 @@ author: "EasyBot Contributors"
             library: None,
         };
         let dir = Path::new("/plugins/my-adapter");
-        let path = manifest.library_path(dir);
+        let path = manifest.library_path(dir).unwrap();
         // Platform-dependent, but the name should contain "lib" prefix
         let filename = path.file_name().unwrap().to_str().unwrap();
         assert!(
@@ -136,8 +147,43 @@ author: "EasyBot Contributors"
             library: Some("custom.so".into()),
         };
         let dir = Path::new("/plugins/my-adapter");
-        let path = manifest.library_path(dir);
+        let path = manifest.library_path(dir).unwrap();
         assert_eq!(path, Path::new("/plugins/my-adapter/custom.so"));
+    }
+
+    #[test]
+    fn test_library_path_rejects_absolute() {
+        let manifest = PluginManifest {
+            name: "my-adapter".into(),
+            display_name: None,
+            description: None,
+            version: "1.0.0".into(),
+            sdk_version: None,
+            author: None,
+            library: Some("/usr/lib/libc.so.6".into()),
+        };
+        let dir = Path::new("/plugins/my-adapter");
+        assert!(manifest.library_path(dir).is_err());
+    }
+
+    #[test]
+    fn test_library_path_rejects_parent_dir_traversal() {
+        let manifest = PluginManifest {
+            name: "my-adapter".into(),
+            display_name: None,
+            description: None,
+            version: "1.0.0".into(),
+            sdk_version: None,
+            author: None,
+            library: Some("../../../usr/lib/libc.so.6".into()),
+        };
+        let dir = Path::new("/plugins/my-adapter");
+        let result = manifest.library_path(dir);
+        assert!(
+            result.is_err(),
+            "should reject .. traversal, got: {:?}",
+            result
+        );
     }
 
     #[test]
