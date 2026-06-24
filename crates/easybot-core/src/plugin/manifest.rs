@@ -63,12 +63,12 @@ impl PluginManifest {
         };
 
         // 安全检查：绝对路径可绕过插件目录
-        if std::path::Path::new(&lib).is_absolute() {
+        if Path::new(&lib).is_absolute() {
             return Err(format!("插件 library 路径不允许使用绝对路径: {}", lib));
         }
 
         // 安全检查：拒绝含 .. 的目录穿越
-        if std::path::Path::new(&lib)
+        if Path::new(&lib)
             .components()
             .any(|c| c == std::path::Component::ParentDir)
         {

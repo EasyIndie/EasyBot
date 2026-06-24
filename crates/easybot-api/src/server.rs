@@ -58,7 +58,7 @@ impl Server {
     ) -> Response {
         let auth_header = req
             .headers()
-            .get(axum::http::header::AUTHORIZATION)
+            .get(header::AUTHORIZATION)
             .and_then(|v| v.to_str().ok())
             .and_then(|v| v.strip_prefix("Bearer "));
 
@@ -259,18 +259,18 @@ pub fn create_router(state: AppState) -> Router {
     };
 
     let protected_routes = protected_routes
-        // 速率限制中间件（在认证之前）
+        // 速率限制中间件（最内层，最后执行）
         .route_layer(middleware::from_fn_with_state(
             rate_limiter.clone(),
             crate::middleware::rate_limit::rate_limit_middleware,
         ))
-        // 认证中间件（作用于以上所有路由）
+        // 权限中间件（在认证之后执行，根据路径+方法检查权限）
+        .route_layer(middleware::from_fn(Server::permission_middleware))
+        // 认证中间件（最外层，最先执行，注入 AuthInfo 到 extensions）
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             Server::auth_middleware,
-        ))
-        // 权限中间件（在认证之后，根据路径+方法检查权限）
-        .route_layer(middleware::from_fn(Server::permission_middleware));
+        ));
 
     // 合并公共 + 受保护路由
     let api_routes = Router::new().merge(public_routes).merge(protected_routes);

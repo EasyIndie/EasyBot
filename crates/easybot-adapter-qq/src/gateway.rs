@@ -17,7 +17,6 @@ use tokio_tungstenite::MaybeTlsStream;
 use tokio_tungstenite::tungstenite::Message;
 
 use crate::auth::QqTokenStore;
-use crate::types::*;
 
 impl crate::QqAdapter {
     /// 建立到 QQ Gateway 的 WebSocket 连接（使用 rustls）

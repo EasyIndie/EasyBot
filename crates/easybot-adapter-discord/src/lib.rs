@@ -1,3 +1,5 @@
+#![allow(missing_docs)]
+
 //! Discord 平台适配器
 //!
 //! 使用 Discord Bot API + Gateway WebSocket 实现消息收发。
@@ -299,7 +301,7 @@ fn handle_gateway_event<E: std::fmt::Display>(
             heartbeat.beat();
             if let Some(inbound) = DiscordAdapter::convert_message(&msg.0, bot_user_id) {
                 let event = GatewayEvent::new(
-                    easybot_core::types::event::event_types::MESSAGE_INBOUND,
+                    event_types::MESSAGE_INBOUND,
                     "discord",
                     serde_json::to_value(&inbound).unwrap_or_default(),
                 );

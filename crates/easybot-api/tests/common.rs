@@ -42,7 +42,7 @@ pub async fn test_app_state() -> (AppState, String) {
     // API Key 管理
     let auth_manager = Arc::new(ApiKeyManager::new());
     let (_, raw_key) = auth_manager
-        .create_key("test-key", vec![], None)
+        .create_key("test-key", vec!["*".to_string()], None)
         .await
         .unwrap();
 

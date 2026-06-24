@@ -1,3 +1,5 @@
+#![allow(missing_docs)]
+
 //! 飞书/Lark 平台适配器
 //!
 //! 使用飞书开放平台 API 实现消息收发。
@@ -132,7 +134,7 @@ impl FeishuAdapter {
     fn client(&self) -> &reqwest::Client {
         self.http_client.get_or_init(|| {
             reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(15))
+                .timeout(Duration::from_secs(15))
                 .build()
                 .expect("Failed to create HTTP client")
         })
@@ -501,7 +503,7 @@ impl PlatformAdapter for FeishuAdapter {
             };
 
             let dispatcher = EventDispatcher::new("", "").skip_sign_verify().on_event(
-                types::EVENT_MESSAGE_RECEIVE_V1,
+                EVENT_MESSAGE_RECEIVE_V1,
                 move |event_data| {
                     let eb = eb.clone();
                     let bot_id = app_id_owned.clone();

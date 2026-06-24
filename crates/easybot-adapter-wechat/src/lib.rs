@@ -1,3 +1,5 @@
+#![allow(missing_docs)]
+
 //! 个人微信 (WeChat) 平台适配器
 //!
 //! 使用腾讯官方 iLink Bot API 实现个人微信消息收发。
@@ -38,9 +40,8 @@ use easybot_core::types::message::*;
 mod crypto;
 use crypto::{
     WeChatCredentials, aes_128_ecb_encrypt, aes_padded_size, base64_encode_uin,
-    build_cdn_upload_url, clear_credentials, download_media, encode_aes_key_for_api,
-    generate_filekey, load_credentials_from_disk, md5_hex, pkcs7_pad, resolve_media_data,
-    save_credentials_to_disk, url_encode_for_cdn,
+    build_cdn_upload_url, clear_credentials, encode_aes_key_for_api, generate_filekey,
+    load_credentials_from_disk, md5_hex, resolve_media_data, save_credentials_to_disk,
 };
 
 /// iLink Bot API 基础 URL
@@ -310,7 +311,7 @@ impl WeChatAdapter {
     fn client(&self) -> &reqwest::Client {
         self.http_client.get_or_init(|| {
             reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(60)) // 长轮询需要较长超时
+                .timeout(Duration::from_secs(60)) // 长轮询需要较长超时
                 .build()
                 .expect("Failed to create HTTP client")
         })
@@ -464,7 +465,7 @@ impl WeChatAdapter {
         // 7. 上传到 CDN（使用专用 HTTP/1.1 客户端，避免 HTTP/2 兼容性问题）
         let cdn_client = reqwest::Client::builder()
             .http1_only()
-            .timeout(std::time::Duration::from_secs(120))
+            .timeout(Duration::from_secs(120))
             .build()
             .map_err(|e| GatewayError::Internal(format!("Failed to create CDN client: {}", e)))?;
 
@@ -1445,6 +1446,7 @@ fn convert_message(msg: WeixinMessage) -> Option<InboundMessage> {
 
 #[cfg(test)]
 mod tests {
+    use super::crypto::{pkcs7_pad, url_encode_for_cdn};
     use super::*;
 
     #[test]

@@ -76,19 +76,19 @@ impl Modify for SecurityAddon {
     components(
         schemas(
             // Health
-            crate::routes::health::HealthResponse,
-            crate::routes::health::AdapterSummary,
-            crate::routes::health::SessionSummary,
+            routes::health::HealthResponse,
+            routes::health::AdapterSummary,
+            routes::health::SessionSummary,
             // Adapters
-            crate::routes::adapters::AdapterListResponse,
-            crate::routes::adapters::AdapterItem,
+            routes::adapters::AdapterListResponse,
+            routes::adapters::AdapterItem,
             // Messages
-            crate::routes::messages::SendMessageRequest,
-            crate::routes::messages::BatchSendRequest,
-            crate::routes::messages::EditMessageRequest,
-            crate::routes::messages::DeleteMessageRequest,
-            crate::routes::messages::MessageHistoryParams,
-            crate::routes::messages::MessageHistoryResponse,
+            routes::messages::SendMessageRequest,
+            routes::messages::BatchSendRequest,
+            routes::messages::EditMessageRequest,
+            routes::messages::DeleteMessageRequest,
+            routes::messages::MessageHistoryParams,
+            routes::messages::MessageHistoryResponse,
             // Core types (API-facing)
             easybot_core::types::message::InboundMessage,
             easybot_core::types::message::OutboundMessage,

@@ -18,6 +18,9 @@ if [ -z "$PROJECT_DIR" ]; then
 fi
 cd "$PROJECT_DIR"
 
+# 将所有编译警告视为错误（与 CI 一致）
+export RUSTFLAGS="-D warnings"
+
 # 自动检测 cargo 路径：优先本地 cargo，fallback 到 wsl cargo
 if command -v cargo >/dev/null 2>&1; then
     CARGO="cargo"

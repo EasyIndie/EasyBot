@@ -178,7 +178,7 @@ pub async fn rate_limit_middleware(
         .get("X-Forwarded-For")
         .and_then(|v| v.to_str().ok())
         // 取最后一个 IP（最靠近本服务的代理，避免客户端伪造 XFF 头绕过限流）
-        .and_then(|v| v.split(',').last().map(|s| s.trim().to_string()))
+        .and_then(|v| v.split(',').next_back().map(|s| s.trim().to_string()))
     {
         forwarded
     } else if let Some(addr) = req.extensions().get::<ConnectInfo<std::net::SocketAddr>>() {

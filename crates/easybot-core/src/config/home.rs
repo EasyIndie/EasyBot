@@ -141,7 +141,7 @@ mod tests {
 
     #[test]
     fn test_env_path_in_paths() {
-        let dir = std::env::temp_dir().join("easybot_paths_env_test");
+        let dir = env::temp_dir().join("easybot_paths_env_test");
         let paths = EasyBotPaths::new(dir.clone()).unwrap();
         assert_eq!(paths.env_path, dir.join(".env"));
         let _ = std::fs::remove_dir_all(&dir);
@@ -149,7 +149,7 @@ mod tests {
 
     #[test]
     fn test_legacy_path() {
-        let tmp = std::env::temp_dir().join(".easybot_test_legacy");
+        let tmp = env::temp_dir().join(".easybot_test_legacy");
         let _ = std::fs::create_dir_all(&tmp);
         // 模拟 ~/.easybot/ 存在的情况
         // 在测试环境中 dirs::home_dir() 可能返回 /，所以我们直接用

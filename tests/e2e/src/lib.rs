@@ -1,3 +1,5 @@
+#![allow(missing_docs)]
+
 //! E2E 测试共享工具
 //!
 //! 提供所有平台 E2E 测试共用的辅助函数。
@@ -171,7 +173,10 @@ pub async fn build_router(
     config: GatewayConfig,
 ) -> (Router, String) {
     let auth_manager = Arc::new(ApiKeyManager::new());
-    let (_, raw_key) = auth_manager.create_key("e2e", vec![], None).await.unwrap();
+    let (_, raw_key) = auth_manager
+        .create_key("e2e", vec!["*".to_string()], None)
+        .await
+        .unwrap();
 
     let config_manager =
         easybot_api::config_manager::ConfigManager::new_shared(Arc::new(config.clone()));

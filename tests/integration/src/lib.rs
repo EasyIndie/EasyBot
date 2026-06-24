@@ -1,3 +1,5 @@
+#![allow(missing_docs)]
+
 //! EasyBot 集成测试
 //!
 //! 覆盖 CLI、插件系统等端到端场景。

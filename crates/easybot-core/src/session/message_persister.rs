@@ -214,8 +214,7 @@ mod tests {
         let event_bus = Arc::new(EventBus::new());
         let pool = sqlx::SqlitePool::connect(":memory:").await.unwrap();
         run_migrations(&pool).await.unwrap();
-        let message_store: Arc<dyn crate::storage::MessageStore> =
-            Arc::new(SqliteMessageStore::new(pool.clone()));
+        let message_store: Arc<dyn MessageStore> = Arc::new(SqliteMessageStore::new(pool.clone()));
 
         MessagePersister::start(event_bus.clone(), message_store);
 
@@ -248,8 +247,7 @@ mod tests {
         let event_bus = Arc::new(EventBus::new());
         let pool = sqlx::SqlitePool::connect(":memory:").await.unwrap();
         run_migrations(&pool).await.unwrap();
-        let message_store: Arc<dyn crate::storage::MessageStore> =
-            Arc::new(SqliteMessageStore::new(pool.clone()));
+        let message_store: Arc<dyn MessageStore> = Arc::new(SqliteMessageStore::new(pool.clone()));
 
         MessagePersister::start(event_bus.clone(), message_store);
 
@@ -289,8 +287,7 @@ mod tests {
         let event_bus = Arc::new(EventBus::new());
         let pool = sqlx::SqlitePool::connect(":memory:").await.unwrap();
         run_migrations(&pool).await.unwrap();
-        let message_store: Arc<dyn crate::storage::MessageStore> =
-            Arc::new(SqliteMessageStore::new(pool.clone()));
+        let message_store: Arc<dyn MessageStore> = Arc::new(SqliteMessageStore::new(pool.clone()));
 
         MessagePersister::start(event_bus.clone(), message_store);
 

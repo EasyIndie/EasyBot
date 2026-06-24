@@ -1,3 +1,5 @@
+#![allow(missing_docs)]
+
 //! Mock 适配器（用于集成测试）
 //!
 //! 实现最小功能的 PlatformAdapter，通过 declare_plugin! 导出 C ABI。

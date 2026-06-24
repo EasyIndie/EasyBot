@@ -40,7 +40,8 @@ async fn setup() -> (Router, String, MockServer) {
                     if !result.ok {
                         return Err(result.error.unwrap_or_default());
                     }
-                    Ok(Box::new(adapter) as Box<dyn easybot_core::PlatformAdapter>)
+                    let boxed: Box<dyn PlatformAdapter> = Box::new(adapter);
+                    Ok(boxed)
                 })
             }),
             &["QQ_APP_ID", "QQ_CLIENT_SECRET"],

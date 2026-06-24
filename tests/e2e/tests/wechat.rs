@@ -40,7 +40,8 @@ async fn setup() -> (Router, String, MockServer) {
                     if !result.ok {
                         return Err(result.error.unwrap_or_default());
                     }
-                    Ok(Box::new(adapter) as Box<dyn easybot_core::PlatformAdapter>)
+                    let boxed: Box<dyn PlatformAdapter> = Box::new(adapter);
+                    Ok(boxed)
                 })
             }),
             &[], // WeChat 无必需凭证环境变量

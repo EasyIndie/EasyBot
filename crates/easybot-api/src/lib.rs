@@ -1,3 +1,5 @@
+#![allow(missing_docs)]
+
 //! EasyBot API 服务层
 //!
 //! 提供 HTTP REST API 和 WebSocket 实时推送。

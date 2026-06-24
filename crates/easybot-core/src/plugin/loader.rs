@@ -394,7 +394,7 @@ mod tests {
 
     /// 创建临时插件目录，包含一个指定内容的子目录（代表一个插件）
     fn create_plugin_subdir(
-        parent: &std::path::Path,
+        parent: &Path,
         name: &str,
         manifest_content: &str,
         lib_exists: bool,
@@ -573,7 +573,7 @@ library: "libmissing.so"
         let loader = PluginLoader::new(dir.clone());
         // 没有加载任何插件时，get_factory 应返回 None
         let factory = loader
-            .get_factory("unknown", Arc::new(crate::bus::EventBus::new()))
+            .get_factory("unknown", Arc::new(EventBus::new()))
             .await;
         assert!(
             factory.is_none(),
@@ -607,8 +607,8 @@ library: "libmissing.so"
         let loader = PluginLoader::new(dir.clone());
         loader.load_all().await;
 
-        let registry = crate::adapter::AdapterRegistry::new();
-        let eb = Arc::new(crate::bus::EventBus::new());
+        let registry = AdapterRegistry::new();
+        let eb = Arc::new(EventBus::new());
         // 没有加载任何插件时，register_all 不应 panic
         loader.register_all(&registry, eb).await;
         let platforms = registry.list_platforms().await;

@@ -1,3 +1,4 @@
+#![allow(unused_qualifications)]
 //! 消息收发路由
 
 use crate::AppState;
@@ -54,6 +55,7 @@ pub struct BatchSendRequest {
 /// 消息历史查询参数
 #[derive(Deserialize, ToSchema, IntoParams)]
 #[into_params(parameter_in = Query)]
+#[allow(unused_qualifications)]
 pub struct MessageHistoryParams {
     pub session_key: Option<String>,
     pub platform: Option<String>,
@@ -82,7 +84,7 @@ pub async fn send_message(
     Json(req): Json<SendMessageRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let (platform, chat_id) = parse_target(&req.target).ok_or_else(|| {
-        api_error(easybot_core::types::error::GatewayError::InvalidRequest(
+        api_error(GatewayError::InvalidRequest(
             "Invalid target format. Expected 'platform:chatId'".to_string(),
         ))
     })?;

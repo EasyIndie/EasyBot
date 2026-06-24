@@ -1,4 +1,5 @@
 //! 持久化存储抽象层
+#![allow(missing_docs)]
 //!
 //! 定义存储 trait 和共享模型，支持 SQLite 和未来 PostgreSQL 后端。
 //! SessionManager 使用 SessionStore 做持久化写入；
@@ -132,11 +133,7 @@ pub struct StoredMessage {
 impl StoredMessage {
     /// 从入站消息构建
     pub fn from_inbound(msg: &InboundMessage) -> Self {
-        let session_key = crate::types::session::Session::build_key(
-            &msg.platform,
-            &msg.chat_id,
-            msg.thread_id.as_deref(),
-        );
+        let session_key = Session::build_key(&msg.platform, &msg.chat_id, msg.thread_id.as_deref());
         let raw = serde_json::to_value(msg).unwrap_or_default();
         Self {
             id: format!("inbound:{}:{}", msg.platform, msg.id),
@@ -159,7 +156,7 @@ impl StoredMessage {
         text: &str,
         result: &SendResult,
     ) -> Self {
-        let session_key = crate::types::session::Session::build_key(platform, chat_id, thread_id);
+        let session_key = Session::build_key(platform, chat_id, thread_id);
         let msg_id = result
             .message_id
             .clone()

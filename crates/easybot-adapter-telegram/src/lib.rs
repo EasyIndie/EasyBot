@@ -1,3 +1,5 @@
+#![allow(missing_docs)]
+
 //! Telegram 平台适配器
 //!
 //! 使用 Telegram Bot API 实现消息收发。
@@ -241,7 +243,7 @@ impl TelegramAdapter {
                                 if let Some(tg_msg) = update.message
                                     && let Some(inbound) = Self::convert_message(tg_msg) {
                                         let event = GatewayEvent::new(
-                                            easybot_core::types::event::event_types::MESSAGE_INBOUND,
+                                            event_types::MESSAGE_INBOUND,
                                             "telegram",
                                             serde_json::to_value(&inbound).unwrap_or_default(),
                                         );
@@ -1222,14 +1224,11 @@ mod tests {
     use rstest::rstest;
 
     #[rstest]
-    #[case("private", easybot_core::types::message::ChatType::Dm)]
-    #[case("group", easybot_core::types::message::ChatType::Group)]
-    #[case("supergroup", easybot_core::types::message::ChatType::Group)]
-    #[case("channel", easybot_core::types::message::ChatType::Channel)]
-    fn test_chat_type_mapping(
-        #[case] tg_type: &str,
-        #[case] expected: easybot_core::types::message::ChatType,
-    ) {
+    #[case("private", ChatType::Dm)]
+    #[case("group", ChatType::Group)]
+    #[case("supergroup", ChatType::Group)]
+    #[case("channel", ChatType::Channel)]
+    fn test_chat_type_mapping(#[case] tg_type: &str, #[case] expected: ChatType) {
         let chat = TelegramChat {
             id: 1,
             chat_type: tg_type.to_string(),

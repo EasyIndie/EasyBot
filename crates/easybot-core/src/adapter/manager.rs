@@ -1,4 +1,5 @@
 //! 适配器管理器实现
+#![allow(missing_docs)]
 //!
 //! 管理所有平台适配器的生命周期、健康轮询和状态查询。
 
@@ -878,14 +879,15 @@ mod tests {
     /// 注册 MockTestAdapter 到 manager
     async fn register_mock_adapter(manager: &AdapterManager) {
         let registry = manager.registry();
-        let factory: AdapterFactory = std::sync::Arc::new(|config| {
+        let factory: AdapterFactory = Arc::new(|config| {
             Box::pin(async move {
                 let mut adapter = MockTestAdapter::new();
                 let result = adapter.init(config).await.map_err(|e| e.to_string())?;
                 if !result.ok {
                     return Err(result.error.unwrap_or_default());
                 }
-                Ok(Box::new(adapter) as Box<dyn PlatformAdapter>)
+                let boxed: Box<dyn PlatformAdapter> = Box::new(adapter);
+                Ok(boxed)
             })
         });
         registry
@@ -1121,7 +1123,7 @@ mod tests {
         let manager = new_manager().await;
         register_mock_adapter(&manager).await;
 
-        let mut configs = std::collections::HashMap::new();
+        let mut configs = HashMap::new();
         configs.insert(
             "test-mock".to_string(),
             AdapterConfig {
@@ -1162,7 +1164,7 @@ mod tests {
         manager.start("test-mock", config).await.unwrap();
 
         // ADAPTER_CONNECTED 现在由后台任务发布
-        let event = tokio::time::timeout(tokio::time::Duration::from_secs(1), rx.recv())
+        let event = tokio::time::timeout(Duration::from_secs(1), rx.recv())
             .await
             .expect("should receive ADAPTER_CONNECTED")
             .expect("event should be valid");
@@ -1191,7 +1193,7 @@ mod tests {
 
         manager.stop("test-mock").await.unwrap();
 
-        let event = tokio::time::timeout(tokio::time::Duration::from_secs(1), rx.recv())
+        let event = tokio::time::timeout(Duration::from_secs(1), rx.recv())
             .await
             .expect("should receive ADAPTER_DISCONNECTED")
             .expect("event should be valid");
@@ -1206,10 +1208,11 @@ mod tests {
     async fn test_inject_credentials_populates_token_and_extra() {
         let manager = AdapterManager::new();
         let registry = manager.registry();
-        let factory: AdapterFactory = std::sync::Arc::new(|_config| {
+        let factory: AdapterFactory = Arc::new(|_config| {
             Box::pin(async move {
                 let adapter = MockTestAdapter::new();
-                Ok(Box::new(adapter) as Box<dyn PlatformAdapter>)
+                let boxed: Box<dyn PlatformAdapter> = Box::new(adapter);
+                Ok(boxed)
             })
         });
         // platform "test" → prefix "TEST_" → env vars must start with "TEST_"
@@ -1248,10 +1251,11 @@ mod tests {
     async fn test_inject_credentials_does_not_overwrite_existing_token() {
         let manager = AdapterManager::new();
         let registry = manager.registry();
-        let factory: AdapterFactory = std::sync::Arc::new(|_config| {
+        let factory: AdapterFactory = Arc::new(|_config| {
             Box::pin(async move {
                 let adapter = MockTestAdapter::new();
-                Ok(Box::new(adapter) as Box<dyn PlatformAdapter>)
+                let boxed: Box<dyn PlatformAdapter> = Box::new(adapter);
+                Ok(boxed)
             })
         });
         registry
@@ -1284,7 +1288,7 @@ mod tests {
     async fn test_start_all_auto_enables_with_injected_credentials() {
         let manager = new_manager().await;
         let registry = manager.registry();
-        let factory: AdapterFactory = std::sync::Arc::new(|config| {
+        let factory: AdapterFactory = Arc::new(|config| {
             Box::pin(async move {
                 let mut adapter = MockTestAdapter::new();
                 // 验证 config 已被注入凭据
@@ -1292,7 +1296,8 @@ mod tests {
                 if !init_result.ok {
                     return Err(init_result.error.unwrap_or_default());
                 }
-                Ok(Box::new(adapter) as Box<dyn PlatformAdapter>)
+                let boxed: Box<dyn PlatformAdapter> = Box::new(adapter);
+                Ok(boxed)
             })
         });
         registry

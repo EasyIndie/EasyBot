@@ -1,3 +1,5 @@
+#![allow(missing_docs)]
+
 //! QQ 频道机器人适配器
 //!
 //! 使用 QQ 频道机器人 API（WebSocket Gateway + HTTP API）实现消息收发。
@@ -11,7 +13,6 @@ mod types;
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
 
 use async_trait::async_trait;
 use easybot_core::bus::EventBus;
@@ -20,10 +21,7 @@ use easybot_core::types::error::GatewayError;
 use easybot_core::types::event::GatewayEvent;
 use easybot_core::types::event::event_types;
 use easybot_core::types::message::*;
-use futures::{SinkExt, StreamExt};
 use tokio::sync::broadcast;
-use tokio_tungstenite::MaybeTlsStream;
-use tokio_tungstenite::tungstenite::Message;
 use types::*;
 
 /// QQ API 基础 URL（正式环境）
@@ -1312,8 +1310,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_dispatch_at_message() {
-        let event_bus = Arc::new(easybot_core::bus::EventBus::new());
-        let mut rx = event_bus.subscribe(easybot_core::types::event::event_types::MESSAGE_INBOUND);
+        let event_bus = Arc::new(EventBus::new());
+        let mut rx = event_bus.subscribe(event_types::MESSAGE_INBOUND);
         let messages_in = AtomicU64::new(0);
 
         let data = serde_json::json!({
@@ -1354,8 +1352,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_dispatch_group_at() {
-        let event_bus = Arc::new(easybot_core::bus::EventBus::new());
-        let mut rx = event_bus.subscribe(easybot_core::types::event::event_types::MESSAGE_INBOUND);
+        let event_bus = Arc::new(EventBus::new());
+        let mut rx = event_bus.subscribe(event_types::MESSAGE_INBOUND);
         let messages_in = AtomicU64::new(0);
 
         let data = serde_json::json!({
@@ -1396,8 +1394,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_dispatch_group_message_create_mentioned() {
-        let event_bus = Arc::new(easybot_core::bus::EventBus::new());
-        let mut rx = event_bus.subscribe(easybot_core::types::event::event_types::MESSAGE_INBOUND);
+        let event_bus = Arc::new(EventBus::new());
+        let mut rx = event_bus.subscribe(event_types::MESSAGE_INBOUND);
         let messages_in = AtomicU64::new(0);
 
         // 2026 新版全量群消息，其中 @了机器人
@@ -1447,8 +1445,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_dispatch_group_message_create_not_mentioned() {
-        let event_bus = Arc::new(easybot_core::bus::EventBus::new());
-        let mut rx = event_bus.subscribe(easybot_core::types::event::event_types::MESSAGE_INBOUND);
+        let event_bus = Arc::new(EventBus::new());
+        let mut rx = event_bus.subscribe(event_types::MESSAGE_INBOUND);
         let messages_in = AtomicU64::new(0);
 
         // 2026 新版全量群消息，没有 @机器人
@@ -1492,8 +1490,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_dispatch_c2c() {
-        let event_bus = Arc::new(easybot_core::bus::EventBus::new());
-        let mut rx = event_bus.subscribe(easybot_core::types::event::event_types::MESSAGE_INBOUND);
+        let event_bus = Arc::new(EventBus::new());
+        let mut rx = event_bus.subscribe(event_types::MESSAGE_INBOUND);
         let messages_in = AtomicU64::new(0);
 
         let data = serde_json::json!({
@@ -1530,8 +1528,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_dispatch_self_filter_channel() {
-        let event_bus = Arc::new(easybot_core::bus::EventBus::new());
-        let mut rx = event_bus.subscribe(easybot_core::types::event::event_types::MESSAGE_INBOUND);
+        let event_bus = Arc::new(EventBus::new());
+        let mut rx = event_bus.subscribe(event_types::MESSAGE_INBOUND);
         let messages_in = AtomicU64::new(0);
 
         let data = serde_json::json!({
@@ -1564,8 +1562,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_dispatch_ignored_event() {
-        let event_bus = Arc::new(easybot_core::bus::EventBus::new());
-        let mut rx = event_bus.subscribe(easybot_core::types::event::event_types::MESSAGE_INBOUND);
+        let event_bus = Arc::new(EventBus::new());
+        let mut rx = event_bus.subscribe(event_types::MESSAGE_INBOUND);
         let messages_in = AtomicU64::new(0);
 
         let data = serde_json::json!({"dummy": true});
@@ -1592,8 +1590,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_dispatch_missing_data() {
-        let event_bus = Arc::new(easybot_core::bus::EventBus::new());
-        let mut rx = event_bus.subscribe(easybot_core::types::event::event_types::MESSAGE_INBOUND);
+        let event_bus = Arc::new(EventBus::new());
+        let mut rx = event_bus.subscribe(event_types::MESSAGE_INBOUND);
         let messages_in = AtomicU64::new(0);
 
         let payload = GatewayPayload::<serde_json::Value> {
@@ -1619,8 +1617,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_handle_dispatch_malformed_data() {
-        let event_bus = Arc::new(easybot_core::bus::EventBus::new());
-        let mut rx = event_bus.subscribe(easybot_core::types::event::event_types::MESSAGE_INBOUND);
+        let event_bus = Arc::new(EventBus::new());
+        let mut rx = event_bus.subscribe(event_types::MESSAGE_INBOUND);
         let messages_in = AtomicU64::new(0);
 
         // missing required fields (author, timestamp)
@@ -1653,8 +1651,8 @@ mod tests {
     async fn test_handle_dispatch_c2c_self_not_filtered() {
         // C2C 和 group 消息没有 bot 字段，无法通过 id 过滤自身
         // 验证即使 bot_id 出现在 user_openid 中，消息仍被处理
-        let event_bus = Arc::new(easybot_core::bus::EventBus::new());
-        let mut rx = event_bus.subscribe(easybot_core::types::event::event_types::MESSAGE_INBOUND);
+        let event_bus = Arc::new(EventBus::new());
+        let mut rx = event_bus.subscribe(event_types::MESSAGE_INBOUND);
         let messages_in = AtomicU64::new(0);
 
         let data = serde_json::json!({

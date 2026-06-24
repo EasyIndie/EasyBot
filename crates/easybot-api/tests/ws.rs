@@ -251,7 +251,7 @@ async fn test_ws_multiple_events_sequential() {
         });
 
     // 收集两个事件（不假定跨类型事件顺序，EventBus 使用多 channel 轮询）
-    let mut events: Vec<serde_json::Value> = Vec::new();
+    let mut events: Vec<Value> = Vec::new();
     for _ in 0..2 {
         let ev = client.recv_json().await;
         assert!(ev.is_some(), "Expected event");

@@ -119,7 +119,7 @@ mod tests {
         bus.publish(event);
 
         // 等待事件处理
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        tokio::time::sleep(Duration::from_millis(100)).await;
 
         // 验证会话已创建
         let session = sessions.get("telegram:12345");

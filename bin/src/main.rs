@@ -480,7 +480,7 @@ async fn handle_init(cli: Cli) -> anyhow::Result<()> {
 async fn load_plugin_adapters(
     adapter_manager: &easybot_core::adapter::AdapterManager,
     paths: &easybot_core::config::EasyBotPaths,
-    event_bus: std::sync::Arc<easybot_core::bus::EventBus>,
+    event_bus: Arc<easybot_core::bus::EventBus>,
 ) {
     use easybot_core::plugin::PluginLoader;
 
@@ -523,7 +523,7 @@ async fn load_plugin_adapters(
 async fn load_plugin_adapters(
     _adapter_manager: &easybot_core::adapter::AdapterManager,
     _paths: &easybot_core::config::EasyBotPaths,
-    _event_bus: std::sync::Arc<easybot_core::bus::EventBus>,
+    _event_bus: Arc<easybot_core::bus::EventBus>,
 ) {
     tracing::info!("Plugin system not enabled (compile with --features plugin-system to enable)");
 }
@@ -531,6 +531,7 @@ async fn load_plugin_adapters(
 /// 注册单个内置适配器的宏
 ///
 /// 消除 5 个适配器注册代码的重复模式：创建 factory → 注册到 registry → 日志输出。
+#[allow(unused_macros)]
 macro_rules! register_adapter {
     ($registry:expr, $eb:expr, $platform:literal, $display:literal, $ty:ty, $creds:expr) => {{
         let eb_cloned = $eb.clone();
@@ -548,7 +549,8 @@ macro_rules! register_adapter {
                         .error
                         .unwrap_or_else(|| "unknown init error".to_string()));
                 }
-                Ok(Box::new(adapter) as Box<dyn easybot_core::PlatformAdapter>)
+                let boxed: Box<dyn easybot_core::PlatformAdapter> = Box::new(adapter);
+                Ok(boxed)
             })
         });
         $registry
@@ -562,7 +564,7 @@ macro_rules! register_adapter {
 #[allow(unused_variables)]
 async fn register_builtin_adapters(
     adapter_manager: &easybot_core::adapter::AdapterManager,
-    event_bus: std::sync::Arc<easybot_core::bus::EventBus>,
+    event_bus: Arc<easybot_core::bus::EventBus>,
 ) {
     let registry = adapter_manager.registry();
 

@@ -36,7 +36,8 @@ async fn setup() -> (Router, String, MockServer) {
                 Box::pin(async move {
                     let mut adapter = easybot_adapter_telegram::TelegramAdapter::new();
                     adapter.set_event_bus(eb);
-                    Ok(Box::new(adapter) as Box<dyn easybot_core::PlatformAdapter>)
+                    let boxed: Box<dyn easybot_core::PlatformAdapter> = Box::new(adapter);
+                    Ok(boxed)
                 })
             }),
             &["TELEGRAM_BOT_TOKEN"],
