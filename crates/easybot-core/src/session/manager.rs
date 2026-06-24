@@ -56,40 +56,43 @@ impl SessionManager {
 
     /// 获取或创建会话
     ///
-    /// 根据 session_key 查找已有会话，不存在则创建新的。
+    /// 使用 DashMap::entry() 原子化 get-or-insert，消除 check-then-act 竞态条件。
     /// 如果配置了持久化存储，创建/更新操作会同步写入。
     pub async fn get_or_create(&self, key: &str, source: SessionSource) -> Session {
-        if let Some(entry) = self.sessions.get(key) {
-            let session = entry.value().clone();
-            drop(entry);
-            // 更新活跃时间
-            if let Some(mut entry) = self.sessions.get_mut(key) {
-                entry.updated_at = chrono::Utc::now().timestamp_millis();
+        use dashmap::mapref::entry::Entry;
+
+        let entry = self.sessions.entry(key.to_string());
+        match entry {
+            Entry::Occupied(mut occupied) => {
+                occupied.get_mut().updated_at = chrono::Utc::now().timestamp_millis();
+                let session = occupied.get().clone();
+                drop(occupied);
                 // 持久化更新
                 if let Some(ref store) = self.store {
-                    let _ = store.upsert_session(&entry.clone()).await;
+                    let _ = store.upsert_session(&session).await;
                 }
+                session
             }
-            session
-        } else {
-            let now = chrono::Utc::now().timestamp_millis();
-            let session = Session {
-                key: key.to_string(),
-                platform: source.platform.clone(),
-                chat_id: source.chat_id.clone(),
-                thread_id: None,
-                created_at: now,
-                updated_at: now,
-                source,
-                reset_policy: DEFAULT_RESET_POLICY,
-                metadata: serde_json::json!({}),
-            };
-            self.sessions.insert(key.to_string(), session.clone());
-            // 持久化新会话
-            if let Some(ref store) = self.store {
-                let _ = store.upsert_session(&session).await;
+            Entry::Vacant(vacant) => {
+                let now = chrono::Utc::now().timestamp_millis();
+                let session = Session {
+                    key: key.to_string(),
+                    platform: source.platform.clone(),
+                    chat_id: source.chat_id.clone(),
+                    thread_id: None,
+                    created_at: now,
+                    updated_at: now,
+                    source,
+                    reset_policy: DEFAULT_RESET_POLICY,
+                    metadata: serde_json::json!({}),
+                };
+                vacant.insert(session.clone());
+                // 持久化新会话
+                if let Some(ref store) = self.store {
+                    let _ = store.upsert_session(&session).await;
+                }
+                session
             }
-            session
         }
     }
 

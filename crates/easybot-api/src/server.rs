@@ -153,6 +153,7 @@ pub fn create_router(state: AppState) -> Router {
             burst_size: rl_config.burst_size,
         },
     );
+    rate_limiter.start_cleanup();
 
     // ── 受保护路由（需要 Bearer Token 认证）──
 

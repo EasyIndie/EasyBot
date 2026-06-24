@@ -10,8 +10,8 @@
 
 | 优先级 | 数量 | 状态 | 预计总工时 |
 |--------|:----:|------|:----------:|
-| **P0 紧急** | 5 | ⬜ 待修复 | ~2h |
-| **P1 高优先级** | 8 | ⬜ 待修复 | ~12h |
+| **P0 紧急** | 5 | ✅ 已完成 | ~2h |
+| **P1 高优先级** | 8 | ✅ 已完成 | ~12h |
 | **P2 中优先级** | 10 | ⬜ 待修复 | ~20h |
 | **P3 低优先级** | 7 | ⬜ 待修复 | ~16h |
 | **合计** | **30** | — | **~50h** |
@@ -22,13 +22,14 @@
 
 > 严重安全漏洞 + 数据安全风险，修复成本极低
 
-### P0-1. Dev API Key 明文写入日志 🔴
+### ✅ P0-1. Dev API Key 明文写入日志 🔴 ✅
 
 | 属性 | 内容 |
 |------|------|
 | **文件** | `bin/src/main.rs` 第 236 行 |
 | **严重性** | 严重 — 凭据泄露 |
 | **工时** | 5 分钟 |
+| **状态** | ✅ 已完成 (commit 39d5d79) |
 
 **问题**: `--debug` 模式下创建的 dev API key（权限 `["*"]`）完整写入 tracing 日志，Docker logs / journald / CI 输出均可被读取。
 
@@ -50,7 +51,7 @@ Ok((id, key)) => tracing::info!(
 
 ---
 
-### P0-2. WebSocket 连接数限制未生效 🔴
+### ✅ P0-2. WebSocket 连接数限制未生效 🔴
 
 | 属性 | 内容 |
 |------|------|
@@ -77,7 +78,7 @@ let permit = state.ws_semaphore
 
 ---
 
-### P0-3. 数据库存储路径穿越 🔴
+### ✅ P0-3. 数据库存储路径穿越 🔴
 
 | 属性 | 内容 |
 |------|------|
@@ -110,7 +111,7 @@ let db_path = if !config.storage.path.is_empty() {
 
 ---
 
-### P0-4. 插件库路径穿越 → 任意代码执行 🔴
+### ✅ P0-4. 插件库路径穿越 → 任意代码执行 🔴
 
 | 属性 | 内容 |
 |------|------|
@@ -145,7 +146,7 @@ pub fn library_path(&self, plugin_dir: &Path) -> Result<PathBuf, GatewayError> {
 
 ---
 
-### P0-5. PostgreSQL 连接字符串明文日志 🔴
+### ✅ P0-5. PostgreSQL 连接字符串明文日志 🔴
 
 | 属性 | 内容 |
 |------|------|
@@ -175,7 +176,7 @@ fn redact_password_in_conn_str(s: &str) -> String {
 
 > 功能性缺陷 + 可靠性风险 + 安全加固
 
-### P1-1. Rate Limiter IP 映射永不释放导致内存泄漏
+### ✅ P1-1. Rate Limiter IP 映射永不释放导致内存泄漏
 
 | 属性 | 内容 |
 |------|------|
@@ -207,7 +208,7 @@ pub fn start_cleanup(self: &Arc<Self>) {
 
 ---
 
-### P1-2. SessionManager::get_or_create 竞态条件
+### ✅ P1-2. SessionManager::get_or_create 竞态条件
 
 | 属性 | 内容 |
 |------|------|
@@ -234,7 +235,7 @@ pub fn get_or_create(&self, key: &str, source: SessionSource) -> Session {
 
 ---
 
-### P1-3. 应用层 TLS 实现或强制反向代理声明
+### ✅ P1-3. 应用层 TLS 实现或强制反向代理声明
 
 | 属性 | 内容 |
 |------|------|
@@ -263,7 +264,7 @@ if !self.config.tls.enabled && !cfg!(debug_assertions) {
 
 ---
 
-### P1-4. 配置热重载端点缺少输入验证
+### ✅ P1-4. 配置热重载端点缺少输入验证
 
 | 属性 | 内容 |
 |------|------|
@@ -292,7 +293,7 @@ if let Some(false) = new_config.rate_limit.enabled {
 
 ---
 
-### P1-5. batch-send 无最大目标数限制
+### ✅ P1-5. batch-send 无最大目标数限制
 
 | 属性 | 内容 |
 |------|------|
@@ -317,7 +318,7 @@ if request.targets.len() > MAX_BATCH_TARGETS {
 
 ---
 
-### P1-6. Docker 容器以 root 运行
+### ✅ P1-6. Docker 容器以 root 运行
 
 | 属性 | 内容 |
 |------|------|
@@ -338,7 +339,7 @@ EXPOSE 8080
 
 ---
 
-### P1-7. E2E Mock 断言从 `expect(0..)` 改为 `expect(1)`
+### ✅ P1-7. E2E Mock 断言从 `expect(0..)` 改为 `expect(1)`
 
 | 属性 | 内容 |
 |------|------|
@@ -366,7 +367,7 @@ mock_server.register(Mock::given(method("POST"))
 
 ---
 
-### P1-8. Feishu E2E 认证失败测试断言修复
+### ✅ P1-8. Feishu E2E 认证失败测试断言修复
 
 | 属性 | 内容 |
 |------|------|

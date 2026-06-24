@@ -14,6 +14,9 @@ use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use utoipa::{IntoParams, ToSchema};
 
+/// 批量发送最大目标数（防止单次请求耗尽 tokio 任务预算）
+const MAX_BATCH_TARGETS: usize = 100;
+
 /// 发送消息请求
 #[derive(Deserialize, ToSchema)]
 pub struct SendMessageRequest {
@@ -177,7 +180,15 @@ pub async fn send_message(
 pub async fn batch_send(
     State(state): State<AppState>,
     Json(req): Json<BatchSendRequest>,
-) -> Json<serde_json::Value> {
+) -> Result<Json<serde_json::Value>, ApiError> {
+    if req.targets.len() > MAX_BATCH_TARGETS {
+        return Err(api_error(GatewayError::InvalidRequest(format!(
+            "最多支持 {} 个目标，当前 {} 个",
+            MAX_BATCH_TARGETS,
+            req.targets.len()
+        ))));
+    }
+
     let parse_mode = req.parse_mode.unwrap_or_default();
     let semaphore = Arc::new(tokio::sync::Semaphore::new(5)); // 最大并发 5
     let results = Arc::new(tokio::sync::Mutex::new(serde_json::Map::new()));
@@ -262,10 +273,10 @@ pub async fn batch_send(
 
     let final_results = Arc::try_unwrap(results).unwrap().into_inner();
 
-    Json(serde_json::json!({
+    Ok(Json(serde_json::json!({
         "total": req.targets.len(),
         "results": final_results,
-    }))
+    })))
 }
 
 /// 编辑消息请求

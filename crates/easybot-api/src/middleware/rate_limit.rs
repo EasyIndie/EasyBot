@@ -12,6 +12,7 @@ use axum::{
 use dashmap::DashMap;
 use std::collections::VecDeque;
 use std::sync::Arc;
+use std::time::Duration;
 use tokio::sync::RwLock;
 use tracing::warn;
 
@@ -43,12 +44,15 @@ impl Default for RateLimitConfig {
 struct SlidingWindow {
     /// 时间戳窗口（毫秒时间戳）
     timestamps: VecDeque<i64>,
+    /// 最近一次访问时间（毫秒时间戳），用于清理判断
+    last_access: i64,
 }
 
 impl SlidingWindow {
     fn new() -> Self {
         Self {
             timestamps: VecDeque::with_capacity(1024),
+            last_access: chrono::Utc::now().timestamp_millis(),
         }
     }
 
@@ -65,6 +69,7 @@ impl SlidingWindow {
 
     /// 检查是否允许请求。如果允许则记录，否则返回 false。
     fn check_and_record(&mut self, max_requests: u64, burst: u32, now: i64) -> bool {
+        self.last_access = now;
         let window_ms = 60_000; // 1 分钟窗口
         let window_start = now - window_ms;
 
@@ -142,6 +147,22 @@ impl RateLimiter {
     pub async fn update_config(&self, config: RateLimitConfig) {
         let mut c = self.config.write().await;
         *c = config;
+    }
+
+    /// 启动后台清理任务，定期移除超过 5 分钟未活跃的 IP 条目
+    pub fn start_cleanup(&self) {
+        let buckets = Arc::clone(&self.buckets);
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_secs(300)).await;
+                let cutoff = chrono::Utc::now().timestamp_millis() - 300_000; // 5 分钟
+                buckets.retain(|_, w| {
+                    w.try_read()
+                        .map(|w| w.last_access >= cutoff)
+                        .unwrap_or(true) // 无法读取时保守保留
+                });
+            }
+        });
     }
 }
 

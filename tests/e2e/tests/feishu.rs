@@ -84,7 +84,7 @@ async fn mock_feishu_token(mock_server: &MockServer) {
             "tenant_access_token": "t-access-token-67890",
             "expire": 7200
         })))
-        .expect(0..)
+        .expect(1..)
         .mount(mock_server)
         .await;
 }
@@ -97,7 +97,7 @@ async fn mock_feishu_send(mock_server: &MockServer) {
             "msg": "ok",
             "data": { "message_id": "om_feishu_001" }
         })))
-        .expect(0..)
+        .expect(1)
         .mount(mock_server)
         .await;
 }
@@ -110,7 +110,7 @@ async fn mock_feishu_edit_message(mock_server: &MockServer, msg_id: &str) {
             "msg": "ok",
             "data": {}
         })))
-        .expect(0..)
+        .expect(1)
         .mount(mock_server)
         .await;
 }
@@ -160,7 +160,7 @@ async fn test_e2e_feishu_send_message() {
             "msg": "ok",
             "data": { "message_id": "om_feishu_001" }
         })))
-        .expect(0..)
+        .expect(1)
         .mount(&mock_server)
         .await;
 
@@ -190,7 +190,7 @@ async fn test_e2e_feishu_send_error() {
             "code": 10001,
             "msg": "invalid chat_id"
         })))
-        .expect(0..)
+        .expect(1)
         .mount(&mock_server)
         .await;
 
@@ -218,20 +218,19 @@ async fn test_e2e_feishu_auth_failure() {
             "code": 99991663,
             "msg": "invalid app secret"
         })))
-        .expect(0..)
+        .expect(1)
         .mount(&mock_server)
         .await;
 
     let (status, _) = auth_post(&router, "/api/v1/adapters/feishu/start", &key, None).await;
-    // connect 应该失败
+    // connect 应该失败，adapter 不应标记为 connected
     let (_, json) = auth_get(&router, "/api/v1/adapters/feishu/status", &key).await;
-    // 未连接或状态不是 Connected
-    let connected = json["connected"].as_bool().unwrap_or(false);
-    if connected {
-        // 某些飞书 SDK 版本即使 token 错误也可能标记为 connected
-        eprintln!("Note: feishu adapter reported connected despite auth error");
-    }
-    // 无论如何 API 应返回有效响应
+    assert!(
+        !json["connected"].as_bool().unwrap_or(true),
+        "auth 失败时 adapter 不应连接: {}",
+        json
+    );
+    // API 应返回有效响应
     assert!(status.is_success() || status.is_server_error());
 }
 
@@ -304,7 +303,7 @@ async fn mock_feishu_delete_message(mock_server: &MockServer, msg_id: &str) {
             "code": 0,
             "msg": "ok"
         })))
-        .expect(0..)
+        .expect(1)
         .mount(mock_server)
         .await;
 }

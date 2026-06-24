@@ -85,7 +85,7 @@ async fn mock_qq_token(mock_server: &MockServer) {
             "access_token": "mock-qq-token",
             "expires_in": 7200
         })))
-        .expect(0..)
+        .expect(1)
         .mount(mock_server)
         .await;
 }
@@ -98,7 +98,7 @@ async fn mock_qq_bot_info(mock_server: &MockServer) {
             "username": "QQBot",
             "bot": true
         })))
-        .expect(0..)
+        .expect(1)
         .mount(mock_server)
         .await;
 }
@@ -151,7 +151,7 @@ async fn test_e2e_qq_send_message() {
             "id": "msg_qq_001",
             "timestamp": "2026-06-20T12:00:00+00:00"
         })))
-        .expect(0..)
+        .expect(1)
         .mount(&mock_server)
         .await;
 
@@ -201,7 +201,7 @@ async fn test_e2e_qq_auth_failure() {
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "error": "invalid_secret"
         })))
-        .expect(0..)
+        .expect(1)
         .mount(&mock_server)
         .await;
 
@@ -230,7 +230,7 @@ async fn test_e2e_qq_send_media() {
             "id": "msg_qq_media_001",
             "timestamp": "2026-06-20T12:00:00+00:00"
         })))
-        .expect(0..)
+        .expect(1)
         .mount(&mock_server)
         .await;
 

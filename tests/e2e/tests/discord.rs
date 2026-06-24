@@ -84,7 +84,7 @@ async fn mock_discord_users_me(mock_server: &MockServer) {
             "discriminator": "0000",
             "bot": true
         })))
-        .expect(0..)
+        .expect(1)
         .mount(mock_server)
         .await;
 }
@@ -99,7 +99,7 @@ async fn mock_discord_send(mock_server: &MockServer, channel_id: &str, msg_id: &
             "author": { "id": "bot", "username": "Bot", "discriminator": "0000", "bot": true },
             "timestamp": "2026-06-20T12:00:00+00:00"
         })))
-        .expect(0..)
+        .expect(1)
         .mount(mock_server)
         .await;
 }
@@ -133,7 +133,7 @@ async fn mock_discord_edit_message(mock_server: &MockServer, channel_id: &str, m
             "author": {"id": "bot", "username": "Bot", "discriminator": "0000", "bot": true},
             "timestamp": "2026-06-20T12:05:00+00:00"
         })))
-        .expect(0..)
+        .expect(1)
         .mount(mock_server)
         .await;
 }
@@ -145,7 +145,7 @@ async fn mock_discord_delete_message(mock_server: &MockServer, channel_id: &str,
             channel_id, msg_id
         )))
         .respond_with(ResponseTemplate::new(204))
-        .expect(0..)
+        .expect(1)
         .mount(mock_server)
         .await;
 }
@@ -232,7 +232,7 @@ async fn test_e2e_discord_auth_failure() {
         .respond_with(ResponseTemplate::new(401).set_body_json(serde_json::json!({
             "message": "401: Unauthorized", "code": 0
         })))
-        .expect(0..)
+        .expect(1)
         .mount(&mock_server)
         .await;
 

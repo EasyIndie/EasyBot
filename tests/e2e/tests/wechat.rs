@@ -120,7 +120,7 @@ async fn test_e2e_wechat_send_message() {
             "message_id": "msg_wechat_001",
             "seq": 100
         })))
-        .expect(0..)
+        .expect(1)
         .mount(&mock_server)
         .await;
 
@@ -149,7 +149,7 @@ async fn test_e2e_wechat_send_error() {
                 .set_body_string("not-valid-json")
                 .insert_header("Content-Type", "text/plain"),
         )
-        .expect(0..)
+        .expect(1)
         .mount(&mock_server)
         .await;
 
@@ -177,7 +177,7 @@ async fn test_e2e_wechat_send_api_error() {
             "ret": 1001,
             "errmsg": "invalid token"
         })))
-        .expect(0..)
+        .expect(1)
         .mount(&mock_server)
         .await;
 

@@ -129,7 +129,7 @@ async fn test_e2e_lifecycle() {
     Mock::given(method("GET"))
         .and(path("/bottest-token/getMe"))
         .respond_with(ResponseTemplate::new(200).set_body_json(get_me_response()))
-        .expect(0..)
+        .expect(2) // lifecycle 测试: 启动 + 停止后重新启动，共两次握手
         .mount(&mock_server)
         .await;
 
@@ -159,14 +159,14 @@ async fn test_e2e_send_message() {
     Mock::given(method("GET"))
         .and(path("/bottest-token/getMe"))
         .respond_with(ResponseTemplate::new(200).set_body_json(get_me_response()))
-        .expect(0..)
+        .expect(1)
         .mount(&mock_server)
         .await;
 
     Mock::given(method("POST"))
         .and(path("/bottest-token/sendMessage"))
         .respond_with(ResponseTemplate::new(200).set_body_json(send_message_response()))
-        .expect(0..)
+        .expect(1)
         .mount(&mock_server)
         .await;
 
@@ -190,14 +190,14 @@ async fn test_e2e_send_markdown() {
     Mock::given(method("GET"))
         .and(path("/bottest-token/getMe"))
         .respond_with(ResponseTemplate::new(200).set_body_json(get_me_response()))
-        .expect(0..)
+        .expect(1)
         .mount(&mock_server)
         .await;
 
     Mock::given(method("POST"))
         .and(path("/bottest-token/sendMessage"))
         .respond_with(ResponseTemplate::new(200).set_body_json(send_message_response()))
-        .expect(0..)
+        .expect(1)
         .mount(&mock_server)
         .await;
 
@@ -219,14 +219,14 @@ async fn test_e2e_send_media() {
     Mock::given(method("GET"))
         .and(path("/bottest-token/getMe"))
         .respond_with(ResponseTemplate::new(200).set_body_json(get_me_response()))
-        .expect(0..)
+        .expect(1)
         .mount(&mock_server)
         .await;
 
     Mock::given(method("POST"))
         .and(path("/bottest-token/sendPhoto"))
         .respond_with(ResponseTemplate::new(200).set_body_json(send_photo_response()))
-        .expect(0..)
+        .expect(1)
         .mount(&mock_server)
         .await;
 
@@ -262,14 +262,14 @@ async fn test_e2e_send_interactive() {
     Mock::given(method("GET"))
         .and(path("/bottest-token/getMe"))
         .respond_with(ResponseTemplate::new(200).set_body_json(get_me_response()))
-        .expect(0..)
+        .expect(1)
         .mount(&mock_server)
         .await;
 
     Mock::given(method("POST"))
         .and(path("/bottest-token/sendMessage"))
         .respond_with(ResponseTemplate::new(200).set_body_json(send_message_response()))
-        .expect(0..)
+        .expect(1)
         .mount(&mock_server)
         .await;
 
@@ -314,14 +314,14 @@ async fn test_e2e_edit_message() {
     Mock::given(method("GET"))
         .and(path("/bottest-token/getMe"))
         .respond_with(ResponseTemplate::new(200).set_body_json(get_me_response()))
-        .expect(0..)
+        .expect(1)
         .mount(&mock_server)
         .await;
 
     Mock::given(method("POST"))
         .and(path("/bottest-token/editMessageText"))
         .respond_with(ResponseTemplate::new(200).set_body_json(edit_message_response()))
-        .expect(0..)
+        .expect(1)
         .mount(&mock_server)
         .await;
 
@@ -351,14 +351,14 @@ async fn test_e2e_delete_message() {
     Mock::given(method("GET"))
         .and(path("/bottest-token/getMe"))
         .respond_with(ResponseTemplate::new(200).set_body_json(get_me_response()))
-        .expect(0..)
+        .expect(1)
         .mount(&mock_server)
         .await;
 
     Mock::given(method("POST"))
         .and(path("/bottest-token/deleteMessage"))
         .respond_with(ResponseTemplate::new(200).set_body_json(delete_message_response()))
-        .expect(0..)
+        .expect(1)
         .mount(&mock_server)
         .await;
 
@@ -386,14 +386,14 @@ async fn test_e2e_batch_send() {
     Mock::given(method("GET"))
         .and(path("/bottest-token/getMe"))
         .respond_with(ResponseTemplate::new(200).set_body_json(get_me_response()))
-        .expect(0..)
+        .expect(1)
         .mount(&mock_server)
         .await;
 
     Mock::given(method("POST"))
         .and(path("/bottest-token/sendMessage"))
         .respond_with(ResponseTemplate::new(200).set_body_json(send_message_response()))
-        .expect(0..)
+        .expect(2) // batch send 到 2 个 target，各一次 sendMessage
         .mount(&mock_server)
         .await;
 
