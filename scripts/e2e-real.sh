@@ -120,12 +120,12 @@ print_phase_timing_summary() {
     for _p in "${_order[@]}"; do
         local _t="${PHASE_TIMES[$_p]:-0}"
         if [ "$_t" -gt 0 ] 2>/dev/null; then
-            printf "  %-30s %4ds\n" "$_p" "$_t"
+            printf "  %-35s %4ds\n" "$_p" "$_t"
             _total=$((_total + _t))
         fi
     done
     echo "  ──────────────────────────────────────"
-    printf "  %-30s %4ds\n" "总计" "$_total"
+    printf "  %-35s %4ds\n" "总计" "$_total"
 }
 
 adapter_display_name() {
@@ -278,7 +278,8 @@ phase2_wait_for_adapters() {
             '[.adapters[] | select(.connected == false) | .display_name] | join(", ")' 2>/dev/null || echo "?")
 
         # 进度行（每轮一行，不原地刷新以保证终端兼容性）
-        echo -e "  ⏳ ${_connected}/${_total} 已连接 (${_still_connecting:-?} 仍在连接) [${_elapsed}s]"
+        printf "  ⏳ %d/%d 已连接 (%-20s 仍在连接) [%3ds]\n" \
+            "$_connected" "$_total" "${_still_connecting:-?}" "$_elapsed"
 
         # 超时检查
         if [ "$_elapsed" -ge "$ADAPTER_CONNECT_TIMEOUT" ]; then
@@ -370,8 +371,8 @@ phase3_wait_for_messages() {
             [ -n "$p" ] && found_platforms+=("$p")
         done <<< "$cur_platforms"
 
-        # 构建逐平台状态行
-        local _line_parts=()
+        # 构建逐平台状态行（固定宽度，保证各轮对齐）
+        printf "  [%3ds]" "$elapsed"
         for p in "${expected_platforms[@]}"; do
             local _found=false
             for f in "${found_platforms[@]}"; do
@@ -380,14 +381,15 @@ phase3_wait_for_messages() {
             local _dname
             _dname=$(adapter_display_name "$p")
             if [ "$_found" = true ]; then
-                _line_parts+=("${GREEN}✅${NC} ${_dname}")
+                printf '%b' "  ${GREEN}✅${NC} "
             else
-                _line_parts+=("${YELLOW}⏳${NC} ${_dname}")
+                printf '%b' "  ${YELLOW}⏳${NC} "
             fi
+            printf "%-10s" "$_dname"
         done
 
         local _found_count=${#found_platforms[@]}
-        echo -e "  [${elapsed}s] ${_line_parts[*]}  (${_found_count}/${total_expected})"
+        printf "  (%d/%d)\n" "$_found_count" "$total_expected"
 
         if [ "$_found_count" -ge "$total_expected" ]; then
             echo ""
@@ -616,9 +618,11 @@ phase5_verify_and_report() {
     echo ""
     echo -e "  ${BOLD}══════ 逐平台验证 ══════${NC}"
 
-    # 表头
-    printf "  ${BOLD}%-10s %-8s %-6s %-6s %s${NC}\n" "平台" "Session" "入站" "出站" "状态"
-    printf "  %-10s %-8s %-6s %-6s %s\n" "──────────" "───────" "──────" "──────" "───────"
+    # 表头（手动填充到固定 visual 列宽：平台=10, Session=8, 入站=6, 出站=6）
+    printf "  ${BOLD}%s %s %s %s %s${NC}\n" \
+        "平台      " "Session " "入站  " "出站  " "状态"
+    printf "  %s %s %s %s %s\n" \
+        "──────────" "────────" "──────" "──────" "───────"
 
     local all_pass=true
     for p in telegram discord feishu qq wechat; do
@@ -662,8 +666,18 @@ phase5_verify_and_report() {
 
         [ -z "$status_text" ] && status_text="✅"
 
-        printf "  %-10s %-8s %-6s %-6s %s\n" \
-            "$_dname" "$s_icon" "$i_icon" "$o_icon" "$status_text"
+        # 填充到 10 个 visual 列宽（中文 2 列/字，ASCII 1 列/字）
+        local _padded
+        case "$p" in
+            telegram) _padded="Telegram  " ;;    # 8 vis + 2
+            discord)  _padded="Discord   " ;;    # 7 vis + 3
+            feishu)   _padded="飞书      " ;;    # 4 vis + 6
+            qq)       _padded="QQ        " ;;    # 2 vis + 8
+            wechat)   _padded="个人微信  " ;;    # 8 vis + 2
+            *)        _padded="$_dname" ;;
+        esac
+        printf "  %s %-8s %-6s %-6s %s\n" \
+            "$_padded" "$s_icon" "$i_icon" "$o_icon" "$status_text"
     done
 
     echo ""
