@@ -371,14 +371,27 @@ impl PlatformAdapter for TelegramAdapter {
         let client = self.http_client();
         let url = self.api_url("getMe");
 
-        let resp =
-            client.get(&url).send().await.map_err(|e| {
-                GatewayError::Internal(format!("Failed to connect to Telegram: {}", e))
-            })?;
+        let resp = match client.get(&url).send().await {
+            Ok(r) => r,
+            Err(e) => {
+                return Ok(ConnectResult {
+                    ok: false,
+                    error: Some(format!("Failed to connect to Telegram: {}", e)),
+                    bot_info: None,
+                });
+            }
+        };
 
-        let api_resp: TelegramApiResponse<TelegramBotInfo> = resp.json().await.map_err(|e| {
-            GatewayError::Internal(format!("Failed to parse getMe response: {}", e))
-        })?;
+        let api_resp: TelegramApiResponse<TelegramBotInfo> = match resp.json().await {
+            Ok(r) => r,
+            Err(e) => {
+                return Ok(ConnectResult {
+                    ok: false,
+                    error: Some(format!("Failed to parse getMe response: {}", e)),
+                    bot_info: None,
+                });
+            }
+        };
 
         if !api_resp.ok {
             let desc = api_resp
