@@ -247,11 +247,15 @@ async fn main() -> anyhow::Result<()> {
             .create_key("dev", vec!["*".to_string()], None)
             .await
         {
-            Ok((id, key)) => tracing::info!(
-                "Dev API Key created: id={}, key_prefix={}...",
-                id,
-                &key[..key.len().min(8)]
-            ),
+            Ok((id, key)) => {
+                tracing::info!(
+                    "Dev API Key created: id={}, key_prefix={}...",
+                    id,
+                    &key[..key.len().min(8)]
+                );
+                // E2E 脚本通过 stdout 提取完整 key（不经过 tracing，不会写入日志文件）
+                println!("E2E_API_KEY={}", key);
+            }
             Err(e) => tracing::warn!("Failed to create dev API key: {}", e),
         }
     }

@@ -43,6 +43,7 @@ fi
 BASE_URL="${E2E_BASE_URL:-http://127.0.0.1:8080}"
 API_BASE="$BASE_URL/api/v1"
 LOG_FILE="/tmp/easybot-e2e.log"
+STDOUT_FILE="/tmp/easybot-e2e-stdout.log"
 WAIT_TIMEOUT="${E2E_TIMEOUT:-30}"
 START_TIMEOUT="${E2E_START_TIMEOUT:-60}"
 ADAPTER_CONNECT_TIMEOUT="${E2E_ADAPTER_TIMEOUT:-30}"
@@ -179,7 +180,7 @@ phase1_build_and_start() {
     info "启动 easybot --debug（日志: $LOG_FILE）..."
     # 只重定向 stderr 到日志文件，stdout 保留在终端
     # 这样 println! 输出（如微信 QR 码）用户可以直接看到
-    cargo run --features full -- --debug 2>"$LOG_FILE" &
+    cargo run --features full -- --debug 2>"$LOG_FILE" | tee "$STDOUT_FILE" &
     E2E_PID=$!
 
     # 等待服务就绪
@@ -208,10 +209,12 @@ phase1_build_and_start() {
     done
     pass "服务已启动 (PID=$E2E_PID, ${_elapsed:-?}s)"
 
-    # 提取 Dev API Key
-    E2E_API_KEY=$(grep -o 'key=eb_[a-f0-9]*' "$LOG_FILE" | head -1 | cut -d= -f2)
+    # 提取 Dev API Key（从 stdout 输出中解析 E2E_API_KEY=...）
+    E2E_API_KEY=$(grep -o 'E2E_API_KEY=eb_[a-f0-9]*' "$STDOUT_FILE" | head -1 | cut -d= -f2)
     if [ -z "$E2E_API_KEY" ]; then
-        fail "未找到 Dev API Key（日志中无 key=eb_...）"
+        fail "未找到 Dev API Key（stdout 中无 E2E_API_KEY=eb_...）"
+        info "stdout 最后 10 行:"
+        tail -10 "$STDOUT_FILE" | sed 's/^/    /'
         info "日志最后 10 行:"
         tail -10 "$LOG_FILE" | sed 's/^/    /'
         exit 1
@@ -677,7 +680,8 @@ phase5_verify_and_report() {
 
     echo -e "${BOLD}═══════════════════════════════════════════${NC}"
     echo ""
-    info "完整日志: $LOG_FILE"
+    info "Stderr 日志: $LOG_FILE"
+    info "Stdout 输出: $STDOUT_FILE"
 
     phase_timer_end
 }
