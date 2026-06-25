@@ -2,8 +2,6 @@ name: Release
 
 on:
   workflow_dispatch:
-  push:
-    tags: ["v*"]
 
 env:
   CARGO_TERM_COLOR: always
@@ -13,10 +11,11 @@ env:
 jobs:
   # ── Cut release: bump version, update changelog, tag ─────────
   cut-release:
-    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    outputs:
+      version: ${{ steps.version.outputs.version }}
 
     steps:
       - uses: actions/checkout@v7
@@ -77,7 +76,7 @@ jobs:
           fi
           sed -i "/^## \[Unreleased\]/a\\\n$NEW_ENTRY" CHANGELOG.md
 
-      - name: Commit, tag, and push
+      - name: Commit and tag locally
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
@@ -86,11 +85,24 @@ jobs:
           git add Cargo.toml CHANGELOG.md
           git commit -m "chore: bump version to v$VERSION"
           git tag "v$VERSION"
-          git push origin main --tags
+
+      - name: Push tag to origin
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          git push origin "v$VERSION"
+
+      - name: Upload updated files
+        uses: actions/upload-artifact@v7
+        with:
+          name: updated-files
+          path: |
+            Cargo.toml
+            CHANGELOG.md
 
   # ── Verify: run full CI checks before releasing ─────────────────
   verify:
-    if: github.event_name == 'push'
+    needs: cut-release
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -104,6 +116,12 @@ jobs:
 
       - name: Setup sccache
         uses: mozilla-actions/sccache-action@v0.0.10
+
+      - name: Apply version bump
+        uses: actions/download-artifact@v8
+        with:
+          name: updated-files
+          path: .
 
       - name: Format
         run: cargo fmt --all --check
@@ -122,7 +140,7 @@ jobs:
 
   # ── Cross-compile release binaries ────────────────────────────
   build-binaries:
-    needs: verify
+    needs: cut-release
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -153,6 +171,12 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           target: ${{ matrix.target }}
+
+      - name: Apply version bump
+        uses: actions/download-artifact@v8
+        with:
+          name: updated-files
+          path: .
 
       - name: Install protoc (Linux)
         run: sudo apt-get update -qq && sudo apt-get install -y -qq protobuf-compiler
@@ -193,12 +217,11 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-      packages: write
 
     steps:
       - uses: actions/checkout@v7
 
-      - name: Download all artifacts
+      - name: Download all binary artifacts
         uses: actions/download-artifact@v8
 
       - name: Generate checksums
@@ -213,17 +236,18 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v3
         with:
-          name: EasyBot ${{ github.ref_name }}
+          tag_name: v${{ needs.cut-release.outputs.version }}
+          name: EasyBot v${{ needs.cut-release.outputs.version }}
           body_path: CHANGELOG.md
           draft: false
-          prerelease: ${{ contains(github.ref_name, '-') }}
+          prerelease: ${{ contains(needs.cut-release.outputs.version, '-') }}
           files: |
             easybot-*/easybot-*
             checksums.txt
 
   # ── Build and push Docker image ────────────────────────────────
   docker:
-    needs: verify
+    needs: cut-release
     runs-on: ubuntu-latest
     permissions:
       contents: read
