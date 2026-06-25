@@ -1335,7 +1335,7 @@ async fn poll_messages(
         .map_err(|e| GatewayError::Internal(format!("Longpoll read body failed: {}", e)))?;
 
     tracing::debug!(
-        "QQ getupdates raw response: {}",
+        "WeChat poll_messages raw response: {}",
         &resp_text[..resp_text.len().min(500)]
     );
 
