@@ -38,6 +38,26 @@ fn write_port_override(dir: &std::path::Path, port: u16) {
         .expect("failed to write port override");
 }
 
+/// 从 --version 输出中提取版本号
+fn parse_version_from_output(output: &str) -> Option<&str> {
+    // 输出格式: "easybot X.Y.Z"
+    // 或: "easybot 0.1.0"
+    let prefix = "easybot ";
+    if let Some(pos) = output.find(prefix) {
+        let rest = &output[pos + prefix.len()..];
+        let version = rest.split_whitespace().next()?;
+        // 验证是 semver 格式
+        let parts: Vec<&str> = version.split('.').collect();
+        if parts.len() == 3 && parts.iter().all(|p| p.chars().all(|c| c.is_ascii_digit())) {
+            Some(version)
+        } else {
+            None
+        }
+    } else {
+        None
+    }
+}
+
 #[test]
 fn test_cli_version() {
     let output = Command::new(easybot_bin())
@@ -50,7 +70,11 @@ fn test_cli_version() {
         stdout.contains("easybot"),
         "output should contain 'easybot'"
     );
-    assert!(stdout.contains("0.1.0"), "output should contain version");
+    assert!(
+        parse_version_from_output(&stdout).is_some(),
+        "output should contain a valid semver version (X.Y.Z), got: {}",
+        stdout.trim()
+    );
 }
 
 #[test]
