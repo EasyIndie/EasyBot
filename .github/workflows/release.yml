@@ -18,7 +18,7 @@ jobs:
       version: ${{ steps.version.outputs.version }}
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
         with:
           ref: main
           fetch-depth: 0
@@ -78,7 +78,7 @@ jobs:
           ' CHANGELOG.md > release_body.md
 
       - name: Upload release body
-        uses: actions/upload-artifact@v8
+        uses: actions/upload-artifact@v4
         with:
           name: release-body
           path: release_body.md
@@ -88,7 +88,7 @@ jobs:
     needs: cut-release
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
         with:
           ref: main
           fetch-depth: 0
@@ -139,7 +139,7 @@ jobs:
       fail-fast: false
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
         with:
           ref: main
       - uses: ./.github/actions/setup-rust
@@ -166,7 +166,7 @@ jobs:
           echo "archive=$ARCHIVE" >> $GITHUB_ENV
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v8
+        uses: actions/upload-artifact@v4
         with:
           name: easybot-${{ matrix.target }}
           path: easybot-${{ matrix.target }}${{ matrix.suffix }}
@@ -180,10 +180,10 @@ jobs:
       contents: write
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
 
       - name: Download all binary artifacts
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@v4
 
       - name: Generate checksums
         run: |
@@ -195,7 +195,7 @@ jobs:
           done
 
       - name: Download release body
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@v4
         with:
           name: release-body
           path: .release-body
@@ -221,15 +221,15 @@ jobs:
       packages: write
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
 
       - name: Download linux x86_64 binary
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@v4
         with:
           name: easybot-x86_64-unknown-linux-gnu
 
       - name: Download linux aarch64 binary
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@v4
         with:
           name: easybot-aarch64-unknown-linux-gnu
 
@@ -249,7 +249,7 @@ jobs:
             type=raw,value=latest,enable={{is_default_branch}}
 
       - name: Build and push Docker image
-        uses: docker/build-push-action@v7
+        uses: docker/build-push-action@v6
         with:
           context: .
           file: Dockerfile.release

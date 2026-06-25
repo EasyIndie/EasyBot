@@ -26,7 +26,7 @@ jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-rust
         with:
           components: clippy, rustfmt
@@ -44,7 +44,7 @@ jobs:
   test-default:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-rust
 
       - name: Install cargo-nextest
@@ -62,7 +62,7 @@ jobs:
   test-full:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-rust
 
       - name: Install cargo-nextest
@@ -94,7 +94,7 @@ jobs:
           - "--no-default-features --features adapter-wechat"
       fail-fast: false
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-rust
         with:
           cache-cargo-registry: "true"
@@ -110,7 +110,7 @@ jobs:
         os: [windows-latest, macos-latest, windows-11-arm]
       fail-fast: false
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-rust
         with:
           cache-cargo-registry: "true"
@@ -126,7 +126,7 @@ jobs:
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-rust
 
       - name: Install cargo-llvm-cov
@@ -144,7 +144,7 @@ jobs:
         run: cargo llvm-cov --workspace --features "full,plugin-system" --locked --lcov --output-path lcov.info
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v7
+        uses: codecov/codecov-action@v5
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: lcov.info
