@@ -188,11 +188,19 @@ jobs:
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Install protoc (macOS)
+        run: brew install protobuf
+        if: runner.os == 'macOS'
+
       - name: Install cross-compilation dependencies (aarch64-linux)
         if: matrix.target == 'aarch64-unknown-linux-gnu'
         run: sudo apt-get install -y -qq gcc-aarch64-linux-gnu
 
       - name: Build release binary
+        env:
+          # aarch64-linux cross-compilation requires the cross-gcc linker;
+          # the default `cc` on x86_64 invokes lld in x86_64 mode and fails
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
         run: cargo build --release --features "full,plugin-system" --target ${{ matrix.target }} --locked
 
       - name: Prepare artifact
@@ -246,8 +254,9 @@ jobs:
             checksums.txt
 
   # ── Build and push Docker image ────────────────────────────────
+  # Uses pre-built binaries from build-binaries — skips Rust compilation.
   docker:
-    needs: cut-release
+    needs: [cut-release, build-binaries]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -256,8 +265,23 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v4
+      - name: Download linux x86_64 binary
+        uses: actions/download-artifact@v8
+        with:
+          name: easybot-x86_64-unknown-linux-gnu
+
+      - name: Download linux aarch64 binary
+        uses: actions/download-artifact@v8
+        with:
+          name: easybot-aarch64-unknown-linux-gnu
+
+      - name: Prepare binaries for Docker
+        run: |
+          mkdir -p dist/
+          # download-artifact@v4+ extracts single named artifacts directly (no subdirectory)
+          cp easybot-x86_64-unknown-linux-gnu dist/easybot-amd64
+          cp easybot-aarch64-unknown-linux-gnu dist/easybot-arm64
+          chmod +x dist/easybot-*
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
@@ -283,9 +307,8 @@ jobs:
         uses: docker/build-push-action@v7
         with:
           context: .
+          file: Dockerfile.release
           push: true
           platforms: linux/amd64,linux/arm64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
