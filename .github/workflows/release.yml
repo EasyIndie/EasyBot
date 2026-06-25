@@ -1,6 +1,7 @@
 name: Release
 
 on:
+  workflow_dispatch:
   push:
     tags: ["v*"]
 
@@ -10,8 +11,86 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
+  # ── Cut release: bump version, update changelog, tag ─────────
+  cut-release:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - name: Determine version from Release Drafter
+        id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          DRAFT_TAG=$(gh release list --limit 10 --json tagName,isDraft --jq '.[] | select(.isDraft) | .tagName' 2>/dev/null | head -1)
+          if [ -n "$DRAFT_TAG" ]; then
+            echo "version=${DRAFT_TAG#v}" >> "$GITHUB_OUTPUT"
+          else
+            CURRENT=$(grep '^version =' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+            MAJOR=$(echo "$CURRENT" | cut -d. -f1)
+            MINOR=$(echo "$CURRENT" | cut -d. -f2)
+            PATCH=$(echo "$CURRENT" | cut -d. -f3)
+            echo "version=$MAJOR.$MINOR.$((PATCH + 1))" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Validate version
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if ! echo "$VERSION" | grep -qxE '[0-9]+\.[0-9]+\.[0-9]+'; then
+            echo "ERROR: invalid version '$VERSION'"
+            exit 1
+          fi
+
+      - name: Get Release Drafter body
+        id: drafter
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          DRAFT_BODY=$(gh release list --limit 10 --json body,isDraft --jq '.[] | select(.isDraft) | .body' 2>/dev/null | head -1)
+          echo "body<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$DRAFT_BODY" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Update Cargo.toml version
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          sed -i "s/^version = \".*\"/version = \"$VERSION\"/" Cargo.toml
+
+      - name: Update CHANGELOG.md
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          DRAFT_BODY: ${{ steps.drafter.outputs.body }}
+        run: |
+          DATE=$(date +%Y-%m-%d)
+          NEW_ENTRY="## [$VERSION] - $DATE"
+          if [ -n "$DRAFT_BODY" ]; then
+            NEW_ENTRY="$NEW_ENTRY\n\n$DRAFT_BODY"
+          fi
+          sed -i "/^## \[Unreleased\]/a\\\n$NEW_ENTRY" CHANGELOG.md
+
+      - name: Commit, tag, and push
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Cargo.toml CHANGELOG.md
+          git commit -m "chore: bump version to v$VERSION"
+          git tag "v$VERSION"
+          git push origin main --tags
+
   # ── Verify: run full CI checks before releasing ─────────────────
   verify:
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -63,6 +142,9 @@ jobs:
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             suffix: ".exe"
+          - os: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            suffix: ".exe"
       fail-fast: false
 
     steps:
@@ -72,9 +154,15 @@ jobs:
         with:
           target: ${{ matrix.target }}
 
-      - name: Install protoc
+      - name: Install protoc (Linux)
         run: sudo apt-get update -qq && sudo apt-get install -y -qq protobuf-compiler
         if: runner.os == 'Linux'
+
+      - name: Install protoc (Windows)
+        uses: arduino/setup-protoc@v3
+        if: runner.os == 'Windows'
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install cross-compilation dependencies (aarch64-linux)
         if: matrix.target == 'aarch64-unknown-linux-gnu'
@@ -120,6 +208,7 @@ jobs:
           cd ../easybot-x86_64-apple-darwin && sha256sum easybot-x86_64-apple-darwin* >> ../checksums.txt
           cd ../easybot-aarch64-apple-darwin && sha256sum easybot-aarch64-apple-darwin* >> ../checksums.txt
           cd ../easybot-x86_64-pc-windows-msvc && sha256sum easybot-x86_64-pc-windows-msvc* >> ../checksums.txt
+          cd ../easybot-aarch64-pc-windows-msvc && sha256sum easybot-aarch64-pc-windows-msvc* >> ../checksums.txt
 
       - name: Create Release
         uses: softprops/action-gh-release@v3
@@ -131,7 +220,6 @@ jobs:
           files: |
             easybot-*/easybot-*
             checksums.txt
-          generate_release_notes: true
 
   # ── Build and push Docker image ────────────────────────────────
   docker:

@@ -153,7 +153,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [windows-latest, macos-latest]
+        os: [windows-latest, macos-latest, windows-11-arm]
       fail-fast: false
     steps:
       - uses: actions/checkout@v7
