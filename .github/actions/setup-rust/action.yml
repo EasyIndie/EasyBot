@@ -1,0 +1,72 @@
+name: Setup Rust toolchain
+description: >
+  Checkout, Rust toolchain, platform-detecting protoc, sccache, and Cargo registry caching.
+  Use as the first step in any job that compiles Rust code.
+
+inputs:
+  components:
+    description: "Additional Rustup components (e.g., 'clippy, rustfmt')"
+    required: false
+    default: ""
+  target:
+    description: "Rust target triple for cross-compilation (e.g., 'aarch64-unknown-linux-gnu')"
+    required: false
+    default: ""
+  install-protoc:
+    description: >
+      Protoc installation strategy: 'auto' (detect from runner.os), 'linux', 'macos', 'windows',
+      or 'none' to skip entirely.
+    required: false
+    default: auto
+  cache-cargo-registry:
+    description: "Whether to cache ~/.cargo/registry and ~/.cargo/git"
+    required: false
+    default: "true"
+  sccache:
+    description: "Whether to set up sccache"
+    required: false
+    default: "true"
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/checkout@v7
+
+    - uses: actions-rust-lang/setup-rust-toolchain@v1
+      with:
+        components: ${{ inputs.components }}
+        target: ${{ inputs.target }}
+
+    # ----- protoc (Linux) -----
+    - name: Install protoc (Linux apt)
+      if: ${{ runner.os == 'Linux' && (inputs.install-protoc == 'auto' || inputs.install-protoc == 'linux') }}
+      shell: bash
+      run: sudo apt-get update -qq && sudo apt-get install -y -qq protobuf-compiler
+
+    # ----- protoc (macOS) -----
+    - name: Install protoc (macOS brew)
+      if: ${{ runner.os == 'macOS' && (inputs.install-protoc == 'auto' || inputs.install-protoc == 'macos') }}
+      shell: bash
+      run: brew install protobuf
+
+    # ----- protoc (Windows) -----
+    - name: Install protoc (Windows)
+      if: ${{ runner.os == 'Windows' && (inputs.install-protoc == 'auto' || inputs.install-protoc == 'windows') }}
+      uses: arduino/setup-protoc@v3
+      with:
+        repo-token: ${{ github.token }}
+
+    - name: Setup sccache
+      if: ${{ inputs.sccache == 'true' }}
+      uses: mozilla-actions/sccache-action@v0.0.10
+
+    - name: Cache Cargo registry
+      if: ${{ inputs.cache-cargo-registry == 'true' }}
+      uses: actions/cache@v5
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+        key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-cargo-registry-

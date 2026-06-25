@@ -3,10 +3,21 @@
 # EasyBot 一键验收脚本
 # 与 CI 执行相同的检验逻辑，开发者在本地（macOS / Linux）运行即可。
 #
+# CI 映射（参见 .github/workflows/ci.yml）:
+#   Step 1 (cargo check)         → ci.yml check
+#   Step 2 (cargo fmt)           → ci.yml check
+#   Step 3 (cargo clippy)        → ci.yml check
+#   Step 4 (Feature Matrix)      → ci.yml test-feature-matrix
+#   Step 5 (cargo build)         → ci.yml test-default
+#   Step 6 (Test default)        → ci.yml test-default
+#   Step 7 (build mock-adapter)  → ci.yml test-full
+#   Step 8 (Test full)           → ci.yml test-full
+#
 # 用法：
-#   bash scripts/verify.sh          # 跑全部检查
-#   bash scripts/verify.sh --fast   # 只跑测试，跳过 clippy / fmt
-#   bash scripts/verify.sh --help   # 查看帮助
+#   bash scripts/verify.sh              # 跑全部检查
+#   bash scripts/verify.sh --fast       # 只跑测试，跳过 clippy / fmt
+#   bash scripts/verify.sh --locked     # 追加 cargo --locked（与 CI 保持一致）
+#   bash scripts/verify.sh --help       # 查看帮助
 #
 
 set -euo pipefail
@@ -40,6 +51,9 @@ else
     TEST_LABEL="test"
 fi
 echo "  测试运行器: $TEST_LABEL"
+
+# --locked 标志：追加到所有 cargo 命令，与 CI 的 --locked 策略一致
+LOCKED=""
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -95,11 +109,14 @@ FAST=false
 for arg in "$@"; do
   case "$arg" in
     --fast) FAST=true ;;
+    --locked) LOCKED="--locked" ;;
     --help)
       echo "EasyBot 一键验收脚本（与 CI workflow 一致）"
       echo ""
-      echo "  bash scripts/verify.sh         完整检查（8 步：fmt + clippy + check + matrix + build + test）"
-      echo "  bash scripts/verify.sh --fast  快速检查，跳过 clippy 和 fmt"
+      echo "  bash scripts/verify.sh             完整检查（8 步：fmt + clippy + check + matrix + build + test）"
+      echo "  bash scripts/verify.sh --fast      快速检查，跳过 clippy 和 fmt"
+      echo "  bash scripts/verify.sh --locked    追加 --locked 到 cargo 命令"
+      echo "  bash scripts/verify.sh --fast --locked  快速 + 锁定依赖版本"
       echo ""
       echo "  步骤:"
       echo "    1. cargo check    (full + plugin-system)"
@@ -122,13 +139,13 @@ echo "╔═══════════════════════�
 echo "║    EasyBot Verification Suite           ║"
 echo "╚══════════════════════════════════════════╝"
 echo "  工作目录: $PROJECT_DIR"
-echo "  模式: $([ "$FAST" = true ] && echo 'fast (跳过 lint/fmt)' || echo '完整')"
+echo "  模式: $([ "$FAST" = true ] && echo 'fast (跳过 lint/fmt)' || echo '完整')$([ -n "$LOCKED" ] && echo ' + locked')"
 echo "  日期: $(date '+%Y-%m-%d %H:%M:%S')"
 echo ""
 
 # ── 1. 编译检查 ──────────────────────────────────────────────────
 run_step "cargo check (workspace + full features)" \
-  $CARGO check --workspace --features "full,plugin-system"
+  $CARGO check --workspace --features "full,plugin-system" $LOCKED
 
 # ── 2. 格式化检查（全量提交时必做）───────────────────────────────
 if [ "$FAST" = false ]; then
@@ -139,7 +156,7 @@ fi
 # ── 3. Clippy lint（全量提交时必做）───────────────────────────────
 if [ "$FAST" = false ]; then
   run_step "cargo clippy (all targets + warnings as errors)" \
-    $CARGO clippy --workspace --features "full,plugin-system" --all-targets -- -D warnings
+    $CARGO clippy --workspace --features "full,plugin-system" --all-targets $LOCKED -- -D warnings
 fi
 
 # ── 4. Feature Matrix 检查（与 CI test-feature-matrix 一致）─────
@@ -165,7 +182,7 @@ for entry in "${FEATURE_COMBOS[@]}"; do
     label=$(echo "$label" | xargs)
 
     echo -ne "  ⏳ ${label}..."
-    if $CARGO check --workspace $features >/dev/null 2>&1; then
+    if $CARGO check --workspace $features $LOCKED >/dev/null 2>&1; then
         echo -e "\r  ${GREEN}✅${NC} ${label}"
     else
         echo -e "\r  ${RED}❌${NC} ${label} — cargo check 失败！"
@@ -185,19 +202,19 @@ fi
 
 # ── 5. 构建全部（确保 mock-adapter 可用）──────────────────────────
 run_step "cargo build --workspace" \
-  $CARGO build --workspace
+  $CARGO build --workspace $LOCKED
 
 # ── 6. 默认特性下的测试 ──────────────────────────────────────────
 run_step "$TEST_LABEL (default features)" \
-  $TEST_RUNNER --workspace
+  $TEST_RUNNER --workspace $LOCKED
 
 # ── 7. 编译 mock-adapter（插件集成测试前置条件）───────────────────
 run_step "cargo build -p mock-adapter" \
-  $CARGO build -p mock-adapter
+  $CARGO build -p mock-adapter $LOCKED
 
 # ── 8. 全特性测试（验证所有适配器 + 插件系统 + E2E）─────────────
 run_step "$TEST_LABEL (full features + plugin-system)" \
-  $TEST_RUNNER --workspace --features "full,plugin-system"
+  $TEST_RUNNER --workspace --features "full,plugin-system" $LOCKED
 
 # ── 汇总报告 ─────────────────────────────────────────────────────
 echo ""
