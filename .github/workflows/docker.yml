@@ -51,31 +51,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
-
-      - name: Lowercase repository name for GHCR
-        id: lower
-        run: echo "repo=${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
-
-      - name: Log in to GHCR
-        uses: docker/login-action@v4
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Extract metadata (tags, labels)
-        id: meta
-        uses: docker/metadata-action@v6
-        with:
-          images: ${{ env.REGISTRY }}/${{ steps.lower.outputs.repo }}
-          tags: |
-            type=ref,event=branch
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=sha,prefix=,suffix=,format=short
-            type=raw,value=latest,enable={{is_default_branch}}
+      - uses: ./.github/actions/docker-setup
+        id: docker-prep
 
       - name: Build and push by digest
         id: build
@@ -84,10 +61,10 @@ jobs:
           context: .
           push: true
           platforms: linux/amd64
-          labels: ${{ steps.meta.outputs.labels }}
+          labels: ${{ steps.docker-prep.outputs.meta-labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          outputs: type=image,name=${{ env.REGISTRY }}/${{ steps.lower.outputs.repo }},push-by-digest=true
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ steps.docker-prep.outputs.lower-repo }},push-by-digest=true
 
   # ── arm64: 原生 ARM 构建（GitHub 原生 ARM runner） ──
   build-arm64:
@@ -102,31 +79,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
-
-      - name: Lowercase repository name for GHCR
-        id: lower
-        run: echo "repo=${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
-
-      - name: Log in to GHCR
-        uses: docker/login-action@v4
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Extract metadata (tags, labels)
-        id: meta
-        uses: docker/metadata-action@v6
-        with:
-          images: ${{ env.REGISTRY }}/${{ steps.lower.outputs.repo }}
-          tags: |
-            type=ref,event=branch
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=sha,prefix=,suffix=,format=short
-            type=raw,value=latest,enable={{is_default_branch}}
+      - uses: ./.github/actions/docker-setup
+        id: docker-prep
 
       - name: Build and push by digest
         id: build
@@ -135,10 +89,10 @@ jobs:
           context: .
           push: true
           platforms: linux/arm64
-          labels: ${{ steps.meta.outputs.labels }}
+          labels: ${{ steps.docker-prep.outputs.meta-labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-          outputs: type=image,name=${{ env.REGISTRY }}/${{ steps.lower.outputs.repo }},push-by-digest=true
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ steps.docker-prep.outputs.lower-repo }},push-by-digest=true
 
   # ── Merge: 组合 multi-arch manifest 并打标签推送 ──
   merge:
@@ -152,40 +106,17 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
-
-      - name: Lowercase repository name for GHCR
-        id: lower
-        run: echo "repo=${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
-
-      - name: Log in to GHCR
-        uses: docker/login-action@v4
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Extract metadata (tags, labels)
-        id: meta
-        uses: docker/metadata-action@v6
-        with:
-          images: ${{ env.REGISTRY }}/${{ steps.lower.outputs.repo }}
-          tags: |
-            type=ref,event=branch
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=sha,prefix=,suffix=,format=short
-            type=raw,value=latest,enable={{is_default_branch}}
+      - uses: ./.github/actions/docker-setup
+        id: docker-prep
 
       - name: Create and push multi-arch manifest
         shell: bash
         run: |
           REGISTRY="${{ env.REGISTRY }}"
-          IMAGE="${{ steps.lower.outputs.repo }}"
+          IMAGE="${{ steps.docker-prep.outputs.lower-repo }}"
           DIGEST_AMD64="${{ needs.build-amd64.outputs.digest }}"
           DIGEST_ARM64="${{ needs.build-arm64.outputs.digest }}"
-          TAGS="${{ steps.meta.outputs.tags }}"
+          TAGS="${{ steps.docker-prep.outputs.meta-tags }}"
 
           while IFS= read -r tag; do
             [ -z "$tag" ] && continue
