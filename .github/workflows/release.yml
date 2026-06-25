@@ -56,13 +56,23 @@ jobs:
           # 此处只插入版本号 header，原有内容自动归入此版本
           sed -i "/^## \[Unreleased\]/a\\\n## [$VERSION] - $DATE" CHANGELOG.md
 
+      - name: Update insta snapshots to match new version
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          SNAP="crates/easybot-api/tests/snapshots/routes__health_response.snap"
+          if [ -f "$SNAP" ]; then
+            sed -i 's/"version": ".*"/"version": "'"$VERSION"'"/' "$SNAP"
+          fi
+
       - name: Commit, tag, push to main
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Cargo.toml CHANGELOG.md Cargo.lock
+          git add Cargo.toml CHANGELOG.md Cargo.lock \
+            crates/easybot-api/tests/snapshots/routes__health_response.snap
           git commit -m "chore: bump version to v$VERSION"
           git tag "v$VERSION"
           git push origin main
