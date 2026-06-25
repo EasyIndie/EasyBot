@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-06-25
+
 ### Added
 - **P5 Plugin System**: Plugin SDK, dynamic library loading, plugin registry, loader tests, developer docs.
 - Pre-push hook: automatically runs verification script before push to catch CI failures early.
