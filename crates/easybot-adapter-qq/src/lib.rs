@@ -158,28 +158,74 @@ impl QqAdapter {
             .get()
     }
 
-    /// QQ API GET
-    async fn api_get<T: serde::de::DeserializeOwned>(&self, path: &str) -> Result<T, GatewayError> {
+    /// 发送 QQ API 请求，检测 401 Unauthorized 时自动刷新 token 并重试一次
+    async fn send_api_request<T: serde::de::DeserializeOwned>(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        body: Option<&serde_json::Value>,
+    ) -> Result<T, GatewayError> {
         let token = self.bot_token()?;
+        let result = self
+            .send_api_request_raw(&token, method.clone(), path, body)
+            .await;
+
+        // token 过期（HTTP 401）时刷新一次并重试
+        if let Err(GatewayError::Internal(msg)) = &result
+            && msg.contains("401")
+        {
+            tracing::warn!(
+                "QQ API 返回 401 Unauthorized（token 可能已过期），尝试刷新 token 后重试"
+            );
+            if let Some(ref store) = self.token_store {
+                let _ = store.refresh().await;
+            }
+            let new_token = self.bot_token()?;
+            return self
+                .send_api_request_raw(&new_token, method, path, body)
+                .await;
+        }
+
+        result
+    }
+
+    /// 发送原始的 QQ API 请求（无 401 重试）
+    async fn send_api_request_raw<T: serde::de::DeserializeOwned>(
+        &self,
+        token: &str,
+        method: reqwest::Method,
+        path: &str,
+        body: Option<&serde_json::Value>,
+    ) -> Result<T, GatewayError> {
         let client = self.client();
         let url = format!("{}{}", self.api_base_url(), path);
-        let resp = client
-            .get(&url)
-            .header("Authorization", &token)
+        let mut req = client
+            .request(method.clone(), &url)
+            .header("Authorization", token);
+        if let Some(b) = body {
+            req = req.json(b);
+        }
+        let resp = req
             .send()
             .await
-            .map_err(|e| GatewayError::Internal(format!("QQ GET {} failed: {}", path, e)))?;
+            .map_err(|e| GatewayError::Internal(format!("QQ {} {} failed: {}", method, path, e)))?;
         if !resp.status().is_success() {
             let s = resp.status();
             let b = resp.text().await.unwrap_or_default();
             return Err(GatewayError::Internal(format!(
-                "QQ API error (GET {}): {} - {}",
-                path, s, b
+                "QQ API error ({} {}): {} - {}",
+                method, path, s, b
             )));
         }
-        resp.json()
+        resp.json::<T>().await.map_err(|e| {
+            GatewayError::Internal(format!("QQ {} {} parse failed: {}", method, path, e))
+        })
+    }
+
+    /// QQ API GET
+    async fn api_get<T: serde::de::DeserializeOwned>(&self, path: &str) -> Result<T, GatewayError> {
+        self.send_api_request(reqwest::Method::GET, path, None)
             .await
-            .map_err(|e| GatewayError::Internal(format!("QQ GET {} parse failed: {}", path, e)))
     }
 
     /// QQ API POST
@@ -188,27 +234,8 @@ impl QqAdapter {
         path: &str,
         body: &serde_json::Value,
     ) -> Result<T, GatewayError> {
-        let token = self.bot_token()?;
-        let client = self.client();
-        let url = format!("{}{}", self.api_base_url(), path);
-        let resp = client
-            .post(&url)
-            .header("Authorization", &token)
-            .json(body)
-            .send()
+        self.send_api_request(reqwest::Method::POST, path, Some(body))
             .await
-            .map_err(|e| GatewayError::Internal(format!("QQ POST {} failed: {}", path, e)))?;
-        if !resp.status().is_success() {
-            let s = resp.status();
-            let b = resp.text().await.unwrap_or_default();
-            return Err(GatewayError::Internal(format!(
-                "QQ API error (POST {}): {} - {}",
-                path, s, b
-            )));
-        }
-        resp.json()
-            .await
-            .map_err(|e| GatewayError::Internal(format!("QQ POST {} parse failed: {}", path, e)))
     }
 
     /// QQ API PATCH
@@ -217,37 +244,39 @@ impl QqAdapter {
         path: &str,
         body: &serde_json::Value,
     ) -> Result<T, GatewayError> {
-        let token = self.bot_token()?;
-        let client = self.client();
-        let url = format!("{}{}", self.api_base_url(), path);
-        let resp = client
-            .patch(&url)
-            .header("Authorization", &token)
-            .json(body)
-            .send()
+        self.send_api_request(reqwest::Method::PATCH, path, Some(body))
             .await
-            .map_err(|e| GatewayError::Internal(format!("QQ PATCH {} failed: {}", path, e)))?;
-        if !resp.status().is_success() {
-            let s = resp.status();
-            let b = resp.text().await.unwrap_or_default();
-            return Err(GatewayError::Internal(format!(
-                "QQ API error (PATCH {}): {} - {}",
-                path, s, b
-            )));
-        }
-        resp.json()
-            .await
-            .map_err(|e| GatewayError::Internal(format!("QQ PATCH {} parse failed: {}", path, e)))
     }
 
-    /// QQ API DELETE
+    /// QQ API DELETE（不期望 JSON body，仅验证状态码）
     async fn api_delete(&self, path: &str) -> Result<(), GatewayError> {
         let token = self.bot_token()?;
+        let result = self.api_delete_raw(&token, path).await;
+
+        // token 过期（HTTP 401）时刷新一次并重试
+        if let Err(GatewayError::Internal(msg)) = &result
+            && msg.contains("401")
+        {
+            tracing::warn!(
+                "QQ API 返回 401 Unauthorized（token 可能已过期），尝试刷新 token 后重试"
+            );
+            if let Some(ref store) = self.token_store {
+                let _ = store.refresh().await;
+            }
+            let new_token = self.bot_token()?;
+            return self.api_delete_raw(&new_token, path).await;
+        }
+
+        result
+    }
+
+    /// 发送原始 DELETE 请求（无 401 重试）
+    async fn api_delete_raw(&self, token: &str, path: &str) -> Result<(), GatewayError> {
         let client = self.client();
         let url = format!("{}{}", self.api_base_url(), path);
         let resp = client
             .delete(&url)
-            .header("Authorization", &token)
+            .header("Authorization", token)
             .send()
             .await
             .map_err(|e| GatewayError::Internal(format!("QQ DELETE {} failed: {}", path, e)))?;

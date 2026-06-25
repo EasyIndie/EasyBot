@@ -99,6 +99,9 @@ struct QrCodeStatusResponse {
 }
 
 /// 长轮询消息响应（实际 API 无 ret 字段，直接返回数据）
+///
+/// 注意：session 过期时 API 返回 `{"errcode":-14,"errmsg":"session timeout"}`，
+/// 此时 msgs 为空。poll_messages() 需主动检查 errcode，否则会误认为"无消息"循环轮询。
 #[derive(Debug, serde::Deserialize)]
 struct GetUpdatesResponse {
     #[serde(default)]
@@ -107,6 +110,11 @@ struct GetUpdatesResponse {
     get_updates_buf: Option<String>,
     #[serde(default)]
     sync_buf: Option<String>,
+    /// API 错误码，0 或缺失表示成功；-14 表示 session 过期
+    #[serde(default)]
+    errcode: i64,
+    #[serde(default)]
+    errmsg: Option<String>,
 }
 
 /// 微信消息（iLink Bot API 实际格式）
@@ -1335,7 +1343,7 @@ async fn poll_messages(
         .map_err(|e| GatewayError::Internal(format!("Longpoll read body failed: {}", e)))?;
 
     tracing::debug!(
-        "QQ getupdates raw response: {}",
+        "WeChat poll_messages raw response: {}",
         &resp_text[..resp_text.len().min(500)]
     );
 
@@ -1346,6 +1354,28 @@ async fn poll_messages(
             &resp_text[..resp_text.len().min(200)]
         ))
     })?;
+
+    // 检测 iLink API 错误：-14 = session 过期，需要重新扫码登录
+    if resp.errcode != 0 {
+        let msg = resp.errmsg.as_deref().unwrap_or("unknown error");
+        if resp.errcode == -14 {
+            tracing::warn!("WeChat session 过期 (errcode=-14)，将清除凭据并触发重新登录");
+            return Err(GatewayError::Internal(format!(
+                "WeChat session expired: {}",
+                msg
+            )));
+        }
+        // 其他错误码也上报，但可能可以恢复（如限流），计入失败计数
+        tracing::warn!(
+            "WeChat API 返回错误: errcode={}, errmsg={}",
+            resp.errcode,
+            msg
+        );
+        return Err(GatewayError::Internal(format!(
+            "WeChat API error: errcode={}, errmsg={}",
+            resp.errcode, msg
+        )));
+    }
 
     let new_buf = resp
         .get_updates_buf

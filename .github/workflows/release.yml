@@ -9,7 +9,7 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  # ── Cut release: bump version, update changelog, tag ─────────
+  # ── Cut release: bump version, tag, push ────────────
   cut-release:
     runs-on: ubuntu-latest
     permissions:
@@ -20,42 +20,23 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          fetch-depth: 0
           ref: main
+          fetch-depth: 0
+          # 用 PAT 提权以绕过分支保护 push 到 main + tag
+          # 需先在 https://github.com/settings/tokens 创建 classic PAT (repo 权限)
+          # 并添加到仓库 Secrets: GH_RELEASE_PAT
+          # 同时将该用户加入分支保护规则集的 bypass_actors
+          token: ${{ secrets.GH_RELEASE_PAT || github.token }}
 
-      - name: Determine version from Release Drafter
+      - name: Determine version
         id: version
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
-          # 优先使用 Release Drafter draft 的 tagName；跳过 tagName 为 null 的 draft
-          DRAFT_TAG=$(gh release list --limit 10 --json tagName,isDraft \
-            --jq '.[] | select(.isDraft) | select(.tagName != null) | .tagName' 2>/dev/null | head -1)
-          if [ -n "$DRAFT_TAG" ]; then
-            VERSION="${DRAFT_TAG#v}"
-          else
-            CURRENT=$(grep '^version =' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
-            MAJOR=$(echo "$CURRENT" | cut -d. -f1)
-            MINOR=$(echo "$CURRENT" | cut -d. -f2)
-            PATCH=$(echo "$CURRENT" | cut -d. -f3)
-            VERSION="$MAJOR.$MINOR.$((PATCH + 1))"
-          fi
-          # 二次验证：确保版本号为有效的 semver
-          if ! echo "$VERSION" | grep -qxE '[0-9]+\.[0-9]+\.[0-9]+'; then
-            echo "ERROR: invalid version '$VERSION' (from DRAFT_TAG=${DRAFT_TAG:-<none>})"
-            exit 1
-          fi
+          CURRENT=$(grep '^version =' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          MAJOR=$(echo "$CURRENT" | cut -d. -f1)
+          MINOR=$(echo "$CURRENT" | cut -d. -f2)
+          PATCH=$(echo "$CURRENT" | cut -d. -f3)
+          VERSION="$MAJOR.$MINOR.$((PATCH + 1))"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-
-      - name: Get Release Drafter body
-        id: drafter
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          DRAFT_BODY=$(gh release list --limit 10 --json body,isDraft --jq '.[] | select(.isDraft) | .body' 2>/dev/null | head -1)
-          echo "body<<EOF" >> "$GITHUB_OUTPUT"
-          echo "$DRAFT_BODY" >> "$GITHUB_OUTPUT"
-          echo "EOF" >> "$GITHUB_OUTPUT"
 
       - name: Update Cargo.toml version
         env:
@@ -63,19 +44,16 @@ jobs:
         run: |
           sed -i "s/^version = \".*\"/version = \"$VERSION\"/" Cargo.toml
 
-      - name: Update CHANGELOG.md
+      - name: Update CHANGELOG.md — add version header under [Unreleased]
         env:
           VERSION: ${{ steps.version.outputs.version }}
-          DRAFT_BODY: ${{ steps.drafter.outputs.body }}
         run: |
           DATE=$(date +%Y-%m-%d)
-          NEW_ENTRY="## [$VERSION] - $DATE"
-          if [ -n "$DRAFT_BODY" ]; then
-            NEW_ENTRY="$NEW_ENTRY\n\n$DRAFT_BODY"
-          fi
-          sed -i "/^## \[Unreleased\]/a\\\n$NEW_ENTRY" CHANGELOG.md
+          # CHANGELOG.md 的 [Unreleased] 下方已在日常 PR 中积累了内容，
+          # 此处只插入版本号 header，原有内容自动归入此版本
+          sed -i "/^## \[Unreleased\]/a\\\n## [$VERSION] - $DATE" CHANGELOG.md
 
-      - name: Commit and tag locally
+      - name: Commit, tag, push to main
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
@@ -84,23 +62,10 @@ jobs:
           git add Cargo.toml CHANGELOG.md
           git commit -m "chore: bump version to v$VERSION"
           git tag "v$VERSION"
-
-      - name: Push tag to origin
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
-        run: |
+          git push origin main
           git push origin "v$VERSION"
 
-      - name: Upload updated files
-        uses: actions/upload-artifact@v7
-        with:
-          name: updated-files
-          path: |
-            Cargo.toml
-            CHANGELOG.md
-
-      # 从更新后的 CHANGELOG.md 提取当前版本对应的 release notes
-      - name: Extract release body
+      - name: Extract release body from CHANGELOG.md
         run: |
           VERSION="${{ steps.version.outputs.version }}"
           awk -v ver="$VERSION" '
@@ -113,26 +78,23 @@ jobs:
           ' CHANGELOG.md > release_body.md
 
       - name: Upload release body
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v8
         with:
           name: release-body
           path: release_body.md
 
-  # ── Verify: run full CI checks before releasing ─────────────────
+  # ── Verify: run full CI checks before releasing ────
   verify:
     needs: cut-release
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: main
+          fetch-depth: 0
       - uses: ./.github/actions/setup-rust
         with:
           components: clippy, rustfmt
-
-      - name: Apply version bump
-        uses: actions/download-artifact@v8
-        with:
-          name: updated-files
-          path: .
 
       - name: Format
         run: cargo fmt --all --check
@@ -149,7 +111,7 @@ jobs:
       - name: Test
         run: cargo test --workspace --features "full,plugin-system" --locked
 
-  # ── Cross-compile release binaries ────────────────────────────
+  # ── Cross-compile release binaries ─────────────────
   build-binaries:
     needs: cut-release
     runs-on: ${{ matrix.os }}
@@ -178,16 +140,12 @@ jobs:
 
     steps:
       - uses: actions/checkout@v7
+        with:
+          ref: main
       - uses: ./.github/actions/setup-rust
         with:
           target: ${{ matrix.target }}
           install-protoc: auto
-
-      - name: Apply version bump
-        uses: actions/download-artifact@v8
-        with:
-          name: updated-files
-          path: .
 
       - name: Install cross-compilation dependencies (aarch64-linux)
         if: matrix.target == 'aarch64-unknown-linux-gnu'
@@ -208,13 +166,13 @@ jobs:
           echo "archive=$ARCHIVE" >> $GITHUB_ENV
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@v8
         with:
           name: easybot-${{ matrix.target }}
           path: easybot-${{ matrix.target }}${{ matrix.suffix }}
           if-no-files-found: error
 
-  # ── Create GitHub Release ──────────────────────────────────────
+  # ── Create GitHub Release ─────────────────────────
   create-release:
     needs: [build-binaries, cut-release]
     runs-on: ubuntu-latest
@@ -229,12 +187,12 @@ jobs:
 
       - name: Generate checksums
         run: |
-          cd easybot-x86_64-unknown-linux-gnu && sha256sum easybot-x86_64-unknown-linux-gnu* >> ../checksums.txt
-          cd ../easybot-aarch64-unknown-linux-gnu && sha256sum easybot-aarch64-unknown-linux-gnu* >> ../checksums.txt
-          cd ../easybot-x86_64-apple-darwin && sha256sum easybot-x86_64-apple-darwin* >> ../checksums.txt
-          cd ../easybot-aarch64-apple-darwin && sha256sum easybot-aarch64-apple-darwin* >> ../checksums.txt
-          cd ../easybot-x86_64-pc-windows-msvc && sha256sum easybot-x86_64-pc-windows-msvc* >> ../checksums.txt
-          cd ../easybot-aarch64-pc-windows-msvc && sha256sum easybot-aarch64-pc-windows-msvc* >> ../checksums.txt
+          # Collect sha256 for all platform binaries
+          for dir in easybot-*-*; do
+            if [ -d "$dir" ]; then
+              cd "$dir" && sha256sum easybot-*-* >> ../checksums.txt && cd ..
+            fi
+          done
 
       - name: Download release body
         uses: actions/download-artifact@v8
@@ -254,8 +212,7 @@ jobs:
             easybot-*/easybot-*
             checksums.txt
 
-  # ── Build and push Docker image ────────────────────────────────
-  # Uses pre-built binaries from build-binaries — skips Rust compilation.
+  # ── Build and push Docker image ────────────────────
   docker:
     needs: [cut-release, build-binaries]
     runs-on: ubuntu-latest
