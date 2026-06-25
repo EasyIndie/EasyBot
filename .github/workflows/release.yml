@@ -74,9 +74,9 @@ jobs:
           git add Cargo.toml CHANGELOG.md Cargo.lock \
             crates/easybot-api/tests/snapshots/routes__health_response.snap
           git commit -m "chore: bump version to v$VERSION"
-          git tag "v$VERSION"
+          git tag -f "v$VERSION"
           git push origin main
-          git push origin "v$VERSION"
+          git push origin "v$VERSION" --force
 
       - name: Extract release body from CHANGELOG.md
         run: |
