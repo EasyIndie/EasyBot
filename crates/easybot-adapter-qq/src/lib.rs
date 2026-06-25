@@ -171,17 +171,19 @@ impl QqAdapter {
             .await;
 
         // token 过期（HTTP 401）时刷新一次并重试
-        if let Err(GatewayError::Internal(msg)) = &result {
-            if msg.contains("401") {
-                tracing::warn!("QQ API 返回 401 Unauthorized（token 可能已过期），尝试刷新 token 后重试");
-                if let Some(ref store) = self.token_store {
-                    let _ = store.refresh().await;
-                }
-                let new_token = self.bot_token()?;
-                return self
-                    .send_api_request_raw(&new_token, method, path, body)
-                    .await;
+        if let Err(GatewayError::Internal(msg)) = &result
+            && msg.contains("401")
+        {
+            tracing::warn!(
+                "QQ API 返回 401 Unauthorized（token 可能已过期），尝试刷新 token 后重试"
+            );
+            if let Some(ref store) = self.token_store {
+                let _ = store.refresh().await;
             }
+            let new_token = self.bot_token()?;
+            return self
+                .send_api_request_raw(&new_token, method, path, body)
+                .await;
         }
 
         result
@@ -203,9 +205,10 @@ impl QqAdapter {
         if let Some(b) = body {
             req = req.json(b);
         }
-        let resp = req.send().await.map_err(|e| {
-            GatewayError::Internal(format!("QQ {} {} failed: {}", method, path, e))
-        })?;
+        let resp = req
+            .send()
+            .await
+            .map_err(|e| GatewayError::Internal(format!("QQ {} {} failed: {}", method, path, e)))?;
         if !resp.status().is_success() {
             let s = resp.status();
             let b = resp.text().await.unwrap_or_default();
@@ -221,7 +224,8 @@ impl QqAdapter {
 
     /// QQ API GET
     async fn api_get<T: serde::de::DeserializeOwned>(&self, path: &str) -> Result<T, GatewayError> {
-        self.send_api_request(reqwest::Method::GET, path, None).await
+        self.send_api_request(reqwest::Method::GET, path, None)
+            .await
     }
 
     /// QQ API POST
@@ -250,15 +254,17 @@ impl QqAdapter {
         let result = self.api_delete_raw(&token, path).await;
 
         // token 过期（HTTP 401）时刷新一次并重试
-        if let Err(GatewayError::Internal(msg)) = &result {
-            if msg.contains("401") {
-                tracing::warn!("QQ API 返回 401 Unauthorized（token 可能已过期），尝试刷新 token 后重试");
-                if let Some(ref store) = self.token_store {
-                    let _ = store.refresh().await;
-                }
-                let new_token = self.bot_token()?;
-                return self.api_delete_raw(&new_token, path).await;
+        if let Err(GatewayError::Internal(msg)) = &result
+            && msg.contains("401")
+        {
+            tracing::warn!(
+                "QQ API 返回 401 Unauthorized（token 可能已过期），尝试刷新 token 后重试"
+            );
+            if let Some(ref store) = self.token_store {
+                let _ = store.refresh().await;
             }
+            let new_token = self.bot_token()?;
+            return self.api_delete_raw(&new_token, path).await;
         }
 
         result

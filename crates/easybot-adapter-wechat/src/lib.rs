@@ -1366,7 +1366,11 @@ async fn poll_messages(
             )));
         }
         // 其他错误码也上报，但可能可以恢复（如限流），计入失败计数
-        tracing::warn!("WeChat API 返回错误: errcode={}, errmsg={}", resp.errcode, msg);
+        tracing::warn!(
+            "WeChat API 返回错误: errcode={}, errmsg={}",
+            resp.errcode,
+            msg
+        );
         return Err(GatewayError::Internal(format!(
             "WeChat API error: errcode={}, errmsg={}",
             resp.errcode, msg
