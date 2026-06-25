@@ -1,0 +1,24 @@
+# syntax=docker/dockerfile:1
+# EasyBot — Release Docker Image (pre-built binary)
+# Uses binaries produced by the build-binaries CI job, skipping Rust compilation.
+FROM debian:bookworm-slim
+
+RUN apt-get update && apt-get install -y \
+    ca-certificates \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN useradd -r -m -s /bin/bash easybot \
+    && mkdir -p /var/lib/easybot/data /var/lib/easybot/logs /var/lib/easybot/plugins /etc/easybot \
+    && chown -R easybot:easybot /var/lib/easybot /etc/easybot
+
+# TARGETARCH is auto-injected by Docker Buildx during multi-platform builds
+# (amd64 for x86_64 builds, arm64 for aarch64 builds)
+ARG TARGETARCH
+COPY dist/easybot-${TARGETARCH} /usr/local/bin/easybot
+RUN chmod +x /usr/local/bin/easybot
+
+USER easybot
+EXPOSE 8080
+ENTRYPOINT ["easybot"]
+CMD ["--config", "/etc/easybot/gateway.yaml"]
