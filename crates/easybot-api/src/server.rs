@@ -245,7 +245,11 @@ pub fn create_router(state: AppState) -> Router {
         .route("/config", get(routes::config::get_config))
         .route("/config", put(routes::config::update_config))
         // WebSocket
-        .route("/ws", get(routes::ws::ws_handler));
+        .route("/ws", get(routes::ws::ws_handler))
+        // 系统信息（管理后台概览页）
+        .route("/system", get(routes::system::system_info))
+        // 日志查询（管理后台日志页）
+        .route("/logs", get(routes::logs::log_entries));
 
     // ── 指标端点（需认证：Prometheus 抓取可能不支持 Bearer token，
     // 生产环境建议通过反向代理 IP 白名单控制访问）──
@@ -300,9 +304,21 @@ pub fn create_router(state: AppState) -> Router {
             .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE])
     };
 
+    // ── 静态页面路由（无需认证）──
+
+    // 主页
+    let homepage = Router::new().route("/", get(routes::home::home_page));
+    // 文档页
+    let docs = Router::new().route("/docs", get(routes::docs::docs_page));
+    // 管理后台（SPA，JS 端负责 API Key 认证）
+    let admin = Router::new().route("/admin", get(routes::admin::admin_page));
+
     // 基础路径
     let base_path = &state.config.api.base_path;
     Router::new()
+        .merge(homepage)
+        .merge(docs)
+        .merge(admin)
         .merge(swagger)
         .nest(base_path, api_routes)
         .layer(TraceLayer::new_for_http())

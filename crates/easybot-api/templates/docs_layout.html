@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>EasyBot 文档</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #0f0f1a; color: #c9d1d9; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; }
+.header { background: #161822; border-bottom: 1px solid #30363d; padding: 12px 24px; display: flex; align-items: center; gap: 16px; position: sticky; top: 0; z-index: 100; }
+.header h1 { font-size: 18px; color: #58a6ff; }
+.header .nav-links { margin-left: auto; display: flex; gap: 12px; }
+.header .nav-links a { color: #8b949e; text-decoration: none; font-size: 14px; }
+.header .nav-links a:hover { color: #58a6ff; }
+.layout { display: flex; min-height: calc(100vh - 52px); }
+.sidebar { width: 240px; flex-shrink: 0; background: #161822; border-right: 1px solid #30363d; padding: 16px 0; overflow-y: auto; position: sticky; top: 52px; height: calc(100vh - 52px); }
+.sidebar a { display: block; padding: 8px 20px; color: #8b949e; text-decoration: none; font-size: 14px; border-left: 3px solid transparent; transition: all 0.15s; }
+.sidebar a:hover { color: #c9d1d9; background: #1c1e2e; }
+.sidebar a.active, .sidebar a:target { color: #58a6ff; border-left-color: #58a6ff; background: #1c1e2e; }
+.content { flex: 1; padding: 32px 48px; overflow-x: auto; min-width: 0; }
+.content p, .content li { max-width: 75ch; }
+.content h2 { font-size: 28px; margin: 32px 0 16px; color: #e6edf3; border-bottom: 1px solid #21262d; padding-bottom: 8px; scroll-margin-top: 72px; }
+.content h2:first-child { margin-top: 0; }
+.content h3 { font-size: 20px; margin: 24px 0 12px; color: #e6edf3; }
+.content h4 { font-size: 16px; margin: 16px 0 8px; color: #c9d1d9; }
+.content p { margin: 12px 0; line-height: 1.7; }
+.content ul, .content ol { margin: 8px 0; padding-left: 24px; }
+.content li { margin: 4px 0; line-height: 1.6; }
+.content code { background: #1c1e2e; padding: 2px 6px; border-radius: 4px; font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace; font-size: 13px; }
+.content pre { background: #161822; border: 1px solid #30363d; border-radius: 8px; padding: 16px; overflow-x: auto; margin: 16px 0; }
+.content pre code { background: none; padding: 0; }
+.content blockquote { border-left: 3px solid #30363d; padding-left: 16px; margin: 12px 0; color: #8b949e; }
+.content table { width: 100%; border-collapse: collapse; margin: 16px 0; }
+.content table th, .content table td { border: 1px solid #30363d; padding: 8px 12px; text-align: left; }
+.content table th { background: #161822; color: #e6edf3; }
+.content table tr:nth-child(even) { background: #11111e; }
+.content img { max-width: 100%; border-radius: 8px; }
+.content hr { border: none; border-top: 1px solid #30363d; margin: 32px 0; }
+.content a { color: #58a6ff; text-decoration: none; }
+.content a:hover { text-decoration: underline; }
+.content strong { color: #e6edf3; }
+/* highlight.js: 代码块背景透明继承 pre */
+.content pre code.hljs { background: none; padding: 0; }
+footer { text-align: center; padding: 24px; color: #484f58; font-size: 13px; border-top: 1px solid #21262d; }
+@media (max-width: 768px) { .layout { flex-direction: column; } .sidebar { width: 100%; position: static; height: auto; border-right: none; border-bottom: 1px solid #30363d; } .content { padding: 24px 16px; } }
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>EasyBot 文档</h1>
+  <div class="nav-links">
+    <a href="/">← 返回主页</a>
+    <a href="/admin">管理后台</a>
+  </div>
+</div>
+<div class="layout">
+  <nav class="sidebar" id="sidebar">
+    __SIDEBAR_ITEMS__
+  </nav>
+  <main class="content">
+    __DOCS_CONTENT__
+  </main>
+</div>
+<footer>
+  <p>EasyBot · IM Gateway — 统一多平台即时通讯网关</p>
+</footer>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script>
+// 高亮当前可见章节对应的侧边栏链接
+const observer = new IntersectionObserver(entries => {
+  entries.forEach(e => {
+    if (e.isIntersecting) {
+      document.querySelectorAll('.sidebar a').forEach(a => a.classList.remove('active'));
+      const id = e.target.id;
+      if (id) { const link = document.querySelector(`.sidebar a[href="#${id}"]`); if (link) link.classList.add('active'); }
+    }
+  });
+}, { rootMargin: '-80px 0px -50% 0px' });
+document.querySelectorAll('.content section[id]').forEach(s => observer.observe(s));
+hljs.highlightAll();
+</script>
+</body>
+</html>

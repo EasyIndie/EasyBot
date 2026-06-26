@@ -16,6 +16,7 @@ use std::sync::Arc;
 use tokio::sync::Semaphore;
 
 pub mod config_manager;
+pub mod log_collector;
 pub mod metrics;
 pub mod middleware;
 pub mod openapi;
@@ -40,10 +41,13 @@ pub struct AppState {
     pub ws_semaphore: Arc<Semaphore>,
     /// 进程启动时间
     pub started_at: std::time::Instant,
+    /// 内存日志收集器（供管理后台日志查看使用）
+    pub log_collector: Arc<log_collector::LogCollector>,
 }
 
 impl AppState {
     /// 创建新的应用状态
+    #[allow(clippy::too_many_arguments)]
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         event_bus: Arc<EventBus>,
@@ -54,6 +58,7 @@ impl AppState {
         config: GatewayConfig,
         config_manager: ConfigManager,
         metrics: Option<Arc<metrics::MetricsRegistry>>,
+        log_collector: Arc<log_collector::LogCollector>,
     ) -> Self {
         let max_clients = config.api.websocket.max_clients.max(1);
         let config_arc = Arc::new(config);
@@ -68,6 +73,7 @@ impl AppState {
             metrics,
             ws_semaphore: Arc::new(Semaphore::new(max_clients)),
             started_at: std::time::Instant::now(),
+            log_collector,
         }
     }
 }

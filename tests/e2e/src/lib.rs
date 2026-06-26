@@ -190,6 +190,7 @@ pub async fn build_router(
         config,
         config_manager,
         None,
+        Arc::new(easybot_api::log_collector::LogCollector::new(5000)),
     );
     let router = easybot_api::server::create_router(state);
     (router, raw_key)

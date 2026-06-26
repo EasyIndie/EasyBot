@@ -81,6 +81,7 @@ pub async fn test_app_state() -> (AppState, String) {
         config,
         config_manager,
         None, // 无 metrics
+        Arc::new(easybot_api::log_collector::LogCollector::new(5000)),
     );
 
     (state, raw_key)

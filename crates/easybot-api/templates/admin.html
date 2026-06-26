@@ -1,0 +1,648 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>EasyBot 管理后台</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #0f0f1a; color: #c9d1d9; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; min-height: 100vh; }
+.header { background: #161822; border-bottom: 1px solid #30363d; padding: 12px 24px; display: flex; align-items: center; gap: 16px; position: sticky; top: 0; z-index: 100; }
+.header h1 { font-size: 18px; color: #58a6ff; }
+.header .right { margin-left: auto; display: flex; align-items: center; gap: 12px; font-size: 13px; }
+.header .right .key-display { color: #8b949e; }
+.header .right .btn-logout { color: #f85149; cursor: pointer; background: none; border: 1px solid #f85149; padding: 4px 12px; border-radius: 6px; font-size: 13px; }
+.header .right .btn-logout:hover { background: #f851491a; }
+.tabs { display: flex; background: #161822; border-bottom: 1px solid #30363d; padding: 0 24px; position: sticky; top: 52px; z-index: 99; overflow-x: auto; }
+.tab-btn { padding: 12px 20px; cursor: pointer; color: #8b949e; border: none; background: none; font-size: 14px; border-bottom: 2px solid transparent; transition: all 0.15s; white-space: nowrap; }
+.tab-btn:hover { color: #c9d1d9; }
+.tab-btn.active { color: #58a6ff; border-bottom-color: #58a6ff; }
+.tab-content { display: none; padding: 24px; }
+.tab-content.active { display: block; }
+.card { background: #161822; border: 1px solid #30363d; border-radius: 8px; padding: 20px; margin-bottom: 16px; }
+.card h3 { font-size: 15px; color: #e6edf3; margin-bottom: 12px; }
+.grid-2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
+.grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+.grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+.stat { text-align: center; padding: 16px; background: #11111e; border-radius: 8px; border: 1px solid #21262d; }
+.stat .val { font-size: 24px; font-weight: 600; color: #e6edf3; }
+.stat .lbl { font-size: 12px; color: #8b949e; margin-top: 4px; }
+.badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 12px; font-weight: 500; }
+.badge-green { background: #1a4731; color: #3fb950; }
+.badge-yellow { background: #472a1a; color: #d29922; }
+.badge-red { background: #471a1a; color: #f85149; }
+.badge-gray { background: #21262d; color: #8b949e; }
+.badge-blue { background: #1a2a47; color: #58a6ff; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+table th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid #21262d; }
+table th { background: #11111e; color: #8b949e; font-weight: 500; position: sticky; top: 0; }
+table tr:hover { background: #1c1e2e; }
+.btn { padding: 8px 16px; border-radius: 6px; border: 1px solid #30363d; cursor: pointer; font-size: 13px; background: #21262d; color: #c9d1d9; transition: all 0.15s; }
+.btn:hover { background: #30363d; }
+.btn-primary { background: #238636; border-color: #238636; color: #fff; }
+.btn-primary:hover { background: #2ea043; }
+.btn-danger { background: #da3633; border-color: #da3633; color: #fff; }
+.btn-danger:hover { background: #f85149; }
+.btn-sm { padding: 4px 10px; font-size: 12px; }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+input, textarea, select { background: #11111e; border: 1px solid #30363d; border-radius: 6px; padding: 8px 12px; color: #c9d1d9; font-size: 14px; width: 100%; }
+input:focus, textarea:focus, select:focus { border-color: #58a6ff; outline: none; }
+textarea { font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace; font-size: 13px; resize: vertical; min-height: 100px; }
+label { display: block; font-size: 13px; color: #8b949e; margin-bottom: 4px; }
+.form-group { margin-bottom: 12px; }
+.progress-bar { height: 8px; background: #21262d; border-radius: 4px; overflow: hidden; margin: 4px 0; }
+.progress-bar .fill { height: 100%; border-radius: 4px; transition: width 0.3s; }
+.fill-green { background: #3fb950; }
+.fill-yellow { background: #d29922; }
+.fill-red { background: #f85149; }
+.loading { text-align: center; padding: 48px; color: #8b949e; }
+.error-msg { color: #f85149; font-size: 13px; }
+.success-msg { color: #3fb950; font-size: 13px; }
+.login-overlay { position: fixed; inset: 0; background: #0f0f1a; display: flex; align-items: center; justify-content: center; z-index: 1000; }
+.login-box { background: #161822; border: 1px solid #30363d; border-radius: 12px; padding: 48px; width: 400px; max-width: 90vw; text-align: center; }
+.login-box h2 { color: #58a6ff; margin-bottom: 8px; }
+.login-box p { color: #8b949e; font-size: 13px; margin-bottom: 24px; }
+.login-box input { margin-bottom: 12px; }
+.log-list { font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace; font-size: 12px; line-height: 1.6; }
+.log-entry { padding: 2px 8px; border-radius: 3px; }
+.log-entry:hover { background: #1c1e2e; }
+.log-ERROR { color: #f85149; }
+.log-WARN { color: #d29922; }
+.log-INFO { color: #c9d1d9; }
+.log-DEBUG { color: #8b949e; }
+.log-TRACE { color: #484f58; }
+.chips { display: flex; gap: 6px; margin-bottom: 12px; flex-wrap: wrap; }
+.chip { padding: 4px 12px; border-radius: 12px; font-size: 12px; cursor: pointer; border: 1px solid #30363d; background: none; color: #8b949e; }
+.chip:hover { color: #c9d1d9; }
+.chip.active { background: #1a2a47; border-color: #58a6ff; color: #58a6ff; }
+.msg-success { border-left: 3px solid #3fb950; padding-left: 12px; }
+.msg-failed { border-left: 3px solid #f85149; padding-left: 12px; }
+@media (max-width: 640px) { .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; } .tabs { padding: 0 8px; } .tab-btn { padding: 10px 12px; font-size: 13px; } .tab-content { padding: 16px; } }
+</style>
+</head>
+<body>
+<!-- Login Overlay -->
+<div class="login-overlay" id="login-overlay">
+  <div class="login-box">
+    <h2>EasyBot</h2>
+    <p>管理后台需要 API Key 认证</p>
+    <div class="form-group">
+      <input type="text" id="login-key" placeholder="输入 API Key (eb_...)">
+    </div>
+    <button class="btn btn-primary" id="login-btn" style="width:100%">验证并登录</button>
+    <p id="login-error" class="error-msg" style="margin-top:12px;display:none"></p>
+    <p style="margin-top:16px;font-size:12px;color:#484f58">首次使用？启动日志中有带 key 的管理链接<br>或输入启动时打印的 E2E_API_KEY</p>
+  </div>
+</div>
+
+<!-- Header -->
+<div class="header">
+  <h1>EasyBot 管理后台</h1>
+  <div class="right">
+    <span class="key-display" id="key-display"></span>
+    <button class="btn-logout" id="logout-btn" style="display:none">登出</button>
+  </div>
+</div>
+
+<!-- Tabs -->
+<div class="tabs" id="tabs-bar">
+  <button class="tab-btn active" data-tab="overview">📊 Overview</button>
+  <button class="tab-btn" data-tab="logs">📋 Logs</button>
+  <button class="tab-btn" data-tab="adapters">🔌 Adapters</button>
+  <button class="tab-btn" data-tab="config">⚙️ Config</button>
+  <button class="tab-btn" data-tab="sessions">💬 Sessions</button>
+  <button class="tab-btn" data-tab="messages">✉️ Messages</button>
+</div>
+
+<!-- Tab: Overview -->
+<div class="tab-content active" id="tab-overview">
+  <div id="overview-loading" class="loading">加载中...</div>
+  <div id="overview-content" style="display:none">
+    <!-- Status badge removed per user request -->
+    <div class="grid-4" id="ov-stats"></div>
+    <h3 style="margin:24px 0 12px;color:#e6edf3">系统信息</h3>
+    <div class="grid-2" id="ov-system"></div>
+    <div class="card" style="margin-top:16px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+        <h3 style="margin:0">📊 Prometheus 监控指标</h3>
+        <button class="btn btn-sm" id="metrics-refresh">🔄 刷新</button>
+      </div>
+      <pre id="metrics-content" style="background:#11111e;border:1px solid #21262d;border-radius:6px;padding:12px;overflow-x:auto;font-size:11px;line-height:1.5;max-height:400px;white-space:pre-wrap;word-break:break-all;margin:0;display:none"></pre>
+      <p id="metrics-status" style="color:#8b949e;margin:0">点击刷新加载 Prometheus 指标</p>
+      <div id="metrics-error" class="error-msg" style="margin-top:8px;display:none"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Tab: Logs -->
+<div class="tab-content" id="tab-logs">
+  <div class="chips" id="log-level-chips">
+    <button class="chip active" data-level="">ALL</button>
+    <button class="chip" data-level="ERROR">ERROR</button>
+    <button class="chip" data-level="WARN">WARN</button>
+    <button class="chip" data-level="INFO">INFO</button>
+    <button class="chip" data-level="DEBUG">DEBUG</button>
+  </div>
+  <div style="display:flex;gap:8px;margin-bottom:12px">
+    <input type="text" id="log-search" placeholder="搜索日志..." style="flex:1">
+    <button class="btn btn-sm" id="log-pause-btn">⏸ 暂停</button>
+    <button class="btn btn-sm" id="log-clear-btn">清空</button>
+  </div>
+  <div class="card" style="max-height:60vh;overflow-y:auto;padding:8px" id="log-container">
+    <div class="log-list" id="log-list"></div>
+  </div>
+</div>
+
+<!-- Tab: Adapters -->
+<div class="tab-content" id="tab-adapters">
+  <div id="adapters-loading" class="loading">加载中...</div>
+  <div id="adapters-content" style="display:none"></div>
+</div>
+
+<!-- Tab: Config -->
+<div class="tab-content" id="tab-config">
+  <div style="display:flex;gap:8px;margin-bottom:12px">
+    <button class="btn" id="config-refresh">🔄 刷新</button>
+    <button class="btn" id="config-edit-btn">✏️ 编辑</button>
+    <button class="btn btn-primary" id="config-save-btn" style="display:none">💾 保存</button>
+    <button class="btn" id="config-cancel-btn" style="display:none">取消</button>
+  </div>
+  <div id="config-loading" class="loading">加载中...</div>
+  <pre id="config-view" style="display:none;background:#11111e;border:1px solid #30363d;border-radius:8px;padding:16px;overflow-x:auto;font-size:13px;font-family:monospace;white-space:pre-wrap"></pre>
+  <textarea id="config-editor" style="display:none;min-height:400px"></textarea>
+  <div id="config-msg" style="margin-top:8px"></div>
+</div>
+
+<!-- Tab: Sessions -->
+<div class="tab-content" id="tab-sessions">
+  <div id="sessions-loading" class="loading">加载中...</div>
+  <div id="sessions-content" style="display:none"></div>
+</div>
+
+<!-- Tab: Messages -->
+<div class="tab-content" id="tab-messages">
+  <div class="card" style="margin-bottom:16px">
+    <h3>📤 发送测试消息</h3>
+    <div class="form-group">
+      <label>Target (<code>platform:chatId</code>)</label>
+      <input type="text" id="msg-target" placeholder="例如: telegram:123456">
+    </div>
+    <div class="form-group">
+      <label>Text</label>
+      <textarea id="msg-text" placeholder="消息内容" rows="3"></textarea>
+    </div>
+    <div class="form-group">
+      <label>Parse Mode</label>
+      <select id="msg-parse-mode">
+        <option value="">none</option>
+        <option value="markdown">markdown</option>
+        <option value="html">html</option>
+      </select>
+    </div>
+    <button class="btn btn-primary" id="msg-send-btn">发送</button>
+    <div id="msg-send-result" style="margin-top:8px"></div>
+  </div>
+  <div style="display:flex;gap:8px;margin-bottom:12px">
+    <select id="msg-platform-filter" style="width:160px">
+      <option value="">所有平台</option>
+      <option value="telegram">Telegram</option>
+      <option value="discord">Discord</option>
+      <option value="feishu">飞书</option>
+      <option value="qq">QQ</option>
+      <option value="wechat">微信</option>
+    </select>
+    <button class="btn" id="msg-refresh">🔄 刷新</button>
+  </div>
+  <div id="messages-loading" class="loading">加载中...</div>
+  <div id="messages-content" style="display:none">
+    <table><thead><tr><th>时间</th><th>平台</th><th>Chat</th><th>角色</th><th>消息</th></tr></thead><tbody id="msg-list"></tbody></table>
+    <div style="text-align:center;margin-top:12px"><button class="btn" id="msg-load-more" style="display:none">加载更多</button></div>
+  </div>
+</div>
+
+<!-- Hidden: store last log timestamp for incremental polling -->
+<div id="log-since" style="display:none">0</div>
+
+<script>
+// ─── Auth ───────────────────────────────────────
+const LS_KEY = 'easybot_api_key';
+let apiKey = localStorage.getItem(LS_KEY) || '';
+let currentKeyDisplay = '';
+
+function setKey(k) { apiKey = k; localStorage.setItem(LS_KEY, k); }
+function clearKey() { apiKey = ''; localStorage.removeItem(LS_KEY); }
+
+// ─── API 请求包装 ──────────────────────────────
+async function api(path, opts = {}) {
+  const { method = 'GET', body } = opts;
+  const headers = { 'Authorization': `Bearer ${apiKey}` };
+  if (body) headers['Content-Type'] = 'application/json';
+  const res = await fetch(path, { method, headers, body: body ? JSON.stringify(body) : undefined });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error?.message || data.message || res.statusText);
+  return data;
+}
+
+// ─── Tab 切换 ──────────────────────────────────
+function switchTab(name) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
+  document.querySelectorAll('.tab-content').forEach(c => c.classList.toggle('active', c.id === 'tab-' + name));
+  if (name === 'overview' && !document.getElementById('ov-stats').children.length) loadOverview();
+  if (name === 'adapters' && !document.getElementById('adapters-content').children.length) loadAdapters();
+  if (name === 'sessions' && !document.getElementById('sessions-content').children.length) loadSessions();
+  if (name === 'config') loadConfig();
+  if (name === 'messages') loadMessages();
+  if (name === 'logs') startLogPolling();
+}
+document.querySelectorAll('.tab-btn').forEach(b => b.addEventListener('click', () => switchTab(b.dataset.tab)));
+
+// ─── 登录 ──────────────────────────────────────
+function initAuth() {
+  const overlay = document.getElementById('login-overlay');
+  const hash = window.location.hash;
+  if (hash.startsWith('#key=')) {
+    const key = hash.substring(5);
+    setKey(key);
+    window.history.replaceState(null, '', '/admin');
+  }
+  if (apiKey) {
+    // 验证 key
+    api('/api/v1/adapters').then(() => {
+      overlay.style.display = 'none';
+      document.getElementById('logout-btn').style.display = 'block';
+      currentKeyDisplay = apiKey.length > 10 ? apiKey.slice(0, 6) + '****' : apiKey;
+      document.getElementById('key-display').textContent = '🔑 ' + currentKeyDisplay;
+      loadOverview();
+    }).catch(() => {
+      clearKey();
+    });
+  }
+}
+
+document.getElementById('login-btn').addEventListener('click', async () => {
+  const key = document.getElementById('login-key').value.trim();
+  if (!key) return;
+  const err = document.getElementById('login-error');
+  err.style.display = 'none';
+  setKey(key);
+  try {
+    await api('/api/v1/adapters');
+    document.getElementById('login-overlay').style.display = 'none';
+    document.getElementById('logout-btn').style.display = 'block';
+    currentKeyDisplay = key.length > 10 ? key.slice(0, 6) + '****' : key;
+    document.getElementById('key-display').textContent = '🔑 ' + currentKeyDisplay;
+    loadOverview();
+  } catch (e) {
+    clearKey();
+    err.textContent = '认证失败：' + e.message;
+    err.style.display = 'block';
+  }
+});
+document.getElementById('login-key').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('login-btn').click(); });
+
+document.getElementById('logout-btn').addEventListener('click', () => {
+  clearKey();
+  document.getElementById('login-overlay').style.display = 'flex';
+  document.getElementById('logout-btn').style.display = 'none';
+  document.getElementById('key-display').textContent = '';
+  stopLogPolling();
+  // Reset tab contents
+  document.querySelectorAll('#ov-stats, #adapters-content, #sessions-content').forEach(e => e.innerHTML = '');
+});
+
+// ─── Overview Tab ──────────────────────────────
+// 首次加载（带 loading 动画）
+async function loadOverview() {
+  const loading = document.getElementById('overview-loading');
+  const content = document.getElementById('overview-content');
+  try {
+    loading.style.display = 'block';
+    content.style.display = 'none';
+    await refreshOverviewData();
+    loading.style.display = 'none';
+    content.style.display = 'block';
+    loadMetrics();
+  } catch (e) {
+    loading.innerHTML = '加载失败: ' + e.message;
+  }
+}
+
+// 增量刷新（不显示/隐藏 content，避免闪动）
+async function refreshOverviewData() {
+  try {
+    const [health, sys] = await Promise.all([api('/api/v1/health'), api('/api/v1/system').catch(() => null)]);
+    if (!health) return;
+
+    // Stats grid
+    const u = health.uptime;
+    const uptimeStr = u < 60 ? u + 's' : u < 3600 ? Math.floor(u/60) + 'm ' + (u%60) + 's' : Math.floor(u/3600) + 'h ' + Math.floor((u%3600)/60) + 'm';
+    document.getElementById('ov-stats').innerHTML = `
+      <div class="stat"><div class="val">${health.version}</div><div class="lbl">版本</div></div>
+      <div class="stat"><div class="val">${uptimeStr}</div><div class="lbl">运行时间</div></div>
+      <div class="stat"><div class="val">${health.adapters.connected}/${health.adapters.total}</div><div class="lbl">适配器</div></div>
+      <div class="stat"><div class="val">${health.sessions.active}</div><div class="lbl">会话</div></div>
+    `;
+
+    // System info
+    if (sys) {
+      const pct = v => { const c = v < 60 ? 'fill-green' : v < 80 ? 'fill-yellow' : 'fill-red'; return `<div class="progress-bar"><div class="fill ${c}" style="width:${v}%"></div></div><span style="font-size:13px">${v.toFixed(1)}%</span>`; };
+      document.getElementById('ov-system').innerHTML = `
+        <div class="card"><h3>🖥 OS</h3><p>${sys.os.name} ${sys.os.version}</p><p style="font-size:12px;color:#8b949e">${sys.os.hostname} · ${sys.os.kernel || ''}</p></div>
+        <div class="card"><h3>🧠 CPU</h3><p>${sys.cpu.brand} · ${sys.cpu.cores}核</p><p>使用率 ${pct(sys.cpu.usage)}</p>${sys.cpu.load_avg_1 ? `<p style="font-size:12px;color:#8b949e">负载: ${sys.cpu.load_avg_1.toFixed(2)} / ${sys.cpu.load_avg_5.toFixed(2)} / ${sys.cpu.load_avg_15.toFixed(2)}</p>` : '<p style="font-size:12px;color:#484f58">负载: N/A (Windows)</p>'}</div>
+        <div class="card"><h3>💾 内存</h3><p>${sys.memory.used_gb.toFixed(1)} GB / ${sys.memory.total_gb.toFixed(1)} GB</p>${pct(sys.memory.percent)}</div>
+        <div class="card"><h3>📀 磁盘</h3><p>${sys.disk.used_gb.toFixed(1)} GB / ${sys.disk.total_gb.toFixed(1)} GB</p>${pct(sys.disk.percent)}</div>
+      `;
+    }
+  } catch (e) { /* 静默忽略刷新错误 */ }
+}
+// 每 10s 增量刷新，不闪动
+setInterval(() => { if (document.getElementById('tab-overview').classList.contains('active')) refreshOverviewData(); }, 10000);
+
+// ─── Metrics (inline, text/plain) ────────────────
+async function loadMetrics() {
+  const pre = document.getElementById('metrics-content');
+  const status = document.getElementById('metrics-status');
+  const err = document.getElementById('metrics-error');
+  try {
+    err.style.display = 'none';
+    status.textContent = '加载中...';
+    const res = await fetch('/api/v1/metrics', { headers: { 'Authorization': `Bearer ${apiKey}` } });
+    if (!res.ok) throw new Error(await res.text());
+    const text = await res.text();
+    pre.textContent = text;
+    pre.style.display = 'block';
+    const lineCount = text.split('\n').filter(l => l && !l.startsWith('#')).length;
+    status.textContent = `共 ${lineCount} 条指标`;
+  } catch (e) {
+    pre.style.display = 'none';
+    err.textContent = '加载失败: ' + e.message;
+    err.style.display = 'block';
+    status.textContent = '';
+  }
+}
+
+// ─── Logs Tab ──────────────────────────────────
+let logPollTimer = null;
+let logSince = 0;
+let logPaused = false;
+let logLevel = '';
+let logSearchText = '';
+
+function startLogPolling() {
+  if (logPollTimer) return;
+  logPollTimer = setInterval(pollLogs, 3000);
+  pollLogs();
+}
+function stopLogPolling() { if (logPollTimer) { clearInterval(logPollTimer); logPollTimer = null; } }
+
+async function pollLogs() {
+  if (logPaused) return;
+  try {
+    const params = new URLSearchParams({ since: logSince, limit: '100' });
+    if (logLevel) params.set('level', logLevel);
+    if (logSearchText) params.set('search', logSearchText);
+    const data = await api('/api/v1/logs?' + params.toString());
+    const list = document.getElementById('log-list');
+    const container = document.getElementById('log-container');
+    const autoScroll = container.scrollHeight - container.scrollTop - container.clientHeight < 100;
+    for (const e of data.entries) {
+      if (e.timestamp > logSince) logSince = e.timestamp;
+      const t = new Date(e.timestamp).toLocaleTimeString();
+      const div = document.createElement('div');
+      div.className = 'log-entry log-' + e.level;
+      div.innerHTML = `<span style="color:#484f58">${t}</span> [<strong>${e.level}</strong>] <span style="color:#8b949e">${e.target}</span> ${e.message}`;
+      list.appendChild(div);
+    }
+    // Trim DOM if too many
+    while (list.children.length > 500) list.removeChild(list.firstChild);
+    if (autoScroll) container.scrollTop = container.scrollHeight;
+  } catch (e) { /* ignore polling errors */ }
+}
+
+document.querySelectorAll('#log-level-chips .chip').forEach(c => c.addEventListener('click', () => {
+  document.querySelectorAll('#log-level-chips .chip').forEach(x => x.classList.remove('active'));
+  c.classList.add('active');
+  logLevel = c.dataset.level;
+  document.getElementById('log-list').innerHTML = '';
+  logSince = 0;
+  pollLogs();
+}));
+
+document.getElementById('log-search').addEventListener('input', e => {
+  logSearchText = e.target.value;
+  document.getElementById('log-list').innerHTML = '';
+  logSince = 0;
+  pollLogs();
+});
+
+document.getElementById('log-pause-btn').addEventListener('click', () => {
+  logPaused = !logPaused;
+  document.getElementById('log-pause-btn').textContent = logPaused ? '▶ 继续' : '⏸ 暂停';
+});
+document.getElementById('log-clear-btn').addEventListener('click', () => {
+  document.getElementById('log-list').innerHTML = '';
+  logSince = 0;
+});
+
+// ─── Adapters Tab ──────────────────────────────
+async function loadAdapters() {
+  const loading = document.getElementById('adapters-loading');
+  const content = document.getElementById('adapters-content');
+  try {
+    loading.style.display = 'block';
+    content.style.display = 'none';
+    const data = await api('/api/v1/adapters');
+    const icons = { telegram: '✈️', discord: '🎮', feishu: '📘', qq: '🐧', wechat: '💬' };
+    content.innerHTML = '<div class="grid-2">' + data.adapters.map(a => {
+      const statusClass = a.connected ? 'badge-green' : a.status === 'Failed' ? 'badge-red' : a.status === 'Reconnecting' ? 'badge-yellow' : 'badge-gray';
+      const icon = icons[a.platform] || '🔌';
+      return `<div class="card">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <h3>${icon} ${a.display_name} <span class="badge ${statusClass}">${a.status}</span></h3>
+          <div>
+            <button class="btn btn-sm btn-primary" onclick="adapterAction('${a.platform}','start')" ${a.connected ? 'disabled':''}>启动</button>
+            <button class="btn btn-sm btn-danger" onclick="adapterAction('${a.platform}','stop')" ${!a.connected ? 'disabled':''}>停止</button>
+          </div>
+        </div>
+      </div>`;
+    }).join('') + '</div>';
+    loading.style.display = 'none';
+    content.style.display = 'block';
+  } catch (e) {
+    loading.innerHTML = '加载失败: ' + e.message;
+  }
+}
+
+async function adapterAction(platform, action) {
+  try {
+    await api('/api/v1/adapters/' + platform + '/' + action, { method: 'POST' });
+    loadAdapters();
+  } catch (e) {
+    alert(action === 'start' ? '启动失败: ' : '停止失败: ' + e.message);
+  }
+}
+
+// ─── Config Tab ──────────────────────────────
+let configData = null;
+let configEditMode = false;
+
+async function loadConfig() {
+  const loading = document.getElementById('config-loading');
+  const view = document.getElementById('config-view');
+  try {
+    loading.style.display = 'block';
+    view.style.display = 'none';
+    configData = await api('/api/v1/config');
+    view.textContent = JSON.stringify(configData, null, 2);
+    loading.style.display = 'none';
+    view.style.display = 'block';
+    if (!configEditMode) document.getElementById('config-editor').value = JSON.stringify(configData, null, 2);
+  } catch (e) {
+    loading.innerHTML = '加载失败: ' + e.message;
+  }
+}
+
+document.getElementById('config-refresh').addEventListener('click', () => { configEditMode = false; document.getElementById('config-editor').style.display = 'none'; document.getElementById('config-save-btn').style.display = 'none'; document.getElementById('config-cancel-btn').style.display = 'none'; document.getElementById('config-edit-btn').style.display = 'inline-block'; document.getElementById('config-view').style.display = 'block'; loadConfig(); });
+document.getElementById('config-edit-btn').addEventListener('click', () => {
+  configEditMode = true;
+  document.getElementById('config-view').style.display = 'none';
+  document.getElementById('config-editor').style.display = 'block';
+  document.getElementById('config-edit-btn').style.display = 'none';
+  document.getElementById('config-save-btn').style.display = 'inline-block';
+  document.getElementById('config-cancel-btn').style.display = 'inline-block';
+  document.getElementById('config-editor').value = JSON.stringify(configData, null, 2);
+});
+document.getElementById('config-cancel-btn').addEventListener('click', () => {
+  configEditMode = false;
+  document.getElementById('config-editor').style.display = 'none';
+  document.getElementById('config-save-btn').style.display = 'none';
+  document.getElementById('config-cancel-btn').style.display = 'none';
+  document.getElementById('config-edit-btn').style.display = 'inline-block';
+  document.getElementById('config-view').style.display = 'block';
+});
+document.getElementById('config-save-btn').addEventListener('click', async () => {
+  const msg = document.getElementById('config-msg');
+  try {
+    JSON.parse(document.getElementById('config-editor').value);
+  } catch (e) {
+    msg.innerHTML = '<span class="error-msg">JSON 格式错误</span>';
+    return;
+  }
+  try {
+    await api('/api/v1/config', { method: 'PUT', body: JSON.parse(document.getElementById('config-editor').value) });
+    msg.innerHTML = '<span class="success-msg">✅ 配置已更新</span>';
+    configEditMode = false;
+    document.getElementById('config-editor').style.display = 'none';
+    document.getElementById('config-save-btn').style.display = 'none';
+    document.getElementById('config-cancel-btn').style.display = 'none';
+    document.getElementById('config-edit-btn').style.display = 'inline-block';
+    loadConfig();
+  } catch (e) {
+    msg.innerHTML = '<span class="error-msg">❌ 保存失败: ' + e.message + '</span>';
+  }
+});
+
+// ─── Sessions Tab ──────────────────────────────
+async function loadSessions() {
+  const loading = document.getElementById('sessions-loading');
+  const content = document.getElementById('sessions-content');
+  try {
+    loading.style.display = 'block';
+    content.style.display = 'none';
+    const data = await api('/api/v1/sessions');
+    if (!data.sessions || !data.sessions.length) {
+      content.innerHTML = '<div class="card"><p style="color:#8b949e">暂无活跃会话</p></div>';
+    } else {
+      content.innerHTML = '<table><thead><tr><th>Key</th><th>平台</th><th>用户</th><th>类型</th><th>创建时间</th><th>操作</th></tr></thead><tbody>' +
+        data.sessions.map(s => `<tr>
+          <td style="font-family:monospace;font-size:12px">${s.key}</td>
+          <td>${s.platform}</td>
+          <td>${s.source?.userName || s.source?.chatName || s.chatId}</td>
+          <td><span class="badge badge-blue">${s.source?.chatType || '-'}</span></td>
+          <td style="font-size:12px;color:#8b949e">${new Date(s.createdAt).toLocaleString()}</td>
+          <td><button class="btn btn-sm btn-danger" onclick="deleteSession('${s.key}')">删除</button></td>
+        </tr>`).join('') + '</tbody></table>';
+    }
+    loading.style.display = 'none';
+    content.style.display = 'block';
+  } catch (e) {
+    loading.innerHTML = '加载失败: ' + e.message;
+  }
+}
+
+async function deleteSession(key) {
+  if (!confirm('确定删除会话 ' + key + ' ？')) return;
+  try {
+    await api('/api/v1/sessions/' + encodeURIComponent(key), { method: 'DELETE' });
+    loadSessions();
+  } catch (e) {
+    alert('删除失败: ' + e.message);
+  }
+}
+
+// ─── Messages Tab ──────────────────────────────
+let msgCursor = null;
+let msgPlatform = '';
+
+document.getElementById('msg-send-btn').addEventListener('click', async () => {
+  const target = document.getElementById('msg-target').value.trim();
+  const text = document.getElementById('msg-text').value.trim();
+  const parseMode = document.getElementById('msg-parse-mode').value;
+  const result = document.getElementById('msg-send-result');
+  if (!target || !text) { result.innerHTML = '<span class="error-msg">请输入 Target 和 Text</span>'; return; }
+  try {
+    const data = await api('/api/v1/messages/send', { method: 'POST', body: { target, text, parseMode: parseMode || null } });
+    result.innerHTML = '<span class="success-msg">✅ 已发送 (id: ' + data.messageId + ', status: ' + data.status + ')</span>';
+    document.getElementById('msg-text').value = '';
+    loadMessages();
+  } catch (e) {
+    result.innerHTML = '<span class="error-msg">❌ 发送失败: ' + e.message + '</span>';
+  }
+});
+// Ctrl+Enter to send
+document.getElementById('msg-text').addEventListener('keydown', e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) document.getElementById('msg-send-btn').click(); });
+
+document.getElementById('msg-platform-filter').addEventListener('change', () => {
+  msgPlatform = document.getElementById('msg-platform-filter').value;
+  msgCursor = null;
+  loadMessages();
+});
+document.getElementById('msg-refresh').addEventListener('click', () => { msgCursor = null; loadMessages(); });
+document.getElementById('msg-load-more').addEventListener('click', () => { loadMessages(true); });
+
+async function loadMessages(append = false) {
+  const loading = document.getElementById('messages-loading');
+  const content = document.getElementById('messages-content');
+  try {
+    if (!append) { loading.style.display = 'block'; content.style.display = 'none'; }
+    const params = new URLSearchParams({ limit: '20' });
+    if (msgPlatform) params.set('platform', msgPlatform);
+    if (msgCursor) params.set('before', msgCursor);
+    const data = await api('/api/v1/messages?' + params.toString());
+    const tbody = document.getElementById('msg-list');
+    if (!append) tbody.innerHTML = '';
+    for (const m of data.messages) {
+      const tr = document.createElement('tr');
+      tr.style.cursor = 'pointer';
+      tr.innerHTML = `<td style="font-size:11px;color:#8b949e;white-space:nowrap">${new Date(m.timestamp).toLocaleTimeString()}</td>
+        <td><span class="badge badge-blue">${m.platform}</span></td>
+        <td style="font-size:12px">${m.chatId}</td>
+        <td><span class="badge ${m.role === 'User' ? 'badge-green' : 'badge-gray'}">${m.role}</span></td>
+        <td style="font-size:12px;color:#8b949e;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${(m.text || '').substring(0, 80)}</td>`;
+      tr.addEventListener('click', () => alert(JSON.stringify(m, null, 2)));
+      tbody.appendChild(tr);
+    }
+    document.getElementById('msg-load-more').style.display = data.hasMore ? 'inline-block' : 'none';
+    if (data.messages.length) msgCursor = data.messages[data.messages.length - 1].timestamp;
+    if (!append) { loading.style.display = 'none'; content.style.display = 'block'; }
+  } catch (e) {
+    if (!append) loading.innerHTML = '加载失败: ' + e.message;
+  }
+}
+
+// ─── Initialize ────────────────────────────────
+document.getElementById('metrics-refresh').addEventListener('click', loadMetrics);
+initAuth();
+</script>
+</body>
+</html>

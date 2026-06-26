@@ -16,6 +16,7 @@ serde_yaml.workspace = true
 uuid.workspace = true
 chrono.workspace = true
 tracing.workspace = true
+tracing-subscriber.workspace = true
 dashmap.workspace = true
 futures.workspace = true
 anyhow.workspace = true
@@ -23,6 +24,10 @@ prometheus.workspace = true
 tokio-stream.workspace = true
 utoipa = { workspace = true, features = ["axum_extras"] }
 utoipa-swagger-ui = { workspace = true, features = ["axum"] }
+sysinfo.workspace = true
+
+[build-dependencies]
+pulldown-cmark = "0.13"
 
 [dev-dependencies]
 sqlx = { workspace = true }

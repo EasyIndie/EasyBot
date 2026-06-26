@@ -12,8 +12,6 @@ use clap::Parser;
 use easybot_core::PlatformAdapter;
 use easybot_core::types::event::{GatewayEvent, event_types};
 use std::sync::Arc;
-use tracing_subscriber::EnvFilter;
-
 /// EasyBot 命令行参数
 #[derive(Parser)]
 #[command(name = "easybot", version, about = "EasyBot - IM Gateway Service")]
@@ -39,11 +37,24 @@ struct Cli {
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
-    // 初始化日志
+    // 初始化日志（含内存日志收集器供管理后台使用）
     let log_level = if cli.debug { "debug" } else { "info" };
-    tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::new(format!("easybot={}", log_level)))
-        .with_writer(std::io::stderr)
+    let log_collector = Arc::new(easybot_api::log_collector::LogCollector::new(5000));
+    // 克隆以共享同一个内部缓冲（Arc<RwLock<VecDeque>>）
+    let tracing_collector = (*log_collector).clone();
+    use tracing_subscriber::EnvFilter;
+    use tracing_subscriber::Layer;
+    use tracing_subscriber::Registry;
+    use tracing_subscriber::fmt;
+    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::util::SubscriberInitExt;
+    Registry::default()
+        .with(
+            fmt::layer()
+                .with_writer(std::io::stderr)
+                .with_filter(EnvFilter::new(format!("easybot={}", log_level))),
+        )
+        .with(tracing_collector)
         .init();
 
     // 处理 init 命令
@@ -242,6 +253,7 @@ async fn main() -> anyhow::Result<()> {
     load_plugin_adapters(&adapter_manager, &paths, event_bus.clone()).await;
 
     // 创建默认 API Key（仅开发环境）
+    let mut dev_api_key: Option<String> = None;
     if cli.debug {
         match auth_manager
             .create_key("dev", vec!["*".to_string()], None)
@@ -255,6 +267,7 @@ async fn main() -> anyhow::Result<()> {
                 );
                 // E2E 脚本通过 stdout 提取完整 key（不经过 tracing，不会写入日志文件）
                 println!("E2E_API_KEY={}", key);
+                dev_api_key = Some(key);
             }
             Err(e) => tracing::warn!("Failed to create dev API key: {}", e),
         }
@@ -320,6 +333,7 @@ async fn main() -> anyhow::Result<()> {
         config,
         config_manager,
         metrics_registry,
+        log_collector,
     );
 
     // ── 启动指标事件监听器（自动更新消息计数和适配器状态）──
@@ -338,6 +352,16 @@ async fn main() -> anyhow::Result<()> {
             anyhow::bail!("生产环境必须启用 TLS，或设置 EASYBOT_ALLOW_PLAINTEXT=true 跳过此检查");
         }
         tracing::warn!("EASYBOT_ALLOW_PLAINTEXT 已设置，跳过 TLS 检查（不推荐）");
+    }
+
+    // 打印管理后台链接（在 server_config 被移动前）
+    if let Some(ref key) = dev_api_key {
+        tracing::info!(
+            "🌐 Admin dashboard: http://{}:{}/admin#key={}",
+            server_config.host,
+            server_config.port,
+            key
+        );
     }
 
     // 启动 API 服务器（支持优雅关闭）
