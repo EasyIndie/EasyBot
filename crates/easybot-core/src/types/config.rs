@@ -54,6 +54,10 @@ pub struct ServerConfig {
     /// CORS 允许的 Origins（生产环境白名单，debug 模式忽略）
     #[serde(default = "default_cors_origins")]
     pub cors_allowed_origins: Vec<String>,
+
+    /// 管理后台登录密码（可通过 EASYBOT_ADMIN_PASSWORD 环境变量覆盖）
+    #[serde(default = "default_admin_password")]
+    pub admin_password: String,
 }
 
 fn default_cors_origins() -> Vec<String> {
@@ -65,6 +69,10 @@ fn default_host() -> String {
 }
 fn default_port() -> u16 {
     8080
+}
+
+fn default_admin_password() -> String {
+    "easybot".to_string()
 }
 
 /// TLS 配置
@@ -343,6 +351,7 @@ impl Default for ServerConfig {
             port: default_port(),
             tls: TlsConfig::default(),
             cors_allowed_origins: default_cors_origins(),
+            admin_password: default_admin_password(),
         }
     }
 }

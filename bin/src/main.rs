@@ -252,25 +252,32 @@ async fn main() -> anyhow::Result<()> {
     // 加载并注册插件适配器
     load_plugin_adapters(&adapter_manager, &paths, event_bus.clone()).await;
 
-    // 创建默认 API Key（仅开发环境）
+    // 创建默认 API Key
     let mut dev_api_key: Option<String> = None;
-    if cli.debug {
-        match auth_manager
-            .create_key("dev", vec!["*".to_string()], None)
-            .await
-        {
-            Ok((id, key)) => {
-                tracing::info!(
-                    "Dev API Key created: id={}, key_prefix={}...",
-                    id,
-                    &key[..key.len().min(8)]
-                );
-                // E2E 脚本通过 stdout 提取完整 key（不经过 tracing，不会写入日志文件）
+    match auth_manager
+        .create_key("dev", vec!["*".to_string()], None)
+        .await
+    {
+        Ok((_id, key)) => {
+            // E2E 测试脚本通过 stdout 提取 key（仅 --debug 模式）
+            if cli.debug {
                 println!("E2E_API_KEY={}", key);
-                dev_api_key = Some(key);
             }
-            Err(e) => tracing::warn!("Failed to create dev API key: {}", e),
+            dev_api_key = Some(key);
         }
+        Err(e) => tracing::warn!("Failed to create dev API key: {}", e),
+    }
+
+    // 解析管理后台密码（支持 .env 和 gateway.yaml 两种配置方式）
+    let admin_password = if !config.server.admin_password.is_empty() {
+        config.server.admin_password.clone()
+    } else {
+        std::env::var("EASYBOT_ADMIN_PASSWORD").unwrap_or_else(|_| "easybot".to_string())
+    };
+    if admin_password == "easybot" {
+        tracing::warn!(
+            "管理后台使用默认密码 'easybot'，请在 .env 或 gateway.yaml 中修改 admin_password"
+        );
     }
 
     // 启动会话桥接器（入站消息 → 自动创建会话）
@@ -334,6 +341,8 @@ async fn main() -> anyhow::Result<()> {
         config_manager,
         metrics_registry,
         log_collector,
+        dev_api_key.clone(),
+        admin_password,
     );
 
     // ── 启动指标事件监听器（自动更新消息计数和适配器状态）──
@@ -354,15 +363,12 @@ async fn main() -> anyhow::Result<()> {
         tracing::warn!("EASYBOT_ALLOW_PLAINTEXT 已设置，跳过 TLS 检查（不推荐）");
     }
 
-    // 打印管理后台链接（在 server_config 被移动前）
-    if let Some(ref key) = dev_api_key {
-        tracing::info!(
-            "🌐 Admin dashboard: http://{}:{}/admin#key={}",
-            server_config.host,
-            server_config.port,
-            key
-        );
-    }
+    // 打印管理后台链接
+    tracing::info!(
+        "🌐 Admin dashboard: http://{}:{}/admin",
+        server_config.host,
+        server_config.port,
+    );
 
     // 启动 API 服务器（支持优雅关闭）
     let server = easybot_api::server::Server::new(app_state.clone(), server_config);
@@ -472,6 +478,24 @@ async fn handle_init(cli: Cli) -> anyhow::Result<()> {
             );
         }
 
+        // 生成平台特定服务管理文件（配置 + 管理脚本）
+        for (svc_path, content) in easybot_core::config::generate_service_files(&paths) {
+            if !svc_path.exists() {
+                tokio::fs::write(&svc_path, &content).await?;
+                // Unix: 让 .sh 脚本可执行
+                #[cfg(unix)]
+                if svc_path.extension().is_some_and(|e| e == "sh") {
+                    use std::os::unix::fs::PermissionsExt;
+                    if let Ok(perm) = std::fs::metadata(&svc_path).map(|m| m.permissions()) {
+                        let mut perm = perm;
+                        perm.set_mode(0o755);
+                        let _ = std::fs::set_permissions(&svc_path, perm);
+                    }
+                }
+                tracing::info!("Created: {}", svc_path.display());
+            }
+        }
+
         println!("\nEasyBot initialized at:");
         paths.print_tree();
         println!("\nNext steps:");
@@ -479,7 +503,54 @@ async fn handle_init(cli: Cli) -> anyhow::Result<()> {
             "  1. Edit {} — uncomment and fill in your tokens",
             paths.env_path.display()
         );
-        println!("  2. Run `easybot --debug` to start");
+        println!("  2. Run `easybot --debug` to start locally");
+
+        // 按平台显示服务安装指引
+        if cfg!(target_os = "linux") {
+            println!();
+            println!("  3. Install as systemd service (recommended for production):");
+            let bin_path = std::env::current_exe()
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|_| "/usr/local/bin/easybot".to_string());
+            println!("     Binary: {}", bin_path);
+            println!(
+                "     cd {} && sudo ./easybot.sh install",
+                paths.home.display()
+            );
+            println!("     sudo ./easybot.sh status");
+            println!("     sudo ./easybot.sh logs");
+            println!("     sudo ./easybot.sh uninstall");
+            println!();
+            println!("  TLS: Release mode requires TLS or EASYBOT_ALLOW_PLAINTEXT.");
+            println!("       .env already configured with EASYBOT_ALLOW_PLAINTEXT=true.");
+            println!("       Edit gateway.yaml tls section to enable real certificates.");
+        } else if cfg!(target_os = "macos") {
+            println!();
+            println!("  3. Install as launchd service (recommended for production):");
+            println!("     cd {} && ./easybot.sh install", paths.home.display());
+            println!("     ./easybot.sh status");
+            println!("     ./easybot.sh logs");
+            println!("     ./easybot.sh uninstall");
+            println!();
+            println!("  TLS: Release mode requires TLS or EASYBOT_ALLOW_PLAINTEXT.");
+            println!("       .env already configured with EASYBOT_ALLOW_PLAINTEXT=true.");
+            println!("       Edit gateway.yaml tls section to enable real certificates.");
+        } else if cfg!(target_os = "windows") {
+            println!();
+            println!(
+                "  3. Install as Windows Service (recommended for production, admin required):"
+            );
+            println!("     cd {}", paths.home.display());
+            println!("     PowerShell -ExecutionPolicy Bypass -File manage-service.ps1 install");
+            println!("     PowerShell -ExecutionPolicy Bypass -File manage-service.ps1 status");
+            println!("     PowerShell -ExecutionPolicy Bypass -File manage-service.ps1 logs");
+            println!("     PowerShell -ExecutionPolicy Bypass -File manage-service.ps1 uninstall");
+            println!();
+            println!("  TLS: Release mode requires TLS or EASYBOT_ALLOW_PLAINTEXT.");
+            println!("       .env already configured with EASYBOT_ALLOW_PLAINTEXT=true.");
+            println!("       Edit gateway.yaml tls section to enable real certificates.");
+        }
+
         println!();
         println!("Docker Compose users:");
         println!("  cp .env.example .env && vim .env && docker compose up -d");

@@ -23,6 +23,12 @@ gateway.local.yaml
 /data/
 /logs/
 
+# Generated service configs (by `easybot --init`)
+easybot.service
+com.easybot.gateway.plist
+easybot.sh
+manage-service.ps1
+
 # Doc build artifacts
 /doc/
 

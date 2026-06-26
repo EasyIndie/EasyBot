@@ -310,8 +310,10 @@ pub fn create_router(state: AppState) -> Router {
     let homepage = Router::new().route("/", get(routes::home::home_page));
     // 文档页
     let docs = Router::new().route("/docs", get(routes::docs::docs_page));
-    // 管理后台（SPA，JS 端负责 API Key 认证）
-    let admin = Router::new().route("/admin", get(routes::admin::admin_page));
+    // 管理后台（SPA + 密码登录 API）
+    let admin = Router::new()
+        .route("/admin", get(routes::admin::admin_page))
+        .route("/admin/login", post(routes::admin::admin_login));
 
     // 基础路径
     let base_path = &state.config.api.base_path;

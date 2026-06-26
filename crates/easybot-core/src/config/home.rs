@@ -102,6 +102,15 @@ impl EasyBotPaths {
         println!("├── gateway.yaml");
         println!("├── gateway.local.yaml");
         println!("├── .env");
+        if cfg!(target_os = "linux") {
+            println!("├── easybot.service         # systemd 服务单元");
+            println!("├── easybot.sh              # 服务管理脚本");
+        } else if cfg!(target_os = "macos") {
+            println!("├── com.easybot.gateway.plist  # launchd 服务配置");
+            println!("├── easybot.sh              # 服务管理脚本");
+        } else if cfg!(target_os = "windows") {
+            println!("├── manage-service.ps1      # Windows 服务管理脚本");
+        }
         println!("├── data/");
         println!("│   ├── gateway.db");
         println!("│   └── media_cache/");

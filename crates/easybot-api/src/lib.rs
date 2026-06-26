@@ -43,10 +43,15 @@ pub struct AppState {
     pub started_at: std::time::Instant,
     /// 内存日志收集器（供管理后台日志查看使用）
     pub log_collector: Arc<log_collector::LogCollector>,
+    /// 原始 API Key（供管理后台登录后返回给前端）
+    pub dev_api_key: Option<String>,
+    /// 管理后台登录密码
+    pub admin_password: String,
 }
 
 impl AppState {
     /// 创建新的应用状态
+    #[allow(clippy::too_many_arguments)]
     #[allow(clippy::too_many_arguments)]
     #[allow(clippy::too_many_arguments)]
     pub fn new(
@@ -59,6 +64,8 @@ impl AppState {
         config_manager: ConfigManager,
         metrics: Option<Arc<metrics::MetricsRegistry>>,
         log_collector: Arc<log_collector::LogCollector>,
+        dev_api_key: Option<String>,
+        admin_password: String,
     ) -> Self {
         let max_clients = config.api.websocket.max_clients.max(1);
         let config_arc = Arc::new(config);
@@ -74,6 +81,8 @@ impl AppState {
             ws_semaphore: Arc::new(Semaphore::new(max_clients)),
             started_at: std::time::Instant::now(),
             log_collector,
+            dev_api_key,
+            admin_password,
         }
     }
 }
