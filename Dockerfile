@@ -1,6 +1,12 @@
 # syntax=docker/dockerfile:1
 # EasyBot — Multi-stage Docker Build
 FROM rust:slim-bookworm AS builder
+
+# Cargo retry settings for transient network errors (e.g. crates.io HTTP/2 resets)
+ENV CARGO_NET_RETRY=5 \
+    CARGO_HTTP_TIMEOUT=120 \
+    CARGO_HTTP_MULTIPLEXING=false
+
 WORKDIR /app
 RUN apt-get update && apt-get install -y \
     pkg-config \
