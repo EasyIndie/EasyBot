@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.0.2] - 2026-06-26
 
+### Added
+
+- Web UI management pages: home, API documentation, admin dashboard with system monitoring.
+- Admin password-based authentication for the admin dashboard.
+- Cross-platform service management: `easybot service install/uninstall/status/start/stop` commands
+  with systemd (Linux), launchd (macOS), and auto-run script (Windows).
+- `CARGO_NET_RETRY` / `CARGO_HTTP_TIMEOUT` / `CARGO_HTTP_MULTIPLEXING` env vars in Dockerfile
+  for robust crate downloads during Docker builds (fixes HTTP/2 connection reset errors).
+
+### Changed
+
+- Enhanced health endpoint to include admin auth status and uptime.
+- Improved build.rs to automatically regenerate Swagger/OpenAPI docs.
+
+### Fixed
+
+- Docker build failure due to transient crates.io HTTP/2 connection resets
+  (run [#122](https://github.com/EasyIndie/EasyBot/actions/runs/28235374371)).
+- Preventitive: Telegram health test snapshot updated for new version format.
+
 ## [0.0.1] - 2026-06-26
 
 ### Added
