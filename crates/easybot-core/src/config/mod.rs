@@ -6,6 +6,9 @@
 mod home;
 pub use home::*;
 
+pub mod service;
+pub use service::*;
+
 use crate::types::config::GatewayConfig;
 use regex::Regex;
 use std::path::Path;
@@ -112,8 +115,16 @@ pub fn generate_env_example() -> String {
 # 个人微信 iLink Bot Token（可选，未设置时启动后扫码登录）
 # WECHAT_BOT_TOKEN=your_wechat_bot_token
 
+# 管理后台登录密码（用于浏览器访问 /admin 时验证身份）
+# EASYBOT_ADMIN_PASSWORD=your_password
+
 # PostgreSQL（可选，默认：SQLite）
 # DATABASE_URL=postgresql://user:password@localhost:5432/easybot
+
+# 生产环境安全：release 版本默认要求启用 TLS 或设置以下变量跳过检查
+# 如果已配置反向代理（Nginx/Caddy/Traefik）终止 TLS，可保留此设置
+# 如果直接暴露到公网，请设置 tls.enabled = true 并配置证书
+EASYBOT_ALLOW_PLAINTEXT=true
 "#
     .to_string()
 }
@@ -178,6 +189,8 @@ server:
     enabled: false
     certFile: ""
     keyFile: ""
+  # 管理后台登录密码（也可通过 EASYBOT_ADMIN_PASSWORD 环境变量覆盖）
+  adminPassword: "easybot"
 
 api:
   basePath: "/api/v1"
@@ -368,6 +381,18 @@ adapters:
         assert!(content.contains("QQ_APP_ID"));
         assert!(content.contains("WECHAT_BOT_TOKEN"));
         assert!(content.contains("DATABASE_URL"));
+    }
+
+    #[test]
+    fn test_generate_env_example_contains_allow_plaintext() {
+        let content = generate_env_example();
+        assert!(content.contains("EASYBOT_ALLOW_PLAINTEXT"));
+    }
+
+    #[test]
+    fn test_generate_env_example_contains_admin_password() {
+        let content = generate_env_example();
+        assert!(content.contains("EASYBOT_ADMIN_PASSWORD"));
     }
 
     #[test]

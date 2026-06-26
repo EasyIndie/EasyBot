@@ -63,6 +63,8 @@ label { display: block; font-size: 13px; color: #8b949e; margin-bottom: 4px; }
 .login-box h2 { color: #58a6ff; margin-bottom: 8px; }
 .login-box p { color: #8b949e; font-size: 13px; margin-bottom: 24px; }
 .login-box input { margin-bottom: 12px; }
+.btn-copy { background: none; border: 1px solid #30363d; border-radius: 4px; color: #8b949e; cursor: pointer; font-size: 12px; padding: 2px 6px; vertical-align: middle; }
+.btn-copy:hover { background: #21262d; color: #e6edf3; }
 .log-list { font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace; font-size: 12px; line-height: 1.6; }
 .log-entry { padding: 2px 8px; border-radius: 3px; }
 .log-entry:hover { background: #1c1e2e; }
@@ -85,13 +87,13 @@ label { display: block; font-size: 13px; color: #8b949e; margin-bottom: 4px; }
 <div class="login-overlay" id="login-overlay">
   <div class="login-box">
     <h2>EasyBot</h2>
-    <p>管理后台需要 API Key 认证</p>
+    <p>管理后台需要密码登录</p>
     <div class="form-group">
-      <input type="text" id="login-key" placeholder="输入 API Key (eb_...)">
+      <input type="password" id="login-password" placeholder="输入管理员密码">
     </div>
-    <button class="btn btn-primary" id="login-btn" style="width:100%">验证并登录</button>
+    <button class="btn btn-primary" id="login-btn" style="width:100%">登录</button>
     <p id="login-error" class="error-msg" style="margin-top:12px;display:none"></p>
-    <p style="margin-top:16px;font-size:12px;color:#484f58">首次使用？启动日志中有带 key 的管理链接<br>或输入启动时打印的 E2E_API_KEY</p>
+    <p style="margin-top:16px;font-size:12px;color:#484f58">密码在 gateway.yaml 或 .env 中配置</p>
   </div>
 </div>
 
@@ -99,7 +101,7 @@ label { display: block; font-size: 13px; color: #8b949e; margin-bottom: 4px; }
 <div class="header">
   <h1>EasyBot 管理后台</h1>
   <div class="right">
-    <span class="key-display" id="key-display"></span>
+    <span class="key-display" id="key-display" style="display:none"></span>
     <button class="btn-logout" id="logout-btn" style="display:none">登出</button>
   </div>
 </div>
@@ -232,6 +234,26 @@ let currentKeyDisplay = '';
 function setKey(k) { apiKey = k; localStorage.setItem(LS_KEY, k); }
 function clearKey() { apiKey = ''; localStorage.removeItem(LS_KEY); }
 
+function updateKeyDisplay() {
+  const el = document.getElementById('key-display');
+  if (apiKey) {
+    const fullKey = apiKey;
+    const masked = fullKey.length > 8 ? fullKey.slice(0, 6) + '****' : fullKey;
+    el.innerHTML = `🔑 ${masked} <button class="btn-copy" onclick="copyApiKey()" title="复制完整 Key">📋</button>
+      <span id="copy-toast" style="font-size:11px;color:#3fb950;display:none;margin-left:4px">已复制</span>`;
+    el.style.display = 'inline';
+  } else {
+    el.style.display = 'none';
+  }
+}
+
+function copyApiKey() {
+  if (!apiKey) return;
+  navigator.clipboard.writeText(apiKey).catch(() => {});
+  const toast = document.getElementById('copy-toast');
+  if (toast) { toast.style.display = 'inline'; setTimeout(() => { toast.style.display = 'none'; }, 2000); }
+}
+
 // ─── API 请求包装 ──────────────────────────────
 async function api(path, opts = {}) {
   const { method = 'GET', body } = opts;
@@ -259,52 +281,54 @@ document.querySelectorAll('.tab-btn').forEach(b => b.addEventListener('click', (
 // ─── 登录 ──────────────────────────────────────
 function initAuth() {
   const overlay = document.getElementById('login-overlay');
-  const hash = window.location.hash;
-  if (hash.startsWith('#key=')) {
-    const key = hash.substring(5);
-    setKey(key);
-    window.history.replaceState(null, '', '/admin');
-  }
   if (apiKey) {
-    // 验证 key
+    // 验证已有 key
     api('/api/v1/adapters').then(() => {
       overlay.style.display = 'none';
       document.getElementById('logout-btn').style.display = 'block';
-      currentKeyDisplay = apiKey.length > 10 ? apiKey.slice(0, 6) + '****' : apiKey;
-      document.getElementById('key-display').textContent = '🔑 ' + currentKeyDisplay;
+      updateKeyDisplay();
       loadOverview();
     }).catch(() => {
       clearKey();
+      updateKeyDisplay();
     });
   }
 }
 
 document.getElementById('login-btn').addEventListener('click', async () => {
-  const key = document.getElementById('login-key').value.trim();
-  if (!key) return;
+  const password = document.getElementById('login-password').value;
+  if (!password) return;
   const err = document.getElementById('login-error');
   err.style.display = 'none';
-  setKey(key);
   try {
-    await api('/api/v1/adapters');
+    const res = await fetch('/admin/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error?.message || data.message || '登录失败');
+    setKey(data.key);
     document.getElementById('login-overlay').style.display = 'none';
     document.getElementById('logout-btn').style.display = 'block';
-    currentKeyDisplay = key.length > 10 ? key.slice(0, 6) + '****' : key;
-    document.getElementById('key-display').textContent = '🔑 ' + currentKeyDisplay;
+    updateKeyDisplay();
     loadOverview();
   } catch (e) {
     clearKey();
-    err.textContent = '认证失败：' + e.message;
+    updateKeyDisplay();
+    err.textContent = '登录失败：' + e.message;
     err.style.display = 'block';
   }
 });
-document.getElementById('login-key').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('login-btn').click(); });
+document.getElementById('login-password').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('login-btn').click(); });
 
 document.getElementById('logout-btn').addEventListener('click', () => {
   clearKey();
+  updateKeyDisplay();
   document.getElementById('login-overlay').style.display = 'flex';
   document.getElementById('logout-btn').style.display = 'none';
-  document.getElementById('key-display').textContent = '';
+  document.getElementById('login-password').value = '';
+  document.getElementById('login-error').style.display = 'none';
   stopLogPolling();
   // Reset tab contents
   document.querySelectorAll('#ov-stats, #adapters-content, #sessions-content').forEach(e => e.innerHTML = '');

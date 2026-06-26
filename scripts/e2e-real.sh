@@ -183,7 +183,7 @@ phase1_build_and_start() {
         pass "编译完成"
     fi
 
-    info "启动 easybot --debug（日志: $LOG_FILE）..."
+    info "启动 easybot --debug （日志: ${LOG_FILE}）..."
     # stderr → 日志文件（tracing），stdout → 文件（println! 如 QR 码 / API Key）
     cargo run --features full -- --debug >"$STDOUT_FILE" 2>"$LOG_FILE" &
     E2E_PID=$!
@@ -217,17 +217,26 @@ phase1_build_and_start() {
     done
     pass "服务已启动 (PID=$E2E_PID, ${_elapsed:-?}s)"
 
-    # 提取 Dev API Key（从 stdout 输出中解析 E2E_API_KEY=...）
-    E2E_API_KEY=$(grep -o 'E2E_API_KEY=eb_[a-f0-9]*' "$STDOUT_FILE" | head -1 | cut -d= -f2)
+    # 通过管理后台登录接口获取 API Key（不再从 stdout 提取）
+    E2E_API_KEY=""
+    local _wait=0
+    while [ $_wait -lt 30 ]; do
+        E2E_API_KEY=$(curl -sf -X POST http://localhost:8080/admin/login \
+            -H 'Content-Type: application/json' \
+            -d '{"password":"easybot"}' 2>/dev/null | grep -o '"key":"eb_[^"]*"' | cut -d'"' -f4 || true)
+        if [ -n "$E2E_API_KEY" ]; then
+            break
+        fi
+        sleep 1
+        _wait=$((_wait + 1))
+    done
     if [ -z "$E2E_API_KEY" ]; then
-        fail "未找到 Dev API Key（stdout 中无 E2E_API_KEY=eb_...）"
-        info "stdout 最后 10 行:"
-        tail -10 "$STDOUT_FILE" | sed 's/^/    /'
+        fail "未能通过 /admin/login 获取 API Key"
         info "日志最后 10 行:"
         tail -10 "$LOG_FILE" | sed 's/^/    /'
         exit 1
     fi
-    pass "API Key: eb_${E2E_API_KEY:3:8}..."
+    pass "API Key: eb_${E2E_API_KEY:3:8}...（已通过 /admin/login 获取）"
 
     phase_timer_end
 }
@@ -702,8 +711,8 @@ phase5_verify_and_report() {
 
     echo -e "${BOLD}═══════════════════════════════════════════${NC}"
     echo ""
-    info "Stderr 日志: $LOG_FILE"
-    info "Stdout 输出: $STDOUT_FILE"
+    info "Stderr 日志: ${LOG_FILE}"
+    info "Stdout 输出: ${STDOUT_FILE}"
 
     phase_timer_end
 }
