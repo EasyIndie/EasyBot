@@ -7,8 +7,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.0.3] - 2026-06-27
-
 ### Changed
 
 - **Linux builds switched to musl** for fully static binaries. Release artifacts for
