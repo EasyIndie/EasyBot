@@ -53,6 +53,8 @@ fn generate_systemd_unit(paths: &EasyBotPaths) -> String {
     let env = paths.env_path.display();
     let svc_path_buf = paths.home.join("easybot.service");
     let svc_path = svc_path_buf.display();
+    let user = current_username();
+    let group = user.clone(); // primary group typically matches username
 
     format!(
         r#"# EasyBot systemd service unit
@@ -74,8 +76,8 @@ Wants=network.target
 
 [Service]
 Type=simple
-User=easybot
-Group=easybot
+User={user}
+Group={group}
 WorkingDirectory={home}
 ExecStart={bin} --config {cfg}
 Restart=on-failure
@@ -95,11 +97,23 @@ CapabilityBoundingSet=
 WantedBy=multi-user.target
 "#,
         svc = svc_path,
+        user = user,
+        group = group,
         home = home,
         bin = bin_path,
         cfg = config,
         env = env,
     )
+}
+
+/// 检测当前运行 `easybot --init` 的用户名。
+///
+/// 优先使用 `$USER` 环境变量，因为这是 `easybot --init` 生成服务文件时的执行者。
+/// 回退到 `$USERNAME`（Windows），最后兜底为 `easybot`。
+fn current_username() -> String {
+    std::env::var("USER")
+        .or_else(|_| std::env::var("USERNAME"))
+        .unwrap_or_else(|_| "easybot".to_string())
 }
 
 // ──────────────────────────────────────
