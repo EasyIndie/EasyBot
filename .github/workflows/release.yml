@@ -161,11 +161,11 @@ jobs:
         with:
           target: ${{ matrix.target }}
           install-protoc: auto
-          install-zigbuild: true
+          install-zigbuild: ${{ contains(matrix.target, 'musl') }}
 
       - name: Build release binary (musl — static linking)
         if: contains(matrix.target, 'musl')
-        run: cargo zigbuild --release --features "full,plugin-system" --target ${{ matrix.target }} --locked
+        run: cargo zigbuild --bin easybot --release --features "full,plugin-system" --target ${{ matrix.target }} --locked
 
       - name: Build release binary (native)
         if: ${{ !contains(matrix.target, 'musl') }}
