@@ -216,12 +216,18 @@ SERVICE_DEST="{svc_dest}"
 CONFIG="{config}"
 EMBEDDED_BIN="{bin}"
 
-# 自动检测二进制路径：嵌入路径 → PATH → 脚本同目录
+# 自动检测二进制路径：嵌入路径 → PATH → 常见 cargo 安装路径 → 脚本同目录
 find_binary() {{
     if [ -x "$EMBEDDED_BIN" ]; then
         echo "$EMBEDDED_BIN"
     elif command -v easybot &>/dev/null; then
         echo "$(command -v easybot)"
+    elif [ -x "${{CARGO_HOME:-$HOME/.cargo}}/bin/easybot" ]; then
+        echo "${{CARGO_HOME:-$HOME/.cargo}}/bin/easybot"
+    elif [ -x "$HOME/.local/bin/easybot" ]; then
+        echo "$HOME/.local/bin/easybot"
+    elif [ -x "/usr/local/bin/easybot" ]; then
+        echo "/usr/local/bin/easybot"
     elif [ -x "$(dirname "$0")/easybot" ]; then
         echo "$(dirname "$0")/easybot"
     else
@@ -234,6 +240,11 @@ install_service() {{
     local bin
     bin=$(find_binary)
     echo "→ 二进制路径: $bin"
+    if [ ! -x "$bin" ]; then
+        echo "⚠ 警告: 可执行文件不存在: $bin"
+        echo "  请安装 easybot 后再运行 install"
+        echo "  例如: cargo install --path /path/to/easybot"
+    fi
     if [ "$bin" != "$EMBEDDED_BIN" ]; then
         echo "  (检测到路径与生成时不一致，已自动修正)"
         sed "s|ExecStart=.*|ExecStart=${bin} --config ${{CONFIG}}|" "$SERVICE_SRC" > /tmp/easybot.service
@@ -350,12 +361,18 @@ SERVICE_LABEL="{label}"
 CONFIG="{config}"
 EMBEDDED_BIN="{bin}"
 
-# 自动检测二进制路径：嵌入路径 → PATH → 脚本同目录
+# 自动检测二进制路径：嵌入路径 → PATH → 常见 cargo 安装路径 → 脚本同目录
 find_binary() {{
     if [ -x "$EMBEDDED_BIN" ]; then
         echo "$EMBEDDED_BIN"
     elif command -v easybot &>/dev/null; then
         echo "$(command -v easybot)"
+    elif [ -x "${{CARGO_HOME:-$HOME/.cargo}}/bin/easybot" ]; then
+        echo "${{CARGO_HOME:-$HOME/.cargo}}/bin/easybot"
+    elif [ -x "$HOME/.local/bin/easybot" ]; then
+        echo "$HOME/.local/bin/easybot"
+    elif [ -x "/usr/local/bin/easybot" ]; then
+        echo "/usr/local/bin/easybot"
     elif [ -x "$(dirname "$0")/easybot" ]; then
         echo "$(dirname "$0")/easybot"
     else
@@ -368,6 +385,10 @@ install_service() {{
     local bin
     bin=$(find_binary)
     echo "→ 二进制路径: $bin"
+    if [ ! -x "$bin" ]; then
+        echo "⚠ 警告: 可执行文件不存在: $bin"
+        echo "  请安装 easybot 后再运行 install"
+    fi
     if [ "$bin" != "$EMBEDDED_BIN" ]; then
         echo "  (检测到路径与生成时不一致，已自动修正)"
         /usr/libexec/PlistBuddy -c "Set :ProgramArguments:0 $bin" "$PLIST_SRC" 2>/dev/null || true
