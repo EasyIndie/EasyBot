@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Linux builds switched to musl** for fully static binaries. Release artifacts for
+  `x86_64` and `aarch64` Linux now use `*-unknown-linux-musl` targets via
+  `cargo-zigbuild`. Solves `GLIBC_X.XX not found` errors on older Linux systems
+  (e.g. Raspberry Pi) — binary runs on any Linux without glibc dependency.
+- SQLite is now compiled from source (`sqlite-bundled`) for all targets, removing
+  the runtime dependency on system `libsqlite3`.
+- macOS builds now set `MACOSX_DEPLOYMENT_TARGET=10.15` (x86_64) and
+  `MACOSX_DEPLOYMENT_TARGET=11.0` (aarch64) for better cross-version compatibility.
+- CI now includes a `musl-check` job that verifies musl compilation and static
+  linking on every push/PR.
+- Docker release image now packages musl-static binaries (no functional change to
+  the container runtime).
+
+### Added
+
+- Optional macOS code signing + notarization support in release workflow. When
+  Apple Developer ID credentials are configured as GitHub Secrets, macOS binaries
+  are automatically signed and notarized for Gatekeeper compatibility.
+- `.cargo/config.toml` with musl build documentation for local development.
+
 ## [0.0.2] - 2026-06-26
 
 ### Added

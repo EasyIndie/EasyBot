@@ -132,17 +132,19 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
+            target: x86_64-unknown-linux-musl
             suffix: ""
           - os: ubuntu-latest
-            target: aarch64-unknown-linux-gnu
+            target: aarch64-unknown-linux-musl
             suffix: ""
           - os: macos-latest
             target: x86_64-apple-darwin
             suffix: ""
+            macos-deployment-target: "10.15"
           - os: macos-latest
             target: aarch64-apple-darwin
             suffix: ""
+            macos-deployment-target: "11.0"
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             suffix: ".exe"
@@ -159,15 +161,74 @@ jobs:
         with:
           target: ${{ matrix.target }}
           install-protoc: auto
+          install-zigbuild: true
 
-      - name: Install cross-compilation dependencies (aarch64-linux)
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
-        run: sudo apt-get install -y -qq gcc-aarch64-linux-gnu
+      - name: Build release binary (musl — static linking)
+        if: contains(matrix.target, 'musl')
+        run: cargo zigbuild --release --features "full,plugin-system" --target ${{ matrix.target }} --locked
 
-      - name: Build release binary
+      - name: Build release binary (native)
+        if: ${{ !contains(matrix.target, 'musl') }}
         env:
-          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+          MACOSX_DEPLOYMENT_TARGET: ${{ matrix.macos-deployment-target || '' }}
         run: cargo build --release --features "full,plugin-system" --target ${{ matrix.target }} --locked
+
+      # ── macOS 签名 + 公证（可选，凭据存在时自动执行） ──
+      - name: Check macOS signing credentials
+        if: contains(matrix.target, 'apple-darwin')
+        id: check-macos-cert
+        env:
+          CERT: ${{ secrets.APPLE_DEVELOPER_ID_CERT_BASE64 }}
+        run: |
+          if [ -n "$CERT" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "No Apple signing certificate — macOS binary will be unsigned"
+          fi
+
+      - name: Sign and notarize macOS binary
+        if: steps.check-macos-cert.outputs.available == 'true'
+        env:
+          CERT_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_CERT_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_CERT_PASSWORD }}
+          NOTARY_API_KEY: ${{ secrets.APPLE_NOTARY_API_KEY_BASE64 }}
+          NOTARY_API_KEY_ID: ${{ secrets.APPLE_NOTARY_API_KEY_ID }}
+          NOTARY_ISSUER: ${{ secrets.APPLE_NOTARY_API_ISSUER }}
+        run: |
+          BINARY="target/${{ matrix.target }}/release/easybot${{ matrix.suffix }}"
+
+          # 1. 导入证书到临时 keychain
+          echo "$CERT_BASE64" | base64 --decode > certificate.p12
+          security create-keychain -p temp temp.keychain
+          security default-keychain -s temp.keychain
+          security unlock-keychain -p temp temp.keychain
+          security import certificate.p12 -k temp.keychain \
+            -P "$CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list \
+            -S apple-tool:,apple: -s -k temp temp.keychain
+
+          # 2. 签名（启用 Hardened Runtime）
+          DEVELOPER_ID=$(security find-identity -v -p basic |
+            grep "Developer ID Application" | head -1 | sed 's/.*"\(.*\)"/\1/')
+          codesign --force --sign "$DEVELOPER_ID" \
+            --timestamp --options runtime "$BINARY"
+
+          # 3. 公证
+          if [ -n "$NOTARY_API_KEY" ]; then
+            echo "$NOTARY_API_KEY" | base64 --decode > auth_key.p8
+            zip -r "$BINARY.zip" "$BINARY"
+            xcrun notarytool submit "$BINARY.zip" \
+              --key auth_key.p8 --key-id "$NOTARY_API_KEY_ID" \
+              --issuer "$NOTARY_ISSUER" --wait
+            # 4. 贴票
+            xcrun stapler staple "$BINARY"
+            rm -f "$BINARY.zip" auth_key.p8
+          fi
+
+          # 清理证书
+          rm -f certificate.p12
+          security delete-keychain temp.keychain
 
       - name: Prepare artifact
         shell: bash
@@ -239,18 +300,18 @@ jobs:
       - name: Download linux x86_64 binary
         uses: actions/download-artifact@v4
         with:
-          name: easybot-x86_64-unknown-linux-gnu
+          name: easybot-x86_64-unknown-linux-musl
 
       - name: Download linux aarch64 binary
         uses: actions/download-artifact@v4
         with:
-          name: easybot-aarch64-unknown-linux-gnu
+          name: easybot-aarch64-unknown-linux-musl
 
       - name: Prepare binaries for Docker
         run: |
           mkdir -p dist/
-          cp easybot-x86_64-unknown-linux-gnu dist/easybot-amd64
-          cp easybot-aarch64-unknown-linux-gnu dist/easybot-arm64
+          cp easybot-x86_64-unknown-linux-musl dist/easybot-amd64
+          cp easybot-aarch64-unknown-linux-musl dist/easybot-arm64
           chmod +x dist/easybot-*
 
       - uses: ./.github/actions/docker-setup

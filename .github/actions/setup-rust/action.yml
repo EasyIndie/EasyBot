@@ -26,6 +26,10 @@ inputs:
     description: "Whether to set up sccache"
     required: false
     default: "true"
+  install-zigbuild:
+    description: "Whether to install cargo-zigbuild for musl cross-compilation (requires Python/pip)"
+    required: false
+    default: "false"
 
 runs:
   using: composite
@@ -53,6 +57,11 @@ runs:
       uses: arduino/setup-protoc@v3
       with:
         repo-token: ${{ github.token }}
+
+    - name: Install cargo-zigbuild
+      if: ${{ inputs.install-zigbuild == 'true' }}
+      shell: bash
+      run: pip3 install cargo-zigbuild
 
     - name: Setup sccache
       if: ${{ inputs.sccache == 'true' }}
