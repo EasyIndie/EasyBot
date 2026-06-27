@@ -1147,6 +1147,62 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_start_all_disabled_by_config_overrides_env_vars() {
+        // 模拟真实场景：.env 中已设置凭据（候选 auto-enable），
+        // 但 gateway.local.yaml 中 enabled: false → 应跳过
+        let manager = new_manager().await;
+        register_mock_adapter(&manager).await;
+
+        let registry = manager.registry();
+        registry
+            .register(
+                "cred-mock",
+                "Cred Mock",
+                Arc::new(|config| {
+                    Box::pin(async move {
+                        let mut adapter = MockTestAdapter::new();
+                        adapter.platform = "cred-mock".into();
+                        let result = adapter.init(config).await.map_err(|e| e.to_string())?;
+                        if !result.ok {
+                            return Err(result.error.unwrap_or_default());
+                        }
+                        let boxed: Box<dyn PlatformAdapter> = Box::new(adapter);
+                        Ok(boxed)
+                    })
+                }),
+                &["CRED_MOCK_TOKEN"],
+            )
+            .await;
+
+        // 设置凭据 — auto-enable 会因此尝试启动，但 enabled: false 优先
+        // SAFETY: 测试环境，单线程执行
+        unsafe { std::env::set_var("CRED_MOCK_TOKEN", "some-token") };
+
+        let mut configs = HashMap::new();
+        configs.insert(
+            "cred-mock".to_string(),
+            AdapterConfig {
+                enabled: Some(false),
+                token: None,
+                api_key: None,
+                base_url: None,
+                extra: serde_json::json!({}),
+            },
+        );
+
+        let result = manager.start_all(configs).await;
+        assert!(
+            !result.succeeded.contains(&"cred-mock".to_string()),
+            "cred-mock should NOT start when enabled:false in config \
+             even though env vars are set for auto-enable; succeeded: {:?}",
+            result.succeeded
+        );
+
+        // SAFETY: 测试环境，单线程执行
+        unsafe { std::env::remove_var("CRED_MOCK_TOKEN") };
+    }
+
+    #[tokio::test]
     async fn test_start_publishes_adapter_connected() {
         let event_bus = Arc::new(EventBus::new());
         let mut rx = event_bus.subscribe(event_types::ADAPTER_CONNECTED);

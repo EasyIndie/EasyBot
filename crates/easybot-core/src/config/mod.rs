@@ -234,27 +234,29 @@ pub fn generate_local_config_example() -> String {
 #   enabled:    true | false          — 强制启用/禁用（不写则自动检测凭据）
 #   token:      "xxx"                 — 覆盖凭据（通常从 .env 读取）
 #   base_url:   "https://..."         — 自定义 API 地址（测试/代理场景）
+#
+# 注意：适配器配置必须放在 adapters: 下方，不可直接放在 YAML 顶层。
 
-# Telegram（凭据: TELEGRAM_BOT_TOKEN）
-# telegram:
-#   enabled: false
+# 注意：适配器配置必须在 adapters: 下，不可直接放在 YAML 顶层。
+# 取消注释以下块来显式禁用或覆盖适配器：
 
-# Discord（凭据: DISCORD_BOT_TOKEN）
-# discord:
-#   enabled: false
-
-# 飞书/Lark（凭据: FEISHU_APP_ID + FEISHU_APP_SECRET）
-# feishu:
-#   enabled: false
-
-# QQ（凭据: QQ_APP_ID + QQ_CLIENT_SECRET）
-# qq:
-#   enabled: false
-
-# 个人微信（无需强制凭据，支持扫码登录；iLink Bot API 可选 WECHAT_BOT_TOKEN）
-# wechat:
-#   enabled: true
-#   base_url: "http://192.168.1.100:8080"
+# adapters:
+#   # Telegram（凭据: TELEGRAM_BOT_TOKEN）
+#   telegram:
+#     enabled: false
+#   # Discord（凭据: DISCORD_BOT_TOKEN）
+#   discord:
+#     enabled: false
+#   # 飞书/Lark（凭据: FEISHU_APP_ID + FEISHU_APP_SECRET）
+#   feishu:
+#     enabled: false
+#   # QQ（凭据: QQ_APP_ID + QQ_CLIENT_SECRET）
+#   qq:
+#     enabled: false
+#   # 个人微信（无需强制凭据，支持扫码登录）
+#   wechat:
+#     enabled: true
+#     base_url: "http://192.168.1.100:8080"
 
 # ── 服务端覆盖 ─────────────────────────────
 # server:
@@ -343,6 +345,54 @@ adapters:
     }
 
     #[test]
+    fn test_merge_configs_preserves_enabled_false_through_deserialize() {
+        // 模拟用户场景：
+        //   gateway.yaml: adapter 有 token 但无 enabled（auto-detect）
+        //   gateway.local.yaml: enabled: false（显式禁用）
+        // 合并后反序列化回 GatewayConfig，AdapterConfig.enabled 应为 Some(false)
+        let base_yaml = r#"
+server:
+  port: 8080
+adapters:
+  telegram:
+    token: "${TELEGRAM_BOT_TOKEN}"
+"#;
+        let local_yaml = r#"
+adapters:
+  telegram:
+    enabled: false
+"#;
+
+        let base_val: serde_yaml::Value =
+            serde_yaml::from_str(base_yaml).expect("base yaml should parse");
+        let local_val: serde_yaml::Value =
+            serde_yaml::from_str(local_yaml).expect("local yaml should parse");
+
+        let mut merged = base_val.clone();
+        merge_configs(&mut merged, local_val);
+
+        // 验证 merged Value 包含 enabled: false
+        assert_eq!(merged["adapters"]["telegram"]["enabled"], false);
+        assert_eq!(
+            merged["adapters"]["telegram"]["token"],
+            "${TELEGRAM_BOT_TOKEN}"
+        );
+
+        // 反序列化回 GatewayConfig
+        let config: GatewayConfig =
+            serde_yaml::from_value(merged).expect("merged value should deserialize");
+
+        let telegram_cfg = config.adapters.get("telegram").unwrap();
+
+        // 关键断言：enabled 应为 Some(false)，而非 None
+        assert!(
+            matches!(telegram_cfg.enabled, Some(false)),
+            "expected Some(false), got {:?}",
+            telegram_cfg.enabled
+        );
+    }
+
+    #[test]
     fn test_load_env_creates_variables() {
         use std::fs;
         let dir = std::env::temp_dir().join("easybot_env_test_basic");
@@ -417,7 +467,12 @@ adapters:
     #[test]
     fn test_generate_local_config_example_contains_override_examples() {
         let content = generate_local_config_example();
-        // 新格式仅包含高级覆盖示例，不再逐平台列举
+        // 必须包含 adapters: 父级键（之前模板误将适配器放在顶层导致 serde 静默忽略）
+        assert!(
+            content.contains("adapters:"),
+            "template must show adapters: wrapper, got:\n{}",
+            content
+        );
         assert!(content.contains("本地配置覆盖"));
         assert!(content.contains("enabled: false"));
         assert!(content.contains("enabled: true"));

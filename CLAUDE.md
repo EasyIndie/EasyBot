@@ -131,6 +131,7 @@ Config supports `${VAR_NAME}` for environment variable substitution and merges `
 Environment variable priority: `export` / Docker `environment:` > `.env` file (loaded via `dotenvy::from_path`, does not override existing vars).
 Run `easybot --init` to create `gateway.yaml`, `gateway.local.yaml` (example override), and `.env` (template with all known variables).
 Adapters auto-enable via credential env var detection — no need to manually set `enabled: true` in YAML config.
+**IMPORTANT for `gateway.local.yaml`**: Adapter overrides MUST be under `adapters:` key, NOT at YAML top level (serde silently ignores unknown struct fields).
 
 ### Adapter Lifecycle
 
