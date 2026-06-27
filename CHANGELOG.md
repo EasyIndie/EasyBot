@@ -7,7 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `GET /api/v1/config` now returns the actual runtime values for config fields
+  that are overridden after YAML loading (admin password from env var, resolved
+  storage path, defaulted connection string, unknown storage-type fallback).
+  Oversight corrected by sinking runtime overrides into `ConfigManager`.
+- `POST /api/v1/adapters/{platform}/start` now injects credentials from
+  environment variables (same as `start_all()`), so adapters stopped via the
+  admin dashboard can be restarted manually. Init failures also update the
+  status cache to `Failed`, preventing the frontend from showing stale state.
+  The admin panel's start/stop buttons now check the API response and show
+  error alerts on failure.
+- `easybot.sh install` no longer fails to find the binary on Raspberry Pi
+  (musl-based systems where `file` reports Linux binary as "data").
+- `gateway.local.yaml` adapter overrides are no longer silently ignored when
+  placed under `adapters:` key (serde unknown-field deserialization fix).
+- Default config directory now uses `~/.easybot` on macOS/Linux consistently,
+  instead of falling back to the legacy `~/.config/easybot` path.
+
+### Changed
+
+- Pre-commit hook (`scripts/pre-commit`) now also runs `cargo clippy --all-targets -- -D warnings`, catching clippy issues before they reach the pre-push verification suite.
+
 ## [0.0.4] - 2026-06-27
+
+### Fixed
+
+- `EASYBOT_ADMIN_PASSWORD` environment variable now correctly overrides the
+  `admin_password` value from `gateway.yaml` at all config loading stages.
+- Generated systemd service unit now sets the correct `User=` and `Group=`
+  by detecting the current user and their primary group via `whoami` + `id -gn`.
+- Stale GitHub release artifacts no longer accumulate; a cleanup step removes
+  drafts from the same tag before publishing a new release.
+
+### Changed
+
+- Release workflow migrated to tag-driven trigger (`git tag v0.0.x && git push
+  --tags`), replacing the previous workflow-dispatch + manual-version-input
+  approach.
+- `gateway.local.yaml` template expanded with all five adapter platform override
+  examples and a clear comment that overrides must be under the `adapters:` key,
+  not at the YAML root.
 
 ## [0.0.3] - 2026-06-27
 
