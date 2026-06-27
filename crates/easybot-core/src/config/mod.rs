@@ -229,15 +229,34 @@ pub fn generate_local_config_example() -> String {
 #
 # 此文件不会被版本控制（已在 .gitignore 中）。
 
-# 示例: 显式禁用 Telegram（即使 TELEGRAM_BOT_TOKEN 已设置）
+# ── 适配器控制 ──────────────────────────────
+# 每个适配器支持以下字段：
+#   enabled:    true | false          — 强制启用/禁用（不写则自动检测凭据）
+#   token:      "xxx"                 — 覆盖凭据（通常从 .env 读取）
+#   base_url:   "https://..."         — 自定义 API 地址（测试/代理场景）
+
+# Telegram（凭据: TELEGRAM_BOT_TOKEN）
 # telegram:
 #   enabled: false
 
-# 示例: 启用个人微信 QR 扫码登录（无需设置 WECHAT_BOT_TOKEN）
+# Discord（凭据: DISCORD_BOT_TOKEN）
+# discord:
+#   enabled: false
+
+# 飞书/Lark（凭据: FEISHU_APP_ID + FEISHU_APP_SECRET）
+# feishu:
+#   enabled: false
+
+# QQ（凭据: QQ_APP_ID + QQ_CLIENT_SECRET）
+# qq:
+#   enabled: false
+
+# 个人微信（无需强制凭据，支持扫码登录；iLink Bot API 可选 WECHAT_BOT_TOKEN）
 # wechat:
 #   enabled: true
+#   base_url: "http://192.168.1.100:8080"
 
-# 示例: 自定义服务器端口
+# ── 服务端覆盖 ─────────────────────────────
 # server:
 #   port: 9090
 "#
