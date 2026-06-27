@@ -31,6 +31,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   are automatically signed and notarized for Gatekeeper compatibility.
 - `.cargo/config.toml` with musl build documentation for local development.
 
+### Fixed
+
+- Release workflow no longer creates Git tags on version bump; tags are now
+  created only after successful binary builds, preventing orphaned version tags
+  when a release fails mid-way.
+- macOS CI failure caused by `pip3` PEP 668 externally-managed-environment error
+  when installing `cargo-zigbuild` on macOS runners (only install for musl targets).
+- Musl builds now use `--bin easybot` to avoid workspace cdylib (`mock-adapter`)
+  incompatibility with `*-linux-musl` targets.
+
 ## [0.0.2] - 2026-06-26
 
 ### Added
