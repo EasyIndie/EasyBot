@@ -268,12 +268,9 @@ async fn main() -> anyhow::Result<()> {
         Err(e) => tracing::warn!("Failed to create dev API key: {}", e),
     }
 
-    // 解析管理后台密码（支持 .env 和 gateway.yaml 两种配置方式）
-    let admin_password = if !config.server.admin_password.is_empty() {
-        config.server.admin_password.clone()
-    } else {
-        std::env::var("EASYBOT_ADMIN_PASSWORD").unwrap_or_else(|_| "easybot".to_string())
-    };
+    // 解析管理后台密码（优先级：EASYBOT_ADMIN_PASSWORD > gateway.yaml > 默认值）
+    let admin_password = std::env::var("EASYBOT_ADMIN_PASSWORD")
+        .unwrap_or_else(|_| config.server.admin_password.clone());
     if admin_password == "easybot" {
         tracing::warn!(
             "管理后台使用默认密码 'easybot'，请在 .env 或 gateway.yaml 中修改 admin_password"
