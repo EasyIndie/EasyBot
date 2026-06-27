@@ -113,7 +113,7 @@ EasyBot is an independent **IM Gateway** service connecting multiple instant mes
 
 ### Configuration Directory
 
-User-level config stored at `~/.easybot/` (macOS/Linux) or `%APPDATA%\easybot\` (Windows). Resolution priority: CLI `--dir` > `EASYBOT_HOME` env var > `~/.easybot/` (legacy) > platform standard dir.
+User-level config stored at `~/.easybot/` (macOS/Linux) or `%APPDATA%\easybot\` (Windows). Resolution priority: CLI `--dir` > `EASYBOT_HOME` env var > platform default (`~/.easybot/` on macOS/Linux, `%APPDATA%\easybot\` on Windows).
 
 ```
 ~/.easybot/

@@ -1,11 +1,8 @@
 //! 配置目录路径管理
 //!
-//! 跨平台用户配置目录解析，遵循各平台标准：
-//! - macOS:   ~/Library/Application Support/easybot/
-//! - Linux:   ~/.local/share/easybot/
-//! - Windows: %APPDATA%\easybot\
-//!
-//! 同时支持传统路径 ~/.easybot/ 以向后兼容。
+//! 跨平台用户配置目录解析：
+//! - macOS/Linux: ~/.easybot/
+//! - Windows:     %APPDATA%\easybot\
 
 use std::path::PathBuf;
 
@@ -17,8 +14,9 @@ const FOLDER_NAME: &str = "easybot";
 /// 优先级（从高到低）:
 /// 1. `--dir` CLI 参数（由调用方传入）
 /// 2. `EASYBOT_HOME` 环境变量
-/// 3. `~/.easybot/`（若已存在，用于从旧路径迁移的用户）
-/// 4. 平台标准数据目录
+/// 3. 平台默认目录:
+///    - macOS/Linux: ~/.easybot/
+///    - Windows:     %APPDATA%\easybot\
 pub fn resolve_home(cli_override: Option<PathBuf>) -> PathBuf {
     // 1. CLI 参数
     if let Some(dir) = cli_override {
@@ -33,20 +31,24 @@ pub fn resolve_home(cli_override: Option<PathBuf>) -> PathBuf {
         }
     }
 
-    // 3. 传统路径 ~/.easybot/
-    if let Some(home) = dirs::home_dir() {
-        let legacy = home.join(format!(".{}", FOLDER_NAME));
-        if legacy.exists() {
-            return legacy;
-        }
-    }
-
-    // 4. 平台标准目录
+    // 3. 平台默认目录
     platform_default_data_dir()
 }
 
-/// 按平台返回标准数据目录
+/// 按平台返回默认配置目录
+///
+/// - macOS/Linux: ~/.easybot/          （类 Unix hidden dir）
+/// - Windows:     %APPDATA%\easybot\   （平台标准数据目录）
 fn platform_default_data_dir() -> PathBuf {
+    // macOS / Linux → ~/.easybot/
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    {
+        if let Some(home) = dirs::home_dir() {
+            return home.join(format!(".{}", FOLDER_NAME));
+        }
+    }
+
+    // Windows（及其他平台）→ 平台标准数据目录
     if let Some(base) = dirs::data_dir() {
         base.join(FOLDER_NAME)
     } else {
