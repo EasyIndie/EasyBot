@@ -498,11 +498,23 @@ async function loadAdapters() {
 }
 
 async function adapterAction(platform, action) {
+  const btnAction = action === 'start' ? '启动' : '停止';
   try {
-    await api('/api/v1/adapters/' + platform + '/' + action, { method: 'POST' });
+    // 禁用按钮防止重复点击（在 loadAdapters 重新渲染前临时禁用）
+    const buttons = document.querySelectorAll(`[onclick*="'${platform}','${action}'"]`);
+    buttons.forEach(b => b.disabled = true);
+
+    const data = await api('/api/v1/adapters/' + platform + '/' + action, { method: 'POST' });
+    if (!data.ok) {
+      throw new Error(data.error || `${btnAction}失败`);
+    }
+    // 等一小段时间让后端更新状态（后台 connect 任务可能需几毫秒才写入 statuses）
+    await new Promise(r => setTimeout(r, 100));
     loadAdapters();
   } catch (e) {
-    alert(action === 'start' ? '启动失败: ' : '停止失败: ' + e.message);
+    // 重新加载让按钮状态恢复
+    loadAdapters();
+    alert(btnAction + '失败: ' + e.message);
   }
 }
 

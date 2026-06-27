@@ -130,10 +130,14 @@ impl AdapterManager {
     pub async fn start(
         &self,
         platform: &str,
-        config: AdapterConfig,
+        mut config: AdapterConfig,
     ) -> Result<StartAdapterResult, GatewayError> {
         // 获取 Arc<Self> 用于后台任务
         let self_arc = self.ensure_self_ref().await?;
+
+        // 注入凭据环境变量（如 token 未在 config 中设置，从 env var 读取）
+        // 确保所有调用方（包括 API 手动启动）都获得凭据注入
+        self.inject_credentials(platform, &mut config).await;
 
         // 通过注册表创建适配器实例
         let mut adapter = self
@@ -142,22 +146,41 @@ impl AdapterManager {
             .await
             .map_err(|e| GatewayError::PlatformNotFound(format!("{}: {}", platform, e)))?;
 
+        // 在 init 前获取名称（init 失败后仍需用它们更新状态缓存）
+        let platform_name = adapter.platform_name().to_string();
+        let display_name = adapter.display_name().to_string();
+
         // 初始化（同步、快速）
         let init_result = adapter.init(config.clone()).await?;
         if !init_result.ok {
             let error_msg = init_result.error.clone().unwrap_or_default();
             self.publish_adapter_error(platform, &error_msg);
+            // 更新状态为 Failed，使前端 /api/v1/adapters 能第一时间看到失败
+            {
+                let mut statuses = self.statuses.write().await;
+                statuses.insert(
+                    platform_name.clone(),
+                    AdapterStatusSummary {
+                        platform: platform_name.clone(),
+                        display_name: display_name.clone(),
+                        state: AdapterState::Failed,
+                        connected: false,
+                        health: None,
+                        last_error: Some(error_msg.clone()),
+                        uptime: None,
+                        messages_in: 0,
+                        messages_out: 0,
+                    },
+                );
+            }
             return Ok(StartAdapterResult {
                 ok: false,
                 pending: false,
-                platform: platform.to_string(),
+                platform: platform_name,
                 error: init_result.error,
                 bot_info: None,
             });
         }
-
-        let platform_name = adapter.platform_name().to_string();
-        let display_name = adapter.display_name().to_string();
 
         // 检查是否已在运行或连接中
         if self.adapters.read().await.contains_key(&platform_name) {
@@ -484,7 +507,7 @@ impl AdapterManager {
 
         for (platform, display_name) in platforms {
             // 从配置中获取覆盖值（如果存在），否则使用默认配置
-            let mut config = configs
+            let config = configs
                 .get(&platform)
                 .cloned()
                 .unwrap_or_else(|| AdapterConfig {
@@ -543,8 +566,7 @@ impl AdapterManager {
             };
 
             if effective_enabled {
-                // 将凭据环境变量注入 AdapterConfig（仅在 config 未显式设置时）
-                self.inject_credentials(&platform, &mut config).await;
+                // 凭据注入已由 start() 内部完成，无需在此处重复调用 inject_credentials
                 match self.start(&platform, config).await {
                     Ok(r) if r.ok => succeeded.push(platform),
                     Ok(r) => failed.push((platform, r.error.unwrap_or_default())),
