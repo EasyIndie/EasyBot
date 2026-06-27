@@ -469,6 +469,9 @@ document.getElementById('log-clear-btn').addEventListener('click', () => {
 });
 
 // ─── Adapters Tab ──────────────────────────────
+// 存储每个 adapter 的轮询 timeout ID，防止切换 tab 后继续轮询
+let adapterPollTimers = {};
+
 async function loadAdapters() {
   const loading = document.getElementById('adapters-loading');
   const content = document.getElementById('adapters-content');
@@ -478,14 +481,21 @@ async function loadAdapters() {
     const data = await api('/api/v1/adapters');
     const icons = { telegram: '✈️', discord: '🎮', feishu: '📘', qq: '🐧', wechat: '💬' };
     content.innerHTML = '<div class="grid-2">' + data.adapters.map(a => {
-      const statusClass = a.connected ? 'badge-green' : a.status === 'Failed' ? 'badge-red' : a.status === 'Reconnecting' ? 'badge-yellow' : 'badge-gray';
+      // 如果有正在轮询中的状态，优先显示轮询状态
+      const pollState = adapterPollTimers[a.platform] ? adapterPollTimers[a.platform].displayState : null;
+      const displayStatus = pollState || a.status;
+      const statusClass = a.connected ? 'badge-green'
+        : displayStatus === 'Failed' ? 'badge-red'
+        : displayStatus === 'Connecting' || displayStatus === '启动中...' || displayStatus === '停止中...' ? 'badge-blue'
+        : displayStatus === 'Reconnecting' ? 'badge-yellow'
+        : 'badge-gray';
       const icon = icons[a.platform] || '🔌';
-      return `<div class="card">
+      return `<div class="card" id="adapter-card-${a.platform}">
         <div style="display:flex;justify-content:space-between;align-items:center">
-          <h3>${icon} ${a.display_name} <span class="badge ${statusClass}">${a.status}</span></h3>
-          <div>
-            <button class="btn btn-sm btn-primary" onclick="adapterAction('${a.platform}','start')" ${a.connected ? 'disabled':''}>启动</button>
-            <button class="btn btn-sm btn-danger" onclick="adapterAction('${a.platform}','stop')" ${!a.connected ? 'disabled':''}>停止</button>
+          <h3>${icon} ${a.display_name} <span class="badge ${statusClass}" id="adapter-badge-${a.platform}">${displayStatus}</span></h3>
+          <div id="adapter-buttons-${a.platform}">
+            <button class="btn btn-sm btn-primary" onclick="adapterAction('${a.platform}','start')" ${a.connected || pollState ? 'disabled':''}>启动</button>
+            <button class="btn btn-sm btn-danger" onclick="adapterAction('${a.platform}','stop')" ${!a.connected || pollState ? 'disabled':''}>停止</button>
           </div>
         </div>
       </div>`;
@@ -497,21 +507,109 @@ async function loadAdapters() {
   }
 }
 
-async function adapterAction(platform, action) {
-  const btnAction = action === 'start' ? '启动' : '停止';
+// 更新单个 adapter 卡片的 badge 和按钮状态（不重新渲染整个列表）
+function updateAdapterCard(platform, status, connected, polling) {
+  const badge = document.getElementById(`adapter-badge-${platform}`);
+  if (badge) {
+    const statusClass = connected ? 'badge-green'
+      : status === 'Failed' ? 'badge-red'
+      : status === '启动中...' || status === '停止中...' ? 'badge-blue'
+      : status === 'Reconnecting' ? 'badge-yellow'
+      : 'badge-gray';
+    badge.className = `badge ${statusClass}`;
+    badge.textContent = status;
+  }
+  // 更新按钮状态
+  const btnDiv = document.getElementById(`adapter-buttons-${platform}`);
+  if (btnDiv) {
+    const [startBtn, stopBtn] = btnDiv.querySelectorAll('button');
+    if (startBtn) startBtn.disabled = connected || polling;
+    if (stopBtn) stopBtn.disabled = !connected || polling;
+  }
+}
+
+// 等待适配器状态稳定的终止状态（Connected 或 Failed）
+// 返回最终的 adapter status string
+async function waitForStableStatus(platform, targetConnected, timeoutMs = 15000) {
+  const pollInterval = 500;
+  const startTime = Date.now();
+
+  while (Date.now() - startTime < timeoutMs) {
+    await new Promise(r => setTimeout(r, pollInterval));
+    try {
+      const resp = await api(`/api/v1/adapters/${platform}/status`);
+      if (resp && resp.state) {
+        const state = resp.state;
+        const connected = resp.connected || false;
+        // 终止状态：启动目标为 connected=true，停止目标为 connected=false+非过渡状态
+        if (targetConnected && connected) {
+          return { status: state, connected: true };
+        }
+        if (!targetConnected && !connected && !['Connecting', 'Starting', 'Disconnecting', 'Stopping'].includes(state)) {
+          return { status: state, connected: false };
+        }
+        // 失败的终止状态
+        if (state === 'Failed') {
+          return { status: state, connected: false };
+        }
+      }
+    } catch (_) {
+      // 轮询请求可能被中断（切换 tab 等），忽略继续
+    }
+  }
+  // 超时：返回当前状态
   try {
-    // 禁用按钮防止重复点击（在 loadAdapters 重新渲染前临时禁用）
+    const resp = await api(`/api/v1/adapters/${platform}/status`);
+    return { status: resp?.state || 'Unknown', connected: resp?.connected || false };
+  } catch (_) {
+    return { status: 'Timeout', connected: false };
+  }
+}
+
+async function adapterAction(platform, action) {
+  const isStart = action === 'start';
+  const btnAction = isStart ? '启动' : '停止';
+  const pendingLabel = isStart ? '启动中...' : '停止中...';
+
+  // 如果已有轮询在进行，忽略本次点击
+  if (adapterPollTimers[platform]) return;
+
+  try {
+    // 乐观更新：立即禁用按钮并显示过渡状态
+    const pollingState = { displayState: pendingLabel, timer: null };
+    adapterPollTimers[platform] = pollingState;
+
+    // 禁用按钮，防止重复点击
     const buttons = document.querySelectorAll(`[onclick*="'${platform}','${action}'"]`);
     buttons.forEach(b => b.disabled = true);
+    // 立即更新 badge 为过渡状态
+    updateAdapterCard(platform, pendingLabel, false, true);
 
+    // 发起启动/停止请求
     const data = await api('/api/v1/adapters/' + platform + '/' + action, { method: 'POST' });
     if (!data.ok) {
       throw new Error(data.error || `${btnAction}失败`);
     }
-    // 等一小段时间让后端更新状态（后台 connect 任务可能需几毫秒才写入 statuses）
-    await new Promise(r => setTimeout(r, 100));
-    loadAdapters();
+
+    // 轮询等待实际状态稳定（启动 → Connected，停止 → Disconnected/Failed）
+    const result = await waitForStableStatus(platform, isStart);
+
+    // 清除轮询状态
+    delete adapterPollTimers[platform];
+
+    // 更新卡片显示最终状态
+    updateAdapterCard(platform, result.status, result.connected, false);
+
+    // 如果不稳定（超时仍没达到目标状态），弹提示但不阻塞
+    if ((isStart && !result.connected && result.status !== 'Connected')
+        || (!isStart && result.connected)) {
+      // 部分成功：后端接受了请求，但状态未完全达到预期
+      console.warn(`${platform} ${btnAction} 操作已接受但状态未稳定: ${result.status}`);
+    }
+
   } catch (e) {
+    // 清除轮询状态
+    delete adapterPollTimers[platform];
     // 重新加载让按钮状态恢复
     loadAdapters();
     alert(btnAction + '失败: ' + e.message);
