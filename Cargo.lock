@@ -858,7 +858,7 @@ checksum = "92773504d58c093f6de2459af4af33faa518c13451eb8f2b5698ed3d36e7c813"
 
 [[package]]
 name = "e2e-tests"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "axum",
  "easybot-adapter-discord",
@@ -881,7 +881,7 @@ dependencies = [
 
 [[package]]
 name = "easybot-adapter-discord"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "async-trait",
  "base64",
@@ -900,7 +900,7 @@ dependencies = [
 
 [[package]]
 name = "easybot-adapter-feishu"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "async-trait",
  "chrono",
@@ -916,7 +916,7 @@ dependencies = [
 
 [[package]]
 name = "easybot-adapter-qq"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "async-trait",
  "base64",
@@ -936,7 +936,7 @@ dependencies = [
 
 [[package]]
 name = "easybot-adapter-telegram"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -955,7 +955,7 @@ dependencies = [
 
 [[package]]
 name = "easybot-adapter-wechat"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "aes 0.8.4",
  "async-trait",
@@ -976,7 +976,7 @@ dependencies = [
 
 [[package]]
 name = "easybot-api"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "anyhow",
  "axum",
@@ -1008,7 +1008,7 @@ dependencies = [
 
 [[package]]
 name = "easybot-bin"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "anyhow",
  "clap",
@@ -1029,7 +1029,7 @@ dependencies = [
 
 [[package]]
 name = "easybot-core"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "anyhow",
  "argon2",
@@ -1060,7 +1060,7 @@ dependencies = [
 
 [[package]]
 name = "easybot-plugin-sdk"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "async-trait",
  "easybot-core",
@@ -1140,7 +1140,7 @@ checksum = "1d674e81391d1e1ab681a28d99df07927c6d4aa5b027d7da16ba32d1d21ecd99"
 
 [[package]]
 name = "fixtures"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "base64",
  "easybot-core",
@@ -1748,7 +1748,7 @@ dependencies = [
 
 [[package]]
 name = "integration-tests"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "easybot-core",
  "easybot-plugin-sdk",
@@ -2060,7 +2060,7 @@ dependencies = [
 
 [[package]]
 name = "mock-adapter"
-version = "0.0.2"
+version = "0.0.3"
 dependencies = [
  "easybot-plugin-sdk",
  "serde_json",
