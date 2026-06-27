@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `GET /api/v1/config` now returns the actual runtime values for config fields
   that are overridden after YAML loading (admin password from env var, resolved
   storage path, defaulted connection string, unknown storage-type fallback).
+<<<<<<< HEAD
   Oversight corrected by sinking runtime overrides into `ConfigManager`.
 - `POST /api/v1/adapters/{platform}/start` now injects credentials from
   environment variables (same as `start_all()`), so adapters stopped via the
@@ -26,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Default config directory now uses `~/.easybot` on macOS/Linux consistently,
   instead of falling back to the legacy `~/.config/easybot` path.
 
+<<<<<<< HEAD
 ### Changed
 
 - Pre-commit hook (`scripts/pre-commit`) now also runs `cargo clippy --all-targets -- -D warnings`, catching clippy issues before they reach the pre-push verification suite.
