@@ -57,15 +57,14 @@ impl AppState {
     /// 此方法将这些运行时覆盖值写回 JSON，确保 API 返回的配置始终反映实际运行值。
     pub fn reconcile_config_json(&self, mut val: serde_json::Value) -> serde_json::Value {
         // 管理后台密码：使用 state.admin_password（已考虑 EASYBOT_ADMIN_PASSWORD 环境变量）
-        if let Some(obj) = val.as_object_mut() {
-            if let Some(server) = obj.get_mut("server") {
-                if let Some(server_obj) = server.as_object_mut() {
-                    server_obj.insert(
-                        "admin_password".to_string(),
-                        serde_json::Value::String(self.admin_password.clone()),
-                    );
-                }
-            }
+        if let Some(obj) = val.as_object_mut()
+            && let Some(server) = obj.get_mut("server")
+            && let Some(server_obj) = server.as_object_mut()
+        {
+            server_obj.insert(
+                "admin_password".to_string(),
+                serde_json::Value::String(self.admin_password.clone()),
+            );
         }
         val
     }
