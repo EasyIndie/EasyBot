@@ -291,6 +291,18 @@ jobs:
           git commit -m "chore: bump version to v$VERSION"
           git push origin main
 
+      - name: Clean up any previous failed release for this tag
+        env:
+          VERSION: ${{ needs.cut-release.outputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # 如果之前有失败的 release（tag 已存在但 release 不完整），先清理
+          gh release view "v$VERSION" --json id 2>/dev/null && \
+            gh release delete "v$VERSION" --yes && \
+            echo "Cleaned up stale release for v$VERSION" || \
+            echo "No stale release found for v$VERSION"
+          git push origin --delete "v$VERSION" 2>/dev/null || true
+
       - name: Download all binary artifacts
         uses: actions/download-artifact@v4
 
