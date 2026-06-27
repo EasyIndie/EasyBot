@@ -1,7 +1,15 @@
 name: Release
 
 on:
+  push:
+    tags:
+      - 'v*'
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to release (e.g. v0.1.0); must be pushed to origin first'
+        required: true
+        type: string
 
 env:
   CARGO_TERM_COLOR: always
@@ -9,8 +17,8 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  # ── Cut release: bump version locally, save as patch ──
-  cut-release:
+  # ── Prepare release: extract version from tag, bump files, save patch ──
+  prepare-release:
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -22,21 +30,31 @@ jobs:
         with:
           ref: main
           fetch-depth: 0
-          # 用 PAT 提权以绕过分支保护 push 到 main + tag
+          # PAT 提权以绕过分支保护 push 到 main
+          # Tag 由开发者本地创建推送，workflow 不创建 tag
           # 需先在 https://github.com/settings/tokens 创建 classic PAT (repo 权限)
           # 并添加到仓库 Secrets: GH_RELEASE_PAT
           # 同时将该用户加入分支保护规则集的 bypass_actors
           token: ${{ secrets.GH_RELEASE_PAT || github.token }}
 
-      - name: Determine version
+      - name: Determine version from tag
         id: version
         run: |
-          CURRENT=$(grep '^version =' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
-          MAJOR=$(echo "$CURRENT" | cut -d. -f1)
-          MINOR=$(echo "$CURRENT" | cut -d. -f2)
-          PATCH=$(echo "$CURRENT" | cut -d. -f3)
-          VERSION="$MAJOR.$MINOR.$((PATCH + 1))"
+          # Extract version from tag name (e.g. v0.1.0 → 0.1.0)
+          # Supports both tag push and workflow_dispatch fallback
+          if [ -n "${{ github.ref_name }}" ] && [ "${{ github.event_name }}" = "push" ]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            # workflow_dispatch fallback — use tags input
+            TAG="${{ inputs.tag }}"
+            VERSION="${TAG#v}"
+          fi
+          if ! echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+'; then
+            echo "❌ Invalid tag format: v$VERSION (expected vX.Y.Z)"
+            exit 1
+          fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Extracted version: $VERSION from tag: v$VERSION"
 
       - name: Update Cargo.toml version
         env:
@@ -65,7 +83,8 @@ jobs:
             sed -i 's/"version": ".*"/"version": "'"$VERSION"'"/' "$SNAP"
           fi
 
-      # 不提交不推送，只保存 diff patch，后续 job 应用后即可得到 bumped version
+      # Save diff patch for downstream jobs (they checkout tag, not main)
+      # The version bump commit is pushed to main separately below
       - name: Save version bump as patch
         run: git diff HEAD > /tmp/version-bump.patch
 
@@ -93,14 +112,33 @@ jobs:
           name: release-body
           path: release_body.md
 
+      # Commit version bump and push to main (patch is already saved for other jobs)
+      - name: Commit version bump and push to main
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Cargo.toml CHANGELOG.md Cargo.lock \
+            crates/easybot-api/tests/snapshots/routes__health_response.snap
+          git commit -m "chore: bump version to v$VERSION"
+          # Rebase to avoid push conflicts (extremely rare for these files)
+          git fetch origin main
+          git rebase origin/main || {
+            echo "❌ Rebase conflict — someone modified Cargo.toml/CHANGELOG simultaneously"
+            echo "   Please resolve manually and re-run the release"
+            exit 1
+          }
+          git push origin main
+
   # ── Verify: run full CI checks before releasing ────
   verify:
-    needs: cut-release
+    needs: prepare-release
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ github.ref }}
           fetch-depth: 0
 
       - name: Apply version bump
@@ -132,7 +170,7 @@ jobs:
 
   # ── Cross-compile release binaries ─────────────────
   build-binaries:
-    needs: cut-release
+    needs: prepare-release
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
@@ -162,7 +200,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ github.ref }}
 
       - name: Apply version bump
         uses: actions/download-artifact@v4
@@ -263,7 +301,7 @@ jobs:
 
   # ── Create GitHub Release ─────────────────────────
   create-release:
-    needs: [build-binaries, cut-release]
+    needs: [build-binaries, prepare-release]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -271,6 +309,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: ${{ github.ref }}
           token: ${{ secrets.GH_RELEASE_PAT || github.token }}
 
       - name: Apply version bump
@@ -281,19 +320,9 @@ jobs:
       - name: Apply version bump patch
         run: git apply version-bump.patch
 
-      - name: Commit and push version bump to main
-        env:
-          VERSION: ${{ needs.cut-release.outputs.version }}
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Cargo.toml CHANGELOG.md Cargo.lock             crates/easybot-api/tests/snapshots/routes__health_response.snap
-          git commit -m "chore: bump version to v$VERSION"
-          git push origin main
-
       - name: Clean up any previous failed release for this tag
         env:
-          VERSION: ${{ needs.cut-release.outputs.version }}
+          VERSION: ${{ needs.prepare-release.outputs.version }}
           GH_TOKEN: ${{ github.token }}
         run: |
           # 如果之前有失败的 release（tag 已存在但 release 不完整），先清理
@@ -324,18 +353,18 @@ jobs:
       - name: Create Release
         uses: softprops/action-gh-release@v3
         with:
-          tag_name: v${{ needs.cut-release.outputs.version }}
-          name: EasyBot v${{ needs.cut-release.outputs.version }}
+          tag_name: v${{ needs.prepare-release.outputs.version }}
+          name: EasyBot v${{ needs.prepare-release.outputs.version }}
           body_path: .release-body/release_body.md
           draft: false
-          prerelease: ${{ contains(needs.cut-release.outputs.version, '-') }}
+          prerelease: ${{ contains(needs.prepare-release.outputs.version, '-') }}
           files: |
             easybot-*/easybot-*
             checksums.txt
 
   # ── Build and push Docker image ────────────────────
   docker:
-    needs: [cut-release, build-binaries]
+    needs: [prepare-release, build-binaries]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -343,6 +372,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref }}
 
       - name: Apply version bump
         uses: actions/download-artifact@v4
@@ -375,7 +406,7 @@ jobs:
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=latest,enable=${{ github.ref_type == 'tag' }}
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v6
