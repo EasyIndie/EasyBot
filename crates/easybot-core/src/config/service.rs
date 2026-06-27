@@ -54,7 +54,7 @@ fn generate_systemd_unit(paths: &EasyBotPaths) -> String {
     let svc_path_buf = paths.home.join("easybot.service");
     let svc_path = svc_path_buf.display();
     let user = current_username();
-    let group = user.clone(); // primary group typically matches username
+    let group = current_group_name(&user);
 
     format!(
         r#"# EasyBot systemd service unit
@@ -114,6 +114,28 @@ fn current_username() -> String {
     std::env::var("USER")
         .or_else(|_| std::env::var("USERNAME"))
         .unwrap_or_else(|_| "easybot".to_string())
+}
+
+/// 检测当前用户的主组名称。
+///
+/// 优先执行 `id -gn`（Linux/macOS 可用，返回用户的主组），
+/// 失败时回退到用户名（大部分 Linux 发行版主组与用户名一致）。
+fn current_group_name(username: &str) -> String {
+    std::process::Command::new("id")
+        .arg("-gn")
+        .output()
+        .ok()
+        .and_then(|o| {
+            if o.status.success() {
+                String::from_utf8(o.stdout)
+                    .ok()
+                    .map(|s| s.trim().to_string())
+            } else {
+                None
+            }
+        })
+        .filter(|g| !g.is_empty())
+        .unwrap_or_else(|| username.to_string())
 }
 
 // ──────────────────────────────────────
