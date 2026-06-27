@@ -57,6 +57,7 @@ footer { text-align: center; padding: 24px; color: #484f58; font-size: 13px; bor
 <div class="layout">
   <nav class="sidebar" id="sidebar">
     <a href="#AUDIT_FIX_PLAN">EasyBot 审计修复计划</a>
+<a href="#MACOS_NOTARIZATION">macOS 公证配置指南</a>
 <a href="#PLUGIN_DEV">EasyBot 插件开发指南</a>
 <a href="#TEST_PLAN">EasyBot 全面验收测试计划</a>
 <a href="#TODO">EasyBot TODO — 待办事项清单</a>
@@ -1322,6 +1323,103 @@ readme = "README.md"
 <p>最后更新: 2026-06-24 · Round 2 修复计划 (20 项新发现)
 Round 1 历史: 30 项 · ✅ 全部完成</p>
 </blockquote>
+</section>
+<section id="MACOS_NOTARIZATION"><h2>macOS 公证配置指南</h2><h1>macOS 公证配置指南</h1>
+<p>EasyBot 发布工作流支持可选 macOS 代码签名 + Apple 公证。启用后，<code>*-apple-darwin</code> 二进制会自动签名并通过 Apple 公证，用户下载后不会触发 Gatekeeper 安全警告。</p>
+<h2>前置条件</h2>
+<ul>
+<li><strong>Apple Developer Program</strong> 会员（$99/年）</li>
+<li>一个已激活的 Apple Developer 账号</li>
+<li>本仓库的 <strong>Admin</strong> 权限（用于添加 GitHub Secrets）</li>
+</ul>
+<h2>步骤</h2>
+<h3>1. 创建 Developer ID Application 证书</h3>
+<ol>
+<li>登录 <a href="https://developer.apple.com">developer.apple.com</a> → <strong>Certificates, Identifiers &amp; Profiles</strong></li>
+<li>点 <strong>+</strong> → <strong>Developer ID Application</strong></li>
+<li>在 Mac 上通过 <strong>Keychain Access → Certificate Assistant → Request a Certificate from a Certificate Authority</strong>
+<ul>
+<li>输入邮箱和姓名</li>
+<li>选择 <strong>Saved to disk</strong> → <strong>Let me specify key pair</strong></li>
+<li>密钥大小至少 <strong>2048 位</strong>，算法 <strong>RSA</strong></li>
+</ul>
+</li>
+<li>上传生成的 <code>.certSigningRequest</code>，下载 <code>.cer</code> 文件</li>
+<li>双击 <code>.cer</code> 导入 Keychain</li>
+<li>在 Keychain 中找到该证书（名称格式：<code>Developer ID Application: Your Name (TEAMID)</code>）</li>
+<li>右键 → <strong>Export "..."</strong> → 格式 <strong>Personal Information Exchange (.p12)</strong>
+<ul>
+<li>设置导出密码（后续需要用到）</li>
+</ul>
+</li>
+<li>Base64 编码（放到剪贴板）：
+<pre><code class="language-bash">base64 -i certificate.p12 | pbcopy
+</code></pre>
+</li>
+</ol>
+<h3>2. 创建 App Store Connect API 密钥</h3>
+<ol>
+<li>登录 <a href="https://appstoreconnect.apple.com">appstoreconnect.apple.com</a></li>
+<li>进入 <strong>Users and Access</strong> → <strong>Keys</strong> 标签 → <strong>API Keys</strong></li>
+<li>点 <strong>+</strong> 新建密钥
+<ul>
+<li>名称：<code>EasyBot Notarization</code></li>
+<li>权限：<strong>Developer</strong>（不需要 Admin）</li>
+</ul>
+</li>
+<li>下载 <code>.p8</code> 文件（<strong>仅有一次下载机会，务必保存好</strong>）</li>
+<li>记录以下信息（页面展示，下载后不会再次显示）：
+<ul>
+<li><strong>Key ID</strong> （如 <code>ABC123DEFG</code>）</li>
+<li><strong>Issuer ID</strong> （UUID 格式，如 <code>12345678-1234-1234-1234-123456789012</code>）</li>
+</ul>
+</li>
+<li>Base64 编码 <code>.p8</code> 文件：
+<pre><code class="language-bash">base64 -i AuthKey_XXXXXXXXXX.p8 | pbcopy
+</code></pre>
+</li>
+</ol>
+<h3>3. 在 GitHub 仓库添加 Secrets</h3>
+<p>转到仓库 <strong>Settings → Secrets and variables → Actions → New repository secret</strong>，添加以下 5 个 Secret：</p>
+<table><thead><tr><th>Secret</th><th>值</th><th>来源</th></tr></thead><tbody>
+<tr><td><code>APPLE_DEVELOPER_ID_CERT_BASE64</code></td><td>p12 文件的 base64 编码</td><td>步骤 1.8</td></tr>
+<tr><td><code>APPLE_DEVELOPER_ID_CERT_PASSWORD</code></td><td>导出 p12 时设置的密码</td><td>步骤 1.7</td></tr>
+<tr><td><code>APPLE_NOTARY_API_KEY_BASE64</code></td><td>p8 密钥文件的 base64 编码</td><td>步骤 2.6</td></tr>
+<tr><td><code>APPLE_NOTARY_API_KEY_ID</code></td><td>API Key ID（如 <code>ABC123DEFG</code>）</td><td>步骤 2.5</td></tr>
+<tr><td><code>APPLE_NOTARY_API_ISSUER</code></td><td>Issuer ID（UUID）</td><td>步骤 2.5</td></tr>
+</tbody></table>
+<h3>4. 验证</h3>
+<ol>
+<li>触发 Release 工作流：<strong>Actions → Release → Run workflow</strong></li>
+<li>在 <code>build-binaries</code> job 中，<code>*-apple-darwin</code> 目标会依次执行：
+<ul>
+<li><strong>签名</strong>：<code>codesign</code> 使用 Developer ID 证书签名，启用 Hardened Runtime</li>
+<li><strong>公证</strong>：<code>notarytool</code> 将二进制提交给 Apple 扫描</li>
+<li><strong>贴票</strong>：<code>stapler</code> 将公证票据嵌入二进制</li>
+</ul>
+</li>
+<li>签名/公证步骤仅在 <strong>所有 5 个 Secret 都存在</strong> 时执行，缺少任意一个则跳过</li>
+</ol>
+<h2>不设置凭据时</h2>
+<p>二进制正常构建但<strong>不签名、不公证</strong>。用户可在 macOS 上通过<strong>右键 → 打开</strong>跳过 Gatekeeper 运行。</p>
+<h2>常见问题</h2>
+<h3>证书过期了怎么办</h3>
+<p>Developer ID Application 证书有效期为 <strong>5 年</strong>（2025 年后改为 5 年）。过期后重新执行整个流程即可。</p>
+<h3>API 密钥泄露了怎么办</h3>
+<p>在 App Store Connect → <strong>Users and Access → Keys</strong> 中废止对应的 API 密钥，重新生成一个。</p>
+<h3>公证失败了怎么办</h3>
+<p>检查以下几点：</p>
+<ol>
+<li>二进制是否启用了 <code>com.apple.security.get-task-allow</code> 或其他测试 entitlement？（不应有）</li>
+<li>代码签名是否包含 <code>--timestamp</code> 和 <code>--options runtime</code>？（CI 脚本已包含）</li>
+<li>网络是否能访问 Apple 的公证服务？（CI runner 通常可以）</li>
+</ol>
+<h2>参考链接</h2>
+<ul>
+<li><a href="https://developer.apple.com/documentation/macos-release-notes/macos-_14-release-notes/appkit-release-notes-for-macos-14">Apple Developer Documentation: Distributing Mac Apps Outside the Mac App Store</a></li>
+<li><a href="https://developer.apple.com/documentation/notarytool">notarytool 命令行</a></li>
+<li><a href="https://developer.apple.com/library/archive/documentation/Security/Conceptual/CodeSigningGuide/">Code Signing Guide</a></li>
+</ul>
 </section>
 <section id="PLUGIN_DEV"><h2>EasyBot 插件开发指南</h2><h1>EasyBot 插件开发指南</h1>
 <h2>概述</h2>
