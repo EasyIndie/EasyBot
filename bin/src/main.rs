@@ -275,10 +275,9 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // 解析管理后台密码（优先级：EASYBOT_ADMIN_PASSWORD > gateway.yaml > 默认值）
+    // ConfigManager.new() 内部也会应用此覆盖，确保热重载路径一致。
     let admin_password = std::env::var("EASYBOT_ADMIN_PASSWORD")
         .unwrap_or_else(|_| config.server.admin_password.clone());
-    // 写回 config，使 API 返回的配置始终反映运行时实际值
-    config.server.admin_password = admin_password.clone();
     if admin_password == "easybot" {
         tracing::warn!(
             "管理后台使用默认密码 'easybot'，请在 .env 或 gateway.yaml 中修改 admin_password"

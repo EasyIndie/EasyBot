@@ -18,6 +18,10 @@ use tokio::sync::RwLock;
 ///
 /// 包装 GatewayConfig 并提供线程安全的读写。
 /// 使用 Arc 使得读取方在获取引用后不受写入方影响。
+///
+/// 所有加载路径（new / with_path / new_shared / swap）都会自动应用
+/// 运行时覆盖（如 EASYBOT_ADMIN_PASSWORD 环境变量），确保 API 返回
+/// 的配置始终反映实际运行值。
 #[derive(Clone)]
 pub struct ConfigManager {
     current: Arc<RwLock<Arc<GatewayConfig>>>,
@@ -26,8 +30,22 @@ pub struct ConfigManager {
 }
 
 impl ConfigManager {
+    /// 将运行时环境变量覆盖应用到配置上
+    ///
+    /// 这些覆盖无法通过 YAML 的 ${VAR_NAME} 替换实现，因为它们依赖于
+    /// 特殊优先级（env var 无条件覆盖配置文件）或运行时上下文。
+    fn apply_runtime_overrides(config: &mut GatewayConfig) {
+        // EASYBOT_ADMIN_PASSWORD 无条件覆盖 gateway.yaml 中的值
+        if let Ok(password) = std::env::var("EASYBOT_ADMIN_PASSWORD")
+            && !password.is_empty()
+        {
+            config.server.admin_password = password;
+        }
+    }
+
     /// 创建新的配置管理器
-    pub fn new(config: GatewayConfig) -> Self {
+    pub fn new(mut config: GatewayConfig) -> Self {
+        Self::apply_runtime_overrides(&mut config);
         Self {
             current: Arc::new(RwLock::new(Arc::new(config))),
             config_path: None,
@@ -37,15 +55,18 @@ impl ConfigManager {
 
     /// 从已存在的 Arc 创建配置管理器（与 AppState 共享）
     pub fn new_shared(config: Arc<GatewayConfig>) -> Self {
+        let mut config = (*config).clone();
+        Self::apply_runtime_overrides(&mut config);
         Self {
-            current: Arc::new(RwLock::new(config)),
+            current: Arc::new(RwLock::new(Arc::new(config))),
             config_path: None,
             last_mtime: Arc::new(RwLock::new(None)),
         }
     }
 
     /// 创建带文件路径的配置管理器（启用文件轮询）
-    pub fn with_path(config: GatewayConfig, path: PathBuf) -> Self {
+    pub fn with_path(mut config: GatewayConfig, path: PathBuf) -> Self {
+        Self::apply_runtime_overrides(&mut config);
         let mtime = std::fs::metadata(&path)
             .ok()
             .and_then(|m| m.modified().ok());
@@ -63,8 +84,9 @@ impl ConfigManager {
 
     /// 原子替换当前配置
     ///
-    /// 返回旧配置。
-    pub async fn swap(&self, new_config: GatewayConfig) -> Arc<GatewayConfig> {
+    /// 返回旧配置。替换前自动应用运行时覆盖。
+    pub async fn swap(&self, mut new_config: GatewayConfig) -> Arc<GatewayConfig> {
+        Self::apply_runtime_overrides(&mut new_config);
         let mut current = self.current.write().await;
 
         std::mem::replace(&mut *current, Arc::new(new_config))

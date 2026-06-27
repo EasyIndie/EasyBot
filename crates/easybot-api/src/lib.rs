@@ -50,25 +50,6 @@ pub struct AppState {
 }
 
 impl AppState {
-    /// 将序列化后的配置 JSON 与运行时实际值 reconcile
-    ///
-    /// config_manager 中保存的 GatewayConfig 反映了文件配置，
-    /// 但某些字段在 main.rs 初始化时会被运行时值覆盖（如 admin_password 取 env var）。
-    /// 此方法将这些运行时覆盖值写回 JSON，确保 API 返回的配置始终反映实际运行值。
-    pub fn reconcile_config_json(&self, mut val: serde_json::Value) -> serde_json::Value {
-        // 管理后台密码：使用 state.admin_password（已考虑 EASYBOT_ADMIN_PASSWORD 环境变量）
-        if let Some(obj) = val.as_object_mut()
-            && let Some(server) = obj.get_mut("server")
-            && let Some(server_obj) = server.as_object_mut()
-        {
-            server_obj.insert(
-                "admin_password".to_string(),
-                serde_json::Value::String(self.admin_password.clone()),
-            );
-        }
-        val
-    }
-
     /// 创建新的应用状态
     #[allow(clippy::too_many_arguments)]
     #[allow(clippy::too_many_arguments)]

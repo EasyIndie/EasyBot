@@ -2,8 +2,10 @@
 # EasyBot pre-commit hook
 # 安装: git config core.hooksPath scripts   (或运行 make setup)
 #
-# 提交前自动检查 cargo fmt，不通过则自动格式化后阻止提交，
-# 让你有机会重新 git add 后再 commit。
+# 提交前自动检查 cargo fmt 和 cargo clippy，不通过则阻止提交。
+# fmt 会尝试自动格式化后再阻止，clippy 直接阻止。
+#
+# 跳过检查（不推荐）: git commit --no-verify
 
 set -e
 
@@ -13,12 +15,13 @@ if command -v cargo >/dev/null 2>&1; then
 elif command -v wsl >/dev/null 2>&1; then
     CARGO="wsl cargo"
 else
-    echo ">>> 跳过 cargo fmt（cargo 不可用）"
+    echo ">>> 跳过 cargo fmt/clippy（cargo 不可用）"
     exit 0
 fi
 
 # 仅在有 .rs 文件变更时才检查
 if git diff --cached --name-only --diff-filter=ACMR | grep -q '\.rs$'; then
+    # ── cargo fmt ──
     echo ">>> 检查 cargo fmt..."
     if ! $CARGO fmt --check 2>/dev/null; then
         echo ""
@@ -29,4 +32,14 @@ if git diff --cached --name-only --diff-filter=ACMR | grep -q '\.rs$'; then
         exit 1
     fi
     echo ">>> cargo fmt 通过"
+
+    # ── cargo clippy ──
+    echo ">>> 检查 cargo clippy..."
+    if ! $CARGO clippy --all-targets -- -D warnings 2>/dev/null; then
+        echo ""
+        echo ">>> cargo clippy 未通过。请修复以上 warning/error 后重试。"
+        echo "    快速查看: cargo clippy --all-targets"
+        exit 1
+    fi
+    echo ">>> cargo clippy 通过"
 fi
