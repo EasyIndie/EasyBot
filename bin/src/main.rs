@@ -141,6 +141,8 @@ async fn main() -> anyhow::Result<()> {
     } else {
         paths.db_path.clone()
     };
+    // 写回 config，使 API 返回的配置始终反映运行时实际路径
+    config.storage.path = db_path.to_string_lossy().to_string();
     let (message_store, session_manager) = match config.storage.storage_type.as_str() {
         "postgres" => {
             let conn_str = if !config.storage.connection_string.is_empty() {
@@ -148,6 +150,8 @@ async fn main() -> anyhow::Result<()> {
             } else {
                 "postgresql://localhost:5432/easybot".to_string()
             };
+            // 写回 config（如使用了默认值），使 API 返回的配置始终反映实际连接串
+            config.storage.connection_string = conn_str.clone();
             match easybot_core::storage::postgres::create_pool(&conn_str, config.storage.pool_size)
                 .await
             {
@@ -228,6 +232,8 @@ async fn main() -> anyhow::Result<()> {
                 "Unknown storage type '{}', falling back to in-memory",
                 config.storage.storage_type
             );
+            // 写回 config，使 API 返回的配置始终反映实际使用的存储类型
+            config.storage.storage_type = "sqlite".to_string();
             let pool = easybot_core::storage::sqlite::create_pool(std::path::Path::new(":memory:"))
                 .await
                 .expect("In-memory SQLite should always work");
@@ -271,6 +277,8 @@ async fn main() -> anyhow::Result<()> {
     // 解析管理后台密码（优先级：EASYBOT_ADMIN_PASSWORD > gateway.yaml > 默认值）
     let admin_password = std::env::var("EASYBOT_ADMIN_PASSWORD")
         .unwrap_or_else(|_| config.server.admin_password.clone());
+    // 写回 config，使 API 返回的配置始终反映运行时实际值
+    config.server.admin_password = admin_password.clone();
     if admin_password == "easybot" {
         tracing::warn!(
             "管理后台使用默认密码 'easybot'，请在 .env 或 gateway.yaml 中修改 admin_password"

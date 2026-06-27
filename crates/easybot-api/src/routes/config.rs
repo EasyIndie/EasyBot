@@ -16,10 +16,11 @@ use std::path::Path;
     )
 )]
 pub async fn get_config(State(state): State<AppState>) -> Json<serde_json::Value> {
-    // 从 ConfigManager 获取最新配置
+    // 从 ConfigManager 获取最新配置，再与运行时实际值 reconcile
     async {
         let config = state.config_manager.get().await;
-        serde_json::to_value(&*config).unwrap_or_default()
+        let val = serde_json::to_value(&*config).unwrap_or_default();
+        state.reconcile_config_json(val)
     }
     .await
     .into()
