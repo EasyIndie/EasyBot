@@ -90,7 +90,7 @@ StandardError=journal
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
-ProtectHome=true
+ProtectHome=false
 CapabilityBoundingSet=
 
 [Install]
