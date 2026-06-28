@@ -320,21 +320,17 @@ async fn test_ws_multiple_clients_receive_events() {
 async fn test_ws_http_auth_failed() {
     let (_state, _key, addr) = ws_server().await;
 
-    // 使用无效 Bearer token → 应在 HTTP 升级阶段被拒绝
+    // WS upgrade 不再在 HTTP 层鉴权（new WebSocket() 无法设自定义头）。
+    // 不带 HTTP Authorization 头 → 连接应成功建立（旧行为会返回 401）
     let uri_str = format!("ws://{}/api/v1/ws", addr);
-    let mut request: http::Request<()> = uri_str
+    let request: http::Request<()> = uri_str
         .into_client_request()
         .expect("Failed to build WS upgrade request");
-    request.headers_mut().insert(
-        http::header::AUTHORIZATION,
-        "Bearer invalid-token".parse().unwrap(),
-    );
-
-    let result = connect_async(request).await;
-    assert!(
-        result.is_err(),
-        "Expected connection to be rejected (HTTP 401), but it succeeded"
-    );
+    let (ws_stream, _) = connect_async(request)
+        .await
+        .expect("WS upgrade should succeed without auth header");
+    // 连接成功即通过测试——鉴权已下放到连接后的 frame 层
+    let (_write, _read) = ws_stream.split();
 }
 
 #[tokio::test]

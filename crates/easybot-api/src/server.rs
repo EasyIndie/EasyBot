@@ -244,8 +244,6 @@ pub fn create_router(state: AppState) -> Router {
         // 配置
         .route("/config", get(routes::config::get_config))
         .route("/config", put(routes::config::update_config))
-        // WebSocket
-        .route("/ws", get(routes::ws::ws_handler))
         // 系统信息（管理后台概览页）
         .route("/system", get(routes::system::system_info))
         // 日志查询（管理后台日志页）
@@ -278,6 +276,24 @@ pub fn create_router(state: AppState) -> Router {
 
     // 合并公共 + 受保护路由
     let api_routes = Router::new().merge(public_routes).merge(protected_routes);
+
+    // ── WebSocket 路由（单独处理：无需 Bearer 认证——WSC 不支持自定义 HTTP 头，
+    // 连接后在 handle_ws() 内通过 JSON 帧 {"token":"..."} 二次认证）──
+    let ws_rate_limiter = crate::middleware::rate_limit::RateLimiter::new(
+        crate::middleware::rate_limit::RateLimitConfig {
+            enabled: state.config.api.rate_limit.enabled,
+            requests_per_minute: rl_config.requests_per_minute,
+            burst_size: rl_config.burst_size,
+        },
+    );
+    ws_rate_limiter.start_cleanup();
+    let ws_routes = Router::new()
+        .route("/ws", get(routes::ws::ws_handler))
+        .route_layer(middleware::from_fn_with_state(
+            ws_rate_limiter,
+            crate::middleware::rate_limit::rate_limit_middleware,
+        ));
+    let api_routes = api_routes.merge(ws_routes);
 
     // OpenAPI 文档路径（Swagger UI，无需认证）
     let swagger = SwaggerUi::new("/swagger").url("/openapi.json", ApiDoc::openapi());
