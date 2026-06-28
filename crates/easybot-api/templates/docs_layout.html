@@ -2,52 +2,95 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>EasyBot 文档</title>
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/atom-one-dark.min.css">
+<style>__HLJS_CSS__</style>
 <style>
-* { margin: 0; padding: 0; box-sizing: border-box; }
-body { background: #0f0f1a; color: #c9d1d9; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; }
-.header { background: #161822; border-bottom: 1px solid #30363d; padding: 12px 24px; display: flex; align-items: center; gap: 16px; position: sticky; top: 0; z-index: 100; }
-.header h1 { font-size: 18px; color: #58a6ff; }
+:root {
+  --bg-primary: #0f0f1a;
+  --bg-secondary: #161822;
+  --bg-tertiary: #11111e;
+  --border-default: #30363d;
+  --border-muted: #21262d;
+  --text-primary: #e6edf3;
+  --text-secondary: #c9d1d9;
+  --text-muted: #949da8;
+  --text-faint: #6e7681;
+  --accent: #58a6ff;
+  --success: #3fb950;
+  --warning: #d29922;
+  --danger: #f85149;
+  --radius: 8px;
+  --font-mono: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+body { background: var(--bg-primary); color: var(--text-secondary); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; -webkit-overflow-scrolling: touch; overscroll-behavior: none; }
+html { touch-action: manipulation; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; } }
+.header { background: var(--bg-secondary); border-bottom: 1px solid var(--border-default); padding: 12px 24px; display: flex; align-items: center; gap: 16px; position: sticky; top: 0; z-index: 100; }
+.header h1 { font-size: 18px; color: var(--accent); }
 .header .nav-links { margin-left: auto; display: flex; gap: 12px; }
-.header .nav-links a { color: #8b949e; text-decoration: none; font-size: 14px; }
-.header .nav-links a:hover { color: #58a6ff; }
+.header .nav-links a { color: var(--text-muted); text-decoration: none; font-size: 14px; }
+.header .nav-links a:hover { color: var(--accent); }
+.sidebar-toggle { display: none; background: none; border: 1px solid var(--border-default); border-radius: 6px; color: var(--text-muted); font-size: 20px; cursor: pointer; padding: 4px 10px; line-height: 1; flex-shrink: 0; }
+.sidebar-toggle:hover { color: var(--text-primary); border-color: var(--accent); }
+.sidebar-search { padding: 8px 12px; }
+.sidebar-search input { width: 100%; padding: 6px 10px; font-size: 13px; background: var(--bg-tertiary); border: 1px solid var(--border-default); border-radius: 6px; color: var(--text-secondary); }
+.sidebar-search input:focus { border-color: var(--accent); outline: none; }
+#back-to-top { position: fixed; bottom: 24px; right: 24px; width: 36px; height: 36px; background: var(--bg-secondary); border: 1px solid var(--border-default); border-radius: 50%; color: var(--text-muted); font-size: 18px; cursor: pointer; z-index: 50; display: none; align-items: center; justify-content: center; transition: opacity 0.2s; }
+#back-to-top:hover { color: var(--accent); border-color: var(--accent); }
+#back-to-top.visible { display: flex; }
+.code-copy-btn { position: absolute; top: 8px; right: 8px; background: var(--bg-tertiary); border: 1px solid var(--border-muted); border-radius: 4px; color: var(--text-muted); font-size: 11px; padding: 2px 8px; cursor: pointer; opacity: 0; transition: opacity 0.2s; }
+.content pre { position: relative; }
+.content pre:hover .code-copy-btn { opacity: 1; }
+.content pre .code-copy-btn:hover { color: var(--text-primary); border-color: var(--accent); }
 .layout { display: flex; min-height: calc(100vh - 52px); }
-.sidebar { width: 240px; flex-shrink: 0; background: #161822; border-right: 1px solid #30363d; padding: 16px 0; overflow-y: auto; position: sticky; top: 52px; height: calc(100vh - 52px); }
-.sidebar a { display: block; padding: 8px 20px; color: #8b949e; text-decoration: none; font-size: 14px; border-left: 3px solid transparent; transition: all 0.15s; }
-.sidebar a:hover { color: #c9d1d9; background: #1c1e2e; }
-.sidebar a.active, .sidebar a:target { color: #58a6ff; border-left-color: #58a6ff; background: #1c1e2e; }
+.sidebar { width: 240px; flex-shrink: 0; background: var(--bg-secondary); border-right: 1px solid var(--border-default); padding: 16px 0; overflow-y: auto; position: sticky; top: 52px; height: calc(100vh - 52px); }
+.sidebar a { display: block; padding: 8px 20px; color: var(--text-muted); text-decoration: none; font-size: 14px; border-left: 3px solid transparent; transition: all 0.15s; }
+.sidebar a:hover { color: var(--text-secondary); background: #1c1e2e; }
+.sidebar a.active, .sidebar a:target { color: var(--accent); border-left-color: var(--accent); background: #1c1e2e; }
 .content { flex: 1; padding: 32px 48px; overflow-x: auto; min-width: 0; }
 .content p, .content li { max-width: 75ch; }
-.content h2 { font-size: 28px; margin: 32px 0 16px; color: #e6edf3; border-bottom: 1px solid #21262d; padding-bottom: 8px; scroll-margin-top: 72px; }
+.content h2 { font-size: 28px; margin: 32px 0 16px; color: var(--text-primary); border-bottom: 1px solid var(--border-muted); padding-bottom: 8px; scroll-margin-top: 72px; }
 .content h2:first-child { margin-top: 0; }
-.content h3 { font-size: 20px; margin: 24px 0 12px; color: #e6edf3; }
-.content h4 { font-size: 16px; margin: 16px 0 8px; color: #c9d1d9; }
+.content h3 { font-size: 20px; margin: 24px 0 12px; color: var(--text-primary); }
+.content h4 { font-size: 16px; margin: 16px 0 8px; color: var(--text-secondary); }
 .content p { margin: 12px 0; line-height: 1.7; }
 .content ul, .content ol { margin: 8px 0; padding-left: 24px; }
 .content li { margin: 4px 0; line-height: 1.6; }
 .content code { background: #1c1e2e; padding: 2px 6px; border-radius: 4px; font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace; font-size: 13px; }
-.content pre { background: #161822; border: 1px solid #30363d; border-radius: 8px; padding: 16px; overflow-x: auto; margin: 16px 0; }
+.content pre { background: var(--bg-secondary); border: 1px solid var(--border-default); border-radius: 8px; padding: 16px; overflow-x: auto; margin: 16px 0; }
 .content pre code { background: none; padding: 0; }
-.content blockquote { border-left: 3px solid #30363d; padding-left: 16px; margin: 12px 0; color: #8b949e; }
+.content blockquote { border-left: 3px solid var(--border-default); padding-left: 16px; margin: 12px 0; color: var(--text-muted); }
 .content table { width: 100%; border-collapse: collapse; margin: 16px 0; }
-.content table th, .content table td { border: 1px solid #30363d; padding: 8px 12px; text-align: left; }
-.content table th { background: #161822; color: #e6edf3; }
-.content table tr:nth-child(even) { background: #11111e; }
+.content table th, .content table td { border: 1px solid var(--border-default); padding: 8px 12px; text-align: left; }
+.content table th { background: var(--bg-secondary); color: var(--text-primary); }
+.content table tr:nth-child(even) { background: var(--bg-tertiary); }
 .content img { max-width: 100%; border-radius: 8px; }
-.content hr { border: none; border-top: 1px solid #30363d; margin: 32px 0; }
-.content a { color: #58a6ff; text-decoration: none; }
+.content hr { border: none; border-top: 1px solid var(--border-default); margin: 32px 0; }
+.content a { color: var(--accent); text-decoration: none; }
 .content a:hover { text-decoration: underline; }
-.content strong { color: #e6edf3; }
+.content strong { color: var(--text-primary); }
 /* highlight.js: 代码块背景透明继承 pre */
 .content pre code.hljs { background: none; padding: 0; }
-footer { text-align: center; padding: 24px; color: #484f58; font-size: 13px; border-top: 1px solid #21262d; }
-@media (max-width: 768px) { .layout { flex-direction: column; } .sidebar { width: 100%; position: static; height: auto; border-right: none; border-bottom: 1px solid #30363d; } .content { padding: 24px 16px; } }
+footer { text-align: center; padding: 24px; color: var(--text-faint); font-size: 13px; border-top: 1px solid var(--border-muted); }
+@media (max-width: 768px) {
+  .sidebar-toggle { display: block; }
+  .layout { flex-direction: column; }
+  .sidebar { width: 100%; position: static; height: auto; max-height: 0; overflow: hidden; border-right: none; border-bottom: none; padding: 0; transition: max-height 0.3s ease, padding 0.3s ease; }
+  .sidebar.open { max-height: 60vh; overflow-y: auto; border-bottom: 1px solid var(--border-default); padding: 8px 0; }
+  .content { padding: 16px; }
+  .content h2 { font-size: 22px; margin: 24px 0 12px; }
+  .content h3 { font-size: 17px; margin: 16px 0 8px; }
+  .content pre { margin: 12px -16px; border-radius: 0; border-left: none; border-right: none; }
+}
 </style>
 </head>
 <body>
 <div class="header">
+  <button class="sidebar-toggle" id="sidebar-toggle" aria-label="切换侧边栏" title="目录">☰</button>
   <h1>EasyBot 文档</h1>
   <div class="nav-links">
     <a href="/">← 返回主页</a>
@@ -56,17 +99,63 @@ footer { text-align: center; padding: 24px; color: #484f58; font-size: 13px; bor
 </div>
 <div class="layout">
   <nav class="sidebar" id="sidebar">
+    <div class="sidebar-search"><input type="search" id="doc-search" placeholder="搜索文档..." aria-label="搜索文档"></div>
     __SIDEBAR_ITEMS__
   </nav>
   <main class="content">
     __DOCS_CONTENT__
   </main>
 </div>
+<button id="back-to-top" title="回到顶部" aria-label="回到顶部">↑</button>
 <footer>
   <p>EasyBot · IM Gateway — 统一多平台即时通讯网关</p>
 </footer>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+<script>__HLJS_JS__</script>
 <script>
+// 文档搜索过滤
+const docSearch = document.getElementById('doc-search');
+if (docSearch) {
+  docSearch.addEventListener('input', () => {
+    const q = docSearch.value.toLowerCase();
+    sidebar.querySelectorAll('a').forEach(a => {
+      a.style.display = !q || a.textContent.toLowerCase().includes(q) ? '' : 'none';
+    });
+  });
+}
+
+// 回到顶部
+const backToTop = document.getElementById('back-to-top');
+window.addEventListener('scroll', () => backToTop.classList.toggle('visible', window.scrollY > 400));
+backToTop.addEventListener('click', () => window.scrollTo({ top: 0, behavior: 'smooth' }));
+
+// 代码块复制按钮
+document.querySelectorAll('.content pre').forEach(pre => {
+  const btn = document.createElement('button');
+  btn.className = 'code-copy-btn';
+  btn.textContent = '复制';
+  btn.addEventListener('click', () => {
+    navigator.clipboard.writeText(pre.textContent).then(() => {
+      btn.textContent = '已复制!';
+      setTimeout(() => btn.textContent = '复制', 1500);
+    }).catch(() => {});
+  });
+  pre.style.position = 'relative';
+  pre.appendChild(btn);
+});
+
+// 移动端侧边栏折叠/展开
+const sidebar = document.getElementById('sidebar');
+const toggleBtn = document.getElementById('sidebar-toggle');
+toggleBtn.addEventListener('click', () => sidebar.classList.toggle('open'));
+// 点击侧边栏链接自动折叠
+sidebar.querySelectorAll('a').forEach(a => a.addEventListener('click', () => sidebar.classList.remove('open')));
+// 点击侧边栏外部自动折叠
+document.addEventListener('click', (e) => {
+  if (!sidebar.contains(e.target) && e.target !== toggleBtn && !toggleBtn.contains(e.target)) {
+    sidebar.classList.remove('open');
+  }
+});
+
 // 高亮当前可见章节对应的侧边栏链接
 const observer = new IntersectionObserver(entries => {
   entries.forEach(e => {

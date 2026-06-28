@@ -162,6 +162,17 @@ impl Server {
     }
 }
 
+/// CSP 中间件：为所有响应添加 Content-Security-Policy header
+async fn csp_middleware(response: Response) -> Response {
+    const CSP_VALUE: &str = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws: wss:; img-src 'self' data:;";
+    let (mut parts, body) = response.into_parts();
+    parts.headers.insert(
+        header::CONTENT_SECURITY_POLICY,
+        axum::http::HeaderValue::from_static(CSP_VALUE),
+    );
+    Response::from_parts(parts, body)
+}
+
 /// 构建 axum Router 实例
 ///
 /// 作为公共函数暴露，以便测试代码可以直接使用。
@@ -343,5 +354,6 @@ pub fn create_router(state: AppState) -> Router {
         .layer(RequestBodyLimitLayer::new(10 * 1024 * 1024)) // 10MB
         .layer(cors)
         .route_layer(metrics_middleware)
+        .layer(middleware::map_response(csp_middleware))
         .with_state(state.clone())
 }

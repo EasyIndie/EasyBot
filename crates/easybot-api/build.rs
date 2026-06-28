@@ -16,10 +16,26 @@ fn main() {
     let docs_dir = manifest_dir.join("../../docs");
     let template_path = manifest_dir.join("templates/docs_layout.html");
     let output_path = manifest_dir.join("templates/docs.html");
+    let hljs_js_path = manifest_dir.join("templates/vendor/highlight.min.js");
+    let hljs_css_path = manifest_dir.join("templates/vendor/atom-one-dark.min.css");
 
-    // 告知 Cargo 在 docs/ 内容变更时重新运行 build.rs
+    // 告知 Cargo 在内容变更时重新运行 build.rs
     println!("cargo::rerun-if-changed={}", docs_dir.display());
     println!("cargo::rerun-if-changed={}", template_path.display());
+    println!("cargo::rerun-if-changed={}", hljs_js_path.display());
+    println!("cargo::rerun-if-changed={}", hljs_css_path.display());
+
+    // 读取 highlight.js vendor 文件
+    let hljs_js = if hljs_js_path.exists() {
+        std::fs::read_to_string(&hljs_js_path).unwrap_or_default()
+    } else {
+        String::new()
+    };
+    let hljs_css = if hljs_css_path.exists() {
+        std::fs::read_to_string(&hljs_css_path).unwrap_or_default()
+    } else {
+        String::new()
+    };
 
     // 收集并排序 .md 文件
     let docs_dir = docs_dir.canonicalize().unwrap_or(docs_dir);
@@ -72,11 +88,38 @@ fn main() {
         generate_default_template()
     };
 
-    let result = template
+    let result = process_includes(&template, manifest_dir)
         .replace("__SIDEBAR_ITEMS__", &sidebar_items)
-        .replace("__DOCS_CONTENT__", &doc_sections);
+        .replace("__DOCS_CONTENT__", &doc_sections)
+        .replace("__HLJS_CSS__", &hljs_css)
+        .replace("__HLJS_JS__", &hljs_js);
 
     std::fs::write(&output_path, &result).unwrap();
+
+    // ── 管理后台：拼接 JS/CSS 模块生成 admin.html ──
+    let admin_layout_path = manifest_dir.join("templates/admin_layout.html");
+    let admin_output_path = manifest_dir.join("templates/admin.html");
+    let js_dir = manifest_dir.join("templates/js");
+    let css_dir = manifest_dir.join("templates/css");
+
+    println!("cargo::rerun-if-changed={}", admin_layout_path.display());
+    println!("cargo::rerun-if-changed={}", js_dir.display());
+    println!("cargo::rerun-if-changed={}", css_dir.display());
+
+    let admin_css = std::fs::read_to_string(css_dir.join("admin.css")).unwrap_or_default();
+
+    // 读取 JS（单文件包含所有逻辑）
+    let admin_js = std::fs::read_to_string(js_dir.join("admin.js")).unwrap_or_default();
+
+    if admin_layout_path.exists() {
+        let layout = std::fs::read_to_string(&admin_layout_path).unwrap();
+        let layout = process_includes(&layout, manifest_dir);
+        let admin_html = layout
+            .replace("__ADMIN_CSS__", &admin_css)
+            .replace("__ADMIN_JS__", &admin_js);
+        std::fs::write(&admin_output_path, admin_html).unwrap();
+    }
+
     // 构建完成，不输出额外消息避免 cargo:warning 干扰
 }
 
@@ -97,6 +140,18 @@ fn extract_title(content: &str, file_name: &str) -> String {
         .join(" ")
         .trim()
         .to_string()
+}
+
+/// 处理 {% include "filename" %} 模板指令
+fn process_includes(template: &str, base_dir: &Path) -> String {
+    let re = regex::Regex::new(r#"\{%\s*include\s*"([^"]+)"\s*%\}"#).unwrap();
+    re.replace_all(template, |caps: &regex::Captures| {
+        let filename = caps.get(1).map(|m| m.as_str()).unwrap_or("");
+        let path = base_dir.join(filename);
+        std::fs::read_to_string(&path)
+            .unwrap_or_else(|_| format!("<!-- include not found: {} -->", filename))
+    })
+    .to_string()
 }
 
 /// 将 Markdown 转为 HTML（启用 GFM 表格等扩展）
