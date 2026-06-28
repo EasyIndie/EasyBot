@@ -57,6 +57,7 @@ label { display: block; font-size: 13px; color: #8b949e; margin-bottom: 4px; }
 .fill-red { background: #f85149; }
 .loading { text-align: center; padding: 48px; color: #8b949e; }
 .error-msg { color: #f85149; font-size: 13px; }
+.login-error-msg { color: #f85149; background: #471a1a; border: 1px solid #f851494d; border-radius: 6px; padding: 8px 12px; font-size: 13px; margin-top: 12px; display: none; }
 .success-msg { color: #3fb950; font-size: 13px; }
 .login-overlay { position: fixed; inset: 0; background: #0f0f1a; display: none; align-items: center; justify-content: center; z-index: 1000; }
 .login-box { background: #161822; border: 1px solid #30363d; border-radius: 12px; padding: 48px; width: 400px; max-width: 90vw; text-align: center; }
@@ -92,7 +93,7 @@ label { display: block; font-size: 13px; color: #8b949e; margin-bottom: 4px; }
       <input type="password" id="login-password" placeholder="输入管理员密码">
     </div>
     <button class="btn btn-primary" id="login-btn" style="width:100%">登录</button>
-    <p id="login-error" class="error-msg" style="margin-top:12px;display:none"></p>
+    <p id="login-error" class="login-error-msg"></p>
     <p style="margin-top:16px;font-size:12px;color:#484f58">密码在 gateway.yaml 或 .env 中配置</p>
   </div>
 </div>
@@ -444,6 +445,7 @@ document.getElementById('login-btn').addEventListener('click', async () => {
   if (!password) return;
   const err = document.getElementById('login-error');
   err.style.display = 'none';
+  err.className = 'login-error-msg';
   try {
     const res = await fetch('/admin/login', {
       method: 'POST',
