@@ -1089,9 +1089,9 @@ async function loadSessions() {
         data.sessions.map(s => `<tr>
           <td style="font-family:monospace;font-size:12px">${s.key}</td>
           <td>${s.platform}</td>
-          <td>${s.source?.userName || s.source?.chatName || s.chatId}</td>
-          <td><span class="badge badge-blue">${s.source?.chatType || '-'}</span></td>
-          <td style="font-size:12px;color:#8b949e">${new Date(s.createdAt).toLocaleString()}</td>
+          <td>${s.source?.user_name || s.source?.chat_name || s.chat_id}</td>
+          <td><span class="badge badge-blue">${s.source?.chat_type || '-'}</span></td>
+          <td style="font-size:12px;color:#8b949e">${new Date(s.created_at).toLocaleString()}</td>
           <td><button class="btn btn-sm btn-danger" onclick="deleteSession('${s.key}')">删除</button></td>
         </tr>`).join('') + '</tbody></table>';
     }
