@@ -273,9 +273,9 @@ function switchTab(name) {
   sessionStorage.setItem('easybot_admin_tab', name);
   if (name === 'overview' && !document.getElementById('ov-stats').children.length) loadOverview();
   if (name === 'adapters' && !document.getElementById('adapters-content').children.length) loadAdapters();
-  if (name === 'sessions') { loadSessions(); startFallbackPoll('sessions', loadSessions); } else { stopFallbackPoll('sessions'); }
+  if (name === 'sessions') loadSessions();
   if (name === 'config') loadConfig();
-  if (name === 'messages') { loadMessages(); startFallbackPoll('messages', loadMessages); } else { stopFallbackPoll('messages'); }
+  if (name === 'messages') loadMessages();
   if (name === 'logs') startLogPolling();
 }
 document.querySelectorAll('.tab-btn').forEach(b => b.addEventListener('click', () => switchTab(b.dataset.tab)));
@@ -339,19 +339,6 @@ function handleGatewayEvent(msg) {
   }
 }
 
-// ─── 保底轮询（事件驱动失败时兜底，10s 一次）─────
-const fallbackPolls = {};
-function startFallbackPoll(name, fn) {
-  if (fallbackPolls[name]) return;
-  fallbackPolls[name] = setInterval(() => {
-    if (document.getElementById('tab-' + name)?.classList.contains('active')) fn();
-  }, 10000);
-  // 启动时立即执行一次（首次切换 tab 已经 load 过，跳过）
-}
-function stopFallbackPoll(name) {
-  if (fallbackPolls[name]) { clearInterval(fallbackPolls[name]); delete fallbackPolls[name]; }
-}
-
 // ─── 登录 ──────────────────────────────────────
 function initAuth() {
   const overlay = document.getElementById('login-overlay');
@@ -411,7 +398,6 @@ document.getElementById('logout-btn').addEventListener('click', () => {
   document.getElementById('login-password').value = '';
   document.getElementById('login-error').style.display = 'none';
   stopLogPolling();
-  Object.keys(fallbackPolls).forEach(stopFallbackPoll);
   // Reset tab contents
   document.querySelectorAll('#ov-stats, #adapters-content, #sessions-content').forEach(e => e.innerHTML = '');
 });
