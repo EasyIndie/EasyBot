@@ -291,51 +291,99 @@ function restoreTab() {
 let ws = null;
 let wsReconnectTimer = null;
 
+function wsStatus(color, label) {
+  let el = document.getElementById('ws-status');
+  if (!el) {
+    el = document.createElement('span');
+    el.id = 'ws-status';
+    el.title = 'WebSocket 状态';
+    document.querySelector('.header .right')?.prepend(el);
+  }
+  el.style.cssText = `display:inline-flex;align-items:center;gap:4px;font-size:11px;color:${color};margin-right:8px`;
+  el.innerHTML = `<span style="width:8px;height:8px;border-radius:50%;background:${color};display:inline-block"></span>${label}`;
+}
+
 function connectWebSocket() {
   disconnectWebSocket();
-  if (!apiKey) return;
+  if (!apiKey) { console.log('[WS] No API key, skipping'); return; }
+  wsStatus('#8b949e', 'connecting');
   try {
     const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    ws = new WebSocket(proto + '//' + location.host + '/api/v1/ws');
-    ws.onopen = () => { ws.send(JSON.stringify({ token: apiKey })); };
+    const url = proto + '//' + location.host + '/api/v1/ws';
+    console.log('[WS] Connecting to', url);
+    ws = new WebSocket(url);
+    ws.onopen = () => {
+      console.log('[WS] Connected, sending auth');
+      ws.send(JSON.stringify({ token: apiKey }));
+    };
     ws.onmessage = (e) => {
       try {
         const msg = JSON.parse(e.data);
-        if (msg.type === 'auth_ok') return;
-        if (msg.type !== 'event') return;
+        if (msg.type === 'auth_ok') {
+          console.log('[WS] Authenticated successfully');
+          wsStatus('#3fb950', 'connected');
+          return;
+        }
+        if (msg.type !== 'event') {
+          console.log('[WS] Non-event msg:', msg.type);
+          return;
+        }
+        console.log('[WS] Event received:', msg.event, msg.data);
         handleGatewayEvent(msg);
-      } catch (_) { /* ignore parse error */ }
+      } catch (err) {
+        console.error('[WS] Parse/handle error:', err, e.data);
+      }
     };
-    ws.onclose = () => {
-      if (apiKey) wsReconnectTimer = setTimeout(connectWebSocket, 3000);
+    ws.onerror = (err) => {
+      console.error('[WS] Connection error', err);
+      wsStatus('#f85149', 'error');
     };
-  } catch (_) { /* ws not available */ }
+    ws.onclose = (ev) => {
+      console.log('[WS] Closed code=' + ev.code + ' reason=' + ev.reason);
+      wsStatus('#8b949e', 'disconnected');
+      if (apiKey) {
+        console.log('[WS] Reconnecting in 3s...');
+        wsReconnectTimer = setTimeout(connectWebSocket, 3000);
+      }
+    };
+  } catch (err) {
+    console.error('[WS] Creation failed:', err);
+    wsStatus('#f85149', 'error');
+  }
 }
 
 function disconnectWebSocket() {
   if (wsReconnectTimer) { clearTimeout(wsReconnectTimer); wsReconnectTimer = null; }
   if (ws) { ws.onclose = null; ws.close(); ws = null; }
+  console.log('[WS] Disconnected');
+  wsStatus('#8b949e', 'disconnected');
 }
 
 function handleGatewayEvent(msg) {
   const t = msg.event || '';
+  const overviewActive = document.getElementById('tab-overview')?.classList.contains('active');
+  const sessionsActive = document.getElementById('tab-sessions')?.classList.contains('active');
+  const messagesActive = document.getElementById('tab-messages')?.classList.contains('active');
+  const adaptersActive = document.getElementById('tab-adapters')?.classList.contains('active');
+  const configActive = document.getElementById('tab-config')?.classList.contains('active');
+  console.log('[EVENT]', t, {overviewActive, sessionsActive, messagesActive, adaptersActive, configActive});
   // Adapter 事件 → 刷新 Overview 统计 + Adapters
   if (t.startsWith('adapter.')) {
-    if (document.getElementById('tab-overview').classList.contains('active')) refreshOverviewData();
-    if (document.getElementById('tab-adapters').classList.contains('active')) loadAdapters();
+    if (overviewActive) { console.log('[EVENT] refreshOverviewData (adapter)'); refreshOverviewData(); }
+    if (adaptersActive) { console.log('[EVENT] loadAdapters'); loadAdapters(); }
   }
   // 消息事件 → 刷新 Sessions + Messages
   if (t.startsWith('message.') || t === 'callback.received') {
-    if (document.getElementById('tab-sessions').classList.contains('active')) loadSessions();
-    if (document.getElementById('tab-messages').classList.contains('active')) loadMessages();
+    if (sessionsActive) { console.log('[EVENT] loadSessions'); loadSessions(); }
+    if (messagesActive) { console.log('[EVENT] loadMessages'); loadMessages(); }
   }
   // 配置变更 → 刷新 Config
   if (t === 'config.changed') {
-    if (document.getElementById('tab-config').classList.contains('active')) loadConfig();
+    if (configActive) { console.log('[EVENT] loadConfig'); loadConfig(); }
   }
   // Gateway 事件 → 刷新 Overview
   if (t === 'gateway.started' || t === 'gateway.stopping') {
-    if (document.getElementById('tab-overview').classList.contains('active')) refreshOverviewData();
+    if (overviewActive) { console.log('[EVENT] refreshOverviewData (gateway)'); refreshOverviewData(); }
   }
 }
 
