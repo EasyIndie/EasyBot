@@ -116,7 +116,7 @@ pub fn collect_system_info() -> SystemInfo {
     };
 
     // 磁盘：取容量最大的分区（即主磁盘，自动跳过 /proc 等虚拟分区且避免 APFS 重复计数）
-    let disks = Disks::new();
+    let disks = Disks::new_with_refreshed_list();
     let (disk_total, disk_used) = disks
         .iter()
         .max_by_key(|d| d.total_space())
