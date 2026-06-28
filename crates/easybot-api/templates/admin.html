@@ -289,7 +289,10 @@ function switchTab(name) {
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
   document.querySelectorAll('.tab-content').forEach(c => c.classList.toggle('active', c.id === 'tab-' + name));
   sessionStorage.setItem('easybot_admin_tab', name);
-  if (name === 'overview' && !document.getElementById('ov-stats').children.length) loadOverview();
+  if (name === 'overview') {
+    if (!document.getElementById('ov-stats').children.length) { loadOverview(); }
+    else { refreshOverviewStats(); refreshSystemInfo(); }
+  }
   if (name === 'adapters' && !document.getElementById('adapters-content').children.length) loadAdapters();
   if (name === 'sessions') loadSessions();
   if (name === 'config') loadConfig();
@@ -395,8 +398,14 @@ function handleGatewayEvent(msg) {
     if (overviewActive) { console.log('[EVENT] refreshOverviewStats'); refreshOverviewStats(); }
     if (adaptersActive) { console.log('[EVENT] loadAdapters'); loadAdapters(); }
   }
-  // 消息事件 → 刷新 Overview 会话数 + Sessions + Messages
-  if (t.startsWith('message.') || t === 'callback.received') {
+  // 入站消息事件 → 直接渲染（避免与 MessagePersister 缓冲写入竞争）
+  if (t === 'message.inbound') {
+    if (overviewActive) { console.log('[EVENT] refreshOverviewStats (msg)'); refreshOverviewStats(); }
+    if (sessionsActive) { console.log('[EVENT] loadSessions'); loadSessions(); }
+    if (messagesActive) { console.log('[EVENT] prependNewMessagesFromEvent'); prependNewMessagesFromEvent(msg); }
+  }
+  // 出站/失败/回调事件 → 通过 API 获取（已同步持久化，无竞争条件）
+  if (t === 'message.sent' || t === 'message.failed' || t === 'callback.received') {
     if (overviewActive) { console.log('[EVENT] refreshOverviewStats (msg)'); refreshOverviewStats(); }
     if (sessionsActive) { console.log('[EVENT] loadSessions'); loadSessions(); }
     if (messagesActive) { console.log('[EVENT] prependNewMessages'); prependNewMessages(); }
@@ -760,6 +769,9 @@ async function adapterAction(platform, action) {
     // 更新卡片显示最终状态
     updateAdapterCard(platform, result.status, result.connected, false);
 
+    // 如果 Overview 激活则刷新统计数据（适配器数、会话数）
+    { const _oa = document.getElementById('tab-overview')?.classList.contains('active'); if (_oa) refreshOverviewStats(); }
+
     // 如果不稳定（超时仍没达到目标状态），弹提示但不阻塞
     if ((isStart && !result.connected && result.status !== 'Connected')
         || (!isStart && result.connected)) {
@@ -880,7 +892,27 @@ let msgPlatform = '';
 // 已加载的消息 ID 集合，防止事件重复追加
 const loadedMsgIds = new Set();
 
-// 增量追加：事件触发时调用，不中断现有列表
+// 增量追加（入站消息）：直接从 WebSocket 事件数据渲染，避免与 MessagePersister 缓冲写入竞争
+function prependNewMessagesFromEvent(msg) {
+  const data = msg.data;
+  if (!data || !data.id) return;
+  // StoredMessage 的 id 格式为 "inbound:<platform>:<msg.id>"，需匹配 loadedMsgIds 中的格式
+  const storedId = 'inbound:' + data.platform + ':' + data.id;
+  if (loadedMsgIds.has(storedId)) return;
+  loadedMsgIds.add(storedId);
+  const tbody = document.getElementById('msg-list');
+  const tr = document.createElement('tr');
+  tr.style.cursor = 'pointer';
+  tr.innerHTML = `<td style="font-size:11px;color:#8b949e;white-space:nowrap">${new Date(data.timestamp).toLocaleTimeString()}</td>
+    <td><span class="badge badge-blue">${data.platform}</span></td>
+    <td style="font-size:12px">${data.chat_id}</td>
+    <td><span class="badge badge-green">User</span></td>
+    <td style="font-size:12px;color:#8b949e;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${(data.text || '').substring(0, 80)}</td>`;
+  tr.addEventListener('click', () => alert(JSON.stringify(data, null, 2)));
+  tbody.insertBefore(tr, tbody.firstChild);
+}
+
+// 增量追加（出站消息）：通过 API 获取（出站消息已同步持久化，无竞争条件）
 async function prependNewMessages() {
   try {
     const params = new URLSearchParams({ limit: '5' });
@@ -897,7 +929,7 @@ async function prependNewMessages() {
       tr.style.cursor = 'pointer';
       tr.innerHTML = `<td style="font-size:11px;color:#8b949e;white-space:nowrap">${new Date(m.timestamp).toLocaleTimeString()}</td>
         <td><span class="badge badge-blue">${m.platform}</span></td>
-        <td style="font-size:12px">${m.chatId}</td>
+        <td style="font-size:12px">${m.chat_id}</td>
         <td><span class="badge ${m.role === 'User' ? 'badge-green' : 'badge-gray'}">${m.role}</span></td>
         <td style="font-size:12px;color:#8b949e;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${(m.text || '').substring(0, 80)}</td>`;
       tr.addEventListener('click', () => alert(JSON.stringify(m, null, 2)));
@@ -952,7 +984,7 @@ async function loadMessages(append = false) {
       tr.style.cursor = 'pointer';
       tr.innerHTML = `<td style="font-size:11px;color:#8b949e;white-space:nowrap">${new Date(m.timestamp).toLocaleTimeString()}</td>
         <td><span class="badge badge-blue">${m.platform}</span></td>
-        <td style="font-size:12px">${m.chatId}</td>
+        <td style="font-size:12px">${m.chat_id}</td>
         <td><span class="badge ${m.role === 'User' ? 'badge-green' : 'badge-gray'}">${m.role}</span></td>
         <td style="font-size:12px;color:#8b949e;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${(m.text || '').substring(0, 80)}</td>`;
       tr.addEventListener('click', () => alert(JSON.stringify(m, null, 2)));
