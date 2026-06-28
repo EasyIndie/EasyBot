@@ -66,6 +66,15 @@ label { display: block; font-size: 13px; color: #8b949e; margin-bottom: 4px; }
 .login-box input { margin-bottom: 12px; }
 .btn-copy { background: none; border: 1px solid #30363d; border-radius: 4px; color: #8b949e; cursor: pointer; font-size: 12px; padding: 2px 6px; vertical-align: middle; }
 .btn-copy:hover { background: #21262d; color: #e6edf3; }
+.mbar { height: 6px; background: #21262d; border-radius: 3px; overflow: hidden; min-width: 40px; }
+.mbar .fill { height: 100%; border-radius: 3px; transition: width 0.3s; }
+.mbar-fill-blue { background: #58a6ff; }
+.mbar-fill-green { background: #3fb950; }
+.mbar-fill-yellow { background: #d29922; }
+.mbar-fill-red { background: #f85149; }
+.mbar-fill-purple { background: #bc8cff; }
+.detail-toggle { color: #58a6ff; cursor: pointer; font-size: 13px; user-select: none; }
+.detail-toggle:hover { text-decoration: underline; }
 .log-list { font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace; font-size: 12px; line-height: 1.6; }
 .log-entry { padding: 2px 8px; border-radius: 3px; }
 .log-entry:hover { background: #1c1e2e; }
@@ -128,11 +137,20 @@ label { display: block; font-size: 13px; color: #8b949e; margin-bottom: 4px; }
     <div class="grid-2" id="ov-system"></div>
     <div class="card" style="margin-top:16px">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-        <h3 style="margin:0">📊 Prometheus 监控指标</h3>
-        <button class="btn btn-sm" id="metrics-refresh">🔄 刷新</button>
+        <h3 style="margin:0">📊 监控指标</h3>
+        <div style="display:flex;gap:6px">
+          <button class="btn btn-sm" id="metrics-toggle-view">📋 原始数据</button>
+          <button class="btn btn-sm" id="metrics-refresh">🔄 刷新</button>
+        </div>
       </div>
+      <!-- 可视化视图（默认） -->
+      <div id="metrics-visual" style="display:none">
+        <div class="grid-4" id="metrics-cards"></div>
+        <div id="metrics-detail" style="margin-top:12px"></div>
+      </div>
+      <!-- 原始数据视图 -->
       <pre id="metrics-content" style="background:#11111e;border:1px solid #21262d;border-radius:6px;padding:12px;overflow-x:auto;font-size:11px;line-height:1.5;max-height:400px;white-space:pre-wrap;word-break:break-all;margin:0;display:none"></pre>
-      <p id="metrics-status" style="color:#8b949e;margin:0">点击刷新加载 Prometheus 指标</p>
+      <p id="metrics-status" style="color:#8b949e;margin:0">点击刷新加载指标</p>
       <div id="metrics-error" class="error-msg" style="margin-top:8px;display:none"></div>
     </div>
   </div>
@@ -553,8 +571,156 @@ setInterval(() => { if (document.getElementById('tab-overview').classList.contai
 // 客户端走秒，运行时间实时更新
 setInterval(() => { if (document.getElementById('tab-overview').classList.contains('active')) tickUptime(); }, 1000);
 
-// ─── Metrics (inline, text/plain) ────────────────
+// ─── Metrics (可视化 + 原始数据切换) ──────────
+let metricsRawText = '';
+let metricsView = 'visual'; // 'visual' | 'raw'
+
+// 解析 Prometheus text/plain 格式，返回 { metricKey: { name, labels, value } }
+function parsePrometheus(text) {
+  const out = {};
+  const lines = text.split('\n');
+  for (const line of lines) {
+    if (!line || line.startsWith('#')) continue;
+    const m = line.match(/^([a-zA-Z_][a-zA-Z0-9_:]*)(?:\{([^}]*)\})?\s+(-?[0-9]+(?:\.[0-9]+)?(?:e[+-]?[0-9]+)?)/);
+    if (!m) continue;
+    const name = m[1];
+    const labelsStr = m[2] || '';
+    const value = parseFloat(m[3]);
+    const labels = {};
+    if (labelsStr) {
+      labelsStr.split(',').forEach(pair => {
+        const kv = pair.match(/(\w+)="([^"]*)"/);
+        if (kv) labels[kv[1]] = kv[2];
+      });
+    }
+    const key = name + (labelsStr ? '{' + labelsStr + '}' : '');
+    out[key] = { name, labels, value };
+  }
+  return out;
+}
+
+function mbar(pct, color) {
+  return `<div class="mbar" style="flex:1"><div class="fill mbar-fill-${color}" style="width:${Math.min(pct,100)}%"></div></div>`;
+}
+
+function renderMetricsVisual(parsed) {
+  const values = Object.values(parsed);
+  let httpTotal = 0, wsConn = 0;
+  let msgInbound = 0, msgOutbound = 0;
+  let adaptersConnected = 0, adaptersTotal = 0;
+  const httpByPath = {};
+  const msgByPlatform = {};
+  const adapterList = [];
+
+  for (const v of values) {
+    if (v.name === 'http_requests_total') {
+      httpTotal += v.value;
+      const key = (v.labels.method||'') + ' ' + (v.labels.path||'');
+      const status = v.labels.status || '';
+      if (!httpByPath[key]) httpByPath[key] = { method: v.labels.method || '', path: v.labels.path || '', ok: 0, err: 0, total: 0 };
+      httpByPath[key].total += v.value;
+      if (status.startsWith('2') || status.startsWith('3')) httpByPath[key].ok += v.value;
+      else httpByPath[key].err += v.value;
+    }
+    if (v.name === 'active_websocket_connections') wsConn = v.value;
+    if (v.name === 'messages_inbound_total') {
+      msgInbound += v.value; const p = v.labels.platform||'unknown';
+      if (!msgByPlatform[p]) msgByPlatform[p] = { inbound:0, outbound:0 };
+      msgByPlatform[p].inbound += v.value;
+    }
+    if (v.name === 'messages_outbound_total') {
+      msgOutbound += v.value; const p = v.labels.platform||'unknown';
+      if (!msgByPlatform[p]) msgByPlatform[p] = { inbound:0, outbound:0 };
+      msgByPlatform[p].outbound += v.value;
+    }
+    if (v.name === 'adapter_status') {
+      adaptersTotal++;
+      if (v.value > 0) adaptersConnected++;
+      adapterList.push({ platform: v.labels.platform||'unknown', connected: v.value > 0 });
+    }
+  }
+
+  document.getElementById('metrics-cards').innerHTML = `
+    <div class="stat"><div class="val">${httpTotal.toFixed(0)}</div><div class="lbl">HTTP 请求总量</div></div>
+    <div class="stat"><div class="val">${wsConn.toFixed(0)}</div><div class="lbl">WebSocket 连接</div></div>
+    <div class="stat"><div class="val" style="font-size:20px">${msgInbound.toFixed(0)}<span style="font-size:12px;color:#3fb950"> ↓</span> ${msgOutbound.toFixed(0)}<span style="font-size:12px;color:#58a6ff"> ↑</span></div><div class="lbl">入站 / 出站消息</div></div>
+    <div class="stat"><div class="val">${adaptersConnected}/${adaptersTotal}</div><div class="lbl">适配器在线</div></div>
+  `;
+
+  let detail = '';
+
+  // HTTP 明细
+  const httpEntries = Object.entries(httpByPath).sort((a,b) => b[1].total - a[1].total);
+  if (httpEntries.length) {
+    const maxHttp = Math.max(...httpEntries.map(e => e[1].total), 1);
+    detail += '<div class="card" style="padding:12px 16px"><h3 style="font-size:14px;margin-bottom:8px">🌐 HTTP 请求明细</h3><div style="font-size:12px">';
+    for (const [, h] of httpEntries) {
+      const w = (h.total/maxHttp*100).toFixed(0);
+      const c = h.err>0 && h.err/h.total>0.1 ? 'red' : 'blue';
+      detail += `<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+        <span style="width:60px;flex-shrink:0;color:#8b949e">${h.method}</span>
+        <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#e6edf3">${h.path}</span>
+        ${mbar(w,c)}<span style="width:50px;text-align:right;font-variant-numeric:tabular-nums">${h.total.toFixed(0)}</span>
+        ${h.err>0 ? `<span style="width:40px;text-align:right;color:#f85149;font-size:11px">${h.err.toFixed(0)} err</span>` : '<span style="width:40px"></span>'}</div>`;
+    }
+    detail += '</div></div>';
+  }
+
+  // 消息按平台
+  const msgEntries = Object.entries(msgByPlatform).sort((a,b) => (b[1].inbound+b[1].outbound)-(a[1].inbound+a[1].outbound));
+  if (msgEntries.length) {
+    const maxMsg = Math.max(...msgEntries.map(e => e[1].inbound+e[1].outbound), 1);
+    detail += '<div class="card" style="padding:12px 16px"><h3 style="font-size:14px;margin-bottom:8px">💬 消息按平台统计</h3><div style="font-size:12px">';
+    for (const [plat, m] of msgEntries) {
+      const t = m.inbound + m.outbound;
+      detail += `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+        <span style="width:70px;flex-shrink:0;color:#e6edf3">${plat}</span>
+        ${mbar((t/maxMsg*100).toFixed(0),'green')}
+        <span style="width:70px;text-align:right">${t.toFixed(0)}</span>
+        <span style="color:#3fb950;font-size:11px">↓${m.inbound.toFixed(0)}</span>
+        <span style="color:#58a6ff;font-size:11px">↑${m.outbound.toFixed(0)}</span></div>`;
+    }
+    detail += '</div></div>';
+  }
+
+  // 适配器状态
+  if (adapterList.length) {
+    detail += '<div class="card" style="padding:12px 16px"><h3 style="font-size:14px;margin-bottom:8px">🔌 适配器状态</h3><div style="display:flex;gap:8px;flex-wrap:wrap">';
+    for (const a of adapterList) {
+      detail += `<span style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;background:#11111e;border-radius:6px;border:1px solid #21262d;font-size:13px">${a.connected?'🟢':'🔴'} ${a.platform} <span style="color:#8b949e;font-size:11px">${a.connected?'在线':'离线'}</span></span>`;
+    }
+    detail += '</div></div>';
+  }
+
+  // 请求平均耗时
+  const durCounts = values.filter(v => v.name === 'http_request_duration_seconds_count');
+  const durSums = values.filter(v => v.name === 'http_request_duration_seconds_sum');
+  if (durCounts.length && durSums.length) {
+    const durByPath = {};
+    for (const v of durCounts) { const k = (v.labels.method||'')+' '+(v.labels.path||''); if(!durByPath[k])durByPath[k]={count:0,sum:0}; durByPath[k].count = v.value; }
+    for (const v of durSums) { const k = (v.labels.method||'')+' '+(v.labels.path||''); if(!durByPath[k])durByPath[k]={count:0,sum:0}; durByPath[k].sum = v.value; }
+    const durEntries = Object.entries(durByPath).filter(e=>e[1].count>0).sort((a,b)=>b[1].sum/b[1].count - a[1].sum/a[1].count);
+    if (durEntries.length) {
+      const maxAvg = Math.max(...durEntries.map(e=>e[1].sum/e[1].count), 0.001);
+      detail += '<div class="card" style="padding:12px 16px"><h3 style="font-size:14px;margin-bottom:8px">⏱ 请求平均耗时</h3><div style="font-size:12px">';
+      for (const [key, d] of durEntries) {
+        const avg = d.sum/d.count, p = key.split(' ');
+        const c = avg<0.1?'green':avg<0.5?'yellow':'red';
+        detail += `<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+          <span style="width:50px;flex-shrink:0;color:#8b949e">${p[0]||''}</span>
+          <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#e6edf3">${p.slice(1).join(' ')||'/'}</span>
+          ${mbar((avg/maxAvg*100).toFixed(0),c)}
+          <span style="width:60px;text-align:right;font-variant-numeric:tabular-nums">${(avg*1000).toFixed(1)}ms</span></div>`;
+      }
+      detail += '</div></div>';
+    }
+  }
+
+  document.getElementById('metrics-detail').innerHTML = detail;
+}
+
 async function loadMetrics() {
+  const visual = document.getElementById('metrics-visual');
   const pre = document.getElementById('metrics-content');
   const status = document.getElementById('metrics-status');
   const err = document.getElementById('metrics-error');
@@ -564,17 +730,39 @@ async function loadMetrics() {
     const res = await fetch('/api/v1/metrics', { headers: { 'Authorization': `Bearer ${apiKey}` } });
     if (!res.ok) throw new Error(await res.text());
     const text = await res.text();
+    metricsRawText = text;
     pre.textContent = text;
-    pre.style.display = 'block';
-    const lineCount = text.split('\n').filter(l => l && !l.startsWith('#')).length;
-    status.textContent = `共 ${lineCount} 条指标`;
+    const parsed = parsePrometheus(text);
+    renderMetricsVisual(parsed);
+    visual.style.display = metricsView === 'visual' ? 'block' : 'none';
+    pre.style.display = metricsView === 'visual' ? 'none' : 'block';
+    status.textContent = `共 ${Object.keys(parsed).length} 条指标数据`;
   } catch (e) {
+    visual.style.display = 'none';
     pre.style.display = 'none';
     err.textContent = '加载失败: ' + e.message;
     err.style.display = 'block';
     status.textContent = '';
   }
 }
+
+// 切换可视化 / 原始数据视图
+document.getElementById('metrics-toggle-view').addEventListener('click', () => {
+  const btn = document.getElementById('metrics-toggle-view');
+  const visual = document.getElementById('metrics-visual');
+  const pre = document.getElementById('metrics-content');
+  if (metricsView === 'visual') {
+    metricsView = 'raw';
+    btn.textContent = '📊 可视化';
+    visual.style.display = 'none';
+    pre.style.display = 'block';
+  } else {
+    metricsView = 'visual';
+    btn.textContent = '📋 原始数据';
+    visual.style.display = 'block';
+    pre.style.display = 'none';
+  }
+});
 
 // ─── Logs Tab ──────────────────────────────────
 let logPollTimer = null;
