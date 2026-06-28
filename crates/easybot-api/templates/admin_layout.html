@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>EasyBot 管理后台</title>
+<style>__ADMIN_CSS__</style>
+</head>
+<body>
+<!-- Login Overlay -->
+<div class="login-overlay" id="login-overlay" role="dialog" aria-modal="true" aria-label="管理员登录">
+  <div class="login-box">
+    <h2>EasyBot</h2>
+    <p>管理后台需要密码登录</p>
+    <form id="login-form">
+      <div class="form-group">
+        <label for="login-password" class="sr-only">管理员密码</label>
+        <input type="password" id="login-password" placeholder="输入管理员密码" autocomplete="current-password">
+      </div>
+      <button type="submit" class="btn btn-primary" id="login-btn" style="width:100%">登录</button>
+    </form>
+    <p id="login-error" class="login-error-msg"></p>
+    <p style="margin-top:16px;font-size:12px;color:var(--text-faint)">密码在 gateway.yaml 或 .env 中配置</p>
+  </div>
+</div>
+
+<!-- Header -->
+<header class="header">
+  <h1 style="font-size:16px;">EasyBot 管理后台</h1>
+  <div class="right">
+    <a href="/" style="color:var(--text-muted);text-decoration:none;font-size:13px;margin-right:8px;">⬅ 首页</a>
+    <span class="key-display" id="key-display" style="display:none"></span>
+    <button class="btn-logout" id="logout-btn" style="display:none">登出</button>
+  </div>
+</header>
+
+<!-- Tabs -->
+<nav class="tabs" id="tabs-bar" aria-label="管理功能" role="tablist">
+  <button class="tab-btn active" data-tab="overview" role="tab" aria-selected="true">📊 Overview</button>
+  <button class="tab-btn" data-tab="metrics" role="tab" aria-selected="false">📈 Metrics</button>
+  <button class="tab-btn" data-tab="logs" role="tab" aria-selected="false">📋 Logs</button>
+  <button class="tab-btn" data-tab="adapters" role="tab" aria-selected="false">🔌 Adapters</button>
+  <button class="tab-btn" data-tab="config" role="tab" aria-selected="false">⚙️ Config</button>
+  <button class="tab-btn" data-tab="sessions" role="tab" aria-selected="false">💬 Sessions</button>
+  <button class="tab-btn" data-tab="messages" role="tab" aria-selected="false">✉️ Messages</button>
+</nav>
+
+<!-- Tab: Overview -->
+<section class="tab-content active" id="tab-overview" role="tabpanel" aria-label="概览">
+  <div id="overview-loading" class="loading">加载中...</div>
+  <div id="overview-content" style="display:none">
+    <!-- Status badge removed per user request -->
+    <div class="grid-4" id="ov-stats"></div>
+    <h3 style="margin:24px 0 12px;color:var(--text-primary)">系统信息</h3>
+    <div class="grid-2" id="ov-system"></div>
+</div>
+</section>
+
+  <!-- Tab: Metrics -->
+<section class="tab-content" id="tab-metrics" role="tabpanel" aria-label="监控指标">
+  <div id="metrics-loading" class="loading">加载中...</div>
+  <div id="metrics-content-area" style="display:none">
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+        <h3 style="margin:0">📈 监控指标</h3>
+        <div style="display:flex;gap:6px">
+          <button class="btn btn-sm" id="metrics-toggle-view">📋 原始数据</button>
+          <button class="btn btn-sm" id="metrics-refresh">🔄 刷新</button>
+        </div>
+      </div>
+      <!-- 可视化视图（默认） -->
+      <div id="metrics-visual" style="display:none">
+        <div class="grid-4" id="metrics-cards"></div>
+        <div id="metrics-detail" style="margin-top:12px"></div>
+      </div>
+      <!-- 原始数据视图 -->
+      <pre id="metrics-content" style="background:var(--bg-tertiary);border:1px solid var(--border-muted);border-radius:6px;padding:12px;overflow-x:auto;font-size:11px;line-height:1.5;max-height:400px;white-space:pre-wrap;word-break:break-all;margin:0;display:none"></pre>
+      <p id="metrics-status" style="color:var(--text-muted);margin:0">点击刷新加载指标</p>
+      <div id="metrics-error" class="error-msg" style="margin-top:8px;display:none"></div>
+    </div>
+  </div>
+</section>
+
+<!-- Tab: Logs -->
+<section class="tab-content" id="tab-logs" role="tabpanel" aria-label="日志">
+  <div class="chips" id="log-level-chips">
+    <button class="chip active" data-level="">ALL</button>
+    <button class="chip" data-level="ERROR">ERROR</button>
+    <button class="chip" data-level="WARN">WARN</button>
+    <button class="chip" data-level="INFO">INFO</button>
+    <button class="chip" data-level="DEBUG">DEBUG</button>
+  </div>
+  <div style="display:flex;gap:8px;margin-bottom:12px">
+    <input type="text" id="log-search" placeholder="搜索日志..." style="flex:1">
+    <button class="btn btn-sm" id="log-pause-btn">⏸ 暂停</button>
+    <button class="btn btn-sm" id="log-clear-btn">清空</button>
+  </div>
+  <div class="card" style="max-height:60vh;overflow-y:auto;padding:8px" id="log-container">
+    <div class="log-list" id="log-list"></div>
+  </div>
+</section>
+
+<!-- Tab: Adapters -->
+<section class="tab-content" id="tab-adapters" role="tabpanel" aria-label="适配器管理">
+  <div id="adapters-loading" class="loading">加载中...</div>
+  <div id="adapters-content" style="display:none"></div>
+</section>
+
+<!-- Tab: Config -->
+<section class="tab-content" id="tab-config" role="tabpanel" aria-label="配置">
+  <div style="display:flex;gap:8px;margin-bottom:12px">
+    <button class="btn" id="config-refresh">🔄 刷新</button>
+    <button class="btn" id="config-edit-btn">✏️ 编辑</button>
+    <button class="btn btn-primary" id="config-save-btn" style="display:none">💾 保存</button>
+    <button class="btn" id="config-cancel-btn" style="display:none">取消</button>
+  </div>
+  <div id="config-loading" class="loading">加载中...</div>
+  <pre id="config-view" style="display:none;background:var(--bg-tertiary);border:1px solid var(--border-default);border-radius:8px;padding:16px;overflow-x:auto;font-size:13px;font-family:monospace;white-space:pre-wrap"></pre>
+  <textarea id="config-editor" style="display:none;min-height:400px"></textarea>
+  <div id="config-msg" style="margin-top:8px"></div>
+</section>
+
+<!-- Tab: Sessions -->
+<section class="tab-content" id="tab-sessions" role="tabpanel" aria-label="会话管理">
+  <div id="sessions-loading" class="loading">加载中...</div>
+  <div id="sessions-content" style="display:none"></div>
+</section>
+
+<!-- Tab: Messages -->
+<section class="tab-content" id="tab-messages" role="tabpanel" aria-label="消息">
+  <div class="card" style="margin-bottom:16px">
+    <h3>📤 发送测试消息</h3>
+    <div class="form-group">
+      <label>Target (<code>platform:chatId</code>)</label>
+      <input type="text" id="msg-target" placeholder="例如: telegram:123456">
+    </div>
+    <div class="form-group">
+      <label>Text</label>
+      <textarea id="msg-text" placeholder="消息内容" rows="3"></textarea>
+    </div>
+    <div class="form-group">
+      <label>Parse Mode</label>
+      <select id="msg-parse-mode">
+        <option value="">none</option>
+        <option value="markdown">markdown</option>
+        <option value="html">html</option>
+      </select>
+    </div>
+    <button class="btn btn-primary" id="msg-send-btn">发送</button>
+    <div id="msg-send-result" style="margin-top:8px"></div>
+  </div>
+  <div style="display:flex;gap:8px;margin-bottom:12px">
+    <select id="msg-platform-filter" style="width:160px">
+      <option value="">所有平台</option>
+      <option value="telegram">Telegram</option>
+      <option value="discord">Discord</option>
+      <option value="feishu">飞书</option>
+      <option value="qq">QQ</option>
+      <option value="wechat">微信</option>
+    </select>
+    <button class="btn" id="msg-refresh">🔄 刷新</button>
+  </div>
+  <div id="messages-loading" class="loading">加载中...</div>
+  <div id="messages-content" style="display:none">
+    <div class="table-wrapper"><table><thead><tr><th>时间</th><th>平台</th><th>Chat</th><th>角色</th><th>消息</th></tr></thead><tbody id="msg-list"></tbody></table></div>
+    <div style="text-align:center;margin-top:12px"><button class="btn" id="msg-load-more" style="display:none">加载更多</button></div>
+  </div>
+</section>
+
+<!-- Toast notification container -->
+<div id="toast-container"></div>
+
+<!-- Detail Modal -->
+<div class="modal-overlay" id="detail-modal" style="display:none">
+  <div class="modal-card">
+    <div class="modal-header">
+      <h3 id="modal-title"></h3>
+      <button class="modal-close" onclick="closeModal()" aria-label="关闭">&times;</button>
+    </div>
+    <pre id="modal-body"></pre>
+  </div>
+</div>
+
+<!-- Hidden: store last log timestamp for incremental polling -->
+<div id="log-since" style="display:none">0</div>
+
+<script>__ADMIN_JS__</script>
+</body>
+</html>

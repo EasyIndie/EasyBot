@@ -2,145 +2,215 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>EasyBot 管理后台</title>
-<style>
-* { margin: 0; padding: 0; box-sizing: border-box; }
-body { background: #0f0f1a; color: #c9d1d9; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; min-height: 100vh; }
-.header { background: #161822; border-bottom: 1px solid #30363d; padding: 12px 24px; display: flex; align-items: center; gap: 16px; position: sticky; top: 0; z-index: 100; }
-.header h1 { font-size: 18px; color: #58a6ff; }
+<style>:root {
+  --bg-primary: #0f0f1a;
+  --bg-secondary: #161822;
+  --bg-tertiary: #11111e;
+  --border-default: #30363d;
+  --border-muted: #21262d;
+  --text-primary: #e6edf3;
+  --text-secondary: #c9d1d9;
+  --text-muted: #949da8;
+  --text-faint: #6e7681;
+  --accent: #58a6ff;
+  --success: #3fb950;
+  --warning: #d29922;
+  --danger: #f85149;
+  --radius: 8px;
+  --font-mono: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+  --font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+body { background: var(--bg-primary); color: var(--text-secondary); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif; min-height: 100vh; -webkit-overflow-scrolling: touch; overscroll-behavior: none; }
+html { touch-action: manipulation; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; } }
+.header { background: var(--bg-secondary); border-bottom: 1px solid var(--border-default); padding: 12px 24px; display: flex; align-items: center; gap: 16px; position: sticky; top: 0; z-index: 100; }
+.header h1 { font-size: 18px; color: var(--accent); }
 .header .right { margin-left: auto; display: flex; align-items: center; gap: 12px; font-size: 13px; }
-.header .right .key-display { color: #8b949e; }
-.header .right .btn-logout { color: #f85149; cursor: pointer; background: none; border: 1px solid #f85149; padding: 4px 12px; border-radius: 6px; font-size: 13px; }
+.header .right .key-display { color: var(--text-muted); }
+.header .right .btn-logout { color: var(--danger); cursor: pointer; background: none; border: 1px solid var(--danger); padding: 4px 12px; border-radius: 6px; font-size: 13px; }
 .header .right .btn-logout:hover { background: #f851491a; }
-.tabs { display: flex; background: #161822; border-bottom: 1px solid #30363d; padding: 0 24px; position: sticky; top: 52px; z-index: 99; overflow-x: auto; }
-.tab-btn { padding: 12px 20px; cursor: pointer; color: #8b949e; border: none; background: none; font-size: 14px; border-bottom: 2px solid transparent; transition: all 0.15s; white-space: nowrap; }
-.tab-btn:hover { color: #c9d1d9; }
-.tab-btn.active { color: #58a6ff; border-bottom-color: #58a6ff; }
+.tabs { display: flex; background: var(--bg-secondary); border-bottom: 1px solid var(--border-default); padding: 0 24px; position: sticky; top: 52px; z-index: 99; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+.tabs::-webkit-scrollbar { display: none; }
+.tab-btn { padding: 12px 20px; cursor: pointer; color: var(--text-muted); border: none; background: none; font-size: 14px; border-bottom: 2px solid transparent; transition: all 0.15s; white-space: nowrap; }
+.tab-btn:hover { color: var(--text-secondary); }
+.tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
 .tab-content { display: none; padding: 24px; }
 .tab-content.active { display: block; }
-.card { background: #161822; border: 1px solid #30363d; border-radius: 8px; padding: 20px; margin-bottom: 16px; }
-.card h3 { font-size: 15px; color: #e6edf3; margin-bottom: 12px; }
+.card { background: var(--bg-secondary); border: 1px solid var(--border-default); border-radius: 8px; padding: 20px; margin-bottom: 16px; }
+.card h3 { font-size: 15px; color: var(--text-primary); margin-bottom: 12px; }
 .grid-2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
 .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
 .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
-.stat { text-align: center; padding: 16px; background: #11111e; border-radius: 8px; border: 1px solid #21262d; }
-.stat .val { font-size: 24px; font-weight: 600; color: #e6edf3; }
-.stat .lbl { font-size: 12px; color: #8b949e; margin-top: 4px; }
+.stat { text-align: center; padding: 16px; background: var(--bg-tertiary); border-radius: 8px; border: 1px solid var(--border-muted); }
+.stat .val { font-size: 24px; font-weight: 600; color: var(--text-primary); }
+.stat .lbl { font-size: 12px; color: var(--text-muted); margin-top: 4px; }
 .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 12px; font-weight: 500; }
-.badge-green { background: #1a4731; color: #3fb950; }
-.badge-yellow { background: #472a1a; color: #d29922; }
-.badge-red { background: #471a1a; color: #f85149; }
-.badge-gray { background: #21262d; color: #8b949e; }
-.badge-blue { background: #1a2a47; color: #58a6ff; }
-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-table th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid #21262d; }
-table th { background: #11111e; color: #8b949e; font-weight: 500; position: sticky; top: 0; }
+.badge-green { background: #1a4731; color: var(--success); }
+.badge-yellow { background: #472a1a; color: var(--warning); }
+.badge-red { background: #471a1a; color: var(--danger); }
+.badge-gray { background: var(--border-muted); color: var(--text-muted); }
+.badge-blue { background: #1a2a47; color: var(--accent); }
+table { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 600px; }
+table th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border-muted); }
+table th { background: var(--bg-tertiary); color: var(--text-muted); font-weight: 500; position: sticky; top: 0; }
+table th:first-child, table td:first-child { position: sticky; left: 0; background: var(--bg-secondary); z-index: 1; }
+table th:first-child { background: var(--bg-tertiary); z-index: 2; }
+table tr:hover td:first-child { background: #1c1e2e; }
 table tr:hover { background: #1c1e2e; }
-.btn { padding: 8px 16px; border-radius: 6px; border: 1px solid #30363d; cursor: pointer; font-size: 13px; background: #21262d; color: #c9d1d9; transition: all 0.15s; }
-.btn:hover { background: #30363d; }
+.table-wrapper { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.btn { padding: 8px 16px; border-radius: 6px; border: 1px solid var(--border-default); cursor: pointer; font-size: 13px; background: var(--border-muted); color: var(--text-secondary); transition: all 0.15s; }
+.btn:hover { background: var(--border-default); }
 .btn-primary { background: #238636; border-color: #238636; color: #fff; }
 .btn-primary:hover { background: #2ea043; }
 .btn-danger { background: #da3633; border-color: #da3633; color: #fff; }
-.btn-danger:hover { background: #f85149; }
+.btn-danger:hover { background: var(--danger); }
 .btn-sm { padding: 4px 10px; font-size: 12px; }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
-input, textarea, select { background: #11111e; border: 1px solid #30363d; border-radius: 6px; padding: 8px 12px; color: #c9d1d9; font-size: 14px; width: 100%; }
-input:focus, textarea:focus, select:focus { border-color: #58a6ff; outline: none; }
+input, textarea, select { background: var(--bg-tertiary); border: 1px solid var(--border-default); border-radius: 6px; padding: 8px 12px; color: var(--text-secondary); font-size: 14px; width: 100%; }
+input:focus, textarea:focus, select:focus { border-color: var(--accent); outline: none; }
 textarea { font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace; font-size: 13px; resize: vertical; min-height: 100px; }
-label { display: block; font-size: 13px; color: #8b949e; margin-bottom: 4px; }
+label { display: block; font-size: 13px; color: var(--text-muted); margin-bottom: 4px; }
 .form-group { margin-bottom: 12px; }
-.progress-bar { height: 8px; background: #21262d; border-radius: 4px; overflow: hidden; margin: 4px 0; }
+.progress-bar { height: 8px; background: var(--border-muted); border-radius: 4px; overflow: hidden; margin: 4px 0; }
 .progress-bar .fill { height: 100%; border-radius: 4px; transition: width 0.3s; }
-.fill-green { background: #3fb950; }
-.fill-yellow { background: #d29922; }
-.fill-red { background: #f85149; }
-.loading { text-align: center; padding: 48px; color: #8b949e; }
-.error-msg { color: #f85149; font-size: 13px; }
-.login-error-msg { color: #f85149; background: #471a1a; border: 1px solid #f851494d; border-radius: 6px; padding: 8px 12px; font-size: 13px; margin-top: 12px; display: none; }
-.success-msg { color: #3fb950; font-size: 13px; }
-.login-overlay { position: fixed; inset: 0; background: #0f0f1a; display: none; align-items: center; justify-content: center; z-index: 1000; }
-.login-box { background: #161822; border: 1px solid #30363d; border-radius: 12px; padding: 48px; width: 400px; max-width: 90vw; text-align: center; }
-.login-box h2 { color: #58a6ff; margin-bottom: 8px; }
-.login-box p { color: #8b949e; font-size: 13px; margin-bottom: 24px; }
+.fill-green { background: var(--success); }
+.fill-yellow { background: var(--warning); }
+.fill-red { background: var(--danger); }
+.loading { text-align: center; padding: 48px; color: var(--text-muted); }
+.error-msg { color: var(--danger); font-size: 13px; }
+.login-error-msg { color: var(--danger); background: #471a1a; border: 1px solid #f851494d; border-radius: 6px; padding: 8px 12px; font-size: 13px; margin-top: 12px; display: none; }
+.login-error-msg.shake { animation: shake 0.4s ease; }
+@keyframes shake { 0%,100% { transform: translateX(0); } 25% { transform: translateX(-8px); } 50% { transform: translateX(8px); } 75% { transform: translateX(-4px); } }
+.login-overlay { transition: opacity 0.3s ease; }
+.login-overlay.fade-out { opacity: 0; }
+.success-msg { color: var(--success); font-size: 13px; }
+.login-overlay { position: fixed; inset: 0; background: var(--bg-primary); display: none; align-items: center; justify-content: center; z-index: 1000; }
+.login-box { background: var(--bg-secondary); border: 1px solid var(--border-default); border-radius: 12px; padding: 48px; width: 400px; max-width: 90vw; text-align: center; }
+.login-box h2 { color: var(--accent); margin-bottom: 8px; }
+.login-box p { color: var(--text-muted); font-size: 13px; margin-bottom: 24px; }
 .login-box input { margin-bottom: 12px; }
-.btn-copy { background: none; border: 1px solid #30363d; border-radius: 4px; color: #8b949e; cursor: pointer; font-size: 12px; padding: 2px 6px; vertical-align: middle; }
-.btn-copy:hover { background: #21262d; color: #e6edf3; }
-.mbar { height: 6px; background: #21262d; border-radius: 3px; overflow: hidden; min-width: 40px; }
+.btn-copy { background: none; border: 1px solid var(--border-default); border-radius: 4px; color: var(--text-muted); cursor: pointer; font-size: 12px; padding: 2px 6px; vertical-align: middle; }
+.btn-copy:hover { background: var(--border-muted); color: var(--text-primary); }
+.mbar { height: 6px; background: var(--border-muted); border-radius: 3px; overflow: hidden; min-width: 40px; }
 .mbar .fill { height: 100%; border-radius: 3px; transition: width 0.3s; }
-.mbar-fill-blue { background: #58a6ff; }
-.mbar-fill-green { background: #3fb950; }
-.mbar-fill-yellow { background: #d29922; }
-.mbar-fill-red { background: #f85149; }
+.mbar-fill-blue { background: var(--accent); }
+.mbar-fill-green { background: var(--success); }
+.mbar-fill-yellow { background: var(--warning); }
+.mbar-fill-red { background: var(--danger); }
 .mbar-fill-purple { background: #bc8cff; }
-.detail-toggle { color: #58a6ff; cursor: pointer; font-size: 13px; user-select: none; }
+.detail-toggle { color: var(--accent); cursor: pointer; font-size: 13px; user-select: none; }
 .detail-toggle:hover { text-decoration: underline; }
 .log-list { font-family: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace; font-size: 12px; line-height: 1.6; }
 .log-entry { padding: 2px 8px; border-radius: 3px; }
 .log-entry:hover { background: #1c1e2e; }
-.log-ERROR { color: #f85149; }
-.log-WARN { color: #d29922; }
-.log-INFO { color: #c9d1d9; }
-.log-DEBUG { color: #8b949e; }
-.log-TRACE { color: #484f58; }
+.log-ERROR { color: var(--danger); }
+.log-WARN { color: var(--warning); }
+.log-INFO { color: var(--text-secondary); }
+.log-DEBUG { color: var(--text-muted); }
+.log-TRACE { color: var(--text-faint); }
 .chips { display: flex; gap: 6px; margin-bottom: 12px; flex-wrap: wrap; }
-.chip { padding: 4px 12px; border-radius: 12px; font-size: 12px; cursor: pointer; border: 1px solid #30363d; background: none; color: #8b949e; }
-.chip:hover { color: #c9d1d9; }
-.chip.active { background: #1a2a47; border-color: #58a6ff; color: #58a6ff; }
-.msg-success { border-left: 3px solid #3fb950; padding-left: 12px; }
-.msg-failed { border-left: 3px solid #f85149; padding-left: 12px; }
-@media (max-width: 640px) { .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; } .tabs { padding: 0 8px; } .tab-btn { padding: 10px 12px; font-size: 13px; } .tab-content { padding: 16px; } }
+.chip { padding: 4px 12px; border-radius: 12px; font-size: 12px; cursor: pointer; border: 1px solid var(--border-default); background: none; color: var(--text-muted); }
+.chip:hover { color: var(--text-secondary); }
+.chip.active { background: #1a2a47; border-color: var(--accent); color: var(--accent); }
+.msg-success { border-left: 3px solid var(--success); padding-left: 12px; }
+.msg-failed { border-left: 3px solid var(--danger); padding-left: 12px; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+/* Toast */
+#toast-container { position: fixed; top: 16px; right: 16px; z-index: 2000; display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
+.toast { padding: 10px 16px; border-radius: 6px; font-size: 13px; color: #e6edf3; pointer-events: auto; max-width: 360px; animation: toastIn 0.3s ease; box-shadow: 0 4px 12px rgba(0,0,0,0.4); }
+.toast.removing { animation: toastOut 0.3s ease forwards; }
+.toast-success { background: #1a4731; border: 1px solid var(--success); }
+.toast-error { background: #471a1a; border: 1px solid var(--danger); }
+.toast-warning { background: #472a1a; border: 1px solid var(--warning); }
+.toast-info { background: #1a2a47; border: 1px solid var(--accent); }
+@keyframes toastIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+@keyframes toastOut { from { transform: translateX(0); opacity: 1; } to { transform: translateX(100%); opacity: 0; } }
+/* Modal */
+.modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 3000; display: flex; align-items: center; justify-content: center; }
+.modal-card { background: var(--bg-secondary); border: 1px solid var(--border-default); border-radius: 12px; max-width: 90vw; max-height: 80vh; width: 600px; display: flex; flex-direction: column; }
+.modal-header { display: flex; justify-content: space-between; align-items: center; padding: 16px 20px; border-bottom: 1px solid var(--border-muted); flex-shrink: 0; }
+.modal-header h3 { color: var(--text-primary); font-size: 16px; margin: 0; }
+.modal-close { background: none; border: none; color: var(--text-muted); font-size: 24px; cursor: pointer; padding: 0 4px; line-height: 1; }
+.modal-close:hover { color: var(--text-primary); }
+#modal-body { padding: 16px 20px; font-size: 13px; font-family: var(--font-mono); color: var(--text-secondary); white-space: pre-wrap; word-break: break-all; margin: 0; overflow: auto; flex: 1; }
+@media (max-width: 900px) { .grid-3, .grid-4 { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 640px) { .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; } .tabs { padding: 0 8px; } .tab-btn { padding: 10px 12px; font-size: 13px; } .tab-content { padding: 16px; } input, textarea, select { font-size: 16px; } }
+@media (max-width: 480px) { .tabs { padding: 0 4px; } .tab-btn { padding: 8px 10px; font-size: 12px; }
+  /* 登录框全屏 */
+  .login-box { width: 100vw; max-width: 100vw; height: 100vh; border-radius: 0; padding: 32px 24px; display: flex; flex-direction: column; justify-content: center; }
+  /* 消息表：隐藏 Chat 和角色列 */
+  #tab-messages th:nth-child(3), #tab-messages td:nth-child(3),
+  #tab-messages th:nth-child(4), #tab-messages td:nth-child(4) { display: none; }
+  /* 会话表：隐藏类型和创建时间列 */
+  #tab-sessions th:nth-child(4), #tab-sessions td:nth-child(4),
+  #tab-sessions th:nth-child(5), #tab-sessions td:nth-child(5) { display: none; }
+  /* 消息发送表单：Target+ParseMode 同行，按钮全宽 */
+  #msg-target { width: 100%; } #msg-parse-mode { width: auto; min-width: 100px; }
+  #msg-send-btn { width: 100%; }
+  /* 日志搜索：按钮换行 */
+  #tab-logs > div[style*="display:flex"] { flex-wrap: wrap; }
+  #tab-logs > div[style*="display:flex"] > .btn { flex: 1; min-width: 60px; }
+  /* Config 按钮组换行 */
+  #tab-config > div[style*="display:flex"] { flex-wrap: wrap; }
+}
 </style>
 </head>
 <body>
 <!-- Login Overlay -->
-<div class="login-overlay" id="login-overlay">
+<div class="login-overlay" id="login-overlay" role="dialog" aria-modal="true" aria-label="管理员登录">
   <div class="login-box">
     <h2>EasyBot</h2>
     <p>管理后台需要密码登录</p>
-    <div class="form-group">
-      <input type="password" id="login-password" placeholder="输入管理员密码">
-    </div>
-    <button class="btn btn-primary" id="login-btn" style="width:100%">登录</button>
+    <form id="login-form">
+      <div class="form-group">
+        <label for="login-password" class="sr-only">管理员密码</label>
+        <input type="password" id="login-password" placeholder="输入管理员密码" autocomplete="current-password">
+      </div>
+      <button type="submit" class="btn btn-primary" id="login-btn" style="width:100%">登录</button>
+    </form>
     <p id="login-error" class="login-error-msg"></p>
-    <p style="margin-top:16px;font-size:12px;color:#484f58">密码在 gateway.yaml 或 .env 中配置</p>
+    <p style="margin-top:16px;font-size:12px;color:var(--text-faint)">密码在 gateway.yaml 或 .env 中配置</p>
   </div>
 </div>
 
 <!-- Header -->
-<div class="header">
+<header class="header">
   <h1 style="font-size:16px;">EasyBot 管理后台</h1>
   <div class="right">
-    <a href="/" style="color:#8b949e;text-decoration:none;font-size:13px;margin-right:8px;">⬅ 首页</a>
+    <a href="/" style="color:var(--text-muted);text-decoration:none;font-size:13px;margin-right:8px;">⬅ 首页</a>
     <span class="key-display" id="key-display" style="display:none"></span>
     <button class="btn-logout" id="logout-btn" style="display:none">登出</button>
   </div>
-</div>
+</header>
 
 <!-- Tabs -->
-<div class="tabs" id="tabs-bar">
-  <button class="tab-btn active" data-tab="overview">📊 Overview</button>
-  <button class="tab-btn" data-tab="metrics">📈 Metrics</button>
-  <button class="tab-btn" data-tab="logs">📋 Logs</button>
-  <button class="tab-btn" data-tab="adapters">🔌 Adapters</button>
-  <button class="tab-btn" data-tab="config">⚙️ Config</button>
-  <button class="tab-btn" data-tab="sessions">💬 Sessions</button>
-  <button class="tab-btn" data-tab="messages">✉️ Messages</button>
-</div>
+<nav class="tabs" id="tabs-bar" aria-label="管理功能" role="tablist">
+  <button class="tab-btn active" data-tab="overview" role="tab" aria-selected="true">📊 Overview</button>
+  <button class="tab-btn" data-tab="metrics" role="tab" aria-selected="false">📈 Metrics</button>
+  <button class="tab-btn" data-tab="logs" role="tab" aria-selected="false">📋 Logs</button>
+  <button class="tab-btn" data-tab="adapters" role="tab" aria-selected="false">🔌 Adapters</button>
+  <button class="tab-btn" data-tab="config" role="tab" aria-selected="false">⚙️ Config</button>
+  <button class="tab-btn" data-tab="sessions" role="tab" aria-selected="false">💬 Sessions</button>
+  <button class="tab-btn" data-tab="messages" role="tab" aria-selected="false">✉️ Messages</button>
+</nav>
 
 <!-- Tab: Overview -->
-<div class="tab-content active" id="tab-overview">
+<section class="tab-content active" id="tab-overview" role="tabpanel" aria-label="概览">
   <div id="overview-loading" class="loading">加载中...</div>
   <div id="overview-content" style="display:none">
     <!-- Status badge removed per user request -->
     <div class="grid-4" id="ov-stats"></div>
-    <h3 style="margin:24px 0 12px;color:#e6edf3">系统信息</h3>
+    <h3 style="margin:24px 0 12px;color:var(--text-primary)">系统信息</h3>
     <div class="grid-2" id="ov-system"></div>
 </div>
-</div>
+</section>
 
   <!-- Tab: Metrics -->
-<div class="tab-content" id="tab-metrics">
+<section class="tab-content" id="tab-metrics" role="tabpanel" aria-label="监控指标">
   <div id="metrics-loading" class="loading">加载中...</div>
   <div id="metrics-content-area" style="display:none">
     <div class="card">
@@ -157,15 +227,15 @@ label { display: block; font-size: 13px; color: #8b949e; margin-bottom: 4px; }
         <div id="metrics-detail" style="margin-top:12px"></div>
       </div>
       <!-- 原始数据视图 -->
-      <pre id="metrics-content" style="background:#11111e;border:1px solid #21262d;border-radius:6px;padding:12px;overflow-x:auto;font-size:11px;line-height:1.5;max-height:400px;white-space:pre-wrap;word-break:break-all;margin:0;display:none"></pre>
-      <p id="metrics-status" style="color:#8b949e;margin:0">点击刷新加载指标</p>
+      <pre id="metrics-content" style="background:var(--bg-tertiary);border:1px solid var(--border-muted);border-radius:6px;padding:12px;overflow-x:auto;font-size:11px;line-height:1.5;max-height:400px;white-space:pre-wrap;word-break:break-all;margin:0;display:none"></pre>
+      <p id="metrics-status" style="color:var(--text-muted);margin:0">点击刷新加载指标</p>
       <div id="metrics-error" class="error-msg" style="margin-top:8px;display:none"></div>
     </div>
   </div>
-</div>
+</section>
 
 <!-- Tab: Logs -->
-<div class="tab-content" id="tab-logs">
+<section class="tab-content" id="tab-logs" role="tabpanel" aria-label="日志">
   <div class="chips" id="log-level-chips">
     <button class="chip active" data-level="">ALL</button>
     <button class="chip" data-level="ERROR">ERROR</button>
@@ -181,16 +251,16 @@ label { display: block; font-size: 13px; color: #8b949e; margin-bottom: 4px; }
   <div class="card" style="max-height:60vh;overflow-y:auto;padding:8px" id="log-container">
     <div class="log-list" id="log-list"></div>
   </div>
-</div>
+</section>
 
 <!-- Tab: Adapters -->
-<div class="tab-content" id="tab-adapters">
+<section class="tab-content" id="tab-adapters" role="tabpanel" aria-label="适配器管理">
   <div id="adapters-loading" class="loading">加载中...</div>
   <div id="adapters-content" style="display:none"></div>
-</div>
+</section>
 
 <!-- Tab: Config -->
-<div class="tab-content" id="tab-config">
+<section class="tab-content" id="tab-config" role="tabpanel" aria-label="配置">
   <div style="display:flex;gap:8px;margin-bottom:12px">
     <button class="btn" id="config-refresh">🔄 刷新</button>
     <button class="btn" id="config-edit-btn">✏️ 编辑</button>
@@ -198,19 +268,19 @@ label { display: block; font-size: 13px; color: #8b949e; margin-bottom: 4px; }
     <button class="btn" id="config-cancel-btn" style="display:none">取消</button>
   </div>
   <div id="config-loading" class="loading">加载中...</div>
-  <pre id="config-view" style="display:none;background:#11111e;border:1px solid #30363d;border-radius:8px;padding:16px;overflow-x:auto;font-size:13px;font-family:monospace;white-space:pre-wrap"></pre>
+  <pre id="config-view" style="display:none;background:var(--bg-tertiary);border:1px solid var(--border-default);border-radius:8px;padding:16px;overflow-x:auto;font-size:13px;font-family:monospace;white-space:pre-wrap"></pre>
   <textarea id="config-editor" style="display:none;min-height:400px"></textarea>
   <div id="config-msg" style="margin-top:8px"></div>
-</div>
+</section>
 
 <!-- Tab: Sessions -->
-<div class="tab-content" id="tab-sessions">
+<section class="tab-content" id="tab-sessions" role="tabpanel" aria-label="会话管理">
   <div id="sessions-loading" class="loading">加载中...</div>
   <div id="sessions-content" style="display:none"></div>
-</div>
+</section>
 
 <!-- Tab: Messages -->
-<div class="tab-content" id="tab-messages">
+<section class="tab-content" id="tab-messages" role="tabpanel" aria-label="消息">
   <div class="card" style="margin-bottom:16px">
     <h3>📤 发送测试消息</h3>
     <div class="form-group">
@@ -245,17 +315,29 @@ label { display: block; font-size: 13px; color: #8b949e; margin-bottom: 4px; }
   </div>
   <div id="messages-loading" class="loading">加载中...</div>
   <div id="messages-content" style="display:none">
-    <table><thead><tr><th>时间</th><th>平台</th><th>Chat</th><th>角色</th><th>消息</th></tr></thead><tbody id="msg-list"></tbody></table>
+    <div class="table-wrapper"><table><thead><tr><th>时间</th><th>平台</th><th>Chat</th><th>角色</th><th>消息</th></tr></thead><tbody id="msg-list"></tbody></table></div>
     <div style="text-align:center;margin-top:12px"><button class="btn" id="msg-load-more" style="display:none">加载更多</button></div>
+  </div>
+</section>
+
+<!-- Toast notification container -->
+<div id="toast-container"></div>
+
+<!-- Detail Modal -->
+<div class="modal-overlay" id="detail-modal" style="display:none">
+  <div class="modal-card">
+    <div class="modal-header">
+      <h3 id="modal-title"></h3>
+      <button class="modal-close" onclick="closeModal()" aria-label="关闭">&times;</button>
+    </div>
+    <pre id="modal-body"></pre>
   </div>
 </div>
 
 <!-- Hidden: store last log timestamp for incremental polling -->
 <div id="log-since" style="display:none">0</div>
 
-<script>
-// ─── Auth ───────────────────────────────────────
-const LS_KEY = 'easybot_api_key';
+<script>const LS_KEY = 'easybot_api_key';
 let apiKey = localStorage.getItem(LS_KEY) || '';
 let currentKeyDisplay = '';
 
@@ -268,7 +350,7 @@ function updateKeyDisplay() {
     const fullKey = apiKey;
     const masked = fullKey.length > 8 ? fullKey.slice(0, 6) + '****' : fullKey;
     el.innerHTML = `🔑 ${masked} <button class="btn-copy" onclick="copyApiKey()" title="复制完整 Key">📋</button>
-      <span id="copy-toast" style="font-size:11px;color:#3fb950;display:none;margin-left:4px">已复制</span>`;
+      <span id="copy-toast" style="font-size:11px;color:var(--success);display:none;margin-left:4px">已复制</span>`;
     el.style.display = 'inline';
   } else {
     el.style.display = 'none';
@@ -281,6 +363,7 @@ function copyApiKey() {
   const toast = document.getElementById('copy-toast');
   if (toast) { toast.style.display = 'inline'; setTimeout(() => { toast.style.display = 'none'; }, 2000); }
 }
+
 
 // ─── API 请求包装 ──────────────────────────────
 function showLogin() {
@@ -298,10 +381,10 @@ function showLogin() {
 }
 
 async function api(path, opts = {}) {
-  const { method = 'GET', body } = opts;
+  const { method = 'GET', body, signal } = opts;
   const headers = { 'Authorization': `Bearer ${apiKey}` };
   if (body) headers['Content-Type'] = 'application/json';
-  const res = await fetch(path, { method, headers, body: body ? JSON.stringify(body) : undefined });
+  const res = await fetch(path, { method, headers, body: body ? JSON.stringify(body) : undefined, signal });
   if (res.status === 401 && !path.includes('/admin/login')) {
     showLogin();
     throw new Error('未授权，请重新登录');
@@ -311,215 +394,88 @@ async function api(path, opts = {}) {
   return data;
 }
 
-// ─── Tab 切换 ──────────────────────────────────
-function switchTab(name) {
-  document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
-  document.querySelectorAll('.tab-content').forEach(c => c.classList.toggle('active', c.id === 'tab-' + name));
-  sessionStorage.setItem('easybot_admin_tab', name);
-  if (name === 'overview') {
-    if (!document.getElementById('ov-stats').children.length) { loadOverview(); }
-    else { refreshOverviewStats(); refreshSystemInfo(); }
-  }
-  if (name === 'metrics') { loadMetrics(); }
-  if (name === 'adapters' && !document.getElementById('adapters-content').children.length) loadAdapters();
-  if (name === 'sessions') loadSessions();
-  if (name === 'config') loadConfig();
-  if (name === 'messages') loadMessages();
-  if (name === 'logs') startLogPolling();
-}
-document.querySelectorAll('.tab-btn').forEach(b => b.addEventListener('click', () => switchTab(b.dataset.tab)));
-
-// 登录后恢复上次 tab
-function restoreTab() {
-  const saved = sessionStorage.getItem('easybot_admin_tab');
-  if (saved && saved !== 'overview' && saved !== 'metrics') switchTab(saved); else if (saved === 'metrics') switchTab('metrics');
-  else loadOverview();
+// AbortController 管理：切换标签页时取消未完成的请求
+const tabControllers = {};
+function getTabController(name) {
+  tabControllers[name]?.abort();
+  tabControllers[name] = new AbortController();
+  return tabControllers[name].signal;
 }
 
-// ─── WebSocket 事件驱动 ────────────────────────
-let ws = null;
-let wsReconnectTimer = null;
-
-function wsStatus(color, label) {
-  let el = document.getElementById('ws-status');
-  if (!el) {
-    el = document.createElement('span');
-    el.id = 'ws-status';
-    el.title = 'WebSocket 状态';
-    document.querySelector('.header .right')?.prepend(el);
-  }
-  el.style.cssText = `display:inline-flex;align-items:center;gap:4px;font-size:11px;color:${color};margin-right:8px`;
-  el.innerHTML = `<span style="width:8px;height:8px;border-radius:50%;background:${color};display:inline-block"></span>${label}`;
+// 简单请求缓存（TTL 毫秒）
+const requestCache = new Map();
+function cachedApi(path, opts = {}, ttlMs = 30000) {
+  const key = path + JSON.stringify(opts);
+  const now = Date.now();
+  const cached = requestCache.get(key);
+  if (cached && now - cached.time < ttlMs) return Promise.resolve(cached.data);
+  const promise = api(path, opts).then(data => {
+    requestCache.set(key, { data, time: now });
+    return data;
+  });
+  return promise;
 }
 
-function connectWebSocket() {
-  disconnectWebSocket();
-  if (!apiKey) { console.log('[WS] No API key, skipping'); return; }
-  wsStatus('#8b949e', 'connecting');
-  try {
-    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const url = proto + '//' + location.host + '/api/v1/ws';
-    console.log('[WS] Connecting to', url);
-    ws = new WebSocket(url);
-    ws.onopen = () => {
-      console.log('[WS] Connected, sending auth');
-      ws.send(JSON.stringify({ token: apiKey }));
-    };
-    ws.onmessage = (e) => {
-      try {
-        const msg = JSON.parse(e.data);
-        if (msg.type === 'auth_ok') {
-          console.log('[WS] Authenticated successfully');
-          wsStatus('#3fb950', 'connected');
-          return;
-        }
-        if (msg.type === 'auth_failed') {
-          console.log('[WS] Auth failed — key invalid');
-          showLogin();
-          return;
-        }
-        if (msg.type !== 'event') {
-          console.log('[WS] Non-event msg:', msg.type);
-          return;
-        }
-        console.log('[WS] Event received:', msg.event, msg.data);
-        handleGatewayEvent(msg);
-      } catch (err) {
-        console.error('[WS] Parse/handle error:', err, e.data);
-      }
-    };
-    ws.onerror = (err) => {
-      console.error('[WS] Connection error', err);
-      wsStatus('#f85149', 'error');
-    };
-    ws.onclose = (ev) => {
-      console.log('[WS] Closed code=' + ev.code + ' reason=' + ev.reason);
-      wsStatus('#8b949e', 'disconnected');
-      if (apiKey) {
-        console.log('[WS] Reconnecting in 3s...');
-        wsReconnectTimer = setTimeout(connectWebSocket, 3000);
-      }
-    };
-  } catch (err) {
-    console.error('[WS] Creation failed:', err);
-    wsStatus('#f85149', 'error');
-  }
+// ─── 公共渲染工具 ──────────────────────────────
+
+// 统一消息行渲染
+function renderMessageRow(m) {
+  const tr = document.createElement('tr');
+  tr.style.cursor = 'pointer';
+  const role = m.role || 'User';
+  const roleBadge = role === 'User' ? 'badge-green' : 'badge-gray';
+  tr.innerHTML = `<td style="font-size:11px;color:var(--text-muted);white-space:nowrap">${new Date(m.timestamp).toLocaleTimeString()}</td>
+    <td><span class="badge badge-blue">${m.platform}</span></td>
+    <td style="font-size:12px">${m.chat_id}</td>
+    <td><span class="badge ${roleBadge}">${role}</span></td>
+    <td style="font-size:12px;color:var(--text-muted);max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${(m.text || '').substring(0, 80)}</td>`;
+  tr.addEventListener('click', () => showDetailModal('消息详情', m));
+  return tr;
 }
 
-function disconnectWebSocket() {
-  if (wsReconnectTimer) { clearTimeout(wsReconnectTimer); wsReconnectTimer = null; }
-  if (ws) { ws.onclose = null; ws.close(); ws = null; }
-  console.log('[WS] Disconnected');
-  wsStatus('#8b949e', 'disconnected');
+// 统一状态徽章 class 计算（返回修饰类名，配合 "badge" 基类使用）
+function statusBadgeClass(status, connected) {
+  if (connected) return 'badge-green';
+  if (status === 'Failed') return 'badge-red';
+  if (status === 'Connecting' || status === 'Starting' || status === 'Disconnecting' || status === 'Stopping') return 'badge-blue';
+  if (status === 'Reconnecting') return 'badge-yellow';
+  return 'badge-gray';
 }
 
-function handleGatewayEvent(msg) {
-  const t = msg.event || '';
-  const overviewActive = document.getElementById('tab-overview')?.classList.contains('active');
-  const sessionsActive = document.getElementById('tab-sessions')?.classList.contains('active');
-  const messagesActive = document.getElementById('tab-messages')?.classList.contains('active');
-  const adaptersActive = document.getElementById('tab-adapters')?.classList.contains('active');
-  const configActive = document.getElementById('tab-config')?.classList.contains('active');
-  console.log('[EVENT]', t, {overviewActive, sessionsActive, messagesActive, adaptersActive, configActive});
-  // Adapter 事件 → 刷新 Overview 统计 + 直接更新单个卡片（避免全量重渲染闪烁）
-  if (t.startsWith('adapter.')) {
-    if (overviewActive) { console.log('[EVENT] refreshOverviewStats'); refreshOverviewStats(); }
-    if (adaptersActive) {
-      const platform = msg.data?.platform;
-      const statusMap = {
-        'adapter.connected': { connected: true, status: 'Connected' },
-        'adapter.reconnected': { connected: true, status: 'Connected' },
-        'adapter.disconnected': { connected: false, status: 'Disconnected' },
-        'adapter.error': { connected: false, status: 'Failed' },
-        'adapter.reconnecting': { connected: false, status: 'Reconnecting' },
-        'adapter.reconnect_failed': { connected: false, status: 'Failed' },
-      };
-      const mapped = statusMap[t];
-      if (platform && mapped) {
-        console.log('[EVENT] updateAdapterCard', platform, mapped);
-        updateAdapterCard(platform, mapped.status, mapped.connected, false);
-      } else {
-        loadAdapters();
-      }
-    }
-  }
-  // 入站消息事件 → 直接渲染（避免与 MessagePersister 缓冲写入竞争）
-  if (t === 'message.inbound') {
-    if (overviewActive) { console.log('[EVENT] refreshOverviewStats (msg)'); refreshOverviewStats(); }
-    if (sessionsActive) { console.log('[EVENT] loadSessions'); loadSessions(); }
-    if (messagesActive) { console.log('[EVENT] prependNewMessagesFromEvent'); prependNewMessagesFromEvent(msg); }
-  }
-  // 出站/失败/回调事件 → 通过 API 获取（已同步持久化，无竞争条件）
-  if (t === 'message.sent' || t === 'message.failed' || t === 'callback.received') {
-    if (overviewActive) { console.log('[EVENT] refreshOverviewStats (msg)'); refreshOverviewStats(); }
-    if (sessionsActive) { console.log('[EVENT] loadSessions'); loadSessions(); }
-    if (messagesActive) { console.log('[EVENT] prependNewMessages'); prependNewMessages(); }
-  }
-  // 配置变更 → 刷新 Config
-  if (t === 'config.changed') {
-    if (configActive) { console.log('[EVENT] loadConfig'); loadConfig(); }
-  }
-  // Gateway 事件 → 刷新 Overview
-  if (t === 'gateway.started' || t === 'gateway.stopping') {
-    if (overviewActive) { console.log('[EVENT] refreshOverviewStats'); refreshOverviewStats(); }
-  }
+// 统一进度条 HTML（百分比，标签）
+function renderProgressBar(percent, label) {
+  const c = percent < 60 ? 'fill-green' : percent < 80 ? 'fill-yellow' : 'fill-red';
+  return `<div class="progress-bar"><div class="fill ${c}" style="width:${percent}%"></div></div><span style="font-size:13px">${label || percent.toFixed(1) + '%'}</span>`;
 }
 
-// ─── 登录 ──────────────────────────────────────
-function initAuth() {
-  if (apiKey) {
-    // 验证已有 key
-    api('/api/v1/adapters').then(() => {
-      document.getElementById('login-overlay').style.display = 'none';
-      document.getElementById('logout-btn').style.display = 'block';
-      updateKeyDisplay();
-      restoreTab();
-      connectWebSocket();
-    }).catch(() => {
-      updateKeyDisplay();
-      showLogin();
-    });
-  } else {
-    showLogin();
-  }
+// ─── Toast 通知 ──────────────────────────────
+function showToast(message, type = 'info') {
+  const container = document.getElementById('toast-container');
+  const toast = document.createElement('div');
+  toast.className = `toast toast-${type}`;
+  toast.textContent = message;
+  container.appendChild(toast);
+  setTimeout(() => {
+    toast.classList.add('removing');
+    toast.addEventListener('animationend', () => toast.remove());
+  }, 3000);
 }
 
-document.getElementById('login-btn').addEventListener('click', async () => {
-  const password = document.getElementById('login-password').value;
-  if (!password) return;
-  const err = document.getElementById('login-error');
-  err.style.display = 'none';
-  err.className = 'login-error-msg';
-  try {
-    const res = await fetch('/admin/login', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ password }),
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error?.message || data.message || '登录失败');
-    setKey(data.key);
-    document.getElementById('login-overlay').style.display = 'none';
-    document.getElementById('logout-btn').style.display = 'block';
-    updateKeyDisplay();
-    restoreTab();
-    connectWebSocket();
-  } catch (e) {
-    clearKey();
-    updateKeyDisplay();
-    err.textContent = '登录失败：' + e.message;
-    err.style.display = 'block';
-  }
-});
-document.getElementById('login-password').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('login-btn').click(); });
+// ─── Modal 详情弹窗 ───────────────────────────
+function showDetailModal(title, data) {
+  document.getElementById('modal-title').textContent = title;
+  document.getElementById('modal-body').textContent = typeof data === 'string' ? data : JSON.stringify(data, null, 2);
+  document.getElementById('detail-modal').style.display = 'flex';
+  document.body.style.overflow = 'hidden';
+}
+function closeModal() {
+  document.getElementById('detail-modal').style.display = 'none';
+  document.body.style.overflow = '';
+}
+// ESC 关闭 + 点击遮罩关闭
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+document.getElementById('detail-modal').addEventListener('click', e => { if (e.target === e.currentTarget) closeModal(); });
 
-document.getElementById('logout-btn').addEventListener('click', () => {
-  clearKey();
-  updateKeyDisplay();
-  // Reset tab contents
-  document.querySelectorAll('#ov-stats, #adapters-content, #sessions-content').forEach(e => e.innerHTML = '');
-  showLogin();
-});
 
 // ─── Overview Tab ──────────────────────────────
 let uptimeBase = 0;     // 服务端 uptime（秒），上次刷新时获取
@@ -585,16 +541,16 @@ async function refreshSystemInfo() {
   try {
     const sys = await api('/api/v1/system').catch(() => null);
     if (!sys) return;
-    const pct = v => { const c = v < 60 ? 'fill-green' : v < 80 ? 'fill-yellow' : 'fill-red'; return `<div class="progress-bar"><div class="fill ${c}" style="width:${v}%"></div></div><span style="font-size:13px">${v.toFixed(1)}%</span>`; };
+    const pct = v => renderProgressBar(v);
     document.getElementById('ov-system').innerHTML = `
-      <div class="card"><h3>🖥 OS</h3><p>${sys.os.name} ${sys.os.version}</p><p style="font-size:12px;color:#8b949e">${sys.os.hostname} · ${sys.os.kernel || ''}</p></div>
-      <div class="card"><h3>🧠 CPU</h3><p>${sys.cpu.brand} · ${sys.cpu.cores}核</p><p>使用率 ${pct(sys.cpu.usage)}</p>${sys.cpu.load_avg_1 ? `<p style="font-size:12px;color:#8b949e">负载: ${sys.cpu.load_avg_1.toFixed(2)} / ${sys.cpu.load_avg_5.toFixed(2)} / ${sys.cpu.load_avg_15.toFixed(2)}</p>` : '<p style="font-size:12px;color:#484f58">负载: N/A (Windows)</p>'}</div>
+      <div class="card"><h3>🖥 OS</h3><p>${sys.os.name} ${sys.os.version}</p><p style="font-size:12px;color:var(--text-muted)">${sys.os.hostname} · ${sys.os.kernel || ''}</p></div>
+      <div class="card"><h3>🧠 CPU</h3><p>${sys.cpu.brand} · ${sys.cpu.cores}核</p><p>使用率 ${pct(sys.cpu.usage)}</p>${sys.cpu.load_avg_1 ? `<p style="font-size:12px;color:var(--text-muted)">负载: ${sys.cpu.load_avg_1.toFixed(2)} / ${sys.cpu.load_avg_5.toFixed(2)} / ${sys.cpu.load_avg_15.toFixed(2)}</p>` : '<p style="font-size:12px;color:var(--text-faint)">负载: N/A (Windows)</p>'}</div>
       <div class="card"><h3>💾 内存</h3><p>${sys.memory.used_gb.toFixed(1)} GB / ${sys.memory.total_gb.toFixed(1)} GB</p>${pct(sys.memory.percent)}</div>
       <div class="card"><h3>📀 磁盘</h3><p>${sys.disk.used_gb.toFixed(1)} GB / ${sys.disk.total_gb.toFixed(1)} GB</p>${pct(sys.disk.percent)}</div>
     `;
   } catch (e) { /* 静默忽略 */ }
 }
-setInterval(() => { if (apiKey && document.getElementById('tab-overview').classList.contains('active')) refreshSystemInfo(); }, 1000);
+setInterval(() => { if (apiKey && document.getElementById('tab-overview').classList.contains('active')) refreshSystemInfo(); }, 5000);
 // 客户端走秒，运行时间实时更新
 setInterval(() => { if (document.getElementById('tab-overview').classList.contains('active')) tickUptime(); }, 1000);
 // 指标 10s 自动刷新（仅 Overview 激活时）
@@ -672,7 +628,7 @@ function renderMetricsVisual(parsed) {
   document.getElementById('metrics-cards').innerHTML = `
     <div class="stat"><div class="val">${httpTotal.toFixed(0)}</div><div class="lbl">HTTP 请求总量</div></div>
     <div class="stat"><div class="val">${wsConn.toFixed(0)}</div><div class="lbl">WebSocket 连接</div></div>
-    <div class="stat"><div class="val" style="font-size:20px">${msgInbound.toFixed(0)}<span style="font-size:12px;color:#3fb950"> ↓</span> ${msgOutbound.toFixed(0)}<span style="font-size:12px;color:#58a6ff"> ↑</span></div><div class="lbl">入站 / 出站消息</div></div>
+    <div class="stat"><div class="val" style="font-size:20px">${msgInbound.toFixed(0)}<span style="font-size:12px;color:var(--success)"> ↓</span> ${msgOutbound.toFixed(0)}<span style="font-size:12px;color:var(--accent)"> ↑</span></div><div class="lbl">入站 / 出站消息</div></div>
     <div class="stat"><div class="val">${adaptersConnected}/${adaptersTotal}</div><div class="lbl">适配器在线</div></div>
   `;
 
@@ -687,10 +643,10 @@ function renderMetricsVisual(parsed) {
       const w = (h.total/maxHttp*100).toFixed(0);
       const c = h.err>0 && h.err/h.total>0.1 ? 'red' : 'blue';
       detail += `<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
-        <span style="width:60px;flex-shrink:0;color:#8b949e">${h.method}</span>
-        <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#e6edf3">${h.path}</span>
+        <span style="width:60px;flex-shrink:0;color:var(--text-muted)">${h.method}</span>
+        <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-primary)">${h.path}</span>
         ${mbar(w,c)}<span style="width:50px;text-align:right;font-variant-numeric:tabular-nums">${h.total.toFixed(0)}</span>
-        ${h.err>0 ? `<span style="width:40px;text-align:right;color:#f85149;font-size:11px">${h.err.toFixed(0)} err</span>` : '<span style="width:40px"></span>'}</div>`;
+        ${h.err>0 ? `<span style="width:40px;text-align:right;color:var(--danger);font-size:11px">${h.err.toFixed(0)} err</span>` : '<span style="width:40px"></span>'}</div>`;
     }
     detail += '</div></div>';
   }
@@ -703,11 +659,11 @@ function renderMetricsVisual(parsed) {
     for (const [plat, m] of msgEntries) {
       const t = m.inbound + m.outbound;
       detail += `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
-        <span style="width:70px;flex-shrink:0;color:#e6edf3">${plat}</span>
+        <span style="width:70px;flex-shrink:0;color:var(--text-primary)">${plat}</span>
         ${mbar((t/maxMsg*100).toFixed(0),'green')}
         <span style="width:70px;text-align:right">${t.toFixed(0)}</span>
-        <span style="color:#3fb950;font-size:11px">↓${m.inbound.toFixed(0)}</span>
-        <span style="color:#58a6ff;font-size:11px">↑${m.outbound.toFixed(0)}</span></div>`;
+        <span style="color:var(--success);font-size:11px">↓${m.inbound.toFixed(0)}</span>
+        <span style="color:var(--accent);font-size:11px">↑${m.outbound.toFixed(0)}</span></div>`;
     }
     detail += '</div></div>';
   }
@@ -716,7 +672,7 @@ function renderMetricsVisual(parsed) {
   if (adapterList.length) {
     detail += '<div class="card" style="padding:12px 16px"><h3 style="font-size:14px;margin-bottom:8px">🔌 适配器状态</h3><div style="display:flex;gap:8px;flex-wrap:wrap">';
     for (const a of adapterList) {
-      detail += `<span style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;background:#11111e;border-radius:6px;border:1px solid #21262d;font-size:13px">${a.connected?'🟢':'🔴'} ${a.platform} <span style="color:#8b949e;font-size:11px">${a.connected?'在线':'离线'}</span></span>`;
+      detail += `<span style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;background:var(--bg-tertiary);border-radius:6px;border:1px solid var(--border-muted);font-size:13px">${a.connected?'🟢':'🔴'} ${a.platform} <span style="color:var(--text-muted);font-size:11px">${a.connected?'在线':'离线'}</span></span>`;
     }
     detail += '</div></div>';
   }
@@ -736,8 +692,8 @@ function renderMetricsVisual(parsed) {
         const avg = d.sum/d.count, p = key.split(' ');
         const c = avg<0.1?'green':avg<0.5?'yellow':'red';
         detail += `<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
-          <span style="width:50px;flex-shrink:0;color:#8b949e">${p[0]||''}</span>
-          <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#e6edf3">${p.slice(1).join(' ')||'/'}</span>
+          <span style="width:50px;flex-shrink:0;color:var(--text-muted)">${p[0]||''}</span>
+          <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-primary)">${p.slice(1).join(' ')||'/'}</span>
           ${mbar((avg/maxAvg*100).toFixed(0),c)}
           <span style="width:60px;text-align:right;font-variant-numeric:tabular-nums">${(avg*1000).toFixed(1)}ms</span></div>`;
       }
@@ -800,6 +756,7 @@ document.getElementById('metrics-toggle-view').addEventListener('click', () => {
   }
 });
 
+
 // ─── Logs Tab ──────────────────────────────────
 let logPollTimer = null;
 let logSince = 0;
@@ -824,16 +781,18 @@ async function pollLogs() {
     const list = document.getElementById('log-list');
     const container = document.getElementById('log-container');
     const autoScroll = container.scrollHeight - container.scrollTop - container.clientHeight < 100;
+    const frag = document.createDocumentFragment();
     for (const e of data.entries) {
       if (e.timestamp > logSince) logSince = e.timestamp;
       const t = new Date(e.timestamp).toLocaleTimeString();
       const div = document.createElement('div');
       div.className = 'log-entry log-' + e.level;
-      div.innerHTML = `<span style="color:#484f58">${t}</span> [<strong>${e.level}</strong>] <span style="color:#8b949e">${e.target}</span> ${e.message}`;
-      list.appendChild(div);
+      div.innerHTML = `<span style="color:var(--text-faint)">${t}</span> [<strong>${e.level}</strong>] <span style="color:var(--text-muted)">${e.target}</span> ${e.message}`;
+      frag.appendChild(div);
     }
+    list.appendChild(frag);
     // Trim DOM if too many
-    while (list.children.length > 500) list.removeChild(list.firstChild);
+    while (list.children.length > 2000) list.removeChild(list.firstChild);
     if (autoScroll) container.scrollTop = container.scrollHeight;
   } catch (e) { /* ignore polling errors */ }
 }
@@ -863,6 +822,7 @@ document.getElementById('log-clear-btn').addEventListener('click', () => {
   logSince = 0;
 });
 
+
 // ─── Adapters Tab ──────────────────────────────
 // 存储每个 adapter 的轮询 timeout ID，防止切换 tab 后继续轮询
 let adapterPollTimers = {};
@@ -879,11 +839,7 @@ async function loadAdapters() {
       // 如果有正在轮询中的状态，优先显示轮询状态
       const pollState = adapterPollTimers[a.platform] ? adapterPollTimers[a.platform].displayState : null;
       const displayStatus = pollState || a.status;
-      const statusClass = a.connected ? 'badge-green'
-        : displayStatus === 'Failed' ? 'badge-red'
-        : displayStatus === 'Connecting' || displayStatus === '启动中...' || displayStatus === '停止中...' ? 'badge-blue'
-        : displayStatus === 'Reconnecting' ? 'badge-yellow'
-        : 'badge-gray';
+      const statusClass = statusBadgeClass(displayStatus, a.connected);
       const icon = icons[a.platform] || '🔌';
       return `<div class="card" id="adapter-card-${a.platform}">
         <div style="display:flex;justify-content:space-between;align-items:center">
@@ -906,12 +862,7 @@ async function loadAdapters() {
 function updateAdapterCard(platform, status, connected, polling) {
   const badge = document.getElementById(`adapter-badge-${platform}`);
   if (badge) {
-    const statusClass = connected ? 'badge-green'
-      : status === 'Failed' ? 'badge-red'
-      : status === '启动中...' || status === '停止中...' ? 'badge-blue'
-      : status === 'Reconnecting' ? 'badge-yellow'
-      : 'badge-gray';
-    badge.className = `badge ${statusClass}`;
+    badge.className = `badge ${statusBadgeClass(status, connected)}`;
     badge.textContent = status;
   }
   // 更新按钮状态
@@ -994,6 +945,7 @@ async function adapterAction(platform, action) {
 
     // 更新卡片显示最终状态
     updateAdapterCard(platform, result.status, result.connected, false);
+    showToast(`${platform} ${btnAction}成功`, 'success');
 
     // 如果 Overview 激活则刷新统计数据（适配器数、会话数）
     { const _oa = document.getElementById('tab-overview')?.classList.contains('active'); if (_oa) refreshOverviewStats(); }
@@ -1010,9 +962,10 @@ async function adapterAction(platform, action) {
     delete adapterPollTimers[platform];
     // 重新加载让按钮状态恢复
     loadAdapters();
-    alert(btnAction + '失败: ' + e.message);
+    showToast(btnAction + '失败: ' + e.message, 'error');
   }
 }
+
 
 // ─── Config Tab ──────────────────────────────
 let configData = null;
@@ -1068,7 +1021,7 @@ document.getElementById('config-save-btn').addEventListener('click', async () =>
       const line = (before.match(/\n/g) || []).length + 1;
       const col = pos - before.lastIndexOf('\n');
       hint = ` (第 ${line} 行第 ${col} 列)`;
-      editor.style.borderColor = '#f85149';
+      editor.style.borderColor = 'var(--danger)';
       editor.focus();
       editor.setSelectionRange(pos, pos);
       editor.scrollTop = editor.scrollHeight * (line / (raw.split('\n').length || 1));
@@ -1080,6 +1033,7 @@ document.getElementById('config-save-btn').addEventListener('click', async () =>
   try {
     await api('/api/v1/config', { method: 'PUT', body: JSON.parse(document.getElementById('config-editor').value) });
     msg.innerHTML = '<span class="success-msg">✅ 配置已更新</span>';
+    showToast('配置已更新', 'success');
     configEditMode = false;
     document.getElementById('config-editor').style.display = 'none';
     document.getElementById('config-save-btn').style.display = 'none';
@@ -1091,6 +1045,7 @@ document.getElementById('config-save-btn').addEventListener('click', async () =>
   }
 });
 
+
 // ─── Sessions Tab ──────────────────────────────
 async function loadSessions() {
   const loading = document.getElementById('sessions-loading');
@@ -1100,17 +1055,17 @@ async function loadSessions() {
     content.style.display = 'none';
     const data = await api('/api/v1/sessions');
     if (!data.sessions || !data.sessions.length) {
-      content.innerHTML = '<div class="card"><p style="color:#8b949e">暂无活跃会话</p></div>';
+      content.innerHTML = '<div class="card"><p style="color:var(--text-muted)">暂无活跃会话</p></div>';
     } else {
-      content.innerHTML = '<table><thead><tr><th>Key</th><th>平台</th><th>用户</th><th>类型</th><th>创建时间</th><th>操作</th></tr></thead><tbody>' +
+      content.innerHTML = '<div class="table-wrapper"><table><thead><tr><th>Key</th><th>平台</th><th>用户</th><th>类型</th><th>创建时间</th><th>操作</th></tr></thead><tbody>' +
         data.sessions.map(s => `<tr>
           <td style="font-family:monospace;font-size:12px">${s.key}</td>
           <td>${s.platform}</td>
           <td>${s.source?.user_name || s.source?.chat_name || s.chat_id}</td>
           <td><span class="badge badge-blue">${s.source?.chat_type || '-'}</span></td>
-          <td style="font-size:12px;color:#8b949e">${new Date(s.created_at).toLocaleString()}</td>
+          <td style="font-size:12px;color:var(--text-muted)">${new Date(s.created_at).toLocaleString()}</td>
           <td><button class="btn btn-sm btn-danger" onclick="deleteSession('${s.key}')">删除</button></td>
-        </tr>`).join('') + '</tbody></table>';
+        </tr>`).join('') + '</tbody></table></div>';
     }
     loading.style.display = 'none';
     content.style.display = 'block';
@@ -1125,9 +1080,10 @@ async function deleteSession(key) {
     await api('/api/v1/sessions/' + encodeURIComponent(key), { method: 'DELETE' });
     loadSessions();
   } catch (e) {
-    alert('删除失败: ' + e.message);
+    showToast('删除失败: ' + e.message, 'error');
   }
 }
+
 
 // ─── Messages Tab ──────────────────────────────
 let msgCursor = null;
@@ -1144,14 +1100,13 @@ function prependNewMessagesFromEvent(msg) {
   if (loadedMsgIds.has(storedId)) return;
   loadedMsgIds.add(storedId);
   const tbody = document.getElementById('msg-list');
-  const tr = document.createElement('tr');
-  tr.style.cursor = 'pointer';
-  tr.innerHTML = `<td style="font-size:11px;color:#8b949e;white-space:nowrap">${new Date(data.timestamp).toLocaleTimeString()}</td>
-    <td><span class="badge badge-blue">${data.platform}</span></td>
-    <td style="font-size:12px">${data.chat_id}</td>
-    <td><span class="badge badge-green">User</span></td>
-    <td style="font-size:12px;color:#8b949e;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${(data.text || '').substring(0, 80)}</td>`;
-  tr.addEventListener('click', () => alert(JSON.stringify(data, null, 2)));
+  const tr = renderMessageRow({
+    timestamp: data.timestamp,
+    platform: data.platform,
+    chat_id: data.chat_id,
+    text: data.text,
+    role: 'User',
+  });
   tbody.insertBefore(tr, tbody.firstChild);
 }
 
@@ -1168,14 +1123,7 @@ async function prependNewMessages() {
       const m = data.messages[i];
       if (loadedMsgIds.has(m.id)) continue;
       loadedMsgIds.add(m.id);
-      const tr = document.createElement('tr');
-      tr.style.cursor = 'pointer';
-      tr.innerHTML = `<td style="font-size:11px;color:#8b949e;white-space:nowrap">${new Date(m.timestamp).toLocaleTimeString()}</td>
-        <td><span class="badge badge-blue">${m.platform}</span></td>
-        <td style="font-size:12px">${m.chat_id}</td>
-        <td><span class="badge ${m.role === 'User' ? 'badge-green' : 'badge-gray'}">${m.role}</span></td>
-        <td style="font-size:12px;color:#8b949e;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${(m.text || '').substring(0, 80)}</td>`;
-      tr.addEventListener('click', () => alert(JSON.stringify(m, null, 2)));
+      const tr = renderMessageRow(m);
       tbody.insertBefore(tr, tbody.firstChild);
     }
     // 更新 cursor 为最新的消息时间戳
@@ -1192,10 +1140,12 @@ document.getElementById('msg-send-btn').addEventListener('click', async () => {
   try {
     const data = await api('/api/v1/messages/send', { method: 'POST', body: { target, text, parseMode: parseMode || null } });
     result.innerHTML = '<span class="success-msg">✅ 已发送 (id: ' + data.messageId + ', status: ' + data.status + ')</span>';
+    showToast('消息已发送', 'success');
     document.getElementById('msg-text').value = '';
     prependNewMessages();
   } catch (e) {
     result.innerHTML = '<span class="error-msg">❌ 发送失败: ' + e.message + '</span>';
+    showToast('发送失败: ' + e.message, 'error');
   }
 });
 // Ctrl+Enter to send
@@ -1223,15 +1173,7 @@ async function loadMessages(append = false) {
     if (!append) tbody.innerHTML = '';
     for (const m of data.messages) {
       if (m.id) loadedMsgIds.add(m.id);
-      const tr = document.createElement('tr');
-      tr.style.cursor = 'pointer';
-      tr.innerHTML = `<td style="font-size:11px;color:#8b949e;white-space:nowrap">${new Date(m.timestamp).toLocaleTimeString()}</td>
-        <td><span class="badge badge-blue">${m.platform}</span></td>
-        <td style="font-size:12px">${m.chat_id}</td>
-        <td><span class="badge ${m.role === 'User' ? 'badge-green' : 'badge-gray'}">${m.role}</span></td>
-        <td style="font-size:12px;color:#8b949e;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${(m.text || '').substring(0, 80)}</td>`;
-      tr.addEventListener('click', () => alert(JSON.stringify(m, null, 2)));
-      tbody.appendChild(tr);
+      tbody.appendChild(renderMessageRow(m));
     }
     document.getElementById('msg-load-more').style.display = data.has_more ? 'inline-block' : 'none';
     if (data.messages.length) msgCursor = data.messages[data.messages.length - 1].timestamp;
@@ -1241,9 +1183,256 @@ async function loadMessages(append = false) {
   }
 }
 
+
+// ─── Tab 切换 ──────────────────────────────────
+// ─── 标签页注册表 ──────────────────────────────
+let currentTab = 'overview';
+
+const tabRegistry = {
+  overview:  { load: loadOverview,        refresh: () => { refreshOverviewStats(); refreshSystemInfo(); }, cleanup: null },
+  metrics:   { load: loadMetrics,         refresh: loadMetrics,         cleanup: null },
+  logs:      { load: startLogPolling,     refresh: null,               cleanup: stopLogPolling },
+  adapters:  { load: loadAdapters,        refresh: loadAdapters,        cleanup: () => { adapterPollTimers = {}; } },
+  config:    { load: loadConfig,          refresh: loadConfig,          cleanup: null },
+  sessions:  { load: loadSessions,        refresh: loadSessions,        cleanup: null },
+  messages:  { load: loadMessages,        refresh: () => { msgCursor = null; loadedMsgIds.clear(); loadMessages(); }, cleanup: null },
+};
+
+function switchTab(name) {
+  // 清理旧标签页
+  if (tabRegistry[currentTab]?.cleanup) tabRegistry[currentTab].cleanup();
+  // 取消旧标签页的未完成请求
+  tabControllers[currentTab]?.abort();
+  // 更新 active 状态
+  document.querySelectorAll('.tab-btn').forEach(b => {
+    const active = b.dataset.tab === name;
+    b.classList.toggle('active', active);
+    b.setAttribute('aria-selected', String(active));
+  });
+  document.querySelectorAll('.tab-content').forEach(c => c.classList.toggle('active', c.id === 'tab-' + name));
+  sessionStorage.setItem('easybot_admin_tab', name);
+  currentTab = name;
+  // 移动端：滚动激活标签到可视区
+  const activeBtn = document.querySelector('.tab-btn.active');
+  if (activeBtn) activeBtn.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+  // 加载新标签页
+  if (tabRegistry[name]?.load) tabRegistry[name].load();
+}
+document.querySelectorAll('.tab-btn').forEach(b => b.addEventListener('click', () => switchTab(b.dataset.tab)));
+
+// 登录后恢复上次 tab
+function restoreTab() {
+  const saved = sessionStorage.getItem('easybot_admin_tab');
+  if (saved && saved !== 'overview' && saved !== 'metrics') switchTab(saved); else if (saved === 'metrics') switchTab('metrics');
+  else loadOverview();
+}
+
+// 键盘导航：← → 方向键切换标签页
+document.getElementById('tabs-bar').addEventListener('keydown', (e) => {
+  if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+    e.preventDefault();
+    const tabs = [...document.querySelectorAll('.tab-btn')];
+    const idx = tabs.findIndex(b => b.classList.contains('active'));
+    const next = e.key === 'ArrowRight' ? (idx + 1) % tabs.length : (idx - 1 + tabs.length) % tabs.length;
+    tabs[next]?.focus();
+    switchTab(tabs[next]?.dataset.tab);
+  }
+});
+// ─── WebSocket 事件驱动 ────────────────────────
+let ws = null;
+let wsReconnectTimer = null;
+
+function wsStatus(color, label) {
+  let el = document.getElementById('ws-status');
+  if (!el) {
+    el = document.createElement('span');
+    el.id = 'ws-status';
+    el.title = 'WebSocket 状态';
+    document.querySelector('.header .right')?.prepend(el);
+  }
+  el.style.cssText = `display:inline-flex;align-items:center;gap:4px;font-size:11px;color:${color};margin-right:8px`;
+  el.innerHTML = `<span style="width:8px;height:8px;border-radius:50%;background:${color};display:inline-block"></span>${label}`;
+}
+
+function connectWebSocket() {
+  disconnectWebSocket();
+  if (!apiKey) { console.log('[WS] No API key, skipping'); return; }
+  wsStatus('var(--text-muted)', 'connecting');
+  try {
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const url = proto + '//' + location.host + '/api/v1/ws';
+    console.log('[WS] Connecting to', url);
+    ws = new WebSocket(url);
+    ws.onopen = () => {
+      console.log('[WS] Connected, sending auth');
+      ws.send(JSON.stringify({ token: apiKey }));
+    };
+    ws.onmessage = (e) => {
+      try {
+        const msg = JSON.parse(e.data);
+        if (msg.type === 'auth_ok') {
+          console.log('[WS] Authenticated successfully');
+          wsStatus('var(--success)', 'connected');
+          return;
+        }
+        if (msg.type === 'auth_failed') {
+          console.log('[WS] Auth failed — key invalid');
+          showLogin();
+          return;
+        }
+        if (msg.type !== 'event') {
+          console.log('[WS] Non-event msg:', msg.type);
+          return;
+        }
+        console.log('[WS] Event received:', msg.event, msg.data);
+        handleGatewayEvent(msg);
+      } catch (err) {
+        console.error('[WS] Parse/handle error:', err, e.data);
+      }
+    };
+    ws.onerror = (err) => {
+      console.error('[WS] Connection error', err);
+      wsStatus('var(--danger)', 'error');
+    };
+    ws.onclose = (ev) => {
+      console.log('[WS] Closed code=' + ev.code + ' reason=' + ev.reason);
+      wsStatus('var(--text-muted)', 'disconnected');
+      if (apiKey) {
+        console.log('[WS] Reconnecting in 3s...');
+        wsReconnectTimer = setTimeout(connectWebSocket, 3000);
+      }
+    };
+  } catch (err) {
+    console.error('[WS] Creation failed:', err);
+    wsStatus('var(--danger)', 'error');
+  }
+}
+
+function disconnectWebSocket() {
+  if (wsReconnectTimer) { clearTimeout(wsReconnectTimer); wsReconnectTimer = null; }
+  if (ws) { ws.onclose = null; ws.close(); ws = null; }
+  console.log('[WS] Disconnected');
+  wsStatus('var(--text-muted)', 'disconnected');
+}
+
+function handleGatewayEvent(msg) {
+  const t = msg.event || '';
+  console.log('[EVENT]', t, {currentTab});
+  // Adapter 事件 → 刷新 Overview + 直接更新单个卡片（避免全量重渲染闪烁）
+  if (t.startsWith('adapter.')) {
+    if (currentTab === 'overview') refreshOverviewStats();
+    if (currentTab === 'adapters') {
+      const platform = msg.data?.platform;
+      const statusMap = {
+        'adapter.connected': { connected: true, status: 'Connected' },
+        'adapter.reconnected': { connected: true, status: 'Connected' },
+        'adapter.disconnected': { connected: false, status: 'Disconnected' },
+        'adapter.error': { connected: false, status: 'Failed' },
+        'adapter.reconnecting': { connected: false, status: 'Reconnecting' },
+        'adapter.reconnect_failed': { connected: false, status: 'Failed' },
+      };
+      const mapped = statusMap[t];
+      if (platform && mapped) {
+        updateAdapterCard(platform, mapped.status, mapped.connected, false);
+      } else {
+        tabRegistry.adapters.refresh();
+      }
+    }
+  }
+  // 入站消息事件 → 直接渲染（避免与 MessagePersister 缓冲写入竞争）
+  if (t === 'message.inbound') {
+    if (currentTab === 'overview') refreshOverviewStats();
+    if (currentTab === 'sessions') tabRegistry.sessions.refresh();
+    if (currentTab === 'messages') prependNewMessagesFromEvent(msg);
+  }
+  // 出站/失败/回调事件 → 通过 API 获取（已同步持久化，无竞争条件）
+  if (t === 'message.sent' || t === 'message.failed' || t === 'callback.received') {
+    if (currentTab === 'overview') refreshOverviewStats();
+    if (currentTab === 'sessions') tabRegistry.sessions.refresh();
+    if (currentTab === 'messages') prependNewMessages();
+  }
+  // 配置变更 / Gateway 事件 → 刷新对应标签页
+  if (t === 'config.changed' && currentTab === 'config') tabRegistry.config.refresh();
+  if ((t === 'gateway.started' || t === 'gateway.stopping') && currentTab === 'overview') refreshOverviewStats();
+}
+
+
+// ─── 登录 ──────────────────────────────────────
+function initAuth() {
+  if (apiKey) {
+    // 验证已有 key
+    api('/api/v1/adapters').then(() => {
+      document.getElementById('login-overlay').style.display = 'none';
+      document.getElementById('logout-btn').style.display = 'block';
+      updateKeyDisplay();
+      restoreTab();
+      connectWebSocket();
+    }).catch(() => {
+      updateKeyDisplay();
+      showLogin();
+    });
+  } else {
+    showLogin();
+  }
+}
+
+document.getElementById('login-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const password = document.getElementById('login-password').value;
+  if (!password) return;
+  const btn = document.getElementById('login-btn');
+  const err = document.getElementById('login-error');
+  err.style.display = 'none';
+  err.className = 'login-error-msg';
+  btn.disabled = true;
+  btn.textContent = '登录中...';
+  try {
+    const res = await fetch('/admin/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error?.message || data.message || '登录失败');
+    setKey(data.key);
+    document.getElementById('login-overlay').style.display = 'none';
+    document.getElementById('logout-btn').style.display = 'block';
+    updateKeyDisplay();
+    restoreTab();
+    connectWebSocket();
+  } catch (e) {
+    clearKey();
+    updateKeyDisplay();
+    err.textContent = '登录失败：' + e.message;
+    err.style.display = 'block';
+    err.classList.add('shake');
+    setTimeout(() => err.classList.remove('shake'), 400);
+    btn.disabled = false;
+    btn.textContent = '登录';
+  }
+});
+
+document.getElementById('logout-btn').addEventListener('click', () => {
+  clearKey();
+  updateKeyDisplay();
+  // Reset tab contents
+  document.querySelectorAll('#ov-stats, #adapters-content, #sessions-content').forEach(e => e.innerHTML = '');
+  showLogin();
+});
+
+
+// ─── Error monitoring ─────────────────────────
+window.onerror = (msg, url, line, col, err) => {
+  console.error('[Frontend Error]', msg, `at ${url}:${line}:${col}`, err?.stack || '');
+};
+window.addEventListener('unhandledrejection', e => {
+  console.error('[Unhandled Promise]', e.reason?.message || e.reason, e.reason?.stack || '');
+});
+
 // ─── Initialize ────────────────────────────────
 document.getElementById('metrics-refresh').addEventListener('click', loadMetrics);
 initAuth();
+
 </script>
 </body>
 </html>
