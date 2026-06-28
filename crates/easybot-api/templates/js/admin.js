@@ -215,7 +215,7 @@ setInterval(() => { if (apiKey && document.getElementById('tab-overview').classL
 // 客户端走秒，运行时间实时更新
 setInterval(() => { if (document.getElementById('tab-overview').classList.contains('active')) tickUptime(); }, 1000);
 // 指标 10s 自动刷新（仅 Overview 激活时）
-setInterval(() => { if (apiKey && document.getElementById('tab-metrics').classList.contains('active')) loadMetrics(); }, 10000);
+setInterval(() => { if (apiKey && document.getElementById('tab-metrics').classList.contains('active')) loadMetrics(true); }, 10000);
 
 // ─── Metrics (可视化 + 原始数据切换) ──────────
 let metricsRawText = '';
@@ -365,7 +365,7 @@ function renderMetricsVisual(parsed) {
   document.getElementById('metrics-detail').innerHTML = detail;
 }
 
-async function loadMetrics() {
+async function loadMetrics(isRefresh) {
   const loading = document.getElementById('metrics-loading');
   const contentArea = document.getElementById('metrics-content-area');
   const visual = document.getElementById('metrics-visual');
@@ -373,10 +373,12 @@ async function loadMetrics() {
   const status = document.getElementById('metrics-status');
   const err = document.getElementById('metrics-error');
   try {
-    loading.style.display = 'block';
-    contentArea.style.display = 'none';
+    if (!isRefresh) {
+      loading.style.display = 'block';
+      contentArea.style.display = 'none';
+    }
     err.style.display = 'none';
-    status.textContent = '加载中...';
+    status.textContent = isRefresh ? '' : '加载中...';
     const res = await fetch('/api/v1/metrics', { headers: { 'Authorization': `Bearer ${apiKey}` } });
     if (!res.ok) throw new Error(await res.text());
     const text = await res.text();
@@ -384,15 +386,19 @@ async function loadMetrics() {
     pre.textContent = text;
     const parsed = parsePrometheus(text);
     renderMetricsVisual(parsed);
-    loading.style.display = 'none';
-    contentArea.style.display = 'block';
+    if (!isRefresh) {
+      loading.style.display = 'none';
+      contentArea.style.display = 'block';
+    }
     visual.style.display = metricsView === 'visual' ? 'block' : 'none';
     pre.style.display = metricsView === 'visual' ? 'none' : 'block';
     status.textContent = `共 ${Object.keys(parsed).length} 条指标数据`;
   } catch (e) {
-    loading.innerHTML = '加载失败: ' + e.message;
-    visual.style.display = 'none';
-    pre.style.display = 'none';
+    if (!isRefresh) {
+      loading.innerHTML = '加载失败: ' + e.message;
+      visual.style.display = 'none';
+      pre.style.display = 'none';
+    }
     err.textContent = '加载失败: ' + e.message;
     err.style.display = 'block';
     status.textContent = '';
@@ -928,7 +934,7 @@ let currentTab = 'overview';
 
 const tabRegistry = {
   overview:  { load: loadOverview,        refresh: () => { refreshOverviewStats(); refreshSystemInfo(); }, cleanup: null },
-  metrics:   { load: loadMetrics,         refresh: loadMetrics,         cleanup: null },
+  metrics:   { load: loadMetrics,         refresh: () => loadMetrics(true), cleanup: null },
   logs:      { load: startLogPolling,     refresh: null,               cleanup: stopLogPolling },
   adapters:  { load: loadAdapters,        refresh: loadAdapters,        cleanup: () => { adapterPollTimers = {}; } },
   config:    { load: loadConfig,          refresh: loadConfig,          cleanup: null },
@@ -1168,6 +1174,6 @@ window.addEventListener('unhandledrejection', e => {
 });
 
 // ─── Initialize ────────────────────────────────
-document.getElementById('metrics-refresh').addEventListener('click', loadMetrics);
+document.getElementById('metrics-refresh').addEventListener('click', () => loadMetrics(true));
 initAuth();
 

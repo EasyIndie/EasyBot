@@ -42,14 +42,6 @@ html { touch-action: manipulation; }
 footer { text-align: center; padding: 24px; color: var(--text-faint); font-size: 13px; }
 footer a { color: var(--accent); text-decoration: none; }
 footer a:hover { text-decoration: underline; }
-.section { width: 100%; margin-bottom: 48px; }
-.section h2 { font-size: 20px; color: var(--text-primary); margin-bottom: 16px; }
-.code-block { background: var(--bg-secondary); border: 1px solid var(--border-default); border-radius: var(--radius); padding: 16px; overflow-x: auto; }
-.code-block code { font-family: var(--font-mono); font-size: 13px; color: var(--text-secondary); }
-.platforms { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 8px; }
-.platform-item { background: var(--bg-secondary); border: 1px solid var(--border-muted); border-radius: 6px; padding: 12px 16px; font-size: 14px; display: flex; align-items: center; gap: 8px; }
-.platform-item strong { color: var(--text-primary); }
-.platform-item span { color: var(--text-muted); font-size: 12px; margin-left: auto; }
 @media (max-width: 640px) {
   .cards { grid-template-columns: 1fr; }
   .hero h1 { font-size: 32px; }
@@ -81,33 +73,8 @@ footer a:hover { text-decoration: underline; }
     </a>
   </div>
 
-  <div class="section">
-    <h2>🚀 快速开始</h2>
-    <pre class="code-block"><code># 初始化配置目录
-easybot --init
-
-# 编辑 ~/.easybot/.env 填入凭据
-# TELEGRAM_BOT_TOKEN=...
-# DISCORD_BOT_TOKEN=...
-
-# 启动服务
-easybot --debug</code></pre>
-    <p style="margin-top:8px;font-size:13px;color:var(--text-muted)">支持配置文件热重载，修改 <code>gateway.yaml</code> 后自动生效</p>
-  </div>
-
-  <div class="section">
-    <h2>🔌 支持平台</h2>
-    <div class="platforms">
-      <div class="platform-item">✈️ <strong>Telegram</strong><span>Bot API · 双向消息 · 内联键盘</span></div>
-      <div class="platform-item">🎮 <strong>Discord</strong><span>Gateway WebSocket · 交互组件</span></div>
-      <div class="platform-item">📘 <strong>飞书</strong><span>WebSocket 事件订阅 · 卡片消息</span></div>
-      <div class="platform-item">🐧 <strong>QQ</strong><span>QQBot 鉴权 · Gateway WebSocket</span></div>
-      <div class="platform-item">💬 <strong>微信</strong><span>iLink Bot API · 长轮询</span></div>
-    </div>
-  </div>
-
   <footer>
-    <p>EasyBot &middot; <a href="https://github.com/EasyIndie/EasyBot">GitHub</a> &middot; GPL-3.0</p>
+    <p>EasyBot __VERSION__ &middot; <a href="https://github.com/EasyIndie/EasyBot">GitHub</a> &middot; GPL-3.0</p>
   </footer>
 </div>
 </body>
