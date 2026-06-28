@@ -257,11 +257,14 @@ function copyApiKey() {
 
 // ─── API 请求包装 ──────────────────────────────
 function showLogin() {
+  // 已显示登录框时不再重复重置（防止轮询 401 打断输入）
+  const overlay = document.getElementById('login-overlay');
+  if (overlay.style.display === 'flex') return;
   clearKey();
   sessionStorage.removeItem('easybot_admin_tab');
   disconnectWebSocket();
   stopLogPolling();
-  document.getElementById('login-overlay').style.display = 'flex';
+  overlay.style.display = 'flex';
   document.getElementById('logout-btn').style.display = 'none';
   document.getElementById('login-password').value = '';
   document.getElementById('login-error').style.display = 'none';
