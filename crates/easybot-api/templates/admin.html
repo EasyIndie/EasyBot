@@ -273,7 +273,7 @@ function switchTab(name) {
   localStorage.setItem('easybot_admin_tab', name);
   if (name === 'overview' && !document.getElementById('ov-stats').children.length) loadOverview();
   if (name === 'adapters' && !document.getElementById('adapters-content').children.length) loadAdapters();
-  if (name === 'sessions' && !document.getElementById('sessions-content').children.length) loadSessions();
+  if (name === 'sessions') { loadSessions(); startSessionsPolling(); } else { stopSessionsPolling(); }
   if (name === 'config') loadConfig();
   if (name === 'messages') loadMessages();
   if (name === 'logs') startLogPolling();
@@ -343,6 +343,7 @@ document.getElementById('logout-btn').addEventListener('click', () => {
   document.getElementById('login-password').value = '';
   document.getElementById('login-error').style.display = 'none';
   stopLogPolling();
+  stopSessionsPolling();
   // Reset tab contents
   document.querySelectorAll('#ov-stats, #adapters-content, #sessions-content').forEach(e => e.innerHTML = '');
 });
@@ -690,6 +691,14 @@ document.getElementById('config-save-btn').addEventListener('click', async () =>
 });
 
 // ─── Sessions Tab ──────────────────────────────
+let sessionsPollTimer = null;
+
+function startSessionsPolling() {
+  if (sessionsPollTimer) return;
+  sessionsPollTimer = setInterval(() => { if (document.getElementById('tab-sessions').classList.contains('active')) loadSessions(); }, 3000);
+}
+function stopSessionsPolling() { if (sessionsPollTimer) { clearInterval(sessionsPollTimer); sessionsPollTimer = null; } }
+
 async function loadSessions() {
   const loading = document.getElementById('sessions-loading');
   const content = document.getElementById('sessions-content');
