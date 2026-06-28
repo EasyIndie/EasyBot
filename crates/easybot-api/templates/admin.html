@@ -451,6 +451,31 @@ document.getElementById('logout-btn').addEventListener('click', () => {
 });
 
 // ─── Overview Tab ──────────────────────────────
+let uptimeBase = 0;     // 服务端 uptime（秒），上次刷新时获取
+let uptimeRef = 0;      // 本地时间戳（ms），与 uptimeBase 对应
+
+function formatUptime(s) {
+  const u = Math.floor(s);
+  return u < 60 ? u + 's' : u < 3600 ? Math.floor(u/60) + 'm ' + (u%60) + 's' : Math.floor(u/3600) + 'h ' + Math.floor((u%3600)/60) + 'm';
+}
+
+// 每次刷新 stats 时更新基准值
+function updateUptimeBase(serverUptime) {
+  uptimeBase = serverUptime;
+  uptimeRef = Date.now();
+  const el = document.getElementById('ov-uptime');
+  if (el) el.textContent = formatUptime(serverUptime);
+}
+
+// 客户端走秒（1s 更新一次，无 API 请求）
+function tickUptime() {
+  const el = document.getElementById('ov-uptime');
+  if (!el || !uptimeRef) return;
+  const now = Date.now();
+  const elapsed = (now - uptimeRef) / 1000;
+  el.textContent = formatUptime(uptimeBase + elapsed);
+}
+
 // 首次加载（带 loading 动画）
 async function loadOverview() {
   const loading = document.getElementById('overview-loading');
@@ -473,11 +498,10 @@ async function refreshOverviewStats() {
   try {
     const health = await api('/api/v1/health');
     if (!health) return;
-    const u = health.uptime;
-    const uptimeStr = u < 60 ? u + 's' : u < 3600 ? Math.floor(u/60) + 'm ' + (u%60) + 's' : Math.floor(u/3600) + 'h ' + Math.floor((u%3600)/60) + 'm';
+    updateUptimeBase(health.uptime);
     document.getElementById('ov-stats').innerHTML = `
       <div class="stat"><div class="val">${health.version}</div><div class="lbl">版本</div></div>
-      <div class="stat"><div class="val">${uptimeStr}</div><div class="lbl">运行时间</div></div>
+      <div class="stat"><div class="val" id="ov-uptime">${formatUptime(health.uptime)}</div><div class="lbl">运行时间</div></div>
       <div class="stat"><div class="val">${health.adapters.connected}/${health.adapters.total}</div><div class="lbl">适配器</div></div>
       <div class="stat"><div class="val">${health.sessions.active}</div><div class="lbl">会话</div></div>
     `;
@@ -499,6 +523,8 @@ async function refreshSystemInfo() {
   } catch (e) { /* 静默忽略 */ }
 }
 setInterval(() => { if (document.getElementById('tab-overview').classList.contains('active')) refreshSystemInfo(); }, 1000);
+// 客户端走秒，运行时间实时更新
+setInterval(() => { if (document.getElementById('tab-overview').classList.contains('active')) tickUptime(); }, 1000);
 
 // ─── Metrics (inline, text/plain) ────────────────
 async function loadMetrics() {
