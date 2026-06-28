@@ -375,7 +375,7 @@ function handleGatewayEvent(msg) {
   // 消息事件 → 刷新 Sessions + Messages
   if (t.startsWith('message.') || t === 'callback.received') {
     if (sessionsActive) { console.log('[EVENT] loadSessions'); loadSessions(); }
-    if (messagesActive) { console.log('[EVENT] loadMessages'); loadMessages(); }
+    if (messagesActive) { console.log('[EVENT] prependNewMessages'); prependNewMessages(); }
   }
   // 配置变更 → 刷新 Config
   if (t === 'config.changed') {
@@ -861,6 +861,36 @@ async function deleteSession(key) {
 // ─── Messages Tab ──────────────────────────────
 let msgCursor = null;
 let msgPlatform = '';
+// 已加载的消息 ID 集合，防止事件重复追加
+const loadedMsgIds = new Set();
+
+// 增量追加：事件触发时调用，不中断现有列表
+async function prependNewMessages() {
+  try {
+    const params = new URLSearchParams({ limit: '5' });
+    if (msgPlatform) params.set('platform', msgPlatform);
+    const data = await api('/api/v1/messages?' + params.toString());
+    if (!data.messages?.length) return;
+    const tbody = document.getElementById('msg-list');
+    // 从后往前遍历（API 返回最前的是最新的），跳过已存在的 ID
+    for (let i = data.messages.length - 1; i >= 0; i--) {
+      const m = data.messages[i];
+      if (loadedMsgIds.has(m.id)) continue;
+      loadedMsgIds.add(m.id);
+      const tr = document.createElement('tr');
+      tr.style.cursor = 'pointer';
+      tr.innerHTML = `<td style="font-size:11px;color:#8b949e;white-space:nowrap">${new Date(m.timestamp).toLocaleTimeString()}</td>
+        <td><span class="badge badge-blue">${m.platform}</span></td>
+        <td style="font-size:12px">${m.chatId}</td>
+        <td><span class="badge ${m.role === 'User' ? 'badge-green' : 'badge-gray'}">${m.role}</span></td>
+        <td style="font-size:12px;color:#8b949e;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${(m.text || '').substring(0, 80)}</td>`;
+      tr.addEventListener('click', () => alert(JSON.stringify(m, null, 2)));
+      tbody.insertBefore(tr, tbody.firstChild);
+    }
+    // 更新 cursor 为最新的消息时间戳
+    if (data.messages.length) msgCursor = data.messages[data.messages.length - 1].timestamp;
+  } catch (_) { /* 静默 */ }
+}
 
 document.getElementById('msg-send-btn').addEventListener('click', async () => {
   const target = document.getElementById('msg-target').value.trim();
@@ -872,7 +902,7 @@ document.getElementById('msg-send-btn').addEventListener('click', async () => {
     const data = await api('/api/v1/messages/send', { method: 'POST', body: { target, text, parseMode: parseMode || null } });
     result.innerHTML = '<span class="success-msg">✅ 已发送 (id: ' + data.messageId + ', status: ' + data.status + ')</span>';
     document.getElementById('msg-text').value = '';
-    loadMessages();
+    prependNewMessages();
   } catch (e) {
     result.innerHTML = '<span class="error-msg">❌ 发送失败: ' + e.message + '</span>';
   }
@@ -883,9 +913,10 @@ document.getElementById('msg-text').addEventListener('keydown', e => { if (e.key
 document.getElementById('msg-platform-filter').addEventListener('change', () => {
   msgPlatform = document.getElementById('msg-platform-filter').value;
   msgCursor = null;
+  loadedMsgIds.clear();
   loadMessages();
 });
-document.getElementById('msg-refresh').addEventListener('click', () => { msgCursor = null; loadMessages(); });
+document.getElementById('msg-refresh').addEventListener('click', () => { msgCursor = null; loadedMsgIds.clear(); loadMessages(); });
 document.getElementById('msg-load-more').addEventListener('click', () => { loadMessages(true); });
 
 async function loadMessages(append = false) {
@@ -900,6 +931,7 @@ async function loadMessages(append = false) {
     const tbody = document.getElementById('msg-list');
     if (!append) tbody.innerHTML = '';
     for (const m of data.messages) {
+      if (m.id) loadedMsgIds.add(m.id);
       const tr = document.createElement('tr');
       tr.style.cursor = 'pointer';
       tr.innerHTML = `<td style="font-size:11px;color:#8b949e;white-space:nowrap">${new Date(m.timestamp).toLocaleTimeString()}</td>
