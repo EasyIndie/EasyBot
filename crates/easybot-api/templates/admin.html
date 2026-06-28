@@ -256,11 +256,26 @@ function copyApiKey() {
 }
 
 // ─── API 请求包装 ──────────────────────────────
+function showLogin() {
+  clearKey();
+  sessionStorage.removeItem('easybot_admin_tab');
+  disconnectWebSocket();
+  stopLogPolling();
+  document.getElementById('login-overlay').style.display = 'flex';
+  document.getElementById('logout-btn').style.display = 'none';
+  document.getElementById('login-password').value = '';
+  document.getElementById('login-error').style.display = 'none';
+}
+
 async function api(path, opts = {}) {
   const { method = 'GET', body } = opts;
   const headers = { 'Authorization': `Bearer ${apiKey}` };
   if (body) headers['Content-Type'] = 'application/json';
   const res = await fetch(path, { method, headers, body: body ? JSON.stringify(body) : undefined });
+  if (res.status === 401 && !path.includes('/admin/login')) {
+    showLogin();
+    throw new Error('未授权，请重新登录');
+  }
   const data = await res.json();
   if (!res.ok) throw new Error(data.error?.message || data.message || res.statusText);
   return data;
@@ -322,6 +337,11 @@ function connectWebSocket() {
         if (msg.type === 'auth_ok') {
           console.log('[WS] Authenticated successfully');
           wsStatus('#3fb950', 'connected');
+          return;
+        }
+        if (msg.type === 'auth_failed') {
+          console.log('[WS] Auth failed — key invalid');
+          showLogin();
           return;
         }
         if (msg.type !== 'event') {
@@ -390,22 +410,20 @@ function handleGatewayEvent(msg) {
 
 // ─── 登录 ──────────────────────────────────────
 function initAuth() {
-  const overlay = document.getElementById('login-overlay');
   if (apiKey) {
     // 验证已有 key
     api('/api/v1/adapters').then(() => {
-      overlay.style.display = 'none';
+      document.getElementById('login-overlay').style.display = 'none';
       document.getElementById('logout-btn').style.display = 'block';
       updateKeyDisplay();
       restoreTab();
       connectWebSocket();
     }).catch(() => {
-      clearKey();
       updateKeyDisplay();
-      overlay.style.display = 'flex';
+      showLogin();
     });
   } else {
-    overlay.style.display = 'flex';
+    showLogin();
   }
 }
 
@@ -439,16 +457,10 @@ document.getElementById('login-password').addEventListener('keydown', e => { if 
 
 document.getElementById('logout-btn').addEventListener('click', () => {
   clearKey();
-  sessionStorage.removeItem('easybot_admin_tab');
   updateKeyDisplay();
-  disconnectWebSocket();
-  document.getElementById('login-overlay').style.display = 'flex';
-  document.getElementById('logout-btn').style.display = 'none';
-  document.getElementById('login-password').value = '';
-  document.getElementById('login-error').style.display = 'none';
-  stopLogPolling();
   // Reset tab contents
   document.querySelectorAll('#ov-stats, #adapters-content, #sessions-content').forEach(e => e.innerHTML = '');
+  showLogin();
 });
 
 // ─── Overview Tab ──────────────────────────────
