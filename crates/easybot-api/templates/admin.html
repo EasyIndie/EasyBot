@@ -498,7 +498,7 @@ async function refreshSystemInfo() {
     `;
   } catch (e) { /* 静默忽略 */ }
 }
-setInterval(() => { if (document.getElementById('tab-overview').classList.contains('active')) refreshSystemInfo(); }, 30000);
+setInterval(() => { if (document.getElementById('tab-overview').classList.contains('active')) refreshSystemInfo(); }, 1000);
 
 // ─── Metrics (inline, text/plain) ────────────────
 async function loadMetrics() {
