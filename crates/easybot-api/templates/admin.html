@@ -336,6 +336,7 @@ document.getElementById('login-password').addEventListener('keydown', e => { if 
 
 document.getElementById('logout-btn').addEventListener('click', () => {
   clearKey();
+  localStorage.removeItem('easybot_admin_tab');
   updateKeyDisplay();
   document.getElementById('login-overlay').style.display = 'flex';
   document.getElementById('logout-btn').style.display = 'none';
