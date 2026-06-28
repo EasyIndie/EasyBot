@@ -372,8 +372,9 @@ function handleGatewayEvent(msg) {
     if (overviewActive) { console.log('[EVENT] refreshOverviewStats'); refreshOverviewStats(); }
     if (adaptersActive) { console.log('[EVENT] loadAdapters'); loadAdapters(); }
   }
-  // 消息事件 → 刷新 Sessions + Messages
+  // 消息事件 → 刷新 Overview 会话数 + Sessions + Messages
   if (t.startsWith('message.') || t === 'callback.received') {
+    if (overviewActive) { console.log('[EVENT] refreshOverviewStats (msg)'); refreshOverviewStats(); }
     if (sessionsActive) { console.log('[EVENT] loadSessions'); loadSessions(); }
     if (messagesActive) { console.log('[EVENT] prependNewMessages'); prependNewMessages(); }
   }
