@@ -120,6 +120,7 @@ label { display: block; font-size: 13px; color: #8b949e; margin-bottom: 4px; }
 <!-- Tabs -->
 <div class="tabs" id="tabs-bar">
   <button class="tab-btn active" data-tab="overview">📊 Overview</button>
+  <button class="tab-btn" data-tab="metrics">📈 Metrics</button>
   <button class="tab-btn" data-tab="logs">📋 Logs</button>
   <button class="tab-btn" data-tab="adapters">🔌 Adapters</button>
   <button class="tab-btn" data-tab="config">⚙️ Config</button>
@@ -135,9 +136,16 @@ label { display: block; font-size: 13px; color: #8b949e; margin-bottom: 4px; }
     <div class="grid-4" id="ov-stats"></div>
     <h3 style="margin:24px 0 12px;color:#e6edf3">系统信息</h3>
     <div class="grid-2" id="ov-system"></div>
-    <div class="card" style="margin-top:16px">
+</div>
+</div>
+
+  <!-- Tab: Metrics -->
+<div class="tab-content" id="tab-metrics">
+  <div id="metrics-loading" class="loading">加载中...</div>
+  <div id="metrics-content-area" style="display:none">
+    <div class="card">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-        <h3 style="margin:0">📊 监控指标</h3>
+        <h3 style="margin:0">📈 监控指标</h3>
         <div style="display:flex;gap:6px">
           <button class="btn btn-sm" id="metrics-toggle-view">📋 原始数据</button>
           <button class="btn btn-sm" id="metrics-refresh">🔄 刷新</button>
@@ -310,8 +318,9 @@ function switchTab(name) {
   sessionStorage.setItem('easybot_admin_tab', name);
   if (name === 'overview') {
     if (!document.getElementById('ov-stats').children.length) { loadOverview(); }
-    else { refreshOverviewStats(); refreshSystemInfo(); loadMetrics(); }
+    else { refreshOverviewStats(); refreshSystemInfo(); }
   }
+  if (name === 'metrics') { loadMetrics(); }
   if (name === 'adapters' && !document.getElementById('adapters-content').children.length) loadAdapters();
   if (name === 'sessions') loadSessions();
   if (name === 'config') loadConfig();
@@ -323,7 +332,7 @@ document.querySelectorAll('.tab-btn').forEach(b => b.addEventListener('click', (
 // 登录后恢复上次 tab
 function restoreTab() {
   const saved = sessionStorage.getItem('easybot_admin_tab');
-  if (saved && saved !== 'overview') switchTab(saved);
+  if (saved && saved !== 'overview' && saved !== 'metrics') switchTab(saved); else if (saved === 'metrics') switchTab('metrics');
   else loadOverview();
 }
 
@@ -588,7 +597,7 @@ setInterval(() => { if (document.getElementById('tab-overview').classList.contai
 // 客户端走秒，运行时间实时更新
 setInterval(() => { if (document.getElementById('tab-overview').classList.contains('active')) tickUptime(); }, 1000);
 // 指标 10s 自动刷新（仅 Overview 激活时）
-setInterval(() => { if (document.getElementById('tab-overview').classList.contains('active')) loadMetrics(); }, 10000);
+setInterval(() => { if (document.getElementById('tab-metrics').classList.contains('active')) loadMetrics(); }, 10000);
 
 // ─── Metrics (可视化 + 原始数据切换) ──────────
 let metricsRawText = '';
@@ -739,11 +748,15 @@ function renderMetricsVisual(parsed) {
 }
 
 async function loadMetrics() {
+  const loading = document.getElementById('metrics-loading');
+  const contentArea = document.getElementById('metrics-content-area');
   const visual = document.getElementById('metrics-visual');
   const pre = document.getElementById('metrics-content');
   const status = document.getElementById('metrics-status');
   const err = document.getElementById('metrics-error');
   try {
+    loading.style.display = 'block';
+    contentArea.style.display = 'none';
     err.style.display = 'none';
     status.textContent = '加载中...';
     const res = await fetch('/api/v1/metrics', { headers: { 'Authorization': `Bearer ${apiKey}` } });
@@ -753,10 +766,13 @@ async function loadMetrics() {
     pre.textContent = text;
     const parsed = parsePrometheus(text);
     renderMetricsVisual(parsed);
+    loading.style.display = 'none';
+    contentArea.style.display = 'block';
     visual.style.display = metricsView === 'visual' ? 'block' : 'none';
     pre.style.display = metricsView === 'visual' ? 'none' : 'block';
     status.textContent = `共 ${Object.keys(parsed).length} 条指标数据`;
   } catch (e) {
+    loading.innerHTML = '加载失败: ' + e.message;
     visual.style.display = 'none';
     pre.style.display = 'none';
     err.textContent = '加载失败: ' + e.message;
@@ -1216,7 +1232,7 @@ async function loadMessages(append = false) {
       tr.addEventListener('click', () => alert(JSON.stringify(m, null, 2)));
       tbody.appendChild(tr);
     }
-    document.getElementById('msg-load-more').style.display = data.hasMore ? 'inline-block' : 'none';
+    document.getElementById('msg-load-more').style.display = data.has_more ? 'inline-block' : 'none';
     if (data.messages.length) msgCursor = data.messages[data.messages.length - 1].timestamp;
     if (!append) { loading.style.display = 'none'; content.style.display = 'block'; }
   } catch (e) {
