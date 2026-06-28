@@ -412,10 +412,27 @@ function handleGatewayEvent(msg) {
   const adaptersActive = document.getElementById('tab-adapters')?.classList.contains('active');
   const configActive = document.getElementById('tab-config')?.classList.contains('active');
   console.log('[EVENT]', t, {overviewActive, sessionsActive, messagesActive, adaptersActive, configActive});
-  // Adapter 事件 → 刷新 Overview 统计 + Adapters
+  // Adapter 事件 → 刷新 Overview 统计 + 直接更新单个卡片（避免全量重渲染闪烁）
   if (t.startsWith('adapter.')) {
     if (overviewActive) { console.log('[EVENT] refreshOverviewStats'); refreshOverviewStats(); }
-    if (adaptersActive) { console.log('[EVENT] loadAdapters'); loadAdapters(); }
+    if (adaptersActive) {
+      const platform = msg.data?.platform;
+      const statusMap = {
+        'adapter.connected': { connected: true, status: 'Connected' },
+        'adapter.reconnected': { connected: true, status: 'Connected' },
+        'adapter.disconnected': { connected: false, status: 'Disconnected' },
+        'adapter.error': { connected: false, status: 'Failed' },
+        'adapter.reconnecting': { connected: false, status: 'Reconnecting' },
+        'adapter.reconnect_failed': { connected: false, status: 'Failed' },
+      };
+      const mapped = statusMap[t];
+      if (platform && mapped) {
+        console.log('[EVENT] updateAdapterCard', platform, mapped);
+        updateAdapterCard(platform, mapped.status, mapped.connected, false);
+      } else {
+        loadAdapters();
+      }
+    }
   }
   // 入站消息事件 → 直接渲染（避免与 MessagePersister 缓冲写入竞争）
   if (t === 'message.inbound') {
