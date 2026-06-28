@@ -273,7 +273,7 @@ function switchTab(name) {
   localStorage.setItem('easybot_admin_tab', name);
   if (name === 'overview' && !document.getElementById('ov-stats').children.length) loadOverview();
   if (name === 'adapters' && !document.getElementById('adapters-content').children.length) loadAdapters();
-  if (name === 'sessions') { loadSessions(); startSessionsPolling(); } else { stopSessionsPolling(); }
+  if (name === 'sessions') loadSessions();
   if (name === 'config') loadConfig();
   if (name === 'messages') loadMessages();
   if (name === 'logs') startLogPolling();
@@ -287,6 +287,58 @@ function restoreTab() {
   else loadOverview();
 }
 
+// ─── WebSocket 事件驱动 ────────────────────────
+let ws = null;
+let wsReconnectTimer = null;
+
+function connectWebSocket() {
+  disconnectWebSocket();
+  if (!apiKey) return;
+  try {
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    ws = new WebSocket(proto + '//' + location.host + '/api/v1/ws');
+    ws.onopen = () => { ws.send(JSON.stringify({ token: apiKey })); };
+    ws.onmessage = (e) => {
+      try {
+        const msg = JSON.parse(e.data);
+        if (msg.type === 'auth_ok') return;
+        if (msg.type !== 'event') return;
+        handleGatewayEvent(msg);
+      } catch (_) { /* ignore parse error */ }
+    };
+    ws.onclose = () => {
+      if (apiKey) wsReconnectTimer = setTimeout(connectWebSocket, 3000);
+    };
+  } catch (_) { /* ws not available */ }
+}
+
+function disconnectWebSocket() {
+  if (wsReconnectTimer) { clearTimeout(wsReconnectTimer); wsReconnectTimer = null; }
+  if (ws) { ws.onclose = null; ws.close(); ws = null; }
+}
+
+function handleGatewayEvent(msg) {
+  const t = msg.event || '';
+  // Adapter 事件 → 刷新 Overview 统计 + Adapters
+  if (t.startsWith('adapter.')) {
+    if (document.getElementById('tab-overview').classList.contains('active')) refreshOverviewData();
+    if (document.getElementById('tab-adapters').classList.contains('active')) loadAdapters();
+  }
+  // 消息事件 → 刷新 Sessions + Messages
+  if (t.startsWith('message.') || t === 'callback.received') {
+    if (document.getElementById('tab-sessions').classList.contains('active')) loadSessions();
+    if (document.getElementById('tab-messages').classList.contains('active')) loadMessages();
+  }
+  // 配置变更 → 刷新 Config
+  if (t === 'config.changed') {
+    if (document.getElementById('tab-config').classList.contains('active')) loadConfig();
+  }
+  // Gateway 事件 → 刷新 Overview
+  if (t === 'gateway.started' || t === 'gateway.stopping') {
+    if (document.getElementById('tab-overview').classList.contains('active')) refreshOverviewData();
+  }
+}
+
 // ─── 登录 ──────────────────────────────────────
 function initAuth() {
   const overlay = document.getElementById('login-overlay');
@@ -297,6 +349,7 @@ function initAuth() {
       document.getElementById('logout-btn').style.display = 'block';
       updateKeyDisplay();
       restoreTab();
+      connectWebSocket();
     }).catch(() => {
       clearKey();
       updateKeyDisplay();
@@ -325,6 +378,7 @@ document.getElementById('login-btn').addEventListener('click', async () => {
     document.getElementById('logout-btn').style.display = 'block';
     updateKeyDisplay();
     restoreTab();
+    connectWebSocket();
   } catch (e) {
     clearKey();
     updateKeyDisplay();
@@ -338,12 +392,12 @@ document.getElementById('logout-btn').addEventListener('click', () => {
   clearKey();
   localStorage.removeItem('easybot_admin_tab');
   updateKeyDisplay();
+  disconnectWebSocket();
   document.getElementById('login-overlay').style.display = 'flex';
   document.getElementById('logout-btn').style.display = 'none';
   document.getElementById('login-password').value = '';
   document.getElementById('login-error').style.display = 'none';
   stopLogPolling();
-  stopSessionsPolling();
   // Reset tab contents
   document.querySelectorAll('#ov-stats, #adapters-content, #sessions-content').forEach(e => e.innerHTML = '');
 });
@@ -394,7 +448,8 @@ async function refreshOverviewData() {
   } catch (e) { /* 静默忽略刷新错误 */ }
 }
 // 每 10s 增量刷新，不闪动
-setInterval(() => { if (document.getElementById('tab-overview').classList.contains('active')) refreshOverviewData(); }, 1000);
+// 系统信息（CPU/内存/磁盘）无事件推送，降低轮询频率
+setInterval(() => { if (document.getElementById('tab-overview').classList.contains('active')) refreshOverviewData(); }, 30000);
 
 // ─── Metrics (inline, text/plain) ────────────────
 async function loadMetrics() {
@@ -691,14 +746,6 @@ document.getElementById('config-save-btn').addEventListener('click', async () =>
 });
 
 // ─── Sessions Tab ──────────────────────────────
-let sessionsPollTimer = null;
-
-function startSessionsPolling() {
-  if (sessionsPollTimer) return;
-  sessionsPollTimer = setInterval(() => { if (document.getElementById('tab-sessions').classList.contains('active')) loadSessions(); }, 3000);
-}
-function stopSessionsPolling() { if (sessionsPollTimer) { clearInterval(sessionsPollTimer); sessionsPollTimer = null; } }
-
 async function loadSessions() {
   const loading = document.getElementById('sessions-loading');
   const content = document.getElementById('sessions-content');
