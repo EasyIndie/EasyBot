@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Documentation overhaul: deleted 3 outdated historical docs (rust-implementation-plan.md,
+  AUDIT_FIX_PLAN.md, api-capabilities-research.md). Merged api-capabilities-research.md
+  into platform-capabilities.md. Simplified TEST_PLAN.md (removed verbose expected-result
+  columns). Updated im-gateway-architecture.md with 14 categories of corrections to match
+  actual implementation (API routes, CLI commands, plugin system, lifecycle states, etc.).
+  Updated TODO.md and frontend-plan.md with current completion status.
+  Build.rs automatically regenerates docs.html.
+
 ## [0.0.5] - 2026-06-27
 
 ### Fixed

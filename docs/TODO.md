@@ -1,7 +1,6 @@
 # EasyBot TODO — 待办事项清单
 
-> 最后更新: 2026-06-24
-> 基于 docs/rust-implementation-plan.md 分阶段计划
+> 最后更新: 2026-06-28
 
 ---
 
@@ -18,6 +17,14 @@
 ---
 
 ## 已完成项 (本轮开发)
+
+### 前端优化（2026-06-28）
+- [x] **Sessions Tab 闪烁** — 增量 DOM 更新（`data-session-key` 属性 diff）
+- [x] **Messages Tab 切换时空列表** — AbortController + 重置 cursor
+- [x] **Metrics 刷新闪烁** — 刷新时跳过 loading spinner
+- [x] **按钮文字折行** — `white-space: nowrap`
+- [x] **首页简化** — 移除快速开始和平台区块
+- [x] **登录页导航** — EasyBot 标题点击返回首页
 
 ### WeChat 适配器
 - [x] **edit_message** — ❌ 平台不支持（iLink Bot API 仅 7 个端点）
@@ -72,62 +79,9 @@
 
 ---
 
-## 审计发现 · 修复计划
+## 审计完成
 
-### Round 2 (当前) — 2026-06-24 第二轮审计
-
-> 第二轮全面审计（6 维度）→ 20 项新发现 (N1–N20)
->
-> 详见 **[AUDIT_FIX_PLAN.md](AUDIT_FIX_PLAN.md)** — Round 2 修复计划
-
-| 优先级 | 数量 | 状态 | 预计工时 |
-|--------|:----:|------|:--------:|
-| P0 紧急 | 5 | ✅ 已完成 | ~10h |
-| P1 高 | 8 | ✅ 已完成 | ~14h |
-| P2 中 | 4 | ✅ 3/4 (拆分待编译) | ~16h |
-| P3 低 | 3 | ✅ 已完成 | ~12h |
-| **合计** | **20** | **19/20** | **~52h** |
-
-#### Round 2 修复概览
-
-| ID | 优先级 | 简述 | 文件 |
-|----|:------:|------|------|
-| P0-1 (N8) | 🔴 | ✅ API Key 权限检查中间件 | `api/server.rs` + `auth/permissions.rs` (新建) |
-| P0-2 (N1) | 🔴 | ✅ Feishu unwrap() panic 风险 | `feishu/src/lib.rs:466` |
-| P0-3 (N2) | 🔴 | ✅ Arc::try_unwrap panic 风险 | `api/routes/messages.rs:283` |
-| P0-4 (N9) | 🔴 | ✅ AssertSqlSafe + format! SQL 拼接 | `storage/sqlite.rs` + `postgres.rs` |
-| P0-5 (N10) | 🔴 | ✅ CORS permissive 生产加固 | `api/server.rs:244` |
-| P1-1 (N3) | 🟠 | ✅ Workspace lint 继承修复 | 13 个 Cargo.toml |
-| P1-2 (N11) | 🟠 | ✅ HTTP 请求体大小限制 | `api/server.rs` |
-| P1-3 (N12) | 🟠 | ✅ WebSocket 帧大小限制 | `api/routes/ws.rs` |
-| P1-4 (N4) | 🟠 | ✅ QQ std::Mutex → parking_lot | `qq/src/lib.rs` |
-| P1-5 (N5) | 🟠 | ✅ SessionManager 存储日志 | `session/manager.rs` |
-| P1-6 (N13) | 🟠 | ✅ /metrics 端点认证 | `api/server.rs` |
-| P1-7 (N14) | 🟠 | ✅ X-Forwarded-For 信任链修复 | `middleware/rate_limit.rs` |
-| P1-8 (N15) | 🟠 | ✅ Feishu SDK 版本审计 | `feishu/Cargo.toml` |
-| P2-1 (N6) | 🟡 | ✅ webhook serialize 失败日志 | `webhook/mod.rs` |
-| P2-2 (N16) | 🟡 | ✅ HTTP Client 类型统一 OnceLock | `feishu` + `qq` + `wechat` |
-| P2-3 (N17) | 🟡 | ✅ WeChat 构造函数统一 | `wechat` + `bin/main.rs` |
-| P2-4 (N7) | 🟡 | ⏸️ QQ/WeChat 适配器拆分 | `qq/src/` (✅ 已完成: auth.rs, gateway.rs, types.rs) + `wechat/src/` (⏸️ crypto.rs 已拆分，其余待验证) |
-| P3-1 (N18) | 🟢 | ✅ Capability 声明宏去重 | 2/5 适配器 (Telegram + Discord) |
-| P3-2 (N19) | 🟢 | ✅ bin/main.rs 注册宏统一 | `bin/src/main.rs` |
-| P3-3 (N20) | 🟢 | ✅ Plugin 沙箱文档化 | `SECURITY.md` + `plugin/loader.rs` |
-
-### Round 1 (已完成) — 2026-06-24 早前
-
-> 2026-06-24 首轮审计（6 维度 · 60+ 发现）→ 30 项可执行修复
->
-> 详见 **[AUDIT_FIX_PLAN.md](AUDIT_FIX_PLAN.md)** — Round 1 历史记录
-
-| 优先级 | 数量 | 状态 |
-|--------|:----:|------|
-| P0 紧急 | 5 | ✅ 已完成 |
-| P1 高 | 8 | ✅ 已完成 |
-| P2 中 | 10 | ✅ 已完成 |
-| P3 低 | 7 | ✅ 已完成 |
-| **合计** | **30** | **✅ 全部完成** |
-
-### 审计评分汇总
+两轮安全审计已完成（Round 1: 30 项 / Round 2: 20 项）。所有发现项均已修复并合入代码库。审计记录已归档（可从 Git 历史查看）。
 
 | 维度 | Round 1 | Round 2 | 变化 |
 |------|:------:|:------:|:----:|
@@ -139,8 +93,4 @@
 | 依赖与供应链 | 8.0 | 8.0 | — |
 | **综合** | **7.1** | **7.5** | **+0.4 ⬆️** |
 
-> 目标: Round 2 P0–P1 完成后安全预计达到 7.5+
-
-## 技术债务
-
-（已纳入 [AUDIT_FIX_PLAN.md](AUDIT_FIX_PLAN.md) 跟踪）
+> 下一阶段关注 TLS/HTTPS 和 RBAC 权限模型的覆盖。
