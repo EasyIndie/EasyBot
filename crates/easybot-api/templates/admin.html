@@ -393,7 +393,7 @@ async function refreshOverviewData() {
   } catch (e) { /* 静默忽略刷新错误 */ }
 }
 // 每 10s 增量刷新，不闪动
-setInterval(() => { if (document.getElementById('tab-overview').classList.contains('active')) refreshOverviewData(); }, 3000);
+setInterval(() => { if (document.getElementById('tab-overview').classList.contains('active')) refreshOverviewData(); }, 1000);
 
 // ─── Metrics (inline, text/plain) ────────────────
 async function loadMetrics() {
@@ -427,7 +427,7 @@ let logSearchText = '';
 
 function startLogPolling() {
   if (logPollTimer) return;
-  logPollTimer = setInterval(pollLogs, 3000);
+  logPollTimer = setInterval(pollLogs, 1000);
   pollLogs();
 }
 function stopLogPolling() { if (logPollTimer) { clearInterval(logPollTimer); logPollTimer = null; } }
