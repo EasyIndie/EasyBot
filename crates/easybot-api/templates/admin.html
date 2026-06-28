@@ -581,6 +581,7 @@ async function refreshOverviewStats() {
 
 // 轮询：系统信息（CPU/内存/磁盘）无事件推送，30s 一次
 async function refreshSystemInfo() {
+  if (!apiKey) return;
   try {
     const sys = await api('/api/v1/system').catch(() => null);
     if (!sys) return;
@@ -593,11 +594,11 @@ async function refreshSystemInfo() {
     `;
   } catch (e) { /* 静默忽略 */ }
 }
-setInterval(() => { if (document.getElementById('tab-overview').classList.contains('active')) refreshSystemInfo(); }, 1000);
+setInterval(() => { if (apiKey && document.getElementById('tab-overview').classList.contains('active')) refreshSystemInfo(); }, 1000);
 // 客户端走秒，运行时间实时更新
 setInterval(() => { if (document.getElementById('tab-overview').classList.contains('active')) tickUptime(); }, 1000);
 // 指标 10s 自动刷新（仅 Overview 激活时）
-setInterval(() => { if (document.getElementById('tab-metrics').classList.contains('active')) loadMetrics(); }, 10000);
+setInterval(() => { if (apiKey && document.getElementById('tab-metrics').classList.contains('active')) loadMetrics(); }, 10000);
 
 // ─── Metrics (可视化 + 原始数据切换) ──────────
 let metricsRawText = '';
