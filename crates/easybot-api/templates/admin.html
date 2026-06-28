@@ -270,6 +270,7 @@ async function api(path, opts = {}) {
 function switchTab(name) {
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
   document.querySelectorAll('.tab-content').forEach(c => c.classList.toggle('active', c.id === 'tab-' + name));
+  localStorage.setItem('easybot_admin_tab', name);
   if (name === 'overview' && !document.getElementById('ov-stats').children.length) loadOverview();
   if (name === 'adapters' && !document.getElementById('adapters-content').children.length) loadAdapters();
   if (name === 'sessions' && !document.getElementById('sessions-content').children.length) loadSessions();
@@ -278,6 +279,13 @@ function switchTab(name) {
   if (name === 'logs') startLogPolling();
 }
 document.querySelectorAll('.tab-btn').forEach(b => b.addEventListener('click', () => switchTab(b.dataset.tab)));
+
+// 登录后恢复上次 tab
+function restoreTab() {
+  const saved = localStorage.getItem('easybot_admin_tab');
+  if (saved && saved !== 'overview') switchTab(saved);
+  else loadOverview();
+}
 
 // ─── 登录 ──────────────────────────────────────
 function initAuth() {
@@ -288,7 +296,7 @@ function initAuth() {
       overlay.style.display = 'none';
       document.getElementById('logout-btn').style.display = 'block';
       updateKeyDisplay();
-      loadOverview();
+      restoreTab();
     }).catch(() => {
       clearKey();
       updateKeyDisplay();
@@ -316,7 +324,7 @@ document.getElementById('login-btn').addEventListener('click', async () => {
     document.getElementById('login-overlay').style.display = 'none';
     document.getElementById('logout-btn').style.display = 'block';
     updateKeyDisplay();
-    loadOverview();
+    restoreTab();
   } catch (e) {
     clearKey();
     updateKeyDisplay();
