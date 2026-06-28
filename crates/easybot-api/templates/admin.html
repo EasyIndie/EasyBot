@@ -369,7 +369,7 @@ function handleGatewayEvent(msg) {
   console.log('[EVENT]', t, {overviewActive, sessionsActive, messagesActive, adaptersActive, configActive});
   // Adapter 事件 → 刷新 Overview 统计 + Adapters
   if (t.startsWith('adapter.')) {
-    if (overviewActive) { console.log('[EVENT] refreshOverviewData (adapter)'); refreshOverviewData(); }
+    if (overviewActive) { console.log('[EVENT] refreshOverviewStats'); refreshOverviewStats(); }
     if (adaptersActive) { console.log('[EVENT] loadAdapters'); loadAdapters(); }
   }
   // 消息事件 → 刷新 Sessions + Messages
@@ -383,7 +383,7 @@ function handleGatewayEvent(msg) {
   }
   // Gateway 事件 → 刷新 Overview
   if (t === 'gateway.started' || t === 'gateway.stopping') {
-    if (overviewActive) { console.log('[EVENT] refreshOverviewData (gateway)'); refreshOverviewData(); }
+    if (overviewActive) { console.log('[EVENT] refreshOverviewStats'); refreshOverviewStats(); }
   }
 }
 
@@ -458,7 +458,8 @@ async function loadOverview() {
   try {
     loading.style.display = 'block';
     content.style.display = 'none';
-    await refreshOverviewData();
+    await refreshOverviewStats();
+    await refreshSystemInfo();
     loading.style.display = 'none';
     content.style.display = 'block';
     loadMetrics();
@@ -467,13 +468,11 @@ async function loadOverview() {
   }
 }
 
-// 增量刷新（不显示/隐藏 content，避免闪动）
-async function refreshOverviewData() {
+// 事件驱动：仅刷新统计（适配器数、会话数等）
+async function refreshOverviewStats() {
   try {
-    const [health, sys] = await Promise.all([api('/api/v1/health'), api('/api/v1/system').catch(() => null)]);
+    const health = await api('/api/v1/health');
     if (!health) return;
-
-    // Stats grid
     const u = health.uptime;
     const uptimeStr = u < 60 ? u + 's' : u < 3600 ? Math.floor(u/60) + 'm ' + (u%60) + 's' : Math.floor(u/3600) + 'h ' + Math.floor((u%3600)/60) + 'm';
     document.getElementById('ov-stats').innerHTML = `
@@ -482,22 +481,24 @@ async function refreshOverviewData() {
       <div class="stat"><div class="val">${health.adapters.connected}/${health.adapters.total}</div><div class="lbl">适配器</div></div>
       <div class="stat"><div class="val">${health.sessions.active}</div><div class="lbl">会话</div></div>
     `;
-
-    // System info
-    if (sys) {
-      const pct = v => { const c = v < 60 ? 'fill-green' : v < 80 ? 'fill-yellow' : 'fill-red'; return `<div class="progress-bar"><div class="fill ${c}" style="width:${v}%"></div></div><span style="font-size:13px">${v.toFixed(1)}%</span>`; };
-      document.getElementById('ov-system').innerHTML = `
-        <div class="card"><h3>🖥 OS</h3><p>${sys.os.name} ${sys.os.version}</p><p style="font-size:12px;color:#8b949e">${sys.os.hostname} · ${sys.os.kernel || ''}</p></div>
-        <div class="card"><h3>🧠 CPU</h3><p>${sys.cpu.brand} · ${sys.cpu.cores}核</p><p>使用率 ${pct(sys.cpu.usage)}</p>${sys.cpu.load_avg_1 ? `<p style="font-size:12px;color:#8b949e">负载: ${sys.cpu.load_avg_1.toFixed(2)} / ${sys.cpu.load_avg_5.toFixed(2)} / ${sys.cpu.load_avg_15.toFixed(2)}</p>` : '<p style="font-size:12px;color:#484f58">负载: N/A (Windows)</p>'}</div>
-        <div class="card"><h3>💾 内存</h3><p>${sys.memory.used_gb.toFixed(1)} GB / ${sys.memory.total_gb.toFixed(1)} GB</p>${pct(sys.memory.percent)}</div>
-        <div class="card"><h3>📀 磁盘</h3><p>${sys.disk.used_gb.toFixed(1)} GB / ${sys.disk.total_gb.toFixed(1)} GB</p>${pct(sys.disk.percent)}</div>
-      `;
-    }
-  } catch (e) { /* 静默忽略刷新错误 */ }
+  } catch (e) { /* 静默忽略 */ }
 }
-// 每 10s 增量刷新，不闪动
-// 系统信息（CPU/内存/磁盘）无事件推送，降低轮询频率
-setInterval(() => { if (document.getElementById('tab-overview').classList.contains('active')) refreshOverviewData(); }, 30000);
+
+// 轮询：系统信息（CPU/内存/磁盘）无事件推送，30s 一次
+async function refreshSystemInfo() {
+  try {
+    const sys = await api('/api/v1/system').catch(() => null);
+    if (!sys) return;
+    const pct = v => { const c = v < 60 ? 'fill-green' : v < 80 ? 'fill-yellow' : 'fill-red'; return `<div class="progress-bar"><div class="fill ${c}" style="width:${v}%"></div></div><span style="font-size:13px">${v.toFixed(1)}%</span>`; };
+    document.getElementById('ov-system').innerHTML = `
+      <div class="card"><h3>🖥 OS</h3><p>${sys.os.name} ${sys.os.version}</p><p style="font-size:12px;color:#8b949e">${sys.os.hostname} · ${sys.os.kernel || ''}</p></div>
+      <div class="card"><h3>🧠 CPU</h3><p>${sys.cpu.brand} · ${sys.cpu.cores}核</p><p>使用率 ${pct(sys.cpu.usage)}</p>${sys.cpu.load_avg_1 ? `<p style="font-size:12px;color:#8b949e">负载: ${sys.cpu.load_avg_1.toFixed(2)} / ${sys.cpu.load_avg_5.toFixed(2)} / ${sys.cpu.load_avg_15.toFixed(2)}</p>` : '<p style="font-size:12px;color:#484f58">负载: N/A (Windows)</p>'}</div>
+      <div class="card"><h3>💾 内存</h3><p>${sys.memory.used_gb.toFixed(1)} GB / ${sys.memory.total_gb.toFixed(1)} GB</p>${pct(sys.memory.percent)}</div>
+      <div class="card"><h3>📀 磁盘</h3><p>${sys.disk.used_gb.toFixed(1)} GB / ${sys.disk.total_gb.toFixed(1)} GB</p>${pct(sys.disk.percent)}</div>
+    `;
+  } catch (e) { /* 静默忽略 */ }
+}
+setInterval(() => { if (document.getElementById('tab-overview').classList.contains('active')) refreshSystemInfo(); }, 30000);
 
 // ─── Metrics (inline, text/plain) ────────────────
 async function loadMetrics() {
