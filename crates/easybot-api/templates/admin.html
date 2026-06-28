@@ -1020,12 +1020,29 @@ document.getElementById('config-cancel-btn').addEventListener('click', () => {
 });
 document.getElementById('config-save-btn').addEventListener('click', async () => {
   const msg = document.getElementById('config-msg');
+  const editor = document.getElementById('config-editor');
+  const raw = editor.value;
+  editor.style.borderColor = '';
   try {
-    JSON.parse(document.getElementById('config-editor').value);
+    JSON.parse(raw);
   } catch (e) {
-    msg.innerHTML = '<span class="error-msg">JSON 格式错误</span>';
+    const posMatch = e.message.match(/position\s+(\d+)/);
+    let hint = '';
+    if (posMatch) {
+      const pos = parseInt(posMatch[1]);
+      const before = raw.substring(0, pos);
+      const line = (before.match(/\n/g) || []).length + 1;
+      const col = pos - before.lastIndexOf('\n');
+      hint = ` (第 ${line} 行第 ${col} 列)`;
+      editor.style.borderColor = '#f85149';
+      editor.focus();
+      editor.setSelectionRange(pos, pos);
+      editor.scrollTop = editor.scrollHeight * (line / (raw.split('\n').length || 1));
+    }
+    msg.innerHTML = '<span class="error-msg" style="display:inline-block;background:#471a1a;border:1px solid #f851494d;border-radius:6px;padding:6px 10px">❌ JSON 格式错误' + hint + '<br><span style="font-size:11px;color:#f85149cc">' + e.message + '</span></span>';
     return;
   }
+  editor.style.borderColor = '';
   try {
     await api('/api/v1/config', { method: 'PUT', body: JSON.parse(document.getElementById('config-editor').value) });
     msg.innerHTML = '<span class="success-msg">✅ 配置已更新</span>';
