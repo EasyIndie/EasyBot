@@ -142,7 +142,7 @@ jobs:
           fetch-depth: 0
 
       - name: Apply version bump
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: version-bump-patch
 
@@ -203,7 +203,7 @@ jobs:
           ref: ${{ github.ref }}
 
       - name: Apply version bump
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: version-bump-patch
 
@@ -313,7 +313,7 @@ jobs:
           token: ${{ secrets.GH_RELEASE_PAT || github.token }}
 
       - name: Apply version bump
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: version-bump-patch
 
@@ -333,7 +333,7 @@ jobs:
           git push origin --delete "v$VERSION" 2>/dev/null || true
 
       - name: Download all binary artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
 
       - name: Generate checksums
         run: |
@@ -345,7 +345,7 @@ jobs:
           done
 
       - name: Download release body
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: release-body
           path: .release-body
@@ -376,7 +376,7 @@ jobs:
           ref: ${{ github.ref }}
 
       - name: Apply version bump
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: version-bump-patch
 
@@ -384,12 +384,12 @@ jobs:
         run: git apply version-bump.patch
 
       - name: Download linux x86_64 binary
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: easybot-x86_64-unknown-linux-musl
 
       - name: Download linux aarch64 binary
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: easybot-aarch64-unknown-linux-musl
 
