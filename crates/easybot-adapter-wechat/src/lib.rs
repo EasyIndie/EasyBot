@@ -1965,7 +1965,7 @@ mod tests {
 
     #[test]
     fn test_aes_128_ecb_encrypt_decrypt_roundtrip() {
-        use aes::cipher::{BlockDecrypt, KeyInit, generic_array::GenericArray};
+        use aes::cipher::{BlockCipherDecrypt, KeyInit};
 
         let key: [u8; 16] = [
             0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e,
@@ -1981,7 +1981,8 @@ mod tests {
         let cipher = aes::Aes128::new_from_slice(&key).unwrap();
         let mut decrypted = Vec::new();
         for chunk in ciphertext.chunks(16) {
-            let mut block = GenericArray::clone_from_slice(chunk);
+            let mut block = aes::cipher::Block::<aes::Aes128>::default();
+            block.copy_from_slice(chunk);
             cipher.decrypt_block(&mut block);
             decrypted.extend_from_slice(&block);
         }
