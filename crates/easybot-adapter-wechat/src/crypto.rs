@@ -92,14 +92,15 @@ pub(crate) fn pkcs7_pad(data: &[u8], block_size: usize) -> Vec<u8> {
 
 /// AES-128-ECB 加密
 pub(crate) fn aes_128_ecb_encrypt(plaintext: &[u8], key: &[u8; 16]) -> Vec<u8> {
-    use aes::cipher::{BlockEncrypt, KeyInit, generic_array::GenericArray};
+    use aes::cipher::{BlockCipherEncrypt, KeyInit};
 
     let cipher = aes::Aes128::new_from_slice(key).expect("AES-128 key must be 16 bytes");
     let padded = pkcs7_pad(plaintext, 16);
     let mut result = Vec::with_capacity(padded.len());
 
     for chunk in padded.chunks(16) {
-        let mut block = GenericArray::clone_from_slice(chunk);
+        let mut block = aes::cipher::Block::<aes::Aes128>::default();
+        block.copy_from_slice(chunk);
         cipher.encrypt_block(&mut block);
         result.extend_from_slice(&block);
     }

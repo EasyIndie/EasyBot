@@ -152,14 +152,14 @@ impl MetricsRegistry {
     /// 增加活跃 WebSocket 连接计数
     pub fn inc_websocket_connections(&self) {
         self.active_websocket_connections
-            .with_label_values(&[])
+            .with_label_values::<&str>(&[])
             .inc();
     }
 
     /// 减少活跃 WebSocket 连接计数
     pub fn dec_websocket_connections(&self) {
         self.active_websocket_connections
-            .with_label_values(&[])
+            .with_label_values::<&str>(&[])
             .dec();
     }
 
