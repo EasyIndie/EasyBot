@@ -1048,7 +1048,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
- "sha2 0.10.9",
+ "sha2 0.11.0",
  "sqlx",
  "sysinfo",
  "thiserror 2.0.18",
