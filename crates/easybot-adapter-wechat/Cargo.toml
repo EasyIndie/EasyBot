@@ -17,7 +17,7 @@ futures.workspace = true
 uuid.workspace = true
 base64.workspace = true
 dirs.workspace = true
-aes = "0.8"
+aes = "0.9"
 md5 = "0.8"
 
 [dev-dependencies]
