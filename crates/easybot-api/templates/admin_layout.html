@@ -43,6 +43,7 @@
   <button class="tab-btn" data-tab="config" role="tab" aria-selected="false">⚙️ Config</button>
   <button class="tab-btn" data-tab="sessions" role="tab" aria-selected="false">💬 Sessions</button>
   <button class="tab-btn" data-tab="messages" role="tab" aria-selected="false">✉️ Messages</button>
+  <button class="tab-btn" data-tab="apikeys" role="tab" aria-selected="false">🔑 API Key</button>
 </nav>
 
 <!-- Tab: Overview -->
@@ -165,6 +166,12 @@
     <div class="table-wrapper"><table><thead><tr><th>时间</th><th>平台</th><th>Chat</th><th>角色</th><th>消息</th></tr></thead><tbody id="msg-list"></tbody></table></div>
     <div style="text-align:center;margin-top:12px"><button class="btn" id="msg-load-more" style="display:none">加载更多</button></div>
   </div>
+</section>
+
+<!-- Tab: API Keys -->
+<section class="tab-content" id="tab-apikeys" role="tabpanel" aria-label="API Key 管理">
+  <div id="apikeys-loading" class="loading">加载中...</div>
+  <div id="apikeys-content" style="display:none"></div>
 </section>
 
 <!-- Toast notification container -->

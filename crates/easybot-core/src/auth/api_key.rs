@@ -4,6 +4,7 @@
 //! Key 本身不持久化明文，仅在创建时返回一次。
 //! Phase 4: 从 SHA-256 升级到 argon2id (PHC 格式)
 
+use crate::types::event::event_types;
 use argon2::password_hash::SaltString;
 use argon2::password_hash::rand_core::OsRng;
 use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
@@ -23,6 +24,9 @@ pub struct ApiKeyInfo {
     pub last_used_at: Option<i64>,
     pub revoked: bool,
     pub permissions: Vec<String>,
+    /// 允许接收的 WebSocket 事件类型列表。
+    /// 空列表表示接收所有事件（向后兼容）。
+    pub event_filters: Vec<String>,
 }
 
 /// 认证信息（验证成功后返回）
@@ -31,6 +35,9 @@ pub struct AuthInfo {
     pub id: String,
     pub name: String,
     pub permissions: Vec<String>,
+    /// 允许接收的 WebSocket 事件类型列表。
+    /// 空列表表示接收所有事件（向后兼容）。
+    pub event_filters: Vec<String>,
 }
 
 /// API Key 管理器
@@ -60,12 +67,23 @@ impl ApiKeyManager {
     /// 创建新的 API Key
     ///
     /// 返回 (key_id, raw_key)。raw_key 仅在创建时返回，不再持久化存储。
+    ///
+    /// `event_filters` 指定该 Key 允许接收的 WebSocket 事件类型。
+    /// 传入空数组表示接收全部事件。每个事件名必须在 `event_types::all()` 中。
     pub async fn create_key(
         &self,
         name: &str,
         permissions: Vec<String>,
         expires_at: Option<i64>,
+        event_filters: Vec<String>,
     ) -> Result<(String, String), String> {
+        // 校验 event_filters
+        let known_events = event_types::all();
+        for ef in &event_filters {
+            if !known_events.contains(&ef.as_str()) {
+                return Err(format!("Unknown event type: '{}'", ef));
+            }
+        }
         let key_id = Uuid::new_v4().to_string();
         let raw_key = format!("eb_{}", Uuid::new_v4().to_string().replace("-", ""));
         let prefix = raw_key.chars().take(8).collect::<String>();
@@ -96,6 +114,7 @@ impl ApiKeyManager {
             last_used_at: None,
             revoked: false,
             permissions,
+            event_filters,
         };
 
         let stored = StoredKey {
@@ -135,6 +154,7 @@ impl ApiKeyManager {
             id: stored.info.id.clone(),
             name: stored.info.name.clone(),
             permissions: stored.info.permissions.clone(),
+            event_filters: stored.info.event_filters.clone(),
         };
         let phc_hash = stored.hash.clone();
         let key_owned = key.to_string();
@@ -193,7 +213,7 @@ mod tests {
     async fn test_create_and_authenticate() {
         let mgr = ApiKeyManager::new();
         let (id, key) = mgr
-            .create_key("test", vec!["message:send".to_string()], None)
+            .create_key("test", vec!["message:send".to_string()], None, vec![])
             .await
             .unwrap();
 
@@ -203,12 +223,13 @@ mod tests {
         let auth = mgr.authenticate(&key).await.unwrap();
         assert_eq!(auth.name, "test");
         assert_eq!(auth.permissions, vec!["message:send"]);
+        assert!(auth.event_filters.is_empty());
     }
 
     #[tokio::test]
     async fn test_revoke_key() {
         let mgr = ApiKeyManager::new();
-        let (id, key) = mgr.create_key("test", vec![], None).await.unwrap();
+        let (id, key) = mgr.create_key("test", vec![], None, vec![]).await.unwrap();
 
         assert!(mgr.revoke_key(&id).await);
         assert!(mgr.authenticate(&key).await.is_err());
@@ -223,8 +244,52 @@ mod tests {
     #[tokio::test]
     async fn test_expired_key() {
         let mgr = ApiKeyManager::new();
-        let (_id, key) = mgr.create_key("expired", vec![], Some(1)).await.unwrap();
+        let (_id, key) = mgr
+            .create_key("expired", vec![], Some(1), vec![])
+            .await
+            .unwrap();
         // expires_at is 1ms after epoch — definitely expired
         assert!(mgr.authenticate(&key).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_create_key_with_event_filters() {
+        let mgr = ApiKeyManager::new();
+        let filters = vec!["message.inbound".to_string(), "message.sent".to_string()];
+        let (_id, key) = mgr
+            .create_key(
+                "filtered",
+                vec!["messagesread".to_string()],
+                None,
+                filters.clone(),
+            )
+            .await
+            .unwrap();
+
+        let auth = mgr.authenticate(&key).await.unwrap();
+        assert_eq!(auth.event_filters, filters);
+    }
+
+    #[tokio::test]
+    async fn test_create_key_with_invalid_event_filters() {
+        let mgr = ApiKeyManager::new();
+        let result = mgr
+            .create_key("bad", vec![], None, vec!["nonexistent.event".to_string()])
+            .await;
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Unknown event type"));
+    }
+
+    #[tokio::test]
+    async fn test_create_key_empty_event_filters_all_events() {
+        let mgr = ApiKeyManager::new();
+        let (_id, key) = mgr
+            .create_key("all", vec!["*".to_string()], None, vec![])
+            .await
+            .unwrap();
+
+        let auth = mgr.authenticate(&key).await.unwrap();
+        // Empty event_filters = receive all events (backward compatible)
+        assert!(auth.event_filters.is_empty());
     }
 }

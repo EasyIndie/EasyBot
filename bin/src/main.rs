@@ -261,7 +261,7 @@ async fn main() -> anyhow::Result<()> {
     // 创建默认 API Key
     let mut dev_api_key: Option<String> = None;
     match auth_manager
-        .create_key("dev", vec!["*".to_string()], None)
+        .create_key("dev", vec!["*".to_string()], None, vec![])
         .await
     {
         Ok((_id, key)) => {

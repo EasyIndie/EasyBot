@@ -174,7 +174,7 @@ pub async fn build_router(
 ) -> (Router, String) {
     let auth_manager = Arc::new(ApiKeyManager::new());
     let (_, raw_key) = auth_manager
-        .create_key("e2e", vec!["*".to_string()], None)
+        .create_key("e2e", vec!["*".to_string()], None, vec![])
         .await
         .unwrap();
 

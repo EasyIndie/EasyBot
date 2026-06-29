@@ -109,6 +109,10 @@ impl Server {
             (&Method::GET, p) if p.contains("/adapters") => Permission::AdaptersRead,
             // WebSocket upgrade
             (&Method::GET, p) if p.ends_with("/ws") => Permission::WebSocketConnect,
+            // API Key 管理
+            (&Method::GET, p) if p.contains("/api-keys") => Permission::ApiKeysManage,
+            (&Method::POST, p) if p.contains("/api-keys") => Permission::ApiKeysManage,
+            (&Method::DELETE, p) if p.contains("/api-keys") => Permission::ApiKeysManage,
             _ => return next.run(req).await,
         };
 
@@ -258,7 +262,14 @@ pub fn create_router(state: AppState) -> Router {
         // 系统信息（管理后台概览页）
         .route("/system", get(routes::system::system_info))
         // 日志查询（管理后台日志页）
-        .route("/logs", get(routes::logs::log_entries));
+        .route("/logs", get(routes::logs::log_entries))
+        // API Key 管理
+        .route(
+            "/api-keys",
+            get(routes::admin::list_api_keys).post(routes::admin::create_api_key),
+        )
+        .route("/api-keys/types", get(routes::admin::list_api_key_types))
+        .route("/api-keys/{id}", delete(routes::admin::revoke_api_key));
 
     // ── 指标端点（需认证：Prometheus 抓取可能不支持 Bearer token，
     // 生产环境建议通过反向代理 IP 白名单控制访问）──

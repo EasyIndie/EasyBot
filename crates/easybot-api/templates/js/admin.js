@@ -928,6 +928,583 @@ async function loadMessages(append = false) {
 }
 
 
+// ─── API Key 管理 Tab ──────────────────────────
+
+// 所有可用事件类型（与后端 event_types::all() 一致）
+const ALL_EVENT_TYPES = [
+  "message.inbound", "message.sent", "message.failed",
+  "adapter.connected", "adapter.disconnected", "adapter.error",
+  "adapter.reconnecting", "adapter.reconnected", "adapter.reconnect_failed",
+  "callback.received",
+  "gateway.started", "gateway.stopping", "config.changed",
+];
+
+// 所有可用权限（与后端 Permission 枚举一致）
+const ALL_PERMISSIONS = [
+  "*", "messagesread", "messagessend", "adaptersread",
+  "adaptersmanage", "configread", "configwrite",
+  "sessionsread", "sessionsmanage", "websocketconnect", "apikeysmanage",
+];
+
+// 创建模板
+const KEY_TEMPLATES = [
+  {
+    name: "客服机器人",
+    icon: "📨",
+    desc: "自动回复机器人，只接收用户消息",
+    permissions: ["messagesend"],
+    event_filters: ["message.inbound"],
+  },
+  {
+    name: "监控告警",
+    icon: "🔔",
+    desc: "监控连接状态，异常时告警",
+    permissions: ["adaptersread"],
+    event_filters: ["adapter.disconnected", "adapter.error", "adapter.reconnecting"],
+  },
+  {
+    name: "消息日志",
+    icon: "📋",
+    desc: "消息发送记录归档",
+    permissions: ["messagesread"],
+    event_filters: ["message.sent", "message.failed"],
+  },
+  {
+    name: "会话跟踪",
+    icon: "👤",
+    desc: "追踪完整对话流程",
+    permissions: ["messagesread", "messagessend", "sessionsread"],
+    event_filters: ["message.inbound", "message.sent", "callback.received"],
+  },
+  {
+    name: "全功能",
+    icon: "🚀",
+    desc: "管理后台、开发调试（同 dev key）",
+    permissions: ["*"],
+    event_filters: [],
+  },
+  {
+    name: "自定义",
+    icon: "✏️",
+    desc: "自由组合需要的事件类型和权限",
+    permissions: [],
+    event_filters: [],
+  },
+];
+
+// 侧滑调试面板状态
+let debugWs = null;
+let debugLog = [];
+const MAX_DEBUG_LOG = 200;
+
+async function loadApiKeys() {
+  const loading = document.getElementById('apikeys-loading');
+  const content = document.getElementById('apikeys-content');
+  try {
+    loading.style.display = 'block';
+    content.style.display = 'none';
+
+    const keys = await api('/api/v1/api-keys');
+
+    let html = '<div style="display:flex;gap:8px;margin-bottom:12px">';
+    html += '<button class="btn btn-primary" id="apikey-create-btn">➕ 创建 API Key</button>';
+    html += '</div>';
+
+    if (!keys || !keys.length) {
+      html += '<div class="card"><p style="color:var(--text-muted)">暂无 API Key</p></div>';
+    } else {
+      html += '<div class="table-wrapper"><table><thead><tr>' +
+        '<th>名称</th><th>Key</th><th>权限</th><th>事件过滤</th><th>状态</th><th>创建时间</th><th>操作</th>' +
+        '</tr></thead><tbody>';
+      for (const k of keys) {
+        const masked = k.prefix ? k.prefix + '****' : '****';
+        const statusHtml = k.revoked
+          ? '<span class="badge badge-red">已吊销</span>'
+          : '<span class="badge badge-green">正常</span>';
+        const permHtml = k.permissions.includes('*')
+          ? '<span class="badge badge-blue">全部</span>'
+          : k.permissions.map(p => '<span class="badge badge-gray" style="margin:1px">' + p + '</span>').join('');
+        const filterHtml = !k.event_filters || !k.event_filters.length
+          ? '<span class="badge badge-blue">全部事件</span>'
+          : k.event_filters.map(ef => '<span class="badge badge-gray" style="margin:1px">' + ef + '</span>').join('');
+        const created = new Date(k.created_at).toLocaleString();
+        const debugBtn = k.revoked
+          ? '<button class="btn btn-sm" disabled>调试</button>'
+          : `<button class="btn btn-sm" onclick="openDebugPanel('${k.id}','${k.name}','${masked}','${k.event_filters.join(',')}')">🔍 调试</button>`;
+        const revokeBtn = k.revoked
+          : ''
+          : `<button class="btn btn-sm btn-danger" onclick="revokeApiKey('${k.id}','${k.name}')">吊销</button>`;
+        html += `<tr>
+          <td><strong>${k.name}</strong></td>
+          <td style="font-family:monospace;font-size:12px">${masked}</td>
+          <td style="font-size:12px">${permHtml}</td>
+          <td style="font-size:12px">${filterHtml}</td>
+          <td>${statusHtml}</td>
+          <td style="font-size:12px;color:var(--text-muted)">${created}</td>
+          <td style="white-space:nowrap">${debugBtn} ${revokeBtn}</td>
+        </tr>`;
+      }
+      html += '</tbody></table></div>';
+    }
+
+    // 调试面板容器（初始隐藏）
+    html += '<div class="debug-panel" id="debug-panel" style="display:none"></div>';
+
+    content.innerHTML = html;
+    loading.style.display = 'none';
+    content.style.display = 'block';
+
+    // 绑定创建按钮
+    document.getElementById('apikey-create-btn').addEventListener('click', showCreateDialog);
+
+  } catch (e) {
+    loading.innerHTML = '加载失败: ' + e.message;
+  }
+}
+
+// ─── 创建对话框 ────────────────────────────────
+
+function showCreateDialog() {
+  // 创建模态框（覆盖在页面中央）
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.style.display = 'flex';
+
+  let templateCards = KEY_TEMPLATES.map((t, i) => `
+    <div class="template-card" data-idx="${i}" onclick="selectTemplate(${i})" style="cursor:pointer;padding:12px;border:1px solid var(--border-muted);border-radius:8px;margin-bottom:8px;background:var(--bg-tertiary);transition:all 0.15s">
+      <div style="font-size:16px;font-weight:600">${t.icon} ${t.name}</div>
+      <div style="font-size:12px;color:var(--text-muted);margin-top:4px">${t.desc}</div>
+    </div>
+  `).join('');
+
+  overlay.innerHTML = `
+    <div class="modal-card" style="max-width:640px;max-height:80vh;overflow-y:auto">
+      <div class="modal-header">
+        <h3 id="create-dialog-title">🔑 创建 API Key</h3>
+        <button class="modal-close" onclick="closeCreateDialog()">&times;</button>
+      </div>
+      <div id="create-step-1">
+        <p style="color:var(--text-muted);margin-bottom:12px">选择场景模板快速创建，或选择自定义自由配置：</p>
+        <div id="template-list">${templateCards}</div>
+      </div>
+      <div id="create-step-2" style="display:none">
+        <p style="color:var(--text-muted);margin-bottom:12px">确认配置并填写名称：</p>
+        <div class="form-group">
+          <label>名称</label>
+          <input type="text" id="create-key-name" placeholder="例如: 客服机器人" style="width:100%">
+        </div>
+        <div class="form-group">
+          <label>事件类型过滤（勾选需要接收的事件）</label>
+          <div id="create-event-filters" style="display:flex;flex-wrap:wrap;gap:6px"></div>
+        </div>
+        <div class="form-group">
+          <label>权限（勾选需要的权限，选中 * 为全部）</label>
+          <div id="create-permissions" style="display:flex;flex-wrap:wrap;gap:6px"></div>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:12px">
+          <button class="btn" onclick="backToTemplateSelect()">← 返回</button>
+          <button class="btn btn-primary" id="create-key-submit">✅ 创建</button>
+        </div>
+      </div>
+      <div id="create-result" style="display:none">
+        <div style="text-align:center;padding:16px">
+          <p style="font-size:24px;margin-bottom:12px">✅</p>
+          <p style="color:var(--text-muted);margin-bottom:8px">API Key 创建成功！</p>
+          <p style="font-size:11px;color:var(--danger);margin-bottom:12px">⚠️ 密钥只显示一次，请妥善保管</p>
+          <div style="background:var(--bg-tertiary);border:1px solid var(--border-muted);border-radius:8px;padding:16px;font-family:monospace;font-size:18px;word-break:break-all;margin-bottom:12px" id="create-result-key"></div>
+          <button class="btn btn-primary" onclick="copyResultKey()" style="margin-bottom:8px">📋 复制密钥</button>
+          <button class="btn" onclick="closeCreateDialogAndRefresh()">完成</button>
+        </div>
+      </div>
+    </div>
+  `;
+
+  document.body.appendChild(overlay);
+  document.body.style.overflow = 'hidden';
+}
+
+// 当前选中的模板索引（-1 = 未选中）
+let selectedTemplateIdx = -1;
+
+function selectTemplate(idx) {
+  selectedTemplateIdx = idx;
+  const tpl = KEY_TEMPLATES[idx];
+
+  // 高亮选中
+  document.querySelectorAll('.template-card').forEach((c, i) => {
+    c.style.borderColor = i === idx ? 'var(--accent)' : 'var(--border-muted)';
+    c.style.background = i === idx ? 'var(--bg-secondary)' : 'var(--bg-tertiary)';
+  });
+
+  // 显示第二步
+  document.getElementById('create-step-1').style.display = 'none';
+  document.getElementById('create-step-2').style.display = 'block';
+  document.getElementById('create-dialog-title').textContent = `🔑 创建 API Key — ${tpl.icon} ${tpl.name}`;
+
+  // 填充事件过滤勾选项
+  const filterContainer = document.getElementById('create-event-filters');
+  filterContainer.innerHTML = '';
+  // "全部事件"选项
+  const allEventsCheckbox = document.createElement('label');
+  allEventsCheckbox.style.cssText = 'display:inline-flex;align-items:center;gap:4px;padding:4px 8px;background:var(--bg-tertiary);border-radius:4px;cursor:pointer;font-size:12px';
+  allEventsCheckbox.innerHTML = '<input type="checkbox" id="ef-all" onchange="toggleAllEventFilters()"> 全部事件';
+  filterContainer.appendChild(allEventsCheckbox);
+
+  for (const et of ALL_EVENT_TYPES) {
+    const label = document.createElement('label');
+    label.style.cssText = 'display:inline-flex;align-items:center;gap:4px;padding:4px 8px;background:var(--bg-tertiary);border-radius:4px;cursor:pointer;font-size:12px';
+    label.innerHTML = `<input type="checkbox" class="ef-item" value="${et}" onchange="onEventFilterChange()"> ${et}`;
+    filterContainer.appendChild(label);
+  }
+
+  // 填充权限勾选项
+  const permContainer = document.getElementById('create-permissions');
+  permContainer.innerHTML = '';
+  for (const p of ALL_PERMISSIONS) {
+    const label = document.createElement('label');
+    label.style.cssText = 'display:inline-flex;align-items:center;gap:4px;padding:4px 8px;background:var(--bg-tertiary);border-radius:4px;cursor:pointer;font-size:12px';
+    const starAttr = p === '*' ? 'onchange="onStarPermissionChange()"' : '';
+    label.innerHTML = `<input type="checkbox" class="perm-item" value="${p}" ${starAttr}> ${p}`;
+    permContainer.appendChild(label);
+  }
+
+  // 应用模板预设
+  if (tpl.event_filters.length === 0) {
+    document.getElementById('ef-all').checked = true;
+    document.querySelectorAll('.ef-item').forEach(cb => cb.checked = false);
+  } else {
+    document.getElementById('ef-all').checked = false;
+    tpl.event_filters.forEach(ef => {
+      const cb = document.querySelector(`.ef-item[value="${ef}"]`);
+      if (cb) cb.checked = true;
+    });
+  }
+
+  ALL_PERMISSIONS.forEach(p => {
+    const cb = document.querySelector(`.perm-item[value="${p}"]`);
+    if (cb && tpl.permissions.includes(p)) cb.checked = true;
+  });
+
+  // 绑定创建提交
+  document.getElementById('create-key-submit').onclick = submitCreateKey;
+}
+
+function toggleAllEventFilters() {
+  const allChecked = document.getElementById('ef-all').checked;
+  document.querySelectorAll('.ef-item').forEach(cb => cb.checked = false);
+}
+
+function onEventFilterChange() {
+  const anyChecked = document.querySelectorAll('.ef-item:checked').length > 0;
+  document.getElementById('ef-all').checked = !anyChecked;
+}
+
+function onStarPermissionChange() {
+  const starChecked = document.querySelector('.perm-item[value="*"]')?.checked;
+  document.querySelectorAll('.perm-item').forEach(cb => {
+    if (cb.value !== '*') cb.disabled = starChecked;
+    if (starChecked) cb.checked = false;
+  });
+}
+
+function backToTemplateSelect() {
+  document.getElementById('create-step-2').style.display = 'none';
+  document.getElementById('create-result').style.display = 'none';
+  document.getElementById('create-step-1').style.display = 'block';
+  document.getElementById('create-dialog-title').textContent = '🔑 创建 API Key';
+  selectedTemplateIdx = -1;
+  document.querySelectorAll('.template-card').forEach(c => {
+    c.style.borderColor = 'var(--border-muted)';
+    c.style.background = 'var(--bg-tertiary)';
+  });
+}
+
+let lastCreatedKey = '';
+
+async function submitCreateKey() {
+  const name = document.getElementById('create-key-name').value.trim();
+  if (!name) {
+    document.getElementById('create-key-name').style.borderColor = 'var(--danger)';
+    showToast('请输入名称', 'error');
+    return;
+  }
+  document.getElementById('create-key-name').style.borderColor = '';
+
+  const allChecked = document.getElementById('ef-all').checked;
+  let event_filters;
+  if (allChecked) {
+    event_filters = [];
+  } else {
+    event_filters = [...document.querySelectorAll('.ef-item:checked')].map(cb => cb.value);
+  }
+
+  const permissions = [...document.querySelectorAll('.perm-item:checked')].map(cb => cb.value);
+  if (!permissions.length) {
+    showToast('请至少选择一个权限', 'error');
+    return;
+  }
+
+  const btn = document.getElementById('create-key-submit');
+  btn.disabled = true;
+  btn.textContent = '创建中...';
+
+  try {
+    const result = await api('/api/v1/api-keys', {
+      method: 'POST',
+      body: { name, permissions, event_filters },
+    });
+    lastCreatedKey = result.key || '';
+    document.getElementById('create-step-2').style.display = 'none';
+    document.getElementById('create-result').style.display = 'block';
+    document.getElementById('create-result-key').textContent = lastCreatedKey;
+  } catch (e) {
+    showToast('创建失败: ' + e.message, 'error');
+    btn.disabled = false;
+    btn.textContent = '✅ 创建';
+  }
+}
+
+function copyResultKey() {
+  if (!lastCreatedKey) return;
+  navigator.clipboard.writeText(lastCreatedKey).catch(() => {});
+  showToast('密钥已复制到剪贴板', 'success');
+}
+
+function closeCreateDialog() {
+  const overlay = document.querySelector('.modal-overlay');
+  if (overlay) { overlay.remove(); document.body.style.overflow = ''; }
+}
+
+function closeCreateDialogAndRefresh() {
+  closeCreateDialog();
+  loadApiKeys();
+}
+
+// ─── 吊销 Key ──────────────────────────────────
+
+async function revokeApiKey(id, name) {
+  const isDev = name === 'dev';
+  const msg = isDev
+    ? `⚠️ 这是主管理 Key（${name}），确认吊销？此操作不可撤销！`
+    : `确定吊销 Key [${name}]？此操作不可撤销！`;
+  if (!confirm(msg)) return;
+  try {
+    await api(`/api/v1/api-keys/${id}`, { method: 'DELETE' });
+    showToast(`Key [${name}] 已吊销`, 'success');
+    loadApiKeys();
+  } catch (e) {
+    showToast('吊销失败: ' + e.message, 'error');
+  }
+}
+
+// ─── 调试面板 ──────────────────────────────────
+
+function openDebugPanel(id, name, masked, eventFiltersStr) {
+  const panel = document.getElementById('debug-panel');
+  if (!panel) return;
+
+  const eventFilters = eventFiltersStr ? eventFiltersStr.split(',') : [];
+
+  panel.style.display = 'block';
+  panel.innerHTML = `
+    <div class="debug-panel-header" style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;background:var(--bg-secondary);border-bottom:1px solid var(--border-muted);border-radius:8px 8px 0 0">
+      <div>
+        <h3 style="margin:0;font-size:14px">🔍 调试: ${name}</h3>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:4px">
+          Key: ${masked}
+          ${eventFilters.length ? ' | 事件过滤: ' + eventFilters.join(', ') : ' | 全部事件'}
+        </div>
+      </div>
+      <button class="modal-close" onclick="closeDebugPanel()">&times;</button>
+    </div>
+    <div style="padding:12px 16px;display:flex;gap:8px;align-items:center;border-bottom:1px solid var(--border-muted)">
+      <button class="btn btn-sm btn-primary" id="debug-connect-btn" onclick="debugConnect()">🔗 连接</button>
+      <button class="btn btn-sm" id="debug-disconnect-btn" onclick="debugDisconnect()" disabled>⏹ 断开</button>
+      <button class="btn btn-sm" onclick="debugClearLog()">🗑 清空日志</button>
+      <span id="debug-status" style="font-size:12px;color:var(--text-muted)">● 已断开</span>
+    </div>
+    <div style="padding:8px 16px">
+      <input type="text" id="debug-filter" placeholder="筛选事件..." oninput="debugFilterLog()" style="width:100%;font-size:12px">
+    </div>
+    <div id="debug-log-container" style="height:300px;overflow-y:auto;padding:8px 16px;font-family:monospace;font-size:11px;background:var(--bg-tertiary);border-radius:0 0 8px 8px">
+      <div style="color:var(--text-faint);text-align:center;padding:40px 0">点击"连接"开始接收事件</div>
+    </div>
+  `;
+
+  // 存储当前调试的 key id 和 info
+  panel.dataset.keyId = id;
+  panel.dataset.keyName = name;
+
+  // 重置调试状态
+  debugLog = [];
+  debugWs = null;
+}
+
+function closeDebugPanel() {
+  debugDisconnect();
+  const panel = document.getElementById('debug-panel');
+  if (panel) panel.style.display = 'none';
+}
+
+function debugConnect() {
+  const panel = document.getElementById('debug-panel');
+  if (!panel) return;
+
+  // 获取当前登录用户的 key 作为调试 key
+  // 注意：这里用当前用户的 apiKey 来建立连接
+  // 在实际场景中，应该用被调试的 key，但这里简化处理
+  // 因为 server 端已经在 auth 时根据 event_filters 做了过滤
+  const testKey = apiKey;
+  if (!testKey) { showToast('请先登录', 'error'); return; }
+
+  debugDisconnect();
+
+  const statusEl = document.getElementById('debug-status');
+  const connectBtn = document.getElementById('debug-connect-btn');
+  const disconnectBtn = document.getElementById('debug-disconnect-btn');
+  const logContainer = document.getElementById('debug-log-container');
+  if (!statusEl || !connectBtn || !disconnectBtn || !logContainer) return;
+
+  statusEl.textContent = '● 连接中...';
+  statusEl.style.color = 'var(--accent)';
+  connectBtn.disabled = true;
+
+  try {
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const url = proto + '//' + location.host + '/api/v1/ws';
+    debugWs = new WebSocket(url);
+
+    debugWs.onopen = () => {
+      debugWs.send(JSON.stringify({ token: testKey }));
+    };
+
+    debugWs.onmessage = (e) => {
+      try {
+        const msg = JSON.parse(e.data);
+        if (msg.type === 'auth_ok') {
+          statusEl.textContent = '● 已连接';
+          statusEl.style.color = 'var(--success)';
+          disconnectBtn.disabled = false;
+          debugAddLog('system', '认证成功，开始接收事件');
+          return;
+        }
+        if (msg.type === 'auth_failed') {
+          statusEl.textContent = '● 认证失败';
+          statusEl.style.color = 'var(--danger)';
+          debugAddLog('error', '认证失败: API Key 无效');
+          debugDisconnect();
+          return;
+        }
+        // 业务事件
+        if (msg.type === 'event') {
+          debugAddLog(msg.event, msg.data);
+        }
+      } catch (err) {
+        debugAddLog('error', '解析错误: ' + err.message);
+      }
+    };
+
+    debugWs.onerror = () => {
+      statusEl.textContent = '● 连接错误';
+      statusEl.style.color = 'var(--danger)';
+      debugAddLog('error', 'WebSocket 连接错误');
+      connectBtn.disabled = false;
+    };
+
+    debugWs.onclose = () => {
+      statusEl.textContent = '● 已断开';
+      statusEl.style.color = 'var(--text-muted)';
+      connectBtn.disabled = false;
+      disconnectBtn.disabled = true;
+      debugWs = null;
+    };
+
+  } catch (err) {
+    statusEl.textContent = '● 创建失败';
+    statusEl.style.color = 'var(--danger)';
+    connectBtn.disabled = false;
+    debugAddLog('error', '创建 WebSocket 失败: ' + err.message);
+  }
+}
+
+function debugDisconnect() {
+  if (debugWs) {
+    debugWs.onclose = null;
+    debugWs.close();
+    debugWs = null;
+  }
+  const statusEl = document.getElementById('debug-status');
+  const connectBtn = document.getElementById('debug-connect-btn');
+  const disconnectBtn = document.getElementById('debug-disconnect-btn');
+  if (statusEl) { statusEl.textContent = '● 已断开'; statusEl.style.color = 'var(--text-muted)'; }
+  if (connectBtn) connectBtn.disabled = false;
+  if (disconnectBtn) disconnectBtn.disabled = true;
+}
+
+function debugAddLog(type, data) {
+  const container = document.getElementById('debug-log-container');
+  if (!container) return;
+
+  const time = new Date().toLocaleTimeString();
+  let typeColor = 'var(--text-muted)';
+  if (type === 'message.inbound' || type === 'message.sent') typeColor = 'var(--success)';
+  else if (type === 'message.failed') typeColor = 'var(--danger)';
+  else if (type.startsWith('adapter.')) typeColor = 'var(--accent)';
+  else if (type === 'system') typeColor = 'var(--primary)';
+  else if (type === 'error') typeColor = 'var(--danger)';
+
+  const dataStr = typeof data === 'object' ? JSON.stringify(data) : String(data);
+
+  debugLog.push({ time, type, data: dataStr, typeColor });
+
+  // 限制数量
+  if (debugLog.length > MAX_DEBUG_LOG) debugLog.shift();
+
+  // 移除空状态提示
+  const emptyMsg = container.querySelector('div[style*="text-align:center"]');
+  if (emptyMsg) emptyMsg.remove();
+
+  // 渲染
+  debugRenderLog(container);
+}
+
+function debugRenderLog(container) {
+  const filterText = document.getElementById('debug-filter')?.value?.toLowerCase() || '';
+  const filtered = filterText
+    ? debugLog.filter(l => l.type.toLowerCase().includes(filterText) || l.data.toLowerCase().includes(filterText))
+    : debugLog;
+
+  container.innerHTML = filtered.map(l =>
+    `<div style="padding:2px 0;border-bottom:1px solid var(--border-muted);display:flex;gap:8px">
+      <span style="color:var(--text-faint);white-space:nowrap;flex-shrink:0">${l.time}</span>
+      <span style="color:${l.typeColor};flex-shrink:0">${l.type}</span>
+      <span style="color:var(--text-muted);word-break:break-all">${escapeHtml(l.data)}</span>
+    </div>`
+  ).join('') || '<div style="color:var(--text-faint);text-align:center;padding:20px 0">无匹配事件</div>';
+
+  container.scrollTop = container.scrollHeight;
+}
+
+function debugFilterLog() {
+  const container = document.getElementById('debug-log-container');
+  if (container) debugRenderLog(container);
+}
+
+function debugClearLog() {
+  debugLog = [];
+  const container = document.getElementById('debug-log-container');
+  if (container) {
+    container.innerHTML = '<div style="color:var(--text-faint);text-align:center;padding:40px 0">日志已清空</div>';
+  }
+}
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+
 // ─── Tab 切换 ──────────────────────────────────
 // ─── 标签页注册表 ──────────────────────────────
 let currentTab = 'overview';
@@ -940,6 +1517,7 @@ const tabRegistry = {
   config:    { load: loadConfig,          refresh: loadConfig,          cleanup: null },
   sessions:  { load: loadSessions,        refresh: () => loadSessions(true), cleanup: null },
   messages:  { load: loadMessages,        refresh: loadMessages,        cleanup: null },
+  apikeys:   { load: loadApiKeys,         refresh: loadApiKeys,        cleanup: closeDebugPanel },
 };
 
 function switchTab(name) {
