@@ -931,13 +931,35 @@ async function loadMessages(append = false) {
 // ─── API Key 管理 Tab ──────────────────────────
 
 // 所有可用事件类型（与后端 event_types::all() 一致）
-const ALL_EVENT_TYPES = [
-  "message.inbound", "message.sent", "message.failed",
-  "adapter.connected", "adapter.disconnected", "adapter.error",
-  "adapter.reconnecting", "adapter.reconnected", "adapter.reconnect_failed",
-  "callback.received",
-  "gateway.started", "gateway.stopping", "config.changed",
+// 按类别分组展示
+const EVENT_TYPE_GROUPS = [
+  {
+    title: "消息事件",
+    items: ["message.inbound", "message.sent", "message.failed"],
+  },
+  {
+    title: "适配器事件",
+    items: [
+      "adapter.connected",
+      "adapter.disconnected",
+      "adapter.error",
+      "adapter.reconnecting",
+      "adapter.reconnected",
+      "adapter.reconnect_failed",
+    ],
+  },
+  {
+    title: "回调事件",
+    items: ["callback.received"],
+  },
+  {
+    title: "系统事件",
+    items: ["gateway.started", "gateway.stopping", "config.changed"],
+  },
 ];
+
+// 扁平列表，供模板预设和程序逻辑使用
+const ALL_EVENT_TYPES = EVENT_TYPE_GROUPS.flatMap(g => g.items);
 
 // 所有可用权限（与后端 Permission 枚举一致）
 const ALL_PERMISSIONS = [
@@ -1149,27 +1171,49 @@ function selectTemplate(idx) {
   document.getElementById('create-step-1').style.display = 'none';
   document.getElementById('create-step-2').style.display = 'block';
 
-  // 填充事件过滤勾选项
+  // 填充事件过滤勾选项（按类别分组）
   const filterContainer = document.getElementById('create-event-filters');
   filterContainer.innerHTML = '';
-  const allEventsCb = document.createElement('label');
-  allEventsCb.innerHTML = '<input type="checkbox" id="ef-all" onchange="toggleAllEventFilters()"> 全部事件';
-  filterContainer.appendChild(allEventsCb);
 
-  for (const et of ALL_EVENT_TYPES) {
-    const label = document.createElement('label');
-    label.innerHTML = `<input type="checkbox" class="ef-item" value="${et}" onchange="onEventFilterChange()"> ${et}`;
-    filterContainer.appendChild(label);
+  // 全部事件（独立区域，醒目）
+  const allSection = document.createElement('div');
+  allSection.className = 'cg-all';
+  allSection.innerHTML = '<label><input type="checkbox" id="ef-all" onchange="toggleAllEventFilters()"> 📡 全部事件</label>';
+  filterContainer.appendChild(allSection);
+
+  // 按分类组排列
+  for (const group of EVENT_TYPE_GROUPS) {
+    const groupDiv = document.createElement('div');
+    groupDiv.className = 'cg-group';
+    groupDiv.innerHTML = `<div class="cg-group-title">${group.title}</div><div class="cg-items">`;
+    for (const et of group.items) {
+      groupDiv.innerHTML += `<label><input type="checkbox" class="ef-item" value="${et}" onchange="onEventFilterChange()"> ${et}</label>`;
+    }
+    groupDiv.innerHTML += '</div>';
+    filterContainer.appendChild(groupDiv);
   }
 
-  // 填充权限勾选项
+  // 填充权限勾选项（按角色分组）
   const permContainer = document.getElementById('create-permissions');
   permContainer.innerHTML = '';
-  for (const p of ALL_PERMISSIONS) {
-    const label = document.createElement('label');
-    const starAttr = p === '*' ? 'onchange="onStarPermissionChange()"' : '';
-    label.innerHTML = `<input type="checkbox" class="perm-item" value="${p}" ${starAttr}> ${p}`;
-    permContainer.appendChild(label);
+  const permGroups = [
+    { title: '全部权限', items: ['*'] },
+    { title: '消息', items: ['messagesread', 'messagessend'] },
+    { title: '适配器', items: ['adaptersread', 'adaptersmanage'] },
+    { title: '配置', items: ['configread', 'configwrite'] },
+    { title: '会话', items: ['sessionsread', 'sessionsmanage'] },
+    { title: '其他', items: ['websocketconnect', 'apikeysmanage'] },
+  ];
+  for (const group of permGroups) {
+    const groupDiv = document.createElement('div');
+    groupDiv.className = 'cg-group';
+    groupDiv.innerHTML = `<div class="cg-group-title">${group.title}</div><div class="cg-items">`;
+    for (const p of group.items) {
+      const starAttr = p === '*' ? 'onchange="onStarPermissionChange()"' : '';
+      groupDiv.innerHTML += `<label><input type="checkbox" class="perm-item" value="${p}" ${starAttr}> ${p}</label>`;
+    }
+    groupDiv.innerHTML += '</div>';
+    permContainer.appendChild(groupDiv);
   }
 
   // 应用模板预设
