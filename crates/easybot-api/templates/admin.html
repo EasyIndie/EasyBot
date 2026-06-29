@@ -1600,6 +1600,10 @@ async function submitCreateKey() {
       body: { name, permissions, event_filters },
     });
     lastCreatedKey = result.key || '';
+    // 保存到 sessionStorage，供调试面板自动填充
+    if (lastCreatedKey) {
+      sessionStorage.setItem('easybot_debug_key', lastCreatedKey);
+    }
     document.getElementById('create-step-2').style.display = 'none';
     document.getElementById('create-result').style.display = 'block';
     document.getElementById('create-result-key').textContent = lastCreatedKey;
@@ -1651,19 +1655,25 @@ function openDebugPanel(id, name, masked, eventFiltersStr) {
 
   const eventFilters = eventFiltersStr ? eventFiltersStr.split(',') : [];
 
+  // 尝试从之前创建 Key 的结果中填充 Key（仅本次会话有效）
+  const savedTestKey = sessionStorage.getItem('easybot_debug_key') || '';
+
   panel.style.display = 'block';
   panel.innerHTML = `
     <div class="debug-panel-header" style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;background:var(--bg-secondary);border-bottom:1px solid var(--border-muted);border-radius:8px 8px 0 0">
       <div>
         <h3 style="margin:0;font-size:14px">🔍 调试: ${name}</h3>
         <div style="font-size:11px;color:var(--text-muted);margin-top:4px">
-          Key: ${masked}
-          ${eventFilters.length ? ' | 事件过滤: ' + eventFilters.join(', ') : ' | 全部事件'}
+          ${eventFilters.length ? '事件过滤: ' + eventFilters.join(', ') : '全部事件'}
         </div>
       </div>
       <button class="modal-close" onclick="closeDebugPanel()">&times;</button>
     </div>
-    <div style="padding:12px 16px;display:flex;gap:8px;align-items:center;border-bottom:1px solid var(--border-muted)">
+    <div style="padding:8px 16px;border-bottom:1px solid var(--border-muted)">
+      <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px">输入要测试的 API Key（独立连接，不影响主页面）</label>
+      <input type="text" id="debug-key-input" value="${savedTestKey}" placeholder="粘贴 API Key 进行测试..." style="width:100%;font-family:monospace;font-size:13px;padding:6px 8px">
+    </div>
+    <div style="padding:8px 16px;display:flex;gap:8px;align-items:center;border-bottom:1px solid var(--border-muted)">
       <button class="btn btn-sm btn-primary" id="debug-connect-btn" onclick="debugConnect()">🔗 连接</button>
       <button class="btn btn-sm" id="debug-disconnect-btn" onclick="debugDisconnect()" disabled>⏹ 断开</button>
       <button class="btn btn-sm" onclick="debugClearLog()">🗑 清空日志</button>
@@ -1673,7 +1683,7 @@ function openDebugPanel(id, name, masked, eventFiltersStr) {
       <input type="text" id="debug-filter" placeholder="筛选事件..." oninput="debugFilterLog()" style="width:100%;font-size:12px">
     </div>
     <div id="debug-log-container" style="height:300px;overflow-y:auto;padding:8px 16px;font-family:monospace;font-size:11px;background:var(--bg-tertiary);border-radius:0 0 8px 8px">
-      <div style="color:var(--text-faint);text-align:center;padding:40px 0">点击"连接"开始接收事件</div>
+      <div style="color:var(--text-faint);text-align:center;padding:40px 0">填入 Key 点击"连接"开始测试</div>
     </div>
   `;
 
@@ -1696,12 +1706,10 @@ function debugConnect() {
   const panel = document.getElementById('debug-panel');
   if (!panel) return;
 
-  // 获取当前登录用户的 key 作为调试 key
-  // 注意：这里用当前用户的 apiKey 来建立连接
-  // 在实际场景中，应该用被调试的 key，但这里简化处理
-  // 因为 server 端已经在 auth 时根据 event_filters 做了过滤
-  const testKey = apiKey;
-  if (!testKey) { showToast('请先登录', 'error'); return; }
+  // 从输入框读取要测试的 Key（独立于主管理员的 apiKey）
+  const keyInput = document.getElementById('debug-key-input');
+  const testKey = keyInput ? keyInput.value.trim() : '';
+  if (!testKey) { showToast('请先填入要测试的 API Key', 'error'); return; }
 
   debugDisconnect();
 
