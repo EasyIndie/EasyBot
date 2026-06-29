@@ -3,7 +3,7 @@
 //! 订阅 EventBus 事件，根据配置将事件通过 HTTP POST 转发到外部 URL。
 //! 支持 HMAC-SHA256 签名验证，按事件类型和平台过滤。
 
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use reqwest::Client;
 use sha2::Sha256;
 use std::sync::Arc;

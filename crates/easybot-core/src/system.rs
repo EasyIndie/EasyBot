@@ -79,7 +79,7 @@ pub fn collect_system_info() -> SystemInfo {
 
     // CPU
     sys.refresh_cpu_all();
-    let cpu_cores = sys.physical_core_count().unwrap_or(sys.cpus().len());
+    let cpu_cores = System::physical_core_count().unwrap_or(sys.cpus().len());
     let cpu_brand = if !sys.cpus().is_empty() {
         sys.cpus()[0].brand().to_string()
     } else {

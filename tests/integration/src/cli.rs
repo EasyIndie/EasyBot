@@ -261,8 +261,7 @@ fn test_openapi_has_security_scheme() {
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         assert_eq!(resp.status(), 200, "openapi.json should return 200");
 
-        let mut body = String::new();
-        resp.into_reader().read_to_string(&mut body).unwrap();
+        let body = resp.into_body().read_to_string().unwrap();
         let spec: serde_json::Value =
             serde_json::from_str(&body).expect("openapi.json should be valid JSON");
 
