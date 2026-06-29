@@ -6,6 +6,7 @@
 //!
 //! 新增/修改/删除 `docs/` 下的 `.md` 文件后，重新运行 `cargo build` 即可自动更新。
 
+use base64::Engine;
 use pulldown_cmark::{Options, Parser, html};
 use std::path::Path;
 
@@ -96,6 +97,31 @@ fn main() {
 
     std::fs::write(&output_path, &result).unwrap();
 
+    // ── 读取 favicon/logo 并 base64 编码 ──
+    let favicon_path = manifest_dir.join("templates/favicon.png");
+    let logo_path = manifest_dir.join("templates/logo.png");
+    let logo_small_path = manifest_dir.join("templates/logo-small.png");
+
+    println!("cargo::rerun-if-changed={}", favicon_path.display());
+    println!("cargo::rerun-if-changed={}", logo_path.display());
+    println!("cargo::rerun-if-changed={}", logo_small_path.display());
+
+    let favicon_data = png_to_data_uri(&favicon_path);
+    let logo_data = png_to_data_uri(&logo_path);
+    let logo_small_data = png_to_data_uri(&logo_small_path);
+
+    // ── 首页：从 home_layout.html 生成 home.html（注入 favicon/logo） ──
+    let home_layout_path = manifest_dir.join("templates/home_layout.html");
+    let home_output_path = manifest_dir.join("templates/home.html");
+    println!("cargo::rerun-if-changed={}", home_layout_path.display());
+    if home_layout_path.exists() {
+        let home_html = std::fs::read_to_string(&home_layout_path).unwrap();
+        let home_html = home_html
+            .replace("__FAVICON__", &favicon_data)
+            .replace("__LOGO__", &logo_data);
+        std::fs::write(&home_output_path, home_html).unwrap();
+    }
+
     // ── 管理后台：拼接 JS/CSS 模块生成 admin.html ──
     let admin_layout_path = manifest_dir.join("templates/admin_layout.html");
     let admin_output_path = manifest_dir.join("templates/admin.html");
@@ -116,11 +142,34 @@ fn main() {
         let layout = process_includes(&layout, manifest_dir);
         let admin_html = layout
             .replace("__ADMIN_CSS__", &admin_css)
-            .replace("__ADMIN_JS__", &admin_js);
+            .replace("__ADMIN_JS__", &admin_js)
+            .replace("__FAVICON__", &favicon_data)
+            .replace("__LOGO_SMALL__", &logo_small_data)
+            .replace("__LOGO__", &logo_data);
         std::fs::write(&admin_output_path, admin_html).unwrap();
     }
 
+    // ── 文档页：注入 favicon ──
+    if output_path.exists() {
+        let docs_html = std::fs::read_to_string(&output_path).unwrap();
+        let docs_html = docs_html.replace("__FAVICON__", &favicon_data);
+        std::fs::write(&output_path, docs_html).unwrap();
+    }
+
     // 构建完成，不输出额外消息避免 cargo:warning 干扰
+}
+
+/// 读取 PNG 文件并返回 base64 data URI
+fn png_to_data_uri(path: &Path) -> String {
+    if !path.exists() {
+        return String::new();
+    }
+    let data = std::fs::read(path).unwrap_or_default();
+    if data.is_empty() {
+        return String::new();
+    }
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
+    format!("data:image/png;base64,{}", b64)
 }
 
 /// 提取 Markdown 文件的标题

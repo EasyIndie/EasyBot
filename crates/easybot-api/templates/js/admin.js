@@ -134,7 +134,7 @@ function closeModal() {
   document.body.style.overflow = '';
 }
 // ESC 关闭 + 点击遮罩关闭
-document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape') { closeCreateDialog(); closeModal(); } });
 document.getElementById('detail-modal').addEventListener('click', e => { if (e.target === e.currentTarget) closeModal(); });
 
 
@@ -961,6 +961,22 @@ const EVENT_TYPE_GROUPS = [
 // 扁平列表，供模板预设和程序逻辑使用
 const ALL_EVENT_TYPES = EVENT_TYPE_GROUPS.flatMap(g => g.items);
 
+// 类别颜色映射（用于 checkbox-grid 分组标题圆点）
+const EVENT_GROUP_COLORS = {
+  "消息事件": "#58a6ff",
+  "适配器事件": "#3fb950",
+  "回调事件": "#d29922",
+  "系统事件": "#bc8cff",
+};
+const PERM_GROUP_COLORS = {
+  "全部权限": "#d29922",
+  "消息": "#58a6ff",
+  "适配器": "#3fb950",
+  "配置": "#bc8cff",
+  "会话": "#56d4dd",
+  "其他": "#6e7681",
+};
+
 // 所有可用权限（与后端 Permission 枚举一致）
 const ALL_PERMISSIONS = [
   "*", "messagesread", "messagessend", "adaptersread",
@@ -974,7 +990,7 @@ const KEY_TEMPLATES = [
     name: "客服机器人",
     icon: "📨",
     desc: "自动回复机器人，只接收用户消息",
-    permissions: ["messagesend"],
+    permissions: ["messagessend"],
     event_filters: ["message.inbound"],
   },
   {
@@ -1022,10 +1038,13 @@ const MAX_DEBUG_LOG = 200;
 async function loadApiKeys() {
   const loading = document.getElementById('apikeys-loading');
   const content = document.getElementById('apikeys-content');
-  try {
+  const isFirstLoad = content.style.display === 'none';
+  if (isFirstLoad) {
     loading.style.display = 'block';
     content.style.display = 'none';
+  }
 
+  try {
     const keys = await api('/api/v1/api-keys');
 
     let html = '<div style="display:flex;gap:8px;margin-bottom:12px">';
@@ -1038,7 +1057,7 @@ async function loadApiKeys() {
       html += '<div class="table-wrapper"><table><thead><tr>' +
         '<th>名称</th><th>Key</th><th>权限</th><th>事件过滤</th><th>状态</th><th>创建时间</th><th>操作</th>' +
         '</tr></thead><tbody>';
-      for (const k of keys) {
+      for (const k of keys.filter(k => k.name !== 'dev')) {
         const masked = k.prefix ? k.prefix + '****' : '****';
         const statusHtml = k.revoked
           ? '<span class="badge badge-red">已吊销</span>'
@@ -1054,10 +1073,10 @@ async function loadApiKeys() {
           ? '<button class="btn btn-sm" disabled>调试</button>'
           : `<button class="btn btn-sm" onclick="openDebugPanel('${k.id}','${k.name}','${masked}','${k.event_filters.join(',')}')">🔍 调试</button>`;
         const revokeBtn = k.revoked
-          ? ''
+          ? `<button class="btn btn-sm btn-danger" onclick="deleteApiKey('${k.id}','${k.name}')">删除</button>`
           : `<button class="btn btn-sm btn-danger" onclick="revokeApiKey('${k.id}','${k.name}')">吊销</button>`;
         html += `<tr>
-          <td><strong>${k.name}</strong></td>
+          <td style="white-space:nowrap"><strong>${k.name}</strong></td>
           <td style="font-family:monospace;font-size:12px">${masked}</td>
           <td style="font-size:12px">${permHtml}</td>
           <td style="font-size:12px">${filterHtml}</td>
@@ -1080,11 +1099,50 @@ async function loadApiKeys() {
     document.getElementById('apikey-create-btn').addEventListener('click', showCreateDialog);
 
   } catch (e) {
-    loading.innerHTML = '加载失败: ' + e.message;
+    if (isFirstLoad) {
+      loading.innerHTML = '加载失败: ' + e.message;
+    } else {
+      content.innerHTML = '<div class="error-msg" style="padding:12px">刷新失败: ' + e.message + '</div>';
+    }
   }
 }
 
-// ─── 创建对话框 ────────────────────────────────
+// ─── 创建对话框（单页布局，模板 + 配置同一页面） ──
+
+function buildEventFilterHtml() {
+  let html = '<div class="cg-all"><label><input type="checkbox" id="ef-all" onchange="toggleAllEventFilters()"><span>📡 全部事件</span></label></div>';
+  for (const group of EVENT_TYPE_GROUPS) {
+    const dotColor = EVENT_GROUP_COLORS[group.title] || '#6e7681';
+    let itemsHtml = '';
+    for (const et of group.items) {
+      itemsHtml += `<label><input type="checkbox" class="ef-item" value="${et}" onchange="onEventFilterChange()"><span>${et}</span></label>`;
+    }
+    html += `<div class="cg-group"><div class="cg-group-title"><span class="cg-dot" style="background:${dotColor}"></span>${group.title}</div><div class="cg-items">${itemsHtml}</div></div>`;
+  }
+  return html;
+}
+
+function buildPermHtml() {
+  const permGroups = [
+    { title: '全部权限', items: ['*'] },
+    { title: '消息', items: ['messagesread', 'messagessend'] },
+    { title: '适配器', items: ['adaptersread', 'adaptersmanage'] },
+    { title: '配置', items: ['configread', 'configwrite'] },
+    { title: '会话', items: ['sessionsread', 'sessionsmanage'] },
+    { title: '其他', items: ['websocketconnect', 'apikeysmanage'] },
+  ];
+  let html = '';
+  for (const group of permGroups) {
+    const dotColor = PERM_GROUP_COLORS[group.title] || '#6e7681';
+    let itemsHtml = '';
+    for (const p of group.items) {
+      const starAttr = p === '*' ? 'onchange="onStarPermissionChange()"' : '';
+      itemsHtml += `<label><input type="checkbox" class="perm-item" value="${p}" ${starAttr}><span>${p}</span></label>`;
+    }
+    html += `<div class="cg-group"><div class="cg-group-title"><span class="cg-dot" style="background:${dotColor}"></span>${group.title}</div><div class="cg-items">${itemsHtml}</div></div>`;
+  }
+  return html;
+}
 
 function showCreateDialog() {
   const overlay = document.createElement('div');
@@ -1096,56 +1154,54 @@ function showCreateDialog() {
       <div class="tpl-icon">${t.icon}</div>
       <div class="tpl-name">${t.name}</div>
       <div class="tpl-desc">${t.desc}</div>
-      ${t.permissions.length ? `<span class="tpl-badge">${t.permissions.join(', ')}</span>` : ''}
     </div>
   `).join('');
 
   overlay.innerHTML = `
-    <div class="modal-card" style="max-width:640px;max-height:85vh;overflow-y:auto">
+    <div class="modal-card" style="max-width:680px;max-height:90vh;overflow-y:auto">
       <div class="modal-header">
-        <h3 id="create-dialog-title">🔑 创建 API Key</h3>
+        <h3>🔑 创建 API Key</h3>
         <button class="modal-close" onclick="closeCreateDialog()">&times;</button>
       </div>
-      <div style="padding:20px">
-        <div id="create-step-1">
-          <div class="step-indicator"><div class="step active"><span class="step-num">1</span> 选择模板</div><div class="step-line"></div><div class="step"><span class="step-num">2</span> 配置详情</div></div>
-          <p style="color:var(--text-muted);margin-bottom:16px;font-size:13px">选择场景模板快速创建，或选择自定义自由配置：</p>
-          <div id="template-list">${templateCards}</div>
+      <div style="padding:20px" id="create-form-area">
+        <p style="color:var(--text-muted);margin-bottom:8px;font-size:13px">选择场景模板（点击快速填充配置）：</p>
+        <div class="template-grid" id="template-list">${templateCards}</div>
+
+        <div class="form-group">
+          <label>名称 <span style="color:var(--danger)">*</span></label>
+          <input type="text" id="create-key-name" placeholder="例如: 客服机器人">
         </div>
-        <div id="create-step-2" style="display:none">
-          <div class="step-indicator"><div class="step done"><span class="step-num">✓</span> 选择模板</div><div class="step-line"></div><div class="step active"><span class="step-num">2</span> 配置详情</div></div>
-          <div class="form-group">
-            <label>名称 <span style="color:var(--danger)">*</span></label>
-            <input type="text" id="create-key-name" placeholder="例如: 客服机器人">
+
+        <div class="form-group">
+          <div class="filter-perm-labels">
+            <label>事件类型过滤（不选=全部）</label>
+            <label>权限（选 <code>*</code> = 全部）</label>
           </div>
-          <div class="form-group">
-            <label>事件类型过滤（勾选要接收的事件，不选=全部事件）</label>
-            <div id="create-event-filters" class="checkbox-grid"></div>
-          </div>
-          <div class="form-group">
-            <label>权限（勾选需要的权限，选中 <code>*</code> = 全部）</label>
-            <div id="create-permissions" class="checkbox-grid"></div>
-          </div>
-          <div style="display:flex;gap:8px;margin-top:16px">
-            <button class="btn" onclick="backToTemplateSelect()">← 返回</button>
-            <button class="btn btn-primary" id="create-key-submit" style="flex:1">✅ 创建 API Key</button>
+          <div class="filter-perm-row">
+            <div id="create-event-filters" class="checkbox-grid">${buildEventFilterHtml()}</div>
+            <div id="create-permissions" class="checkbox-grid">${buildPermHtml()}</div>
           </div>
         </div>
-        <div id="create-result" style="display:none">
-          <div class="step-indicator"><div class="step done"><span class="step-num">✓</span> 选择模板</div><div class="step-line"></div><div class="step done"><span class="step-num">✓</span> 配置详情</div></div>
-          <div style="text-align:center;padding:8px 0">
-            <p style="font-size:32px;margin-bottom:8px">✅</p>
-            <p style="color:var(--text-muted);font-size:13px">API Key 创建成功！请立即复制并妥善保管。</p>
+
+        <button class="btn btn-primary" id="create-key-submit" onclick="submitCreateKey()" style="width:100%;margin-top:4px">✅ 创建 API Key</button>
+      </div>
+
+      <div id="create-result" style="display:none;padding:20px">
+        <div style="text-align:center;padding:8px 0">
+          <p style="font-size:32px;margin-bottom:8px">✅</p>
+          <p style="color:var(--text-muted);font-size:13px">API Key 创建成功！请立即复制并妥善保管。</p>
+        </div>
+        <div class="key-result-box">
+          <div class="key-warn">⚠️ 密钥只显示一次，关闭后无法再次查看</div>
+          <div class="key-value" id="create-result-key"></div>
+          <div class="key-actions">
+            <button class="btn btn-primary" onclick="copyResultKey()">📋 复制密钥</button>
+            <button class="btn" onclick="openDebugWithNewKey()">🔍 调试验证</button>
           </div>
-          <div class="key-result-box">
-            <div class="key-warn">⚠️ 密钥只显示一次，关闭后无法再次查看</div>
-            <div class="key-value" id="create-result-key"></div>
-            <div class="key-actions">
-              <button class="btn btn-primary" onclick="copyResultKey()">📋 复制密钥</button>
-              <button class="btn" onclick="openDebugWithNewKey()">🔍 调试验证</button>
-            </div>
-          </div>
-          <button class="btn" onclick="closeCreateDialogAndRefresh()" style="width:100%">完成</button>
+        </div>
+        <div style="display:flex;gap:8px;margin-top:8px">
+          <button class="btn" onclick="resetCreateForm()" style="flex:1">🔄 再创建一个</button>
+          <button class="btn" onclick="closeCreateDialogAndRefresh()" style="flex:1">完成</button>
         </div>
       </div>
     </div>
@@ -1153,6 +1209,9 @@ function showCreateDialog() {
 
   document.body.appendChild(overlay);
   document.body.style.overflow = 'hidden';
+
+  // 默认选中"自定义"模板（索引 5）
+  selectTemplate(5);
 }
 
 // 当前选中的模板索引（-1 = 未选中）
@@ -1167,74 +1226,43 @@ function selectTemplate(idx) {
     c.classList.toggle('selected', i === idx);
   });
 
-  // 显示第二步
-  document.getElementById('create-step-1').style.display = 'none';
-  document.getElementById('create-step-2').style.display = 'block';
+  // 隐藏结果区（如果之前创建过），显示表单区
+  const resultArea = document.getElementById('create-result');
+  const formArea = document.getElementById('create-form-area');
+  if (resultArea) resultArea.style.display = 'none';
+  if (formArea) formArea.style.display = 'block';
 
-  // 填充事件过滤勾选项（按类别分组）
-  const filterContainer = document.getElementById('create-event-filters');
-  filterContainer.innerHTML = '';
+  // 填充名称
+  const nameInput = document.getElementById('create-key-name');
+  if (nameInput) nameInput.value = tpl.name !== '自定义' ? tpl.name : '';
 
-  // 全部事件（独立区域，醒目）
-  const allSection = document.createElement('div');
-  allSection.className = 'cg-all';
-  allSection.innerHTML = '<label><input type="checkbox" id="ef-all" onchange="toggleAllEventFilters()"> 📡 全部事件</label>';
-  filterContainer.appendChild(allSection);
-
-  // 按分类组排列
-  for (const group of EVENT_TYPE_GROUPS) {
-    const groupDiv = document.createElement('div');
-    groupDiv.className = 'cg-group';
-    groupDiv.innerHTML = `<div class="cg-group-title">${group.title}</div><div class="cg-items">`;
-    for (const et of group.items) {
-      groupDiv.innerHTML += `<label><input type="checkbox" class="ef-item" value="${et}" onchange="onEventFilterChange()"> ${et}</label>`;
-    }
-    groupDiv.innerHTML += '</div>';
-    filterContainer.appendChild(groupDiv);
-  }
-
-  // 填充权限勾选项（按角色分组）
-  const permContainer = document.getElementById('create-permissions');
-  permContainer.innerHTML = '';
-  const permGroups = [
-    { title: '全部权限', items: ['*'] },
-    { title: '消息', items: ['messagesread', 'messagessend'] },
-    { title: '适配器', items: ['adaptersread', 'adaptersmanage'] },
-    { title: '配置', items: ['configread', 'configwrite'] },
-    { title: '会话', items: ['sessionsread', 'sessionsmanage'] },
-    { title: '其他', items: ['websocketconnect', 'apikeysmanage'] },
-  ];
-  for (const group of permGroups) {
-    const groupDiv = document.createElement('div');
-    groupDiv.className = 'cg-group';
-    groupDiv.innerHTML = `<div class="cg-group-title">${group.title}</div><div class="cg-items">`;
-    for (const p of group.items) {
-      const starAttr = p === '*' ? 'onchange="onStarPermissionChange()"' : '';
-      groupDiv.innerHTML += `<label><input type="checkbox" class="perm-item" value="${p}" ${starAttr}> ${p}</label>`;
-    }
-    groupDiv.innerHTML += '</div>';
-    permContainer.appendChild(groupDiv);
-  }
-
-  // 应用模板预设
+  // 应用事件过滤预设
+  const efAll = document.getElementById('ef-all');
   if (tpl.event_filters.length === 0) {
-    document.getElementById('ef-all').checked = true;
+    if (efAll) efAll.checked = true;
     document.querySelectorAll('.ef-item').forEach(cb => cb.checked = false);
   } else {
-    document.getElementById('ef-all').checked = false;
-    tpl.event_filters.forEach(ef => {
-      const cb = document.querySelector(`.ef-item[value="${ef}"]`);
-      if (cb) cb.checked = true;
+    if (efAll) efAll.checked = false;
+    document.querySelectorAll('.ef-item').forEach(cb => {
+      cb.checked = tpl.event_filters.includes(cb.value);
     });
   }
 
-  ALL_PERMISSIONS.forEach(p => {
-    const cb = document.querySelector(`.perm-item[value="${p}"]`);
-    if (cb && tpl.permissions.includes(p)) cb.checked = true;
+  // 应用权限预设
+  document.querySelectorAll('.perm-item').forEach(cb => {
+    cb.checked = tpl.permissions.includes(cb.value);
   });
+  onStarPermissionChange(); // 同步 * 的禁用状态
 
   // 绑定创建提交
-  document.getElementById('create-key-submit').onclick = submitCreateKey;
+  const submitBtn = document.getElementById('create-key-submit');
+  if (submitBtn) { submitBtn.onclick = submitCreateKey; submitBtn.disabled = false; submitBtn.textContent = '✅ 创建 API Key'; }
+}
+
+function resetCreateForm() {
+  document.getElementById('create-result').style.display = 'none';
+  document.getElementById('create-form-area').style.display = 'block';
+  selectTemplate(5); // 重置为"自定义"
 }
 
 function toggleAllEventFilters() {
@@ -1250,17 +1278,11 @@ function onEventFilterChange() {
 function onStarPermissionChange() {
   const starChecked = document.querySelector('.perm-item[value="*"]')?.checked;
   document.querySelectorAll('.perm-item').forEach(cb => {
-    if (cb.value !== '*') cb.disabled = starChecked;
-    if (starChecked) cb.checked = false;
+    if (cb.value !== '*') {
+      cb.disabled = starChecked;
+      if (starChecked) cb.checked = false;
+    }
   });
-}
-
-function backToTemplateSelect() {
-  document.getElementById('create-step-2').style.display = 'none';
-  document.getElementById('create-result').style.display = 'none';
-  document.getElementById('create-step-1').style.display = 'block';
-  selectedTemplateIdx = -1;
-  document.querySelectorAll('.template-card').forEach(c => c.classList.remove('selected'));
 }
 
 function openDebugWithNewKey() {
@@ -1316,7 +1338,7 @@ async function submitCreateKey() {
     if (lastCreatedKey) {
       sessionStorage.setItem('easybot_debug_key', lastCreatedKey);
     }
-    document.getElementById('create-step-2').style.display = 'none';
+    document.getElementById('create-form-area').style.display = 'none';
     document.getElementById('create-result').style.display = 'block';
     document.getElementById('create-result-key').textContent = lastCreatedKey;
   } catch (e) {
@@ -1333,13 +1355,15 @@ function copyResultKey() {
 }
 
 function closeCreateDialog() {
-  const overlay = document.querySelector('.modal-overlay');
-  if (overlay) { overlay.remove(); document.body.style.overflow = ''; }
+  const overlay = document.querySelector('.modal-overlay:not(#detail-modal)');
+  if (!overlay) return;
+  overlay.remove();
+  document.body.style.overflow = '';
+  loadApiKeys(); // 退出时自动刷新列表
 }
 
 function closeCreateDialogAndRefresh() {
   closeCreateDialog();
-  loadApiKeys();
 }
 
 // ─── 吊销 Key ──────────────────────────────────
@@ -1356,6 +1380,17 @@ async function revokeApiKey(id, name) {
     loadApiKeys();
   } catch (e) {
     showToast('吊销失败: ' + e.message, 'error');
+  }
+}
+
+async function deleteApiKey(id, name) {
+  if (!confirm(`确定永久删除 Key [${name}]？此操作不可撤销！`)) return;
+  try {
+    await api(`/api/v1/api-keys/${id}/purge`, { method: 'DELETE' });
+    showToast(`Key [${name}] 已永久删除`, 'success');
+    loadApiKeys();
+  } catch (e) {
+    showToast('删除失败: ' + e.message, 'error');
   }
 }
 

@@ -162,6 +162,23 @@ pub async fn revoke_api_key(
     }
 }
 
+/// DELETE /api/v1/api-keys/{id}/purge — 永久删除已吊销的 Key
+pub async fn purge_api_key(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<RevokeResponse>, ApiError> {
+    if state.auth_manager.delete_key(&id).await {
+        Ok(Json(RevokeResponse {
+            success: true,
+            message: "API Key 已永久删除".into(),
+        }))
+    } else {
+        Err(ApiError(GatewayError::InvalidRequest(
+            "只能删除已吊销的 Key，且 Key 必须存在".into(),
+        )))
+    }
+}
+
 /// GET /api/v1/api-keys/types — 获取可用事件类型和权限列表
 pub async fn list_api_key_types() -> Json<ApiKeyTypesResponse> {
     Json(ApiKeyTypesResponse {

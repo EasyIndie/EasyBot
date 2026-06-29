@@ -43,6 +43,21 @@ CREATE TABLE IF NOT EXISTS messages (
 CREATE INDEX IF NOT EXISTS idx_messages_sk ON messages(session_key, timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_messages_pc ON messages(platform, chat_id, timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_messages_ct ON messages(created_at);
+
+CREATE TABLE IF NOT EXISTS api_keys (
+    id            TEXT PRIMARY KEY,
+    name          TEXT NOT NULL,
+    prefix        TEXT NOT NULL,
+    created_at    INTEGER NOT NULL,
+    expires_at    INTEGER,
+    last_used_at  INTEGER,
+    revoked       INTEGER NOT NULL DEFAULT 0,
+    permissions   TEXT NOT NULL DEFAULT '[]',
+    event_filters TEXT NOT NULL DEFAULT '[]',
+    hash          TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_api_keys_created ON api_keys(created_at DESC);
 ";
 
 // ── 连接与迁移 ──

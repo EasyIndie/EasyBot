@@ -114,15 +114,15 @@ label { display: block; font-size: 13px; color: var(--text-muted); margin-bottom
 .msg-failed { border-left: 3px solid var(--danger); padding-left: 12px; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
 /* Toast */
-#toast-container { position: fixed; top: 16px; right: 16px; z-index: 2000; display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
+#toast-container { position: fixed; top: 16px; left: 50%; transform: translateX(-50%); z-index: 10000; display: flex; flex-direction: column; align-items: center; gap: 8px; pointer-events: none; }
 .toast { padding: 10px 16px; border-radius: 6px; font-size: 13px; color: #e6edf3; pointer-events: auto; max-width: 360px; animation: toastIn 0.3s ease; box-shadow: 0 4px 12px rgba(0,0,0,0.4); }
 .toast.removing { animation: toastOut 0.3s ease forwards; }
 .toast-success { background: #1a4731; border: 1px solid var(--success); }
 .toast-error { background: #471a1a; border: 1px solid var(--danger); }
 .toast-warning { background: #472a1a; border: 1px solid var(--warning); }
 .toast-info { background: #1a2a47; border: 1px solid var(--accent); }
-@keyframes toastIn { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
-@keyframes toastOut { from { transform: translateX(0); opacity: 1; } to { transform: translateX(100%); opacity: 0; } }
+@keyframes toastIn { from { transform: translateY(-16px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+@keyframes toastOut { from { transform: translateY(0); opacity: 1; } to { transform: translateY(-16px); opacity: 0; } }
 /* Modal */
 .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 3000; display: flex; align-items: center; justify-content: center; }
 .modal-card { background: var(--bg-secondary); border: 1px solid var(--border-default); border-radius: 12px; max-width: 90vw; max-height: 80vh; width: 600px; display: flex; flex-direction: column; }
@@ -131,30 +131,51 @@ label { display: block; font-size: 13px; color: var(--text-muted); margin-bottom
 .modal-close { background: none; border: none; color: var(--text-muted); font-size: 24px; cursor: pointer; padding: 0 4px; line-height: 1; }
 .modal-close:hover { color: var(--text-primary); }
 #modal-body { padding: 16px 20px; font-size: 13px; font-family: var(--font-mono); color: var(--text-secondary); white-space: pre-wrap; word-break: break-all; margin: 0; overflow: auto; flex: 1; }
-/* Template cards for API Key creation */
-.template-card { cursor: pointer; padding: 14px 16px; border: 1px solid var(--border-muted); border-radius: var(--radius); margin-bottom: 8px; background: var(--bg-tertiary); transition: all .15s; }
+/* Template cards for API Key creation — compact grid layout */
+.template-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 18px; }
+.template-card { cursor: pointer; padding: 10px 12px; border: 1px solid var(--border-muted); border-radius: var(--radius); background: var(--bg-tertiary); transition: all .15s; text-align: center; }
 .template-card:hover { border-color: var(--accent); background: var(--bg-secondary); }
 .template-card.selected { border-color: var(--accent); background: #1a2a47; box-shadow: 0 0 0 1px var(--accent); }
-.template-card .tpl-icon { font-size: 20px; }
-.template-card .tpl-name { font-size: 15px; font-weight: 600; color: var(--text-primary); }
-.template-card .tpl-desc { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
-.template-card .tpl-badge { display: inline-block; font-size: 11px; padding: 1px 6px; border-radius: 4px; background: var(--border-muted); color: var(--text-faint); margin-top: 6px; }
+.template-card .tpl-icon { font-size: 18px; }
+.template-card .tpl-name { font-size: 13px; font-weight: 600; color: var(--text-primary); }
+.template-card .tpl-desc { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
+.template-card .tpl-badge { display: none; }
 
-/* Checkbox grid for event filters and permissions */
-.checkbox-grid { max-height: 260px; overflow-y: auto; background: var(--bg-tertiary); border: 1px solid var(--border-muted); border-radius: 6px; padding: 4px; }
-.checkbox-grid .cg-all { padding: 8px; border-bottom: 1px solid var(--border-muted); margin-bottom: 4px; }
-.checkbox-grid .cg-all label { display: flex; align-items: center; gap: 6px; padding: 6px 10px; background: var(--border-muted); border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: 500; color: var(--text-primary); user-select: none; margin-bottom: 0; transition: all .15s; }
-.checkbox-grid .cg-all label:hover { background: var(--border-default); }
-.checkbox-grid .cg-all label:has(input:checked) { background: #1a2a47; border: 1px solid var(--accent); color: var(--accent); }
-.checkbox-grid .cg-group { padding: 4px 8px 6px; }
-.checkbox-grid .cg-group + .cg-group { border-top: 1px solid var(--border-muted); padding-top: 6px; }
-.checkbox-grid .cg-group-title { font-size: 11px; font-weight: 600; color: var(--text-faint); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 4px; padding: 0 2px; }
+/* Checkbox grid for event filters and permissions — refined pill/tag style */
+.checkbox-grid { background: var(--bg-tertiary); border: 1px solid var(--border-muted); border-radius: 8px; padding: 6px; }
+/* Side-by-side layout: events left, permissions right */
+.filter-perm-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 4px; }
+.filter-perm-labels { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 4px; }
+.filter-perm-labels label { margin-bottom: 0; }
+
+/* Hide native checkboxes — label styling provides all visual feedback */
+.checkbox-grid input[type="checkbox"] { position: absolute; opacity: 0; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; }
+
+/* "全部" toggle — prominent standalone pill */
+.checkbox-grid .cg-all { display: flex; align-items: center; padding: 4px 6px 6px; border-bottom: 1px solid var(--border-muted); margin-bottom: 4px; }
+.checkbox-grid .cg-all label { display: inline-flex !important; align-items: center; gap: 5px; padding: 5px 14px; cursor: pointer; font-size: 12px; font-weight: 600; color: var(--text-primary); user-select: none; background: var(--border-muted); border-radius: 18px; transition: all .2s; margin-bottom: 0; border: 1.5px solid transparent; position: relative; }
+.checkbox-grid .cg-all label:hover { background: var(--border-default); border-color: var(--text-faint); transform: translateY(-1px); }
+.checkbox-grid .cg-all label:has(input:checked) { background: #1a2a47; color: var(--accent); border-color: var(--accent); box-shadow: 0 0 8px rgba(88,166,255,.15); }
+.checkbox-grid .cg-all label:has(input:checked)::before { content: '✓'; font-size: 11px; font-weight: 700; }
+
+/* Group container */
+.checkbox-grid .cg-group { padding: 3px 3px 4px; }
+.checkbox-grid .cg-group + .cg-group { border-top: 1px solid var(--border-muted); margin-top: 2px; padding-top: 5px; }
+
+/* Group title with colored dot */
+.checkbox-grid .cg-group-title { font-size: 10px; font-weight: 700; color: var(--text-faint); text-transform: uppercase; letter-spacing: .4px; padding: 1px 4px 4px; display: flex; align-items: center; gap: 4px; }
+.checkbox-grid .cg-dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+
+/* Items flex wrap */
 .checkbox-grid .cg-items { display: flex; flex-wrap: wrap; gap: 4px; }
-.checkbox-grid .cg-items label { display: inline-flex; align-items: center; gap: 3px; padding: 4px 8px; background: var(--border-muted); border-radius: 5px; cursor: pointer; font-size: 11px; color: var(--text-secondary); transition: all .12s; user-select: none; margin-bottom: 0; border: 1px solid transparent; }
-.checkbox-grid .cg-items label:hover { background: var(--border-default); border-color: var(--text-faint); }
-.checkbox-grid .cg-items label:has(input:checked) { background: #152238; border-color: var(--accent); color: var(--accent); }
-.checkbox-grid .cg-items label:has(input:disabled) { opacity: .35; cursor: not-allowed; }
-.checkbox-grid input[type="checkbox"] { accent-color: var(--accent); }
+
+/* Individual selection pill */
+.checkbox-grid .cg-items label { display: inline-flex !important; align-items: center; gap: 2px; padding: 3px 9px; background: var(--border-muted); border-radius: 12px; cursor: pointer; font-size: 11px; color: var(--text-secondary); transition: all .15s; user-select: none; border: 1.5px solid transparent; margin-bottom: 0; position: relative; }
+.checkbox-grid .cg-items label:hover { background: var(--border-default); border-color: var(--text-faint); transform: translateY(-1px); box-shadow: 0 2px 6px rgba(0,0,0,.18); }
+.checkbox-grid .cg-items label:has(input:checked) { background: #152238; border-color: var(--accent); color: var(--accent); box-shadow: 0 0 8px rgba(88,166,255,.1); }
+.checkbox-grid .cg-items label:has(input:checked)::before { content: '✓'; font-size: 9px; font-weight: 700; }
+.checkbox-grid .cg-items label:has(input:disabled) { opacity: .28; cursor: not-allowed; filter: grayscale(.6); }
+.checkbox-grid .cg-items label:has(input:disabled):hover { transform: none; box-shadow: none; border-color: transparent; }
 
 /* Debug panel */
 .debug-panel { background: var(--bg-secondary); border: 1px solid var(--border-default); border-radius: var(--radius); overflow: hidden; }

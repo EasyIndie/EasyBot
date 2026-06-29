@@ -172,7 +172,7 @@ pub async fn build_router(
     message_store: Arc<dyn easybot_core::storage::MessageStore>,
     config: GatewayConfig,
 ) -> (Router, String) {
-    let auth_manager = Arc::new(ApiKeyManager::new());
+    let auth_manager = Arc::new(ApiKeyManager::new(None));
     let (_, raw_key) = auth_manager
         .create_key("e2e", vec!["*".to_string()], None, vec![])
         .await

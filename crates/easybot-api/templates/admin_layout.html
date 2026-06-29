@@ -4,13 +4,14 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>EasyBot 管理后台</title>
+<link rel="icon" type="image/png" sizes="32x32" href="__FAVICON__">
 <style>__ADMIN_CSS__</style>
 </head>
 <body>
 <!-- Login Overlay -->
 <div class="login-overlay" id="login-overlay" role="dialog" aria-modal="true" aria-label="管理员登录">
   <div class="login-box">
-    <a href="/" style="text-decoration:none;color:inherit"><h2>EasyBot</h2></a>
+    <a href="/" style="text-decoration:none;color:inherit;display:flex;flex-direction:column;align-items:center;gap:8px"><img src="__LOGO__" alt="EasyBot" width="64" height="64" style="display:block"><h2>EasyBot</h2></a>
     <p>管理后台需要密码登录</p>
     <form id="login-form">
       <div class="form-group">
@@ -26,7 +27,7 @@
 
 <!-- Header -->
 <header class="header">
-  <h1 style="font-size:16px;">EasyBot 管理后台</h1>
+  <h1 style="font-size:16px;display:flex;align-items:center;gap:8px"><img src="__LOGO__" alt="" width="20" height="20" style="display:block;border-radius:3px"> EasyBot 管理后台</h1>
   <div class="right">
     <a href="/" style="color:var(--text-muted);text-decoration:none;font-size:13px;margin-right:8px;">⬅ 首页</a>
     <span class="key-display" id="key-display" style="display:none"></span>

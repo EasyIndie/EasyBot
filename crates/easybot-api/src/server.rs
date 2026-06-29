@@ -269,7 +269,8 @@ pub fn create_router(state: AppState) -> Router {
             get(routes::admin::list_api_keys).post(routes::admin::create_api_key),
         )
         .route("/api-keys/types", get(routes::admin::list_api_key_types))
-        .route("/api-keys/{id}", delete(routes::admin::revoke_api_key));
+        .route("/api-keys/{id}", delete(routes::admin::revoke_api_key))
+        .route("/api-keys/{id}/purge", delete(routes::admin::purge_api_key));
 
     // ── 指标端点（需认证：Prometheus 抓取可能不支持 Bearer token，
     // 生产环境建议通过反向代理 IP 白名单控制访问）──
