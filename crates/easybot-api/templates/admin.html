@@ -1378,7 +1378,7 @@ async function loadApiKeys() {
           ? '<button class="btn btn-sm" disabled>调试</button>'
           : `<button class="btn btn-sm" onclick="openDebugPanel('${k.id}','${k.name}','${masked}','${k.event_filters.join(',')}')">🔍 调试</button>`;
         const revokeBtn = k.revoked
-          : ''
+          ? ''
           : `<button class="btn btn-sm btn-danger" onclick="revokeApiKey('${k.id}','${k.name}')">吊销</button>`;
         html += `<tr>
           <td><strong>${k.name}</strong></td>
