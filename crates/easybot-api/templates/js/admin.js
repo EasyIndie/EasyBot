@@ -1065,55 +1065,65 @@ async function loadApiKeys() {
 // ─── 创建对话框 ────────────────────────────────
 
 function showCreateDialog() {
-  // 创建模态框（覆盖在页面中央）
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
   overlay.style.display = 'flex';
 
   let templateCards = KEY_TEMPLATES.map((t, i) => `
-    <div class="template-card" data-idx="${i}" onclick="selectTemplate(${i})" style="cursor:pointer;padding:12px;border:1px solid var(--border-muted);border-radius:8px;margin-bottom:8px;background:var(--bg-tertiary);transition:all 0.15s">
-      <div style="font-size:16px;font-weight:600">${t.icon} ${t.name}</div>
-      <div style="font-size:12px;color:var(--text-muted);margin-top:4px">${t.desc}</div>
+    <div class="template-card" data-idx="${i}" onclick="selectTemplate(${i})">
+      <div class="tpl-icon">${t.icon}</div>
+      <div class="tpl-name">${t.name}</div>
+      <div class="tpl-desc">${t.desc}</div>
+      ${t.permissions.length ? `<span class="tpl-badge">${t.permissions.join(', ')}</span>` : ''}
     </div>
   `).join('');
 
   overlay.innerHTML = `
-    <div class="modal-card" style="max-width:640px;max-height:80vh;overflow-y:auto">
+    <div class="modal-card" style="max-width:640px;max-height:85vh;overflow-y:auto">
       <div class="modal-header">
         <h3 id="create-dialog-title">🔑 创建 API Key</h3>
         <button class="modal-close" onclick="closeCreateDialog()">&times;</button>
       </div>
-      <div id="create-step-1">
-        <p style="color:var(--text-muted);margin-bottom:12px">选择场景模板快速创建，或选择自定义自由配置：</p>
-        <div id="template-list">${templateCards}</div>
-      </div>
-      <div id="create-step-2" style="display:none">
-        <p style="color:var(--text-muted);margin-bottom:12px">确认配置并填写名称：</p>
-        <div class="form-group">
-          <label>名称</label>
-          <input type="text" id="create-key-name" placeholder="例如: 客服机器人" style="width:100%">
+      <div style="padding:20px">
+        <div id="create-step-1">
+          <div class="step-indicator"><div class="step active"><span class="step-num">1</span> 选择模板</div><div class="step-line"></div><div class="step"><span class="step-num">2</span> 配置详情</div></div>
+          <p style="color:var(--text-muted);margin-bottom:16px;font-size:13px">选择场景模板快速创建，或选择自定义自由配置：</p>
+          <div id="template-list">${templateCards}</div>
         </div>
-        <div class="form-group">
-          <label>事件类型过滤（勾选需要接收的事件）</label>
-          <div id="create-event-filters" style="display:flex;flex-wrap:wrap;gap:6px"></div>
+        <div id="create-step-2" style="display:none">
+          <div class="step-indicator"><div class="step done"><span class="step-num">✓</span> 选择模板</div><div class="step-line"></div><div class="step active"><span class="step-num">2</span> 配置详情</div></div>
+          <div class="form-group">
+            <label>名称 <span style="color:var(--danger)">*</span></label>
+            <input type="text" id="create-key-name" placeholder="例如: 客服机器人">
+          </div>
+          <div class="form-group">
+            <label>事件类型过滤（勾选要接收的事件，不选=全部事件）</label>
+            <div id="create-event-filters" class="checkbox-grid"></div>
+          </div>
+          <div class="form-group">
+            <label>权限（勾选需要的权限，选中 <code>*</code> = 全部）</label>
+            <div id="create-permissions" class="checkbox-grid"></div>
+          </div>
+          <div style="display:flex;gap:8px;margin-top:16px">
+            <button class="btn" onclick="backToTemplateSelect()">← 返回</button>
+            <button class="btn btn-primary" id="create-key-submit" style="flex:1">✅ 创建 API Key</button>
+          </div>
         </div>
-        <div class="form-group">
-          <label>权限（勾选需要的权限，选中 * 为全部）</label>
-          <div id="create-permissions" style="display:flex;flex-wrap:wrap;gap:6px"></div>
-        </div>
-        <div style="display:flex;gap:8px;margin-top:12px">
-          <button class="btn" onclick="backToTemplateSelect()">← 返回</button>
-          <button class="btn btn-primary" id="create-key-submit">✅ 创建</button>
-        </div>
-      </div>
-      <div id="create-result" style="display:none">
-        <div style="text-align:center;padding:16px">
-          <p style="font-size:24px;margin-bottom:12px">✅</p>
-          <p style="color:var(--text-muted);margin-bottom:8px">API Key 创建成功！</p>
-          <p style="font-size:11px;color:var(--danger);margin-bottom:12px">⚠️ 密钥只显示一次，请妥善保管</p>
-          <div style="background:var(--bg-tertiary);border:1px solid var(--border-muted);border-radius:8px;padding:16px;font-family:monospace;font-size:18px;word-break:break-all;margin-bottom:12px" id="create-result-key"></div>
-          <button class="btn btn-primary" onclick="copyResultKey()" style="margin-bottom:8px">📋 复制密钥</button>
-          <button class="btn" onclick="closeCreateDialogAndRefresh()">完成</button>
+        <div id="create-result" style="display:none">
+          <div class="step-indicator"><div class="step done"><span class="step-num">✓</span> 选择模板</div><div class="step-line"></div><div class="step done"><span class="step-num">✓</span> 配置详情</div></div>
+          <div style="text-align:center;padding:8px 0">
+            <p style="font-size:32px;margin-bottom:8px">✅</p>
+            <p style="color:var(--text-muted);font-size:13px">API Key 创建成功！请立即复制并妥善保管。</p>
+          </div>
+          <div class="key-result-box">
+            <div class="key-warn">⚠️ 密钥只显示一次，关闭后无法再次查看</div>
+            <div class="key-value" id="create-result-key"></div>
+            <div class="key-actions">
+              <button class="btn btn-primary" onclick="copyResultKey()">📋 复制密钥</button>
+              <button class="btn" onclick="openDebugWithNewKey()">🔍 调试验证</button>
+            </div>
+          </div>
+          <button class="btn" onclick="closeCreateDialogAndRefresh()" style="width:100%">完成</button>
         </div>
       </div>
     </div>
@@ -1132,27 +1142,22 @@ function selectTemplate(idx) {
 
   // 高亮选中
   document.querySelectorAll('.template-card').forEach((c, i) => {
-    c.style.borderColor = i === idx ? 'var(--accent)' : 'var(--border-muted)';
-    c.style.background = i === idx ? 'var(--bg-secondary)' : 'var(--bg-tertiary)';
+    c.classList.toggle('selected', i === idx);
   });
 
   // 显示第二步
   document.getElementById('create-step-1').style.display = 'none';
   document.getElementById('create-step-2').style.display = 'block';
-  document.getElementById('create-dialog-title').textContent = `🔑 创建 API Key — ${tpl.icon} ${tpl.name}`;
 
   // 填充事件过滤勾选项
   const filterContainer = document.getElementById('create-event-filters');
   filterContainer.innerHTML = '';
-  // "全部事件"选项
-  const allEventsCheckbox = document.createElement('label');
-  allEventsCheckbox.style.cssText = 'display:inline-flex;align-items:center;gap:4px;padding:4px 8px;background:var(--bg-tertiary);border-radius:4px;cursor:pointer;font-size:12px';
-  allEventsCheckbox.innerHTML = '<input type="checkbox" id="ef-all" onchange="toggleAllEventFilters()"> 全部事件';
-  filterContainer.appendChild(allEventsCheckbox);
+  const allEventsCb = document.createElement('label');
+  allEventsCb.innerHTML = '<input type="checkbox" id="ef-all" onchange="toggleAllEventFilters()"> 全部事件';
+  filterContainer.appendChild(allEventsCb);
 
   for (const et of ALL_EVENT_TYPES) {
     const label = document.createElement('label');
-    label.style.cssText = 'display:inline-flex;align-items:center;gap:4px;padding:4px 8px;background:var(--bg-tertiary);border-radius:4px;cursor:pointer;font-size:12px';
     label.innerHTML = `<input type="checkbox" class="ef-item" value="${et}" onchange="onEventFilterChange()"> ${et}`;
     filterContainer.appendChild(label);
   }
@@ -1162,7 +1167,6 @@ function selectTemplate(idx) {
   permContainer.innerHTML = '';
   for (const p of ALL_PERMISSIONS) {
     const label = document.createElement('label');
-    label.style.cssText = 'display:inline-flex;align-items:center;gap:4px;padding:4px 8px;background:var(--bg-tertiary);border-radius:4px;cursor:pointer;font-size:12px';
     const starAttr = p === '*' ? 'onchange="onStarPermissionChange()"' : '';
     label.innerHTML = `<input type="checkbox" class="perm-item" value="${p}" ${starAttr}> ${p}`;
     permContainer.appendChild(label);
@@ -1211,12 +1215,22 @@ function backToTemplateSelect() {
   document.getElementById('create-step-2').style.display = 'none';
   document.getElementById('create-result').style.display = 'none';
   document.getElementById('create-step-1').style.display = 'block';
-  document.getElementById('create-dialog-title').textContent = '🔑 创建 API Key';
   selectedTemplateIdx = -1;
-  document.querySelectorAll('.template-card').forEach(c => {
-    c.style.borderColor = 'var(--border-muted)';
-    c.style.background = 'var(--bg-tertiary)';
-  });
+  document.querySelectorAll('.template-card').forEach(c => c.classList.remove('selected'));
+}
+
+function openDebugWithNewKey() {
+  if (lastCreatedKey) {
+    sessionStorage.setItem('easybot_debug_key', lastCreatedKey);
+  }
+  closeCreateDialog();
+  // 切换到 API Key tab 并自动打开调试面板
+  if (currentTab !== 'apikeys') {
+    switchTab('apikeys');
+  } else {
+    loadApiKeys();
+  }
+  showToast('Key 已保存，在调试面板中粘贴使用', 'info');
 }
 
 let lastCreatedKey = '';
@@ -1314,30 +1328,26 @@ function openDebugPanel(id, name, masked, eventFiltersStr) {
 
   panel.style.display = 'block';
   panel.innerHTML = `
-    <div class="debug-panel-header" style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;background:var(--bg-secondary);border-bottom:1px solid var(--border-muted);border-radius:8px 8px 0 0">
+    <div class="dbg-header">
       <div>
-        <h3 style="margin:0;font-size:14px">🔍 调试: ${name}</h3>
-        <div style="font-size:11px;color:var(--text-muted);margin-top:4px">
-          ${eventFilters.length ? '事件过滤: ' + eventFilters.join(', ') : '全部事件'}
-        </div>
+        <h3>🔍 调试: ${name}</h3>
+        <div class="dbg-meta">${eventFilters.length ? '事件过滤: ' + eventFilters.join(', ') : '全部事件'}</div>
       </div>
       <button class="modal-close" onclick="closeDebugPanel()">&times;</button>
     </div>
     <div style="padding:8px 16px;border-bottom:1px solid var(--border-muted)">
-      <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px">输入要测试的 API Key（独立连接，不影响主页面）</label>
-      <input type="text" id="debug-key-input" value="${savedTestKey}" placeholder="粘贴 API Key 进行测试..." style="width:100%;font-family:monospace;font-size:13px;padding:6px 8px">
+      <label class="dbg-key-label">输入要测试的 API Key（独立连接，不影响主页面）</label>
+      <input type="text" class="dbg-key-input" id="debug-key-input" value="${savedTestKey}" placeholder="粘贴 API Key 进行测试...">
     </div>
-    <div style="padding:8px 16px;display:flex;gap:8px;align-items:center;border-bottom:1px solid var(--border-muted)">
+    <div class="dbg-toolbar">
       <button class="btn btn-sm btn-primary" id="debug-connect-btn" onclick="debugConnect()">🔗 连接</button>
       <button class="btn btn-sm" id="debug-disconnect-btn" onclick="debugDisconnect()" disabled>⏹ 断开</button>
       <button class="btn btn-sm" onclick="debugClearLog()">🗑 清空日志</button>
       <span id="debug-status" style="font-size:12px;color:var(--text-muted)">● 已断开</span>
     </div>
-    <div style="padding:8px 16px">
-      <input type="text" id="debug-filter" placeholder="筛选事件..." oninput="debugFilterLog()" style="width:100%;font-size:12px">
-    </div>
-    <div id="debug-log-container" style="height:300px;overflow-y:auto;padding:8px 16px;font-family:monospace;font-size:11px;background:var(--bg-tertiary);border-radius:0 0 8px 8px">
-      <div style="color:var(--text-faint);text-align:center;padding:40px 0">填入 Key 点击"连接"开始测试</div>
+    <div style="padding:8px 16px"><input type="text" id="debug-filter" placeholder="筛选事件..." oninput="debugFilterLog()" style="width:100%;font-size:12px"></div>
+    <div class="dbg-log" id="debug-log-container">
+      <div class="dbg-empty">填入 Key 点击"连接"开始测试</div>
     </div>
   `;
 
@@ -1483,12 +1493,12 @@ function debugRenderLog(container) {
     : debugLog;
 
   container.innerHTML = filtered.map(l =>
-    `<div style="padding:2px 0;border-bottom:1px solid var(--border-muted);display:flex;gap:8px">
-      <span style="color:var(--text-faint);white-space:nowrap;flex-shrink:0">${l.time}</span>
-      <span style="color:${l.typeColor};flex-shrink:0">${l.type}</span>
-      <span style="color:var(--text-muted);word-break:break-all">${escapeHtml(l.data)}</span>
+    `<div class="dbg-log-entry">
+      <span class="dbg-time">${l.time}</span>
+      <span class="dbg-type" style="color:${l.typeColor}">${l.type}</span>
+      <span class="dbg-data">${escapeHtml(l.data)}</span>
     </div>`
-  ).join('') || '<div style="color:var(--text-faint);text-align:center;padding:20px 0">无匹配事件</div>';
+  ).join('') || '<div class="dbg-empty">无匹配事件</div>';
 
   container.scrollTop = container.scrollHeight;
 }
@@ -1502,7 +1512,7 @@ function debugClearLog() {
   debugLog = [];
   const container = document.getElementById('debug-log-container');
   if (container) {
-    container.innerHTML = '<div style="color:var(--text-faint);text-align:center;padding:40px 0">日志已清空</div>';
+    container.innerHTML = '<div class="dbg-empty">日志已清空</div>';
   }
 }
 
