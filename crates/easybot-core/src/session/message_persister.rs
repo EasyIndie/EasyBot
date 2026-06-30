@@ -335,7 +335,7 @@ mod tests {
         let session_manager = Arc::new(SessionManager::new());
 
         // 启动管线组件
-        SessionBridge::start(event_bus.clone(), session_manager.clone());
+        SessionBridge::start(event_bus.clone(), session_manager.clone(), None);
         MessagePersister::start(event_bus.clone(), message_store.clone());
 
         tokio::time::sleep(Duration::from_millis(200)).await;
@@ -415,7 +415,7 @@ mod tests {
         let message_store: Arc<dyn MessageStore> = Arc::new(SqliteMessageStore::new(pool.clone()));
         let session_manager = Arc::new(SessionManager::new());
 
-        SessionBridge::start(event_bus.clone(), session_manager.clone());
+        SessionBridge::start(event_bus.clone(), session_manager.clone(), None);
         MessagePersister::start(event_bus.clone(), message_store.clone());
 
         tokio::time::sleep(Duration::from_millis(200)).await;

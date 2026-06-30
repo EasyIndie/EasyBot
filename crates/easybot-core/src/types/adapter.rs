@@ -355,6 +355,20 @@ pub trait PlatformAdapter: Send + Sync {
 
     /// 返回适配器状态摘要（用于管理 API）
     fn status_summary(&self) -> AdapterStatusSummary;
+
+    // ── 会话富化 ──
+
+    /// 富化会话来源信息（可选）
+    ///
+    /// 会话创建后异步调用，适配器可通过此方法利用平台 API 补充
+    /// 用户名、用户角色等 session source 信息。
+    /// 默认实现直接返回 None（不进行富化）。
+    async fn enrich_source(
+        &self,
+        _source: &crate::types::session::SessionSource,
+    ) -> Option<crate::types::session::SessionSource> {
+        None
+    }
 }
 
 /// 简化能力声明宏

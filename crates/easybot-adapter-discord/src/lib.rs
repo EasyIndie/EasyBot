@@ -25,6 +25,7 @@ use easybot_core::types::message::*;
 use tokio::sync::broadcast;
 use twilight_gateway::{CloseFrame, EventTypeFlags, Intents, Shard, ShardId, StreamExt as _};
 use twilight_model::gateway::event::Event;
+use twilight_model::guild::Permissions;
 use types::*;
 
 /// Discord REST API 基础 URL (v10)
@@ -207,6 +208,26 @@ impl DiscordAdapter {
             ChatType::Dm
         };
 
+        let role = if msg.author.bot {
+            Some(SenderRole::Bot)
+        } else if let Some(ref member) = msg.member {
+            // 检查是否有管理员权限
+            if member
+                .permissions
+                .map(|p| p.contains(Permissions::ADMINISTRATOR))
+                .unwrap_or(false)
+            {
+                Some(SenderRole::Admin)
+            } else {
+                Some(SenderRole::Member)
+            }
+        } else if msg.guild_id.is_some() {
+            // 频道消息但 member 数据不可用（可能缺 intents）
+            Some(SenderRole::Member)
+        } else {
+            None
+        };
+
         let sender = MessageSender {
             id: msg.author.id.to_string(),
             name: Some(
@@ -223,7 +244,7 @@ impl DiscordAdapter {
                 )
             }),
             is_bot: msg.author.bot,
-            role: None,
+            role,
             language_code: msg.author.locale.clone(),
         };
 

@@ -287,8 +287,12 @@ async fn main() -> anyhow::Result<()> {
         );
     }
 
-    // 启动会话桥接器（入站消息 → 自动创建会话）
-    easybot_core::session::SessionBridge::start(event_bus.clone(), session_manager.clone());
+    // 启动会话桥接器（入站消息 → 自动创建会话 → 异步富化）
+    easybot_core::session::SessionBridge::start(
+        event_bus.clone(),
+        session_manager.clone(),
+        Some(adapter_manager.clone()),
+    );
 
     // 启动消息持久化器（入站消息 → SQLite）
     easybot_core::session::MessagePersister::start(event_bus.clone(), message_store.clone());

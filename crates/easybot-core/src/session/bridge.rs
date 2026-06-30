@@ -6,6 +6,7 @@
 use std::sync::Arc;
 use tracing::{info, warn};
 
+use crate::adapter::AdapterManager;
 use crate::bus::EventBus;
 use crate::session::SessionManager;
 use crate::types::message::InboundMessage;
@@ -22,7 +23,14 @@ impl SessionBridge {
     ///
     /// 订阅事件总线上的入站消息事件，持续处理入站消息并创建/更新会话。
     /// 运行时不会退出（除非 EventBus 关闭），随 tokio 运行时一起停止。
-    pub fn start(event_bus: Arc<EventBus>, session_manager: Arc<SessionManager>) {
+    ///
+    /// `adapter_manager` 可选传入，用于在会话创建后异步富化 session source 信息
+    /// （用户名、角色等）。传入 `None` 则跳过富化。
+    pub fn start(
+        event_bus: Arc<EventBus>,
+        session_manager: Arc<SessionManager>,
+        adapter_manager: Option<Arc<AdapterManager>>,
+    ) {
         let mut event_rx =
             event_bus.subscribe_many(&[crate::types::event::event_types::MESSAGE_INBOUND]);
 
@@ -33,7 +41,9 @@ impl SessionBridge {
                 match event_rx.recv().await {
                     Ok(event) => {
                         if let Some(inbound) = Self::parse_inbound(&event.data) {
-                            Self::handle_inbound(&session_manager, inbound).await;
+                            let sm = session_manager.clone();
+                            let am = adapter_manager.clone();
+                            Self::handle_inbound(sm, inbound, am).await;
                         }
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
@@ -53,12 +63,17 @@ impl SessionBridge {
         serde_json::from_value::<InboundMessage>(data.clone()).ok()
     }
 
-    /// 处理入站消息：创建或更新会话
-    async fn handle_inbound(session_manager: &SessionManager, msg: InboundMessage) {
-        let key = Session::build_key(&msg.platform, &msg.chat_id, msg.thread_id.as_deref());
+    /// 处理入站消息：创建或更新会话，然后异步富化
+    async fn handle_inbound(
+        session_manager: Arc<SessionManager>,
+        msg: InboundMessage,
+        adapter_manager: Option<Arc<AdapterManager>>,
+    ) {
+        let platform = msg.platform.clone();
+        let key = Session::build_key(&platform, &msg.chat_id, msg.thread_id.as_deref());
 
         let source = SessionSource {
-            platform: msg.platform,
+            platform: platform.clone(),
             chat_id: msg.chat_id,
             chat_name: msg.chat_name,
             chat_type: msg.chat_type,
@@ -70,6 +85,24 @@ impl SessionBridge {
         };
 
         let _session = session_manager.get_or_create(&key, source).await;
+
+        // 异步富化：不阻塞消息处理路径
+        if let Some(am) = adapter_manager {
+            tokio::spawn(async move {
+                let current = session_manager.get(&key);
+                let current_source = match current {
+                    Some(ref s) => s.source.clone(),
+                    None => return,
+                };
+                if let Some(enriched) = am.enrich_session(&platform, &current_source).await
+                    && (enriched.user_username.is_some()
+                        || enriched.user_role.is_some()
+                        || enriched.user_name.is_some())
+                {
+                    session_manager.update_source_fields(&key, enriched).await;
+                }
+            });
+        }
     }
 }
 
@@ -127,7 +160,7 @@ mod tests {
         let bus = Arc::new(EventBus::new());
         let sessions = Arc::new(SessionManager::new());
 
-        SessionBridge::start(bus.clone(), sessions.clone());
+        SessionBridge::start(bus.clone(), sessions.clone(), None);
 
         // 发布一个入站消息事件
         let msg = make_test_msg(
@@ -163,7 +196,7 @@ mod tests {
         let bus = Arc::new(EventBus::new());
         let sessions = Arc::new(SessionManager::new());
 
-        SessionBridge::start(bus.clone(), sessions.clone());
+        SessionBridge::start(bus.clone(), sessions.clone(), None);
         tokio::time::sleep(Duration::from_millis(100)).await;
 
         let msg = make_test_msg(

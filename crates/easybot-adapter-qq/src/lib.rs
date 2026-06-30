@@ -1114,6 +1114,45 @@ impl PlatformAdapter for QqAdapter {
             }
         }
     }
+
+    // ── 会话富化 ──
+
+    async fn enrich_source(
+        &self,
+        source: &easybot_core::types::session::SessionSource,
+    ) -> Option<easybot_core::types::session::SessionSource> {
+        // 仅对群聊消息尝试富化：chat_id=group_openid, user_id=member_openid
+        if source.chat_type == ChatType::Group {
+            let group_openid = &source.chat_id;
+            let member_openid = source.user_id.as_ref()?;
+            let path = format!("/v2/groups/{}/members/{}", group_openid, member_openid);
+            match self.api_get::<serde_json::Value>(&path).await {
+                Ok(member_info) => {
+                    let mut enriched = source.clone();
+                    // 尝试从响应中提取用户昵称
+                    if let Some(nick) = member_info
+                        .get("nickname")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string())
+                    {
+                        enriched.user_name = Some(nick);
+                    }
+                    // 尝试提取角色
+                    if let Some(role_str) = member_info.get("role").and_then(|v| v.as_str()) {
+                        enriched.user_role = match role_str {
+                            "admin" => Some(SenderRole::Admin),
+                            "owner" => Some(SenderRole::Owner),
+                            _ => Some(SenderRole::Member),
+                        };
+                    }
+                    Some(enriched)
+                }
+                Err(_) => None,
+            }
+        } else {
+            None
+        }
+    }
 }
 
 impl Default for QqAdapter {

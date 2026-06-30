@@ -161,6 +161,39 @@ impl SessionManager {
         self.store.clone()
     }
 
+    /// 更新会话 source 字段（专用于 enrichment）
+    ///
+    /// 异步调用，不阻塞主处理路径。仅更新 user_username 和 user_role 两个字段。
+    pub async fn update_source_fields(
+        &self,
+        key: &str,
+        enriched: SessionSource,
+    ) -> Option<Session> {
+        if let Some(mut entry) = self.sessions.get_mut(key) {
+            let session = entry.value_mut();
+            session.updated_at = chrono::Utc::now().timestamp_millis();
+            // 仅在富化值非空时更新
+            if enriched.user_username.is_some() {
+                session.source.user_username = enriched.user_username.clone();
+            }
+            if enriched.user_role.is_some() {
+                session.source.user_role = enriched.user_role.clone();
+            }
+            if enriched.user_name.is_some() {
+                session.source.user_name = enriched.user_name.clone();
+            }
+            let cloned = session.clone();
+            if let Some(ref store) = self.store
+                && let Err(e) = store.upsert_session(&cloned).await
+            {
+                tracing::warn!(error = %e, session_key = %cloned.key, "持久化富化会话失败");
+            }
+            Some(cloned)
+        } else {
+            None
+        }
+    }
+
     /// 更新会话
     ///
     /// 更新 DashMap 中的会话，并持久化到存储。
