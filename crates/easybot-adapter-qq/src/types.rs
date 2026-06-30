@@ -136,7 +136,7 @@ pub struct QqGroupMessageCreateEvent {
 }
 
 /// @提及信息
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct QqMention {
     /// 是否 @了当前机器人
     pub is_you: bool,
@@ -149,7 +149,7 @@ pub struct QqMention {
 }
 
 /// 消息场景
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct QqMessageScene {
     /// 消息来源（default 等）
     #[serde(default)]

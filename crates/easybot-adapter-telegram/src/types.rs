@@ -55,6 +55,8 @@ pub(crate) struct TelegramUser {
     pub last_name: Option<String>,
     #[serde(default)]
     pub username: Option<String>,
+    #[serde(default)]
+    pub language_code: Option<String>,
 }
 
 /// Telegram 聊天

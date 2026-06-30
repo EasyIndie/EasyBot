@@ -3,7 +3,7 @@
 //! 定义会话（Session）的数据结构，用于持久化对话上下文。
 //! 会话以 session_key（platform:chatId[:threadId]）作为唯一标识。
 
-use crate::types::message::ChatType;
+use crate::types::message::{ChatType, SenderRole};
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
@@ -49,6 +49,10 @@ pub struct SessionSource {
     pub user_name: Option<String>,
     /// 是否为机器人
     pub is_bot: bool,
+    /// 平台特有用户名/句柄
+    pub user_username: Option<String>,
+    /// 发送者角色
+    pub user_role: Option<SenderRole>,
 }
 
 /// 会话重置策略

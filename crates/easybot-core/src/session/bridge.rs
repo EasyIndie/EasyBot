@@ -62,9 +62,11 @@ impl SessionBridge {
             chat_id: msg.chat_id,
             chat_name: msg.chat_name,
             chat_type: msg.chat_type,
-            user_id: Some(msg.author.id),
-            user_name: msg.author.name,
-            is_bot: msg.author.is_bot,
+            user_id: Some(msg.sender.id),
+            user_name: msg.sender.name,
+            is_bot: msg.sender.is_bot,
+            user_username: msg.sender.username,
+            user_role: msg.sender.role,
         };
 
         let _session = session_manager.get_or_create(&key, source).await;
@@ -77,8 +79,48 @@ mod tests {
     use crate::bus::EventBus;
     use crate::session::SessionManager;
     use crate::types::event::GatewayEvent;
-    use crate::types::message::{ChatType, MessageAuthor};
+    use crate::types::message::{ChatType, MessageSender, MessageType};
     use std::time::Duration;
+
+    fn make_test_msg(
+        id: &str,
+        platform: &str,
+        chat_id: &str,
+        chat_name: Option<&str>,
+        sender_id: &str,
+        sender_name: Option<&str>,
+    ) -> InboundMessage {
+        InboundMessage {
+            id: id.to_string(),
+            platform: platform.to_string(),
+            msg_type: MessageType::Text,
+            text: Some("test".to_string()),
+            sender: MessageSender {
+                id: sender_id.to_string(),
+                name: sender_name.map(|s| s.to_string()),
+                username: None,
+                avatar_url: None,
+                is_bot: false,
+                role: None,
+                language_code: None,
+            },
+            recipient: None,
+            chat_id: chat_id.to_string(),
+            chat_name: chat_name.map(|s| s.to_string()),
+            chat_type: ChatType::Dm,
+            guild_id: None,
+            thread_id: None,
+            root_id: None,
+            timestamp: 1700000000000,
+            media: None,
+            command: None,
+            callback: None,
+            reply_to: None,
+            mentions: None,
+            mentioned: None,
+            metadata: None,
+        }
+    }
 
     #[tokio::test]
     async fn test_bridge_creates_session() {
@@ -88,28 +130,14 @@ mod tests {
         SessionBridge::start(bus.clone(), sessions.clone());
 
         // 发布一个入站消息事件
-        let msg = InboundMessage {
-            id: "42".to_string(),
-            platform: "telegram".to_string(),
-            chat_id: "12345".to_string(),
-            chat_name: Some("Test User".to_string()),
-            chat_type: ChatType::Dm,
-            text: Some("Hello".to_string()),
-            author: MessageAuthor {
-                id: "678".to_string(),
-                name: Some("Test User".to_string()),
-                is_bot: false,
-            },
-            timestamp: 1700000000000,
-            media: None,
-            command: None,
-            callback: None,
-            reply_to: None,
-            thread_id: None,
-            mentioned: None,
-            is_group: false,
-            metadata: None,
-        };
+        let msg = make_test_msg(
+            "42",
+            "telegram",
+            "12345",
+            Some("Test User"),
+            "678",
+            Some("Test User"),
+        );
 
         let event = GatewayEvent::new(
             crate::types::event::event_types::MESSAGE_INBOUND,
@@ -138,28 +166,14 @@ mod tests {
         SessionBridge::start(bus.clone(), sessions.clone());
         tokio::time::sleep(Duration::from_millis(100)).await;
 
-        let msg = InboundMessage {
-            id: "src-test".to_string(),
-            platform: "test".to_string(),
-            chat_id: "source-check".to_string(),
-            chat_name: Some("Source Name".to_string()),
-            chat_type: ChatType::Dm,
-            text: Some("check".to_string()),
-            author: MessageAuthor {
-                id: "author-001".to_string(),
-                name: Some("AuthorName".to_string()),
-                is_bot: false,
-            },
-            timestamp: 1700000000000,
-            media: None,
-            command: None,
-            callback: None,
-            reply_to: None,
-            thread_id: None,
-            mentioned: None,
-            is_group: false,
-            metadata: None,
-        };
+        let msg = make_test_msg(
+            "src-test",
+            "test",
+            "source-check",
+            Some("Source Name"),
+            "author-001",
+            Some("AuthorName"),
+        );
 
         let event = GatewayEvent::new(
             crate::types::event::event_types::MESSAGE_INBOUND,

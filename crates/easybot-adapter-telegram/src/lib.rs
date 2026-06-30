@@ -120,17 +120,25 @@ impl TelegramAdapter {
             _ => ChatType::Dm,
         };
 
-        let author = tg_msg
+        let sender = tg_msg
             .from
-            .map(|u| MessageAuthor {
+            .map(|u| MessageSender {
                 id: u.id.to_string(),
                 name: Some(u.first_name),
+                username: u.username,
+                avatar_url: None,
                 is_bot: u.is_bot,
+                role: None,
+                language_code: u.language_code,
             })
-            .unwrap_or_else(|| MessageAuthor {
+            .unwrap_or_else(|| MessageSender {
                 id: "0".to_string(),
                 name: None,
+                username: None,
+                avatar_url: None,
                 is_bot: false,
+                role: None,
+                language_code: None,
             });
 
         // 检测斜杠命令
@@ -154,19 +162,23 @@ impl TelegramAdapter {
         Some(InboundMessage {
             id: tg_msg.message_id.to_string(),
             platform,
+            msg_type: MessageType::Text,
+            text,
+            sender,
+            recipient: None,
             chat_id,
             chat_name: tg_msg.chat.title.or(tg_msg.chat.first_name),
             chat_type,
-            text,
-            author,
+            guild_id: None,
+            thread_id: None,
+            root_id: None,
             timestamp: tg_msg.date * 1000,
             media: None,
             command,
             callback: None,
             reply_to,
-            thread_id: None,
+            mentions: None,
             mentioned: None,
-            is_group: tg_msg.chat.chat_type != "private",
             metadata: None,
         })
     }
@@ -1198,6 +1210,7 @@ mod tests {
                 first_name: "TestUser".to_string(),
                 last_name: None,
                 username: None,
+                language_code: None,
             }),
             chat: TelegramChat {
                 id: -100123456,
@@ -1220,9 +1233,9 @@ mod tests {
         assert_eq!(inbound.chat_id, "-100123456");
         assert_eq!(inbound.chat_name.as_deref(), Some("Test Group"));
         assert_eq!(inbound.chat_type, ChatType::Group);
-        assert_eq!(inbound.author.id, "12345");
-        assert_eq!(inbound.author.name.as_deref(), Some("TestUser"));
-        assert!(inbound.is_group);
+        assert_eq!(inbound.sender.id, "12345");
+        assert_eq!(inbound.sender.name.as_deref(), Some("TestUser"));
+        assert_eq!(inbound.chat_type, ChatType::Group);
         assert_eq!(inbound.text.as_deref(), Some("/start hello"));
 
         // 验证命令解析

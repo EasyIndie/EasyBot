@@ -169,29 +169,37 @@ mod tests {
     use crate::storage::sqlite::{SqliteMessageStore, run_migrations};
     use crate::storage::{MessageFilter, MessageStore};
     use crate::types::event::event_types::MESSAGE_INBOUND;
-    use crate::types::message::{ChatType, InboundMessage, MessageAuthor};
+    use crate::types::message::{ChatType, InboundMessage, MessageSender, MessageType};
 
     /// 创建测试用的入站消息
     fn test_inbound_message() -> InboundMessage {
         InboundMessage {
             id: uuid::Uuid::new_v4().to_string(),
             platform: "telegram".to_string(),
+            msg_type: MessageType::Text,
+            text: Some("Hello from test".to_string()),
+            sender: MessageSender {
+                id: "user1".to_string(),
+                name: Some("Alice".to_string()),
+                username: None,
+                avatar_url: None,
+                is_bot: false,
+                role: None,
+                language_code: None,
+            },
+            recipient: None,
             chat_id: "12345".to_string(),
             chat_name: Some("Test Chat".to_string()),
             chat_type: ChatType::Dm,
-            is_group: false,
-            text: Some("Hello from test".to_string()),
-            author: MessageAuthor {
-                id: "user1".to_string(),
-                name: Some("Alice".to_string()),
-                is_bot: false,
-            },
+            guild_id: None,
+            thread_id: None,
+            root_id: None,
             timestamp: chrono::Utc::now().timestamp_millis(),
             media: None,
             command: None,
             callback: None,
             reply_to: None,
-            thread_id: None,
+            mentions: None,
             mentioned: None,
             metadata: None,
         }
@@ -336,22 +344,30 @@ mod tests {
         let msg = InboundMessage {
             id: "pipe-001".to_string(),
             platform: "test".to_string(),
+            msg_type: MessageType::Text,
+            text: Some("pipeline test".to_string()),
+            sender: MessageSender {
+                id: "user-pipe".to_string(),
+                name: Some("PipelineUser".to_string()),
+                username: None,
+                avatar_url: None,
+                is_bot: false,
+                role: None,
+                language_code: None,
+            },
+            recipient: None,
             chat_id: "pipeline-chat".to_string(),
             chat_name: Some("Pipe Test".to_string()),
             chat_type: ChatType::Dm,
-            is_group: false,
-            text: Some("pipeline test".to_string()),
-            author: MessageAuthor {
-                id: "user-pipe".to_string(),
-                name: Some("PipelineUser".to_string()),
-                is_bot: false,
-            },
+            guild_id: None,
+            thread_id: None,
+            root_id: None,
             timestamp: chrono::Utc::now().timestamp_millis(),
             media: None,
             command: None,
             callback: None,
             reply_to: None,
-            thread_id: None,
+            mentions: None,
             mentioned: None,
             metadata: None,
         };

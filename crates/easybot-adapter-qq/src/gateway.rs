@@ -271,23 +271,31 @@ impl crate::QqAdapter {
                 let inbound = InboundMessage {
                     id: msg_event.id,
                     platform: "qq".to_string(),
-                    chat_id: msg_event.channel_id,
-                    chat_type: ChatType::Group,
-                    chat_name: None,
+                    msg_type: MessageType::Text,
                     text: msg_event.content,
-                    author: MessageAuthor {
+                    sender: MessageSender {
                         id: msg_event.author.id,
-                        name: msg_event.author.username,
+                        name: msg_event.author.username.clone(),
+                        username: msg_event.author.username.clone(),
+                        avatar_url: None,
                         is_bot: msg_event.author.bot,
+                        role: None,
+                        language_code: None,
                     },
+                    recipient: Some(bot_id.to_string()),
+                    chat_id: msg_event.channel_id,
+                    chat_name: None,
+                    chat_type: ChatType::Group,
+                    guild_id: msg_event.guild_id.clone(),
+                    thread_id: None,
+                    root_id: None,
                     timestamp: ts,
                     media: None,
                     command: None,
                     callback: None,
                     reply_to: None,
-                    thread_id: None,
-                    mentioned: Some(true), // 频道 @消息
-                    is_group: true,
+                    mentions: None,
+                    mentioned: Some(true),
                     metadata: None,
                 };
 
@@ -322,23 +330,31 @@ impl crate::QqAdapter {
                 let inbound = InboundMessage {
                     id: msg_event.id,
                     platform: "qq".to_string(),
-                    chat_id: openid,
-                    chat_type: ChatType::Group,
-                    chat_name: None,
+                    msg_type: MessageType::Text,
                     text: msg_event.content,
-                    author: MessageAuthor {
+                    sender: MessageSender {
                         id: member_id.clone(),
-                        name: Some(member_id),
+                        name: Some(member_id.clone()),
+                        username: None,
+                        avatar_url: None,
                         is_bot: false,
+                        role: None,
+                        language_code: None,
                     },
+                    recipient: Some(bot_id.to_string()),
+                    chat_id: openid,
+                    chat_name: None,
+                    chat_type: ChatType::Group,
+                    guild_id: None,
+                    thread_id: None,
+                    root_id: None,
                     timestamp: ts,
                     media: None,
                     command: None,
                     callback: None,
                     reply_to: None,
-                    thread_id: None,
-                    mentioned: Some(true), // 旧协议仅推送 @消息
-                    is_group: true,
+                    mentions: None,
+                    mentioned: Some(true),
                     metadata: None,
                 };
 
@@ -372,36 +388,54 @@ impl crate::QqAdapter {
                 let ts = Self::parse_timestamp(&msg_event.timestamp);
                 let openid = msg_event.group_openid.clone();
                 let member_id = msg_event.author.member_openid.clone();
+                let mentions: Option<Vec<MentionInfo>> = if msg_event.mentions.is_empty() {
+                    None
+                } else {
+                    Some(
+                        msg_event
+                            .mentions
+                            .iter()
+                            .map(|m| MentionInfo {
+                                user_id: None,
+                                username: m.username.clone(),
+                                scope: m.scope.clone(),
+                            })
+                            .collect(),
+                    )
+                };
                 let inbound = InboundMessage {
                     id: msg_event.id,
                     platform: "qq".to_string(),
-                    chat_id: openid,
-                    chat_type: ChatType::Group,
-                    chat_name: None,
+                    msg_type: MessageType::Text,
                     text: msg_event.content,
-                    author: MessageAuthor {
+                    sender: MessageSender {
                         id: member_id.clone(),
-                        name: Some(member_id),
+                        name: Some(member_id.clone()),
+                        username: None,
+                        avatar_url: None,
                         is_bot: false,
+                        role: None,
+                        language_code: None,
                     },
+                    recipient: Some(bot_id.to_string()),
+                    chat_id: openid,
+                    chat_name: None,
+                    chat_type: ChatType::Group,
+                    guild_id: None,
+                    thread_id: None,
+                    root_id: None,
                     timestamp: ts,
                     media: None,
                     command: None,
                     callback: None,
                     reply_to: None,
-                    thread_id: None,
+                    mentions,
                     mentioned: Some(is_mentioned),
-                    is_group: true,
-                    metadata: Some(serde_json::json!({
-                        "mentions": msg_event.mentions.iter().map(|m| serde_json::json!({
-                            "is_you": m.is_you,
-                            "scope": m.scope,
-                            "username": m.username,
-                        })).collect::<Vec<_>>(),
-                        "message_scene": msg_event.message_scene.map(|s| serde_json::json!({
-                            "source": s.source,
-                        })),
-                    })),
+                    metadata: msg_event.message_scene.as_ref().map(|s| {
+                        serde_json::json!({
+                            "message_scene": s,
+                        })
+                    }),
                 };
 
                 let event = GatewayEvent::new(
@@ -433,23 +467,31 @@ impl crate::QqAdapter {
                 let inbound = InboundMessage {
                     id: msg_event.id,
                     platform: "qq".to_string(),
-                    chat_id: user_openid.clone(),
-                    chat_type: ChatType::Dm,
-                    chat_name: None,
+                    msg_type: MessageType::Text,
                     text: msg_event.content,
-                    author: MessageAuthor {
+                    sender: MessageSender {
                         id: user_openid.clone(),
                         name: None,
+                        username: None,
+                        avatar_url: None,
                         is_bot: false,
+                        role: None,
+                        language_code: None,
                     },
+                    recipient: Some(bot_id.to_string()),
+                    chat_id: user_openid.clone(),
+                    chat_name: None,
+                    chat_type: ChatType::Dm,
+                    guild_id: None,
+                    thread_id: None,
+                    root_id: None,
                     timestamp: ts,
                     media: None,
                     command: None,
                     callback: None,
                     reply_to: None,
-                    thread_id: None,
+                    mentions: None,
                     mentioned: None,
-                    is_group: false,
                     metadata: None,
                 };
 

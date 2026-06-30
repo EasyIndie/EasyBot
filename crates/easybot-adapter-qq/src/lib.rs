@@ -1387,7 +1387,7 @@ mod tests {
             "Expected MESSAGE_INBOUND for group message"
         );
         if let Some(e) = event {
-            assert_eq!(e.data["is_group"], true);
+            assert_eq!(e.data["chat_type"], "Group");
             assert_eq!(e.data["chat_type"], "Group");
             assert_eq!(e.data["chat_id"], "GROUP_OPENID_001");
         }
@@ -1435,12 +1435,12 @@ mod tests {
             "Expected MESSAGE_INBOUND for GROUP_MESSAGE_CREATE"
         );
         if let Some(e) = event {
-            assert_eq!(e.data["is_group"], true);
+            assert_eq!(e.data["chat_type"], "Group");
             assert_eq!(e.data["chat_type"], "Group");
             assert_eq!(e.data["chat_id"], "GROUP_OPENID_NEW001");
             assert_eq!(e.data["mentioned"], true);
             // metadata contains mentions info
-            assert!(e.data["metadata"]["mentions"].is_array());
+            assert!(e.data["mentions"].is_array());
         }
         assert_eq!(messages_in.load(Ordering::Relaxed), 1);
     }
@@ -1483,7 +1483,7 @@ mod tests {
             "Expected MESSAGE_INBOUND even for non-@ group message"
         );
         if let Some(e) = event {
-            assert_eq!(e.data["is_group"], true);
+            assert_eq!(e.data["chat_type"], "Group");
             assert_eq!(e.data["chat_id"], "GROUP_OPENID_NEW002");
             assert_eq!(e.data["mentioned"], false);
         }
@@ -1521,7 +1521,7 @@ mod tests {
         let event = rx.try_recv().ok();
         assert!(event.is_some(), "Expected MESSAGE_INBOUND for C2C message");
         if let Some(e) = event {
-            assert_eq!(e.data["is_group"], false);
+            assert_eq!(e.data["chat_type"], "Dm");
             assert_eq!(e.data["chat_type"], "Dm");
             assert_eq!(e.data["chat_id"], "USER_OPENID_001");
         }

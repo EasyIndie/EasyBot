@@ -502,7 +502,7 @@ pub async fn persist_outbound_message(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::message::{ChatType, MessageAuthor};
+    use crate::types::message::{ChatType, MessageSender, MessageType};
     use crate::types::session::{ResetPolicy, SessionSource};
 
     fn make_test_session(key: &str, platform: &str, chat_id: &str) -> Session {
@@ -521,6 +521,8 @@ mod tests {
                 user_id: None,
                 user_name: None,
                 is_bot: false,
+                user_username: None,
+                user_role: None,
             },
             reset_policy: ResetPolicy::Never,
             metadata: serde_json::json!({}),
@@ -640,23 +642,31 @@ mod tests {
         InboundMessage {
             id: "msg1".to_string(),
             platform: "telegram".to_string(),
+            msg_type: MessageType::Text,
+            text: Some("Hello".to_string()),
+            sender: MessageSender {
+                id: "user1".to_string(),
+                name: Some("User".to_string()),
+                username: None,
+                avatar_url: None,
+                is_bot: false,
+                role: None,
+                language_code: None,
+            },
+            recipient: None,
             chat_id: "123".to_string(),
             chat_name: None,
             chat_type: ChatType::Dm,
-            text: Some("Hello".to_string()),
-            author: MessageAuthor {
-                id: "user1".to_string(),
-                name: Some("User".to_string()),
-                is_bot: false,
-            },
+            guild_id: None,
+            thread_id: None,
+            root_id: None,
             timestamp: 1000000,
             media: None,
             command: None,
             callback: None,
             reply_to: None,
-            thread_id: None,
+            mentions: None,
             mentioned: None,
-            is_group: false,
             metadata: None,
         }
     }

@@ -1441,33 +1441,59 @@ fn convert_message(msg: WeixinMessage) -> Option<InboundMessage> {
         });
 
     let msg_id = msg.message_id.map(|id| id.to_string()).unwrap_or_default();
+    // 修复：群聊时使用 group_id 作为 chat_id
+    let chat_id = if is_group {
+        msg.group_id.clone()
+    } else {
+        msg.from_user_id.clone()
+    };
 
     Some(InboundMessage {
         id: msg_id,
         platform: "wechat".to_string(),
-        chat_id: msg.from_user_id.clone(),
+        msg_type: match msg.item_list.first().map(|i| i.item_type) {
+            Some(1) => MessageType::Text,
+            Some(2) => MessageType::Image,
+            Some(3) => MessageType::Audio,
+            Some(4) => MessageType::File,
+            Some(5) => MessageType::Video,
+            _ => MessageType::Unknown,
+        },
+        text: Some(text),
+        sender: MessageSender {
+            id: msg.from_user_id.clone(),
+            name: Some(msg.from_user_id.clone()),
+            username: None,
+            avatar_url: None,
+            is_bot: false,
+            role: if is_group {
+                Some(SenderRole::Member)
+            } else {
+                None
+            },
+            language_code: None,
+        },
+        recipient: Some(msg.to_user_id),
+        chat_id,
+        chat_name: None,
         chat_type: if is_group {
             ChatType::Group
         } else {
             ChatType::Dm
         },
-        chat_name: None,
-        text: Some(text),
-        author: MessageAuthor {
-            id: msg.from_user_id.clone(),
-            name: Some(msg.from_user_id),
-            is_bot: false,
-        },
+        guild_id: None,
+        thread_id: None,
+        root_id: None,
         timestamp: msg.create_time_ms,
         media,
         command: None,
         callback: None,
         reply_to: None,
-        thread_id: None,
+        mentions: None,
         mentioned: None,
-        is_group,
         metadata: Some(serde_json::json!({
             "session_id": msg.session_id,
+            "context_token": msg.context_token,
         })),
     })
 }
@@ -1587,8 +1613,8 @@ mod tests {
         assert_eq!(inbound.id, "12345");
         assert_eq!(inbound.text.as_deref(), Some("你好"));
         assert_eq!(inbound.chat_type, ChatType::Dm);
-        assert!(!inbound.is_group);
-        assert_eq!(inbound.author.id, "user@im.wechat");
+        assert_eq!(inbound.chat_type, ChatType::Dm);
+        assert_eq!(inbound.sender.id, "user@im.wechat");
         assert_eq!(inbound.timestamp, 1700000000000);
         let meta = inbound.metadata.unwrap();
         assert_eq!(
@@ -1694,7 +1720,7 @@ mod tests {
 
         let inbound = convert_message(msg).unwrap();
         assert_eq!(inbound.text.as_deref(), Some("群聊消息"));
-        assert!(inbound.is_group);
+        assert_eq!(inbound.chat_type, ChatType::Group);
         assert_eq!(inbound.chat_type, ChatType::Group);
     }
 
