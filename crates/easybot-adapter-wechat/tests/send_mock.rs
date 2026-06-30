@@ -114,11 +114,11 @@ async fn test_send_http_error() {
         .await;
 
     let adapter = make_adapter(mock_server.address().port()).await;
-    let result = adapter.send(send_text_params()).await.unwrap();
+    let result = adapter.send(send_text_params()).await;
 
-    assert!(!result.success, "HTTP 500 should return success=false");
+    assert!(result.is_err(), "HTTP 500 should return Err");
     assert!(
-        result.error.unwrap_or_default().contains("500"),
+        result.unwrap_err().to_string().contains("500"),
         "error should contain HTTP status code"
     );
 }
