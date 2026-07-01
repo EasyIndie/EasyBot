@@ -49,10 +49,9 @@ fn main() {
     // 收集并排序 .md 文件
     let docs_dir = docs_dir.canonicalize().unwrap_or(docs_dir);
     if !docs_dir.exists() {
-        // docs 目录不存在时生成一个占位页面
+        // docs 目录不存在时生成一个占位页面，继续执行后续的 home/admin 生成
         let fallback = generate_fallback(&template_path);
         std::fs::write(&output_path, fallback).unwrap();
-        return;
     }
 
     let mut entries: Vec<_> = std::fs::read_dir(&docs_dir)
