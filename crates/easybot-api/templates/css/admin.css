@@ -48,7 +48,22 @@ html { touch-action: manipulation; }
 .badge-red { background: #471a1a; color: var(--danger); }
 .badge-gray { background: var(--border-muted); color: var(--text-muted); }
 .badge-blue { background: #1a2a47; color: var(--accent); }
-.badge-type { background: #2a1a47; color: #d4a0ff; font-size: 11px; }
+.badge-type-text     { background: #2a1a47; color: #d4a0ff; }  /* 文本-紫 */
+.badge-type-image    { background: #1a4731; color: #7ee787; }  /* 图片-绿 */
+.badge-type-audio    { background: #1a2a47; color: #79c0ff; }  /* 音频-蓝 */
+.badge-type-video    { background: #472a3a; color: #ff7b9c; }  /* 视频-粉红 */
+.badge-type-file     { background: #473a1a; color: #e3b341; }  /* 文件-黄 */
+.badge-type-sticker  { background: #1a3a47; color: #56d4dd; }  /* 贴纸-青 */
+.badge-type-anim     { background: #472a47; color: #f778ba; }  /* GIF-粉 */
+.badge-type-rich     { background: #2a2a47; color: #b392f0; }  /* 富文本-靛 */
+.badge-type-card     { background: #2a1a3a; color: #c975ff; }  /* 卡片-紫 */
+.badge-type-share    { background: #1a3a30; color: #66d9e8; }  /* 分享-湖绿 */
+.badge-type-loc      { background: #1a303a; color: #58a6ff; }  /* 位置-亮蓝 */
+.badge-type-contact  { background: #1a3a2a; color: #6eff8a; }  /* 名片-翠绿 */
+.badge-type-link     { background: #1a2a3a; color: #58a6ff; }  /* 链接-蓝 */
+.badge-type-system   { background: #3a1a1a; color: #f85149; }  /* 系统-红 */
+.badge-type-unknown  { background: #2a2a2a; color: #8b949e; }  /* 其他-灰 */
+[class^="badge-type-"] { font-size: 11px; }
 table { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 600px; }
 table th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border-muted); }
 table th { background: var(--bg-tertiary); color: var(--text-muted); font-weight: 500; position: sticky; top: 0; }

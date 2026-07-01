@@ -91,6 +91,19 @@ function msgTypeLabel(raw_data) {
   return t ? (MSG_TYPE_LABELS[t] || t) : '文本';
 }
 
+// 消息类型 → badge CSS 类名映射
+const MSG_TYPE_BADGE = {
+  Text: 'badge-type-text', Image: 'badge-type-image', Audio: 'badge-type-audio',
+  Video: 'badge-type-video', File: 'badge-type-file', Sticker: 'badge-type-sticker',
+  Animation: 'badge-type-anim', RichText: 'badge-type-rich', Interactive: 'badge-type-card',
+  Share: 'badge-type-share', Location: 'badge-type-loc', Contact: 'badge-type-contact',
+  Link: 'badge-type-link', System: 'badge-type-system', Unknown: 'badge-type-unknown',
+};
+function msgTypeBadgeClass(raw_data) {
+  const t = raw_data?.msg_type;
+  return MSG_TYPE_BADGE[t] || 'badge-type-text';
+}
+
 function renderMessageRow(m) {
   const tr = document.createElement('tr');
   tr.style.cursor = 'pointer';
@@ -101,7 +114,7 @@ function renderMessageRow(m) {
     <td><span class="badge badge-blue">${m.platform}</span></td>
     <td style="font-size:12px">${m.chat_id}</td>
     <td><span class="badge ${roleBadge}">${role}</span></td>
-    <td><span class="badge badge-type">${typeLabel}</span></td>
+    <td><span class="badge ${msgTypeBadgeClass(m.raw_data)}">${typeLabel}</span></td>
     <td style="font-size:12px;color:var(--text-muted);max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${(m.text || '').substring(0, 80)}</td>
     <td><button class="btn btn-sm btn-reply" data-platform="${m.platform}" data-chat-id="${m.chat_id}" title="回复该会话">回复</button></td>`;
   tr.querySelector('.btn-reply').addEventListener('click', e => {

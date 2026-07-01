@@ -46,7 +46,7 @@ check:  ## 快速编译检查
 DEBUG_FLAG ?= --debug
 
 run:  ## 编译并启动（默认 --debug，make run DEBUG= 可去掉）
-	cargo run $(DEBUG_FLAG)
+	cargo run -- $(DEBUG_FLAG)
 
 run-init:  ## 初始化隔离目录后启动（不影响 ~/.easybot/）
 	@test -d /tmp/easybot-dev || cargo run -- --dir /tmp/easybot-dev --init
@@ -57,7 +57,8 @@ run-fresh:  ## 清理隔离目录后全新初始化并启动
 	cargo run -- --dir /tmp/easybot-dev --init
 	cargo run -- --dir /tmp/easybot-dev $(DEBUG_FLAG)
 
-watch:  ## Watch 模式：改代码自动重编重启（需 cargo install cargo-watch）
+watch:  ## Watch 模式：改代码自动重编重启（自动安装依赖）
+	@command -v cargo-watch >/dev/null 2>&1 || ( echo "📦 正在安装 cargo-watch ..."; cargo install cargo-watch --quiet )
 	cargo watch -x 'run -- --debug'
 
 clean:  ## 清理编译产物
