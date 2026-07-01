@@ -17,7 +17,6 @@ COPY Cargo.toml Cargo.lock ./
 COPY crates/ ./crates/
 COPY bin/ ./bin/
 COPY tests/ ./tests/
-COPY docs/ ./docs/
 RUN --mount=type=cache,target=/app/target \
     --mount=type=cache,target=/usr/local/cargo/registry \
     cargo build --locked --release --features "full,plugin-system" --bin easybot && \
