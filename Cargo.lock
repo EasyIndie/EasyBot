@@ -950,6 +950,7 @@ version = "0.0.6"
 dependencies = [
  "anyhow",
  "axum",
+ "base64",
  "bytes",
  "chrono",
  "dashmap",
@@ -993,6 +994,7 @@ dependencies = [
  "easybot-core",
  "serde_json",
  "serde_yaml",
+ "sqlx",
  "tokio",
  "tracing",
  "tracing-subscriber",

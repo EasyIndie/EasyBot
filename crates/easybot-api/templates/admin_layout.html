@@ -4,13 +4,14 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>EasyBot 管理后台</title>
+<link rel="icon" type="image/png" sizes="32x32" href="__FAVICON__">
 <style>__ADMIN_CSS__</style>
 </head>
 <body>
 <!-- Login Overlay -->
 <div class="login-overlay" id="login-overlay" role="dialog" aria-modal="true" aria-label="管理员登录">
   <div class="login-box">
-    <a href="/" style="text-decoration:none;color:inherit"><h2>EasyBot</h2></a>
+    <a href="/" style="text-decoration:none;color:inherit;display:flex;flex-direction:column;align-items:center;gap:8px"><img src="__LOGO__" alt="EasyBot" width="64" height="64" style="display:block"><h2>EasyBot</h2></a>
     <p>管理后台需要密码登录</p>
     <form id="login-form">
       <div class="form-group">
@@ -26,7 +27,7 @@
 
 <!-- Header -->
 <header class="header">
-  <h1 style="font-size:16px;">EasyBot 管理后台</h1>
+  <h1 style="font-size:16px;display:flex;align-items:center;gap:8px"><img src="__LOGO__" alt="" width="20" height="20" style="display:block;border-radius:3px"> EasyBot 管理后台</h1>
   <div class="right">
     <a href="/" style="color:var(--text-muted);text-decoration:none;font-size:13px;margin-right:8px;">⬅ 首页</a>
     <span class="key-display" id="key-display" style="display:none"></span>
@@ -43,6 +44,7 @@
   <button class="tab-btn" data-tab="config" role="tab" aria-selected="false">⚙️ Config</button>
   <button class="tab-btn" data-tab="sessions" role="tab" aria-selected="false">💬 Sessions</button>
   <button class="tab-btn" data-tab="messages" role="tab" aria-selected="false">✉️ Messages</button>
+  <button class="tab-btn" data-tab="apikeys" role="tab" aria-selected="false">🔑 API Key</button>
 </nav>
 
 <!-- Tab: Overview -->
@@ -162,9 +164,15 @@
   </div>
   <div id="messages-loading" class="loading">加载中...</div>
   <div id="messages-content" style="display:none">
-    <div class="table-wrapper"><table><thead><tr><th>时间</th><th>平台</th><th>Chat</th><th>角色</th><th>消息</th></tr></thead><tbody id="msg-list"></tbody></table></div>
+    <div class="table-wrapper"><table><thead><tr><th>时间</th><th>平台</th><th>Chat</th><th>角色</th><th>类型</th><th>消息</th><th style="width:70px">操作</th></tr></thead><tbody id="msg-list"></tbody></table></div>
     <div style="text-align:center;margin-top:12px"><button class="btn" id="msg-load-more" style="display:none">加载更多</button></div>
   </div>
+</section>
+
+<!-- Tab: API Keys -->
+<section class="tab-content" id="tab-apikeys" role="tabpanel" aria-label="API Key 管理">
+  <div id="apikeys-loading" class="loading">加载中...</div>
+  <div id="apikeys-content" style="display:none"></div>
 </section>
 
 <!-- Toast notification container -->

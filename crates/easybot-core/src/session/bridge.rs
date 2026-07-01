@@ -6,6 +6,7 @@
 use std::sync::Arc;
 use tracing::{info, warn};
 
+use crate::adapter::AdapterManager;
 use crate::bus::EventBus;
 use crate::session::SessionManager;
 use crate::types::message::InboundMessage;
@@ -22,7 +23,14 @@ impl SessionBridge {
     ///
     /// 订阅事件总线上的入站消息事件，持续处理入站消息并创建/更新会话。
     /// 运行时不会退出（除非 EventBus 关闭），随 tokio 运行时一起停止。
-    pub fn start(event_bus: Arc<EventBus>, session_manager: Arc<SessionManager>) {
+    ///
+    /// `adapter_manager` 可选传入，用于在会话创建后异步富化 session source 信息
+    /// （用户名、角色等）。传入 `None` 则跳过富化。
+    pub fn start(
+        event_bus: Arc<EventBus>,
+        session_manager: Arc<SessionManager>,
+        adapter_manager: Option<Arc<AdapterManager>>,
+    ) {
         let mut event_rx =
             event_bus.subscribe_many(&[crate::types::event::event_types::MESSAGE_INBOUND]);
 
@@ -33,7 +41,9 @@ impl SessionBridge {
                 match event_rx.recv().await {
                     Ok(event) => {
                         if let Some(inbound) = Self::parse_inbound(&event.data) {
-                            Self::handle_inbound(&session_manager, inbound).await;
+                            let sm = session_manager.clone();
+                            let am = adapter_manager.clone();
+                            Self::handle_inbound(sm, inbound, am).await;
                         }
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
@@ -53,21 +63,46 @@ impl SessionBridge {
         serde_json::from_value::<InboundMessage>(data.clone()).ok()
     }
 
-    /// 处理入站消息：创建或更新会话
-    async fn handle_inbound(session_manager: &SessionManager, msg: InboundMessage) {
-        let key = Session::build_key(&msg.platform, &msg.chat_id, msg.thread_id.as_deref());
+    /// 处理入站消息：创建或更新会话，然后异步富化
+    async fn handle_inbound(
+        session_manager: Arc<SessionManager>,
+        msg: InboundMessage,
+        adapter_manager: Option<Arc<AdapterManager>>,
+    ) {
+        let platform = msg.platform.clone();
+        let key = Session::build_key(&platform, &msg.chat_id, msg.thread_id.as_deref());
 
         let source = SessionSource {
-            platform: msg.platform,
+            platform: platform.clone(),
             chat_id: msg.chat_id,
             chat_name: msg.chat_name,
             chat_type: msg.chat_type,
-            user_id: Some(msg.author.id),
-            user_name: msg.author.name,
-            is_bot: msg.author.is_bot,
+            user_id: Some(msg.sender.id),
+            user_name: msg.sender.name,
+            is_bot: msg.sender.is_bot,
+            user_username: msg.sender.username,
+            user_role: msg.sender.role,
         };
 
         let _session = session_manager.get_or_create(&key, source).await;
+
+        // 异步富化：不阻塞消息处理路径
+        if let Some(am) = adapter_manager {
+            tokio::spawn(async move {
+                let current = session_manager.get(&key);
+                let current_source = match current {
+                    Some(ref s) => s.source.clone(),
+                    None => return,
+                };
+                if let Some(enriched) = am.enrich_session(&platform, &current_source).await
+                    && (enriched.user_username.is_some()
+                        || enriched.user_role.is_some()
+                        || enriched.user_name.is_some())
+                {
+                    session_manager.update_source_fields(&key, enriched).await;
+                }
+            });
+        }
     }
 }
 
@@ -77,39 +112,65 @@ mod tests {
     use crate::bus::EventBus;
     use crate::session::SessionManager;
     use crate::types::event::GatewayEvent;
-    use crate::types::message::{ChatType, MessageAuthor};
+    use crate::types::message::{ChatType, MessageSender, MessageType};
     use std::time::Duration;
+
+    fn make_test_msg(
+        id: &str,
+        platform: &str,
+        chat_id: &str,
+        chat_name: Option<&str>,
+        sender_id: &str,
+        sender_name: Option<&str>,
+    ) -> InboundMessage {
+        InboundMessage {
+            id: id.to_string(),
+            platform: platform.to_string(),
+            msg_type: MessageType::Text,
+            text: Some("test".to_string()),
+            sender: MessageSender {
+                id: sender_id.to_string(),
+                name: sender_name.map(|s| s.to_string()),
+                username: None,
+                avatar_url: None,
+                is_bot: false,
+                role: None,
+                language_code: None,
+            },
+            recipient: None,
+            chat_id: chat_id.to_string(),
+            chat_name: chat_name.map(|s| s.to_string()),
+            chat_type: ChatType::Dm,
+            guild_id: None,
+            thread_id: None,
+            root_id: None,
+            timestamp: 1700000000000,
+            media: None,
+            command: None,
+            callback: None,
+            reply_to: None,
+            mentions: None,
+            mentioned: None,
+            metadata: None,
+        }
+    }
 
     #[tokio::test]
     async fn test_bridge_creates_session() {
         let bus = Arc::new(EventBus::new());
         let sessions = Arc::new(SessionManager::new());
 
-        SessionBridge::start(bus.clone(), sessions.clone());
+        SessionBridge::start(bus.clone(), sessions.clone(), None);
 
         // 发布一个入站消息事件
-        let msg = InboundMessage {
-            id: "42".to_string(),
-            platform: "telegram".to_string(),
-            chat_id: "12345".to_string(),
-            chat_name: Some("Test User".to_string()),
-            chat_type: ChatType::Dm,
-            text: Some("Hello".to_string()),
-            author: MessageAuthor {
-                id: "678".to_string(),
-                name: Some("Test User".to_string()),
-                is_bot: false,
-            },
-            timestamp: 1700000000000,
-            media: None,
-            command: None,
-            callback: None,
-            reply_to: None,
-            thread_id: None,
-            mentioned: None,
-            is_group: false,
-            metadata: None,
-        };
+        let msg = make_test_msg(
+            "42",
+            "telegram",
+            "12345",
+            Some("Test User"),
+            "678",
+            Some("Test User"),
+        );
 
         let event = GatewayEvent::new(
             crate::types::event::event_types::MESSAGE_INBOUND,
@@ -135,31 +196,17 @@ mod tests {
         let bus = Arc::new(EventBus::new());
         let sessions = Arc::new(SessionManager::new());
 
-        SessionBridge::start(bus.clone(), sessions.clone());
+        SessionBridge::start(bus.clone(), sessions.clone(), None);
         tokio::time::sleep(Duration::from_millis(100)).await;
 
-        let msg = InboundMessage {
-            id: "src-test".to_string(),
-            platform: "test".to_string(),
-            chat_id: "source-check".to_string(),
-            chat_name: Some("Source Name".to_string()),
-            chat_type: ChatType::Dm,
-            text: Some("check".to_string()),
-            author: MessageAuthor {
-                id: "author-001".to_string(),
-                name: Some("AuthorName".to_string()),
-                is_bot: false,
-            },
-            timestamp: 1700000000000,
-            media: None,
-            command: None,
-            callback: None,
-            reply_to: None,
-            thread_id: None,
-            mentioned: None,
-            is_group: false,
-            metadata: None,
-        };
+        let msg = make_test_msg(
+            "src-test",
+            "test",
+            "source-check",
+            Some("Source Name"),
+            "author-001",
+            Some("AuthorName"),
+        );
 
         let event = GatewayEvent::new(
             crate::types::event::event_types::MESSAGE_INBOUND,

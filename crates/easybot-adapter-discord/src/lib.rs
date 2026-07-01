@@ -25,6 +25,7 @@ use easybot_core::types::message::*;
 use tokio::sync::broadcast;
 use twilight_gateway::{CloseFrame, EventTypeFlags, Intents, Shard, ShardId, StreamExt as _};
 use twilight_model::gateway::event::Event;
+use twilight_model::guild::Permissions;
 use types::*;
 
 /// Discord REST API 基础 URL (v10)
@@ -207,7 +208,27 @@ impl DiscordAdapter {
             ChatType::Dm
         };
 
-        let author = MessageAuthor {
+        let role = if msg.author.bot {
+            Some(SenderRole::Bot)
+        } else if let Some(ref member) = msg.member {
+            // 检查是否有管理员权限
+            if member
+                .permissions
+                .map(|p| p.contains(Permissions::ADMINISTRATOR))
+                .unwrap_or(false)
+            {
+                Some(SenderRole::Admin)
+            } else {
+                Some(SenderRole::Member)
+            }
+        } else if msg.guild_id.is_some() {
+            // 频道消息但 member 数据不可用（可能缺 intents）
+            Some(SenderRole::Member)
+        } else {
+            None
+        };
+
+        let sender = MessageSender {
             id: msg.author.id.to_string(),
             name: Some(
                 msg.author
@@ -215,7 +236,16 @@ impl DiscordAdapter {
                     .clone()
                     .unwrap_or(msg.author.name.clone()),
             ),
+            username: msg.author.name.clone().into(),
+            avatar_url: msg.author.avatar.as_ref().map(|a| {
+                format!(
+                    "https://cdn.discordapp.com/avatars/{}/{}.png",
+                    msg.author.id, a
+                )
+            }),
             is_bot: msg.author.bot,
+            role,
+            language_code: msg.author.locale.clone(),
         };
 
         let timestamp = msg.timestamp.as_micros() / 1000;
@@ -223,19 +253,23 @@ impl DiscordAdapter {
         Some(InboundMessage {
             id: msg.id.to_string(),
             platform: "discord".to_string(),
-            chat_id: msg.channel_id.to_string(),
-            chat_name: None, // 消息对象不含频道名称，需额外 API 查询
-            chat_type,
+            msg_type: MessageType::Text,
             text: Some(msg.content.clone()).filter(|s| !s.is_empty()),
-            author,
+            sender,
+            recipient: Some(bot_user_id.to_string()),
+            chat_id: msg.channel_id.to_string(),
+            chat_name: None,
+            chat_type,
+            guild_id: msg.guild_id.map(|g| g.to_string()),
+            thread_id: None,
+            root_id: None,
             timestamp,
             media: None,
             command: None,
             callback: None,
             reply_to: None,
-            thread_id: None,
+            mentions: None,
             mentioned: None,
-            is_group: msg.guild_id.is_some(),
             metadata: None,
         })
     }
@@ -1199,10 +1233,10 @@ mod tests {
         assert_eq!(inbound.platform, "discord");
         assert_eq!(inbound.chat_id, "222222222");
         assert_eq!(inbound.chat_type, ChatType::Dm);
-        assert!(!inbound.is_group);
+        assert_eq!(inbound.chat_type, ChatType::Dm);
         assert_eq!(inbound.text.as_deref(), Some("Hello from Discord!"));
-        assert_eq!(inbound.author.id, "333333333");
-        assert_eq!(inbound.author.name.as_deref(), Some("TestUser"));
+        assert_eq!(inbound.sender.id, "333333333");
+        assert_eq!(inbound.sender.name.as_deref(), Some("TestUser"));
     }
 
     #[test]
@@ -1219,8 +1253,8 @@ mod tests {
 
         let inbound = DiscordAdapter::convert_message(&msg, "999999999").unwrap();
         assert_eq!(inbound.chat_type, ChatType::Group);
-        assert!(inbound.is_group);
-        assert_eq!(inbound.author.name.as_deref(), Some("guilduser"));
+        assert_eq!(inbound.chat_type, ChatType::Group);
+        assert_eq!(inbound.sender.name.as_deref(), Some("guilduser"));
     }
 
     #[test]
@@ -1370,8 +1404,8 @@ mod tests {
             None,
         );
         let inbound = DiscordAdapter::convert_message(&msg, "999999999").unwrap();
-        assert_eq!(inbound.author.id, "222222222");
-        assert!(inbound.author.is_bot);
+        assert_eq!(inbound.sender.id, "222222222");
+        assert!(inbound.sender.is_bot);
         assert_eq!(inbound.text.as_deref(), Some("I am another bot"));
     }
 
@@ -1464,7 +1498,7 @@ mod tests {
         let inbound: InboundMessage =
             serde_json::from_value(published.data).expect("Failed to deserialize inbound message");
         assert_eq!(inbound.text.as_deref(), Some("Hello, world!"));
-        assert_eq!(inbound.author.id, "222222222");
+        assert_eq!(inbound.sender.id, "222222222");
     }
 
     #[test]

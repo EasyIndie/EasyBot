@@ -143,6 +143,7 @@ async fn main() -> anyhow::Result<()> {
     };
     // 写回 config，使 API 返回的配置始终反映运行时实际路径
     config.storage.path = db_path.to_string_lossy().to_string();
+    let mut auth_pool: Option<sqlx::SqlitePool> = None;
     let (message_store, session_manager) = match config.storage.storage_type.as_str() {
         "postgres" => {
             let conn_str = if !config.storage.connection_string.is_empty() {
@@ -191,6 +192,7 @@ async fn main() -> anyhow::Result<()> {
                         .map_err(|e| anyhow::anyhow!("Migration failed: {}", e))?;
                     tracing::info!("SQLite storage initialized: {}", db_path.display());
 
+                    auth_pool = Some(pool.clone());
                     let store: Arc<dyn easybot_core::storage::SessionStore> = Arc::new(
                         easybot_core::storage::sqlite::SqliteSessionStore::new(pool.clone()),
                     );
@@ -250,7 +252,8 @@ async fn main() -> anyhow::Result<()> {
         Arc::new(easybot_core::adapter::AdapterManager::new().with_event_bus(event_bus.clone()));
     // 初始化自引用，使后台任务能安全持有 Arc<AdapterManager>
     easybot_core::adapter::AdapterManager::init_self_ref(&adapter_manager).await;
-    let auth_manager = Arc::new(easybot_core::auth::ApiKeyManager::new());
+    let auth_manager = Arc::new(easybot_core::auth::ApiKeyManager::new(auth_pool));
+    auth_manager.load_from_db().await;
 
     // 注册内置适配器
     register_builtin_adapters(&adapter_manager, event_bus.clone()).await;
@@ -261,7 +264,7 @@ async fn main() -> anyhow::Result<()> {
     // 创建默认 API Key
     let mut dev_api_key: Option<String> = None;
     match auth_manager
-        .create_key("dev", vec!["*".to_string()], None)
+        .create_key("dev", vec!["*".to_string()], None, vec![])
         .await
     {
         Ok((_id, key)) => {
@@ -284,8 +287,12 @@ async fn main() -> anyhow::Result<()> {
         );
     }
 
-    // 启动会话桥接器（入站消息 → 自动创建会话）
-    easybot_core::session::SessionBridge::start(event_bus.clone(), session_manager.clone());
+    // 启动会话桥接器（入站消息 → 自动创建会话 → 异步富化）
+    easybot_core::session::SessionBridge::start(
+        event_bus.clone(),
+        session_manager.clone(),
+        Some(adapter_manager.clone()),
+    );
 
     // 启动消息持久化器（入站消息 → SQLite）
     easybot_core::session::MessagePersister::start(event_bus.clone(), message_store.clone());

@@ -72,9 +72,21 @@ impl Modify for SecurityAddon {
         routes::config::get_config,
         routes::config::update_config,
         routes::ws::ws_handler,
+        // Admin — API Key 管理
+        routes::admin::list_api_keys,
+        routes::admin::create_api_key,
+        routes::admin::revoke_api_key,
+        routes::admin::purge_api_key,
+        routes::admin::list_api_key_types,
     ),
     components(
         schemas(
+            // Admin — API Keys
+            routes::admin::ApiKeyResponse,
+            routes::admin::CreateApiKeyRequest,
+            routes::admin::CreateApiKeyResponse,
+            routes::admin::RevokeResponse,
+            routes::admin::ApiKeyTypesResponse,
             // Health
             routes::health::HealthResponse,
             routes::health::AdapterSummary,
@@ -101,7 +113,10 @@ impl Modify for SecurityAddon {
             easybot_core::types::message::DeleteResult,
             easybot_core::types::message::ChatType,
             easybot_core::types::message::ParseMode,
-            easybot_core::types::message::MessageAuthor,
+            easybot_core::types::message::MessageSender,
+            easybot_core::types::message::MessageType,
+            easybot_core::types::message::MentionInfo,
+            easybot_core::types::message::SenderRole,
             easybot_core::types::message::MediaAttachment,
             easybot_core::types::message::MediaType,
             easybot_core::types::message::CommandData,
@@ -153,6 +168,7 @@ impl Modify for SecurityAddon {
         (name = "Chats", description = "聊天信息查询"),
         (name = "Config", description = "网关配置管理"),
         (name = "WebSocket", description = "WebSocket 实时事件推送"),
+        (name = "API Keys", description = "API Key 管理（创建/列出/吊销/删除）"),
     )
 )]
 pub struct ApiDoc;

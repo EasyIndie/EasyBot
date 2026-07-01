@@ -28,6 +28,8 @@ pub enum Permission {
     SessionsManage,
     /// 建立 WebSocket 连接
     WebSocketConnect,
+    /// 管理 API Key（创建/列出/吊销）
+    ApiKeysManage,
 }
 
 /// 检查 AuthInfo 是否持有所需权限

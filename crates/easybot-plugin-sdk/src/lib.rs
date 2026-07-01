@@ -16,10 +16,13 @@ pub use easybot_core::types::adapter::{
     PlatformAdapter,
 };
 
+#[allow(deprecated)]
+pub use easybot_core::types::message::MessageAuthor;
 pub use easybot_core::types::message::{
     CallbackEvent, ChatFilter, ChatInfo, ChatType, DeleteResult, EditMessageParams, EditResult,
-    InboundMessage, MediaAttachment, MediaType, MessageAuthor, OutboundMessage, ParseMode,
-    SendInteractiveParams, SendMediaParams, SendResult, SendTextParams,
+    InboundMessage, MediaAttachment, MediaType, MentionInfo, MessageSender, MessageType,
+    OutboundMessage, ParseMode, SendInteractiveParams, SendMediaParams, SendResult, SendTextParams,
+    SenderRole,
 };
 
 pub use easybot_core::types::error::GatewayError;
@@ -34,9 +37,9 @@ pub mod prelude {
         CallbackEvent, Capability, CapabilityLimits, CapabilityName, ChatFilter, ChatInfo,
         ChatType, ConnectResult, DeleteResult, EASYBOT_PLUGIN_ABI_VERSION, EditMessageParams,
         EditResult, GatewayError, HealthReport, HealthStatus, InboundMessage, InitResult,
-        MediaAttachment, MediaType, MessageAuthor, OutboundMessage, ParseMode, PlatformAdapter,
-        SendInteractiveParams, SendMediaParams, SendResult, SendTextParams, SessionSource,
-        declare_plugin,
+        MediaAttachment, MediaType, MentionInfo, MessageSender, MessageType, OutboundMessage,
+        ParseMode, PlatformAdapter, SendInteractiveParams, SendMediaParams, SendResult,
+        SendTextParams, SenderRole, SessionSource, declare_plugin,
     };
     pub use async_trait::async_trait;
 }

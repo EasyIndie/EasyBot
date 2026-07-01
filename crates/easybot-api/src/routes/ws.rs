@@ -11,9 +11,11 @@ use axum::{
     },
     response::{IntoResponse, Response},
 };
+use easybot_core::types::event::event_types;
 use futures::{SinkExt, StreamExt};
 use std::time::Instant;
 use tokio::sync::OwnedSemaphorePermit;
+use tokio::sync::broadcast;
 use tracing::{info, warn};
 
 /// WebSocket 实时事件流
@@ -51,16 +53,8 @@ pub async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> 
 async fn handle_ws(socket: WebSocket, state: AppState, _permit: OwnedSemaphorePermit) {
     let (mut sender, mut receiver) = socket.split();
 
-    // 订阅网关事件
-    let mut event_rx = state.event_bus.subscribe_many(&[
-        "message.inbound",
-        "message.sent",
-        "message.failed",
-        "adapter.connected",
-        "adapter.disconnected",
-        "adapter.error",
-        "callback.received",
-    ]);
+    // 认证前使用哑 channel，不订阅任何事件（认证后才创建真实订阅）
+    let (_dummy_tx, mut event_rx) = broadcast::channel(1);
 
     let mut authenticated = false;
     let mut event_seq: u64 = 0;
@@ -97,7 +91,22 @@ async fn handle_ws(socket: WebSocket, state: AppState, _permit: OwnedSemaphorePe
                             match token {
                                 Some(ref key) => {
                                     match state.auth_manager.authenticate(key).await {
-                                        Ok(_auth_info) => {
+                                        Ok(auth_info) => {
+                                            // 根据 API Key 的 event_filters 订阅事件
+                                            let event_refs: Vec<&str> =
+                                                if auth_info.event_filters.is_empty() {
+                                                    // 空数组 = 全部事件（向后兼容）
+                                                    event_types::all().to_vec()
+                                                } else {
+                                                    auth_info
+                                                        .event_filters
+                                                        .iter()
+                                                        .map(|s| s.as_str())
+                                                        .collect()
+                                                };
+                                            event_rx = state
+                                                .event_bus
+                                                .subscribe_many(&event_refs);
                                             authenticated = true;
                                             let _ = sender.send(Message::Text(
                                                 r#"{"type":"auth_ok"}"#.into()
@@ -189,7 +198,7 @@ async fn handle_ws(socket: WebSocket, state: AppState, _permit: OwnedSemaphorePe
                             }
                         }
                     }
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                    Err(broadcast::error::RecvError::Lagged(n)) => {
                         let _ = sender.send(Message::Text(
                             serde_json::json!({"type":"lagged","dropped":n}).to_string().into()
                         )).await;

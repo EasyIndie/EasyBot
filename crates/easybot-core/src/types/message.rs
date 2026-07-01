@@ -13,36 +13,141 @@ pub struct InboundMessage {
     pub id: String,
     /// 来源平台标识
     pub platform: String,
+
+    // ── 消息类型与内容 ──
+    /// 消息内容类型
+    pub msg_type: MessageType,
+    /// 消息文本内容
+    pub text: Option<String>,
+    /// 媒体附件
+    pub media: Option<Vec<MediaAttachment>>,
+
+    // ── 收发双方 ──
+    /// 消息发送者
+    #[serde(alias = "author")]
+    pub sender: MessageSender,
+    /// 接收该消息的机器人 ID（用于多 bot 路由）
+    pub recipient: Option<String>,
+
+    // ── 聊天上下文 ──
     /// 来源聊天 ID
     pub chat_id: String,
-    /// 聊天名称（可选）
+    /// 聊天名称
     pub chat_name: Option<String>,
     /// 聊天类型
     pub chat_type: ChatType,
-    /// 消息文本内容
-    pub text: Option<String>,
-    /// 消息作者
-    pub author: MessageAuthor,
+    /// 所属服务器/频道 ID（Discord guild_id, QQ channel guild_id）
+    pub guild_id: Option<String>,
+    /// 话题/子线程 ID
+    pub thread_id: Option<String>,
+    /// 线程根消息 ID（飞书 root_id）
+    pub root_id: Option<String>,
+
+    // ── 时间 ──
     /// 消息时间戳（毫秒）
     pub timestamp: i64,
-    /// 媒体附件
-    pub media: Option<Vec<MediaAttachment>>,
+
+    // ── 交互 ──
     /// 斜杠命令
     pub command: Option<CommandData>,
     /// 按钮回调
     pub callback: Option<CallbackData>,
     /// 回复引用
     pub reply_to: Option<MessageReference>,
-    /// 话题 ID
-    pub thread_id: Option<String>,
+    /// @提及列表
+    pub mentions: Option<Vec<MentionInfo>>,
     /// 是否 @了机器人（仅群聊场景有意义，None 表示不适用或未知）
     #[serde(default)]
     pub mentioned: Option<bool>,
-    /// 是否为群组消息
-    pub is_group: bool,
+
+    // ── 平台扩展 ──
     /// 平台特有元数据
     pub metadata: Option<serde_json::Value>,
 }
+
+/// 消息内容类型（平台无关）
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq)]
+pub enum MessageType {
+    /// 纯文本
+    Text,
+    /// 图片
+    Image,
+    /// 音频
+    Audio,
+    /// 视频
+    Video,
+    /// 文件
+    File,
+    /// 贴纸
+    Sticker,
+    /// 动画/GIF
+    Animation,
+    /// 富文本（飞书 post）
+    RichText,
+    /// 交互式消息卡片
+    Interactive,
+    /// 分享（群/用户名片）
+    Share,
+    /// 位置
+    Location,
+    /// 联系人名片
+    Contact,
+    /// 链接预览
+    Link,
+    /// 系统消息（成员加入/离开等）
+    System,
+    /// 未识别或未知的消息类型
+    Unknown,
+}
+
+/// 发送者角色
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq)]
+pub enum SenderRole {
+    /// 管理员
+    Admin,
+    /// 普通成员
+    Member,
+    /// 群主/所有者
+    Owner,
+    /// 机器人/应用
+    Bot,
+    /// 匿名用户
+    Anonymous,
+}
+
+/// 消息发送者（增强版，替换 MessageAuthor）
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct MessageSender {
+    /// 平台用户 ID
+    pub id: String,
+    /// 显示名称
+    pub name: Option<String>,
+    /// 平台特有用户名/句柄（telegram @username, discord username）
+    pub username: Option<String>,
+    /// 头像 URL
+    pub avatar_url: Option<String>,
+    /// 是否为机器人
+    pub is_bot: bool,
+    /// 发送者角色
+    pub role: Option<SenderRole>,
+    /// 语言代码（IETF tag，Telegram 特有）
+    pub language_code: Option<String>,
+}
+
+/// @提及信息
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct MentionInfo {
+    /// 被提及的用户 ID（平台原始 ID）
+    pub user_id: Option<String>,
+    /// 被提及的用户名
+    pub username: Option<String>,
+    /// 提及范围：single / all / here
+    pub scope: Option<String>,
+}
+
+/// 消息作者（已弃用，请使用 MessageSender）
+#[deprecated(since = "0.3.0", note = "use MessageSender instead")]
+pub type MessageAuthor = MessageSender;
 
 /// 出站消息（发往 IM 平台的消息）
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -205,14 +310,6 @@ pub enum ChatType {
     Thread,
 }
 
-/// 消息作者
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
-pub struct MessageAuthor {
-    pub id: String,
-    pub name: Option<String>,
-    pub is_bot: bool,
-}
-
 /// 媒体附件
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct MediaAttachment {
@@ -356,5 +453,52 @@ mod tests {
         let mode = ParseMode::None;
         let json = serde_json::to_string(&mode).unwrap();
         assert_eq!(json, r#""none""#);
+    }
+
+    #[test]
+    fn test_inbound_message_serde_alias_author() {
+        // 兼容旧 JSON 格式：author → sender 通过 serde(alias) 反序列化
+        let old_json = serde_json::json!({
+            "id": "msg1",
+            "platform": "test",
+            "msg_type": "Text",
+            "text": "hello",
+            "author": {
+                "id": "user1",
+                "name": "Alice",
+                "is_bot": false
+            },
+            "chat_id": "chat1",
+            "chat_type": "Dm",
+            "timestamp": 1000
+        });
+        let msg: InboundMessage = serde_json::from_value(old_json).unwrap();
+        assert_eq!(msg.sender.id, "user1");
+        assert_eq!(msg.sender.name, Some("Alice".to_string()));
+        assert_eq!(msg.msg_type, MessageType::Text);
+    }
+
+    #[test]
+    fn test_inbound_message_serde_new_format() {
+        // 新 JSON 格式
+        let new_json = serde_json::json!({
+            "id": "msg1",
+            "platform": "test",
+            "msg_type": "Image",
+            "text": "hello",
+            "sender": {
+                "id": "user1",
+                "name": "Alice",
+                "username": "alice_bot",
+                "is_bot": false
+            },
+            "chat_id": "chat1",
+            "chat_type": "Dm",
+            "timestamp": 1000
+        });
+        let msg: InboundMessage = serde_json::from_value(new_json).unwrap();
+        assert_eq!(msg.sender.id, "user1");
+        assert_eq!(msg.sender.username, Some("alice_bot".to_string()));
+        assert_eq!(msg.msg_type, MessageType::Image);
     }
 }

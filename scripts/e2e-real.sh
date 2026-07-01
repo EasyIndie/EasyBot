@@ -50,6 +50,15 @@ ADAPTER_CONNECT_TIMEOUT="${E2E_ADAPTER_TIMEOUT:-30}"
 POLL_INTERVAL=2
 QUICK_MODE=false
 
+# 管理后台密码（优先级：E2E_ADMIN_PASSWORD > ~/.easybot/.env > 默认值 "easybot"）
+if [ -n "${E2E_ADMIN_PASSWORD:-}" ]; then
+    ADMIN_PASSWORD="$E2E_ADMIN_PASSWORD"
+elif [ -f "$HOME/.easybot/.env" ]; then
+    # 从 .env 提取未注释的 EASYBOT_ADMIN_PASSWORD 值
+    ADMIN_PASSWORD=$(grep -E '^[[:space:]]*EASYBOT_ADMIN_PASSWORD=' "$HOME/.easybot/.env" 2>/dev/null | head -1 | sed 's/^[[:space:]]*EASYBOT_ADMIN_PASSWORD=//' | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//")
+fi
+ADMIN_PASSWORD="${ADMIN_PASSWORD:-easybot}"
+
 # ── 全局状态（跨 Phase 共享） ──
 
 FINAL_ADAPTER_STATUSES=""   # Phase 2 缓存，Phase 5 复用
@@ -217,21 +226,25 @@ phase1_build_and_start() {
     done
     pass "服务已启动 (PID=$E2E_PID, ${_elapsed:-?}s)"
 
-    # 通过管理后台登录接口获取 API Key（不再从 stdout 提取）
+    # 通过管理后台登录接口获取 API Key
     E2E_API_KEY=""
     local _wait=0
     while [ $_wait -lt 30 ]; do
         E2E_API_KEY=$(curl -sf -X POST http://localhost:8080/admin/login \
             -H 'Content-Type: application/json' \
-            -d '{"password":"easybot"}' 2>/dev/null | grep -o '"key":"eb_[^"]*"' | cut -d'"' -f4 || true)
+            -d "{\"password\":\"${ADMIN_PASSWORD}\"}" 2>/dev/null | grep -o '"key":"eb_[^"]*"' | cut -d'"' -f4 || true)
         if [ -n "$E2E_API_KEY" ]; then
             break
         fi
         sleep 1
         _wait=$((_wait + 1))
     done
+    # Fallback: 从 stdout 提取 API Key
     if [ -z "$E2E_API_KEY" ]; then
-        fail "未能通过 /admin/login 获取 API Key"
+        E2E_API_KEY=$(grep -o 'E2E_API_KEY=eb_[a-f0-9]*' "$STDOUT_FILE" 2>/dev/null | head -1 | cut -d= -f2)
+    fi
+    if [ -z "$E2E_API_KEY" ]; then
+        fail "未能获取 API Key（/admin/login 和 stdout 均未找到）"
         info "日志最后 10 行:"
         tail -10 "$LOG_FILE" | sed 's/^/    /'
         exit 1

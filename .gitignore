@@ -35,3 +35,6 @@ manage-service.ps1
 # Environment
 .env
 *.env.local
+
+# Build.rs 生成的模板产物（统一输出至此目录，未来新增无需改 .gitignore）
+crates/easybot-api/templates/gen/

@@ -27,6 +27,7 @@
 //! - 仅支持 DM（一对一聊天），不支持群聊
 //! - 不支持 Markdown、贴纸、小程序消息
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
@@ -40,8 +41,9 @@ use easybot_core::types::message::*;
 mod crypto;
 use crypto::{
     WeChatCredentials, aes_128_ecb_encrypt, aes_padded_size, base64_encode_uin,
-    build_cdn_upload_url, clear_credentials, encode_aes_key_for_api, generate_filekey,
-    load_credentials_from_disk, md5_hex, resolve_media_data, save_credentials_to_disk,
+    build_cdn_upload_url, encode_aes_key_for_api, generate_filekey, load_context_tokens,
+    load_credentials_from_disk, load_sync_buf, md5_hex, resolve_media_data, save_context_tokens,
+    save_credentials_to_disk, save_sync_buf,
 };
 
 /// iLink Bot API 基础 URL
@@ -49,10 +51,6 @@ const ILINK_API: &str = "https://ilinkai.weixin.qq.com";
 
 /// 长轮询超时（秒）
 const LONGPOLL_TIMEOUT: u64 = 35;
-
-/// Session 刷新间隔（秒），24 小时后过期需重连
-#[allow(dead_code)]
-const SESSION_REFRESH_INTERVAL: u64 = 82800; // 23 小时
 
 /// iLink 媒体类型常量
 const MEDIA_TYPE_IMAGE: i32 = 1;
@@ -233,6 +231,17 @@ struct UploadUrlResponse {
 
 // ── 适配器 ──
 
+/// 长轮询单次调查结果
+#[derive(Debug)]
+enum PollOutcome {
+    /// HTTP 超时，无消息
+    Timeout,
+    /// 收到消息，包含新游标和消息列表
+    Messages(String, Vec<WeixinMessage>),
+    /// API 返回 errcode=-14，会话过期（暂停后重试，凭据依然有效）
+    SessionExpired(String),
+}
+
 /// 个人微信适配器
 pub struct WeChatAdapter {
     platform_name: String,
@@ -248,8 +257,8 @@ pub struct WeChatAdapter {
     http_client: std::sync::OnceLock<reqwest::Client>,
     /// iLink Bot Token（登录后获取）
     bot_token: tokio::sync::RwLock<Option<String>>,
-    /// 长轮询游标
-    updates_buf: tokio::sync::RwLock<Option<String>>,
+    /// 长轮询游标（持久化到磁盘）
+    sync_buf: Arc<tokio::sync::RwLock<String>>,
     /// 取消信号
     cancel_tx: Option<tokio::sync::broadcast::Sender<()>>,
     /// Background liveness heartbeat (updated by the longpoll task)
@@ -258,8 +267,8 @@ pub struct WeChatAdapter {
     ilink_bot_id: tokio::sync::RwLock<Option<String>>,
     /// iLink User ID
     ilink_user_id: tokio::sync::RwLock<Option<String>>,
-    /// 最近收到的 context_token（回复时需回传，与长轮询任务共享）
-    context_token: Arc<tokio::sync::RwLock<Option<String>>>,
+    /// 每条聊天的上下文令牌（持久化到磁盘，peer_id → token）
+    context_tokens: Arc<tokio::sync::RwLock<HashMap<String, String>>>,
 }
 
 impl WeChatAdapter {
@@ -303,12 +312,12 @@ impl WeChatAdapter {
             event_bus: None,
             http_client: std::sync::OnceLock::new(),
             bot_token: tokio::sync::RwLock::new(None),
-            updates_buf: tokio::sync::RwLock::new(None),
+            sync_buf: Arc::new(tokio::sync::RwLock::new(String::new())),
             cancel_tx: None,
             heartbeat: Heartbeat::new(),
             ilink_bot_id: tokio::sync::RwLock::new(None),
             ilink_user_id: tokio::sync::RwLock::new(None),
-            context_token: Arc::new(tokio::sync::RwLock::new(None)),
+            context_tokens: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
         }
     }
 
@@ -553,6 +562,113 @@ impl WeChatAdapter {
             "rawsize": rawsize,
         }))
     }
+
+    /// 发送文本消息的低层 HTTP 调用。返回原始解析后的响应。
+    /// 由 send() 调用，发送方可在会话过期时剥离 context_token 重试。
+    async fn send_text_http(
+        &self,
+        url: &str,
+        token: &str,
+        chat_id: &str,
+        text: &str,
+        context_token: Option<&str>,
+    ) -> Result<SendMessageResponse, GatewayError> {
+        let client = self.client();
+        let client_id = format!(
+            "easybot:{}:{}",
+            chrono::Utc::now().timestamp_millis(),
+            uuid::Uuid::new_v4().as_simple()
+        );
+
+        let mut body = serde_json::json!({
+            "msg": {
+                "from_user_id": "",
+                "to_user_id": chat_id,
+                "client_id": client_id,
+                "message_type": 2,
+                "message_state": 2,
+                "item_list": [{
+                    "type": 1,
+                    "text_item": { "text": text }
+                }]
+            },
+            "base_info": { "channel_version": "1.0.0" }
+        });
+
+        if let Some(ct) = context_token {
+            body["msg"]["context_token"] = serde_json::Value::String(ct.to_string());
+        }
+
+        let raw_resp = client
+            .post(url)
+            .headers(self.auth_headers(token))
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| GatewayError::Internal(format!("WeChat send HTTP failed: {}", e)))?;
+
+        let status = raw_resp.status();
+        let resp_text = raw_resp
+            .text()
+            .await
+            .map_err(|e| GatewayError::Internal(format!("WeChat send read failed: {}", e)))?;
+
+        if !status.is_success() {
+            return Err(GatewayError::Internal(format!(
+                "WeChat send HTTP {}: {}",
+                status.as_u16(),
+                &resp_text[..resp_text.len().min(200)]
+            )));
+        }
+
+        serde_json::from_str(&resp_text).map_err(|e| {
+            GatewayError::Internal(format!(
+                "WeChat send parse failed: {} (body: {})",
+                e,
+                &resp_text[..resp_text.len().min(200)]
+            ))
+        })
+    }
+
+    /// 发送媒体消息的低层 HTTP 调用。返回原始解析后的响应。
+    /// 由 send_media() 调用，发送方可在会话过期时剥离 context_token 重试。
+    async fn send_media_http(
+        &self,
+        url: &str,
+        token: &str,
+        body: serde_json::Value,
+    ) -> Result<SendMessageResponse, GatewayError> {
+        let client = self.client();
+        let raw_resp = client
+            .post(url)
+            .headers(self.auth_headers(token))
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| GatewayError::Internal(format!("WeChat send_media HTTP failed: {}", e)))?;
+
+        let status = raw_resp.status();
+        let resp_text = raw_resp
+            .text()
+            .await
+            .map_err(|e| GatewayError::Internal(format!("WeChat send_media read failed: {}", e)))?;
+
+        if !status.is_success() {
+            return Err(GatewayError::Internal(format!(
+                "WeChat send_media HTTP {}: {}",
+                status.as_u16(),
+                &resp_text[..resp_text.len().min(200)]
+            )));
+        }
+
+        serde_json::from_str(&resp_text).map_err(|e| {
+            GatewayError::Internal(format!(
+                "WeChat send_media parse failed: {} (body: {})",
+                e,
+                &resp_text[..resp_text.len().min(200)]
+            ))
+        })
+    }
 }
 
 fn publish_send_event(
@@ -617,6 +733,23 @@ impl PlatformAdapter for WeChatAdapter {
             *self.bot_token.write().await = Some(creds.bot_token);
             *self.ilink_bot_id.write().await = Some(creds.ilink_bot_id);
             *self.ilink_user_id.write().await = Some(creds.ilink_user_id);
+        }
+
+        // 从磁盘恢复持久化状态（context_tokens 和 sync_buf）
+        *self.sync_buf.write().await = load_sync_buf();
+        *self.context_tokens.write().await = load_context_tokens();
+        if !self.sync_buf.read().await.is_empty() {
+            tracing::info!(
+                "个人微信适配器：从磁盘恢复 sync_buf ({} 字节)",
+                self.sync_buf.read().await.len()
+            );
+        }
+        let token_count = self.context_tokens.read().await.len();
+        if token_count > 0 {
+            tracing::info!(
+                "个人微信适配器：从磁盘恢复 {} 条聊天上下文令牌",
+                token_count
+            );
         }
 
         self.state = AdapterState::Starting;
@@ -785,17 +918,21 @@ impl PlatformAdapter for WeChatAdapter {
             let eb = event_bus.clone();
             let client = self.client().clone();
             let token = self.bot_token.read().await.clone().unwrap_or_default();
-            let buf = self.updates_buf.read().await.clone().unwrap_or_default();
+            let buf = self.sync_buf.read().await.clone();
             let base_url = self
                 .config
                 .as_ref()
                 .and_then(|c| c.base_url.clone())
                 .unwrap_or_else(|| ILINK_API.to_string());
 
-            let ctx_token = self.context_token.clone();
+            let ctx_tokens = self.context_tokens.clone();
+            let sync_buf = self.sync_buf.clone();
             let hb = self.heartbeat.clone();
             tokio::spawn(async move {
-                longpoll_loop(client, token, buf, base_url, eb, cancel_rx, ctx_token, hb).await;
+                longpoll_loop(
+                    client, token, buf, base_url, eb, cancel_rx, ctx_tokens, sync_buf, hb,
+                )
+                .await;
             });
         }
 
@@ -876,95 +1013,65 @@ impl PlatformAdapter for WeChatAdapter {
         let token = self.bot_token.read().await.clone().ok_or_else(|| {
             GatewayError::Internal("Not authenticated (no bot_token)".to_string())
         })?;
-        let client = self.client();
         let url = format!("{}/ilink/bot/sendmessage", self.api_base_url());
 
-        // iLink send API 完整格式：msg 包装 + context_token + 元数据
-        let ctx_token = self.context_token.read().await.clone();
-        let client_id = format!(
-            "easybot:{}:{}",
-            chrono::Utc::now().timestamp_millis(),
-            uuid::Uuid::new_v4().as_simple()
-        );
-
-        let mut body = serde_json::json!({
-            "msg": {
-                "from_user_id": "",
-                "to_user_id": params.chat_id,
-                "client_id": client_id,
-                "message_type": 2,
-                "message_state": 2,
-                "item_list": [
-                    {
-                        "type": 1,
-                        "text_item": {
-                            "text": params.message.text,
-                        }
-                    }
-                ]
-            },
-            "base_info": {
-                "channel_version": "1.0.0"
-            }
-        });
-
-        if let Some(ref ct) = ctx_token {
-            body["msg"]["context_token"] = serde_json::Value::String(ct.clone());
-        }
+        // 查每条聊天的 context_token（持久化）
+        let ctx_token = {
+            let tokens = self.context_tokens.read().await;
+            tokens.get(&params.chat_id).cloned()
+        };
 
         tracing::debug!(
-            "WeChat send request: to_user_id={}, has_ctx={}, text={}",
+            "WeChat send: to_user_id={}, has_ctx={}, text={}",
             params.chat_id,
             ctx_token.is_some(),
             &params.message.text[..params.message.text.len().min(100)]
         );
 
-        let raw_resp = client
-            .post(&url)
-            .headers(self.auth_headers(&token))
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| GatewayError::Internal(format!("WeChat send failed: {}", e)))?;
-
-        let status = raw_resp.status();
-        let resp_text = raw_resp
-            .text()
-            .await
-            .map_err(|e| GatewayError::Internal(format!("WeChat send read failed: {}", e)))?;
-
-        tracing::debug!(
-            "WeChat send response (status={}): {}",
-            status,
-            &resp_text[..resp_text.len().min(300)]
-        );
-
-        if !status.is_success() {
-            self.errors.fetch_add(1, Ordering::Relaxed);
-            let fail = SendResult::fail(
-                format!(
-                    "WeChat send HTTP {}: {}",
-                    status.as_u16(),
-                    &resp_text[..resp_text.len().min(200)]
-                ),
-                false,
-            );
-            publish_send_event(
-                &self.event_bus,
-                easybot_core::types::event::event_types::MESSAGE_FAILED,
+        // 第一次尝试：带 context_token 发送
+        let mut resp = self
+            .send_text_http(
+                &url,
+                &token,
                 &params.chat_id,
-                &fail,
-            );
-            return Ok(fail);
+                &params.message.text,
+                ctx_token.as_deref(),
+            )
+            .await;
+
+        // 如果 response 是 -14（会话过期）且有 context_token，剥离它重试一次
+        if let Ok(ref r) = resp
+            && r.ret == Some(-14)
+            && ctx_token.is_some()
+        {
+            tracing::warn!("WeChat send 遇到 session 过期 (ret=-14)，剥离 context_token 重试");
+            // 清除该聊天的过期 token
+            {
+                let mut tokens = self.context_tokens.write().await;
+                tokens.remove(&params.chat_id);
+                save_context_tokens(&tokens);
+            }
+            drop(resp); // 释放 borrow，允许重新赋值
+            // 无 token 重试一次（降级模式，iLink 接受无 token 发送）
+            resp = self
+                .send_text_http(&url, &token, &params.chat_id, &params.message.text, None)
+                .await;
         }
 
-        let resp: SendMessageResponse = serde_json::from_str(&resp_text).map_err(|e| {
-            GatewayError::Internal(format!(
-                "WeChat send parse failed: {} (body: {})",
-                e,
-                &resp_text[..resp_text.len().min(200)]
-            ))
-        })?;
+        let resp = match resp {
+            Ok(r) => r,
+            Err(e) => {
+                self.errors.fetch_add(1, Ordering::Relaxed);
+                tracing::warn!("WeChat send 失败: {}", e);
+                publish_send_event(
+                    &self.event_bus,
+                    easybot_core::types::event::event_types::MESSAGE_FAILED,
+                    &params.chat_id,
+                    &SendResult::fail(e.to_string(), false),
+                );
+                return Err(e);
+            }
+        };
 
         // ret 存在且非 0 时报告错误
         if let Some(ret) = resp.ret
@@ -1016,7 +1123,6 @@ impl PlatformAdapter for WeChatAdapter {
         let token = self.bot_token.read().await.clone().ok_or_else(|| {
             GatewayError::Internal("Not authenticated (no bot_token)".to_string())
         })?;
-        let client = self.client();
 
         // 将 MediaType 映射到 iLink media_type
         let (media_type, item_type) = match params.media.media_type {
@@ -1033,9 +1139,14 @@ impl PlatformAdapter for WeChatAdapter {
             .upload_media_to_cdn(&params.media, &params.chat_id, media_type)
             .await?;
 
+        // 查每条聊天的 context_token（持久化）
+        let ctx_token = {
+            let tokens = self.context_tokens.read().await;
+            tokens.get(&params.chat_id).cloned()
+        };
+
         // 构建消息体
         let url = format!("{}/ilink/bot/sendmessage", self.api_base_url());
-        let ctx_token = self.context_token.read().await.clone();
         let client_id = format!(
             "easybot:{}:{}",
             chrono::Utc::now().timestamp_millis(),
@@ -1052,7 +1163,6 @@ impl PlatformAdapter for WeChatAdapter {
                         "mid_size": upload_result["mid_size"],
                     }
                 });
-                // 添加可选的文件名和尺寸
                 if let Some(ref name) = params.media.filename {
                     img_item["image_item"]["file_name"] = serde_json::Value::String(name.clone());
                 }
@@ -1077,7 +1187,7 @@ impl PlatformAdapter for WeChatAdapter {
                 vid_item
             }
             ITEM_TYPE_VOICE => {
-                let voice_item = serde_json::json!({
+                serde_json::json!({
                     "type": ITEM_TYPE_VOICE,
                     "voice_item": {
                         "media": upload_result["media"].clone(),
@@ -1086,19 +1196,17 @@ impl PlatformAdapter for WeChatAdapter {
                         "sample_rate": 24000,
                         "playtime": params.media.duration.unwrap_or(0.0) as i64,
                     }
-                });
-                voice_item
+                })
             }
             _ => {
-                let file_item = serde_json::json!({
+                serde_json::json!({
                     "type": ITEM_TYPE_FILE,
                     "file_item": {
                         "media": upload_result["media"].clone(),
                         "file_name": params.media.filename.as_deref().unwrap_or("file"),
                         "len": upload_result["rawsize"],
                     }
-                });
-                file_item
+                })
             }
         };
 
@@ -1127,52 +1235,45 @@ impl PlatformAdapter for WeChatAdapter {
             params.media.filename,
         );
 
-        let raw_resp = client
-            .post(&url)
-            .headers(self.auth_headers(&token))
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| GatewayError::Internal(format!("WeChat send_media failed: {}", e)))?;
+        // 第一次尝试：带 context_token 发送
+        let mut resp = self.send_media_http(&url, &token, body.clone()).await;
 
-        let status = raw_resp.status();
-        let resp_text = raw_resp
-            .text()
-            .await
-            .map_err(|e| GatewayError::Internal(format!("WeChat send_media read failed: {}", e)))?;
-
-        tracing::debug!(
-            "WeChat send_media response (status={}): {}",
-            status,
-            &resp_text[..resp_text.len().min(300)]
-        );
-
-        if !status.is_success() {
-            self.errors.fetch_add(1, Ordering::Relaxed);
-            let fail = SendResult::fail(
-                format!(
-                    "WeChat send_media HTTP {}: {}",
-                    status.as_u16(),
-                    &resp_text[..resp_text.len().min(200)]
-                ),
-                false,
+        // 如果 response 是 -14（会话过期）且有 context_token，剥离它重试一次
+        if let Ok(ref r) = resp
+            && r.ret == Some(-14)
+            && ctx_token.is_some()
+        {
+            tracing::warn!(
+                "WeChat send_media 遇到 session 过期 (ret=-14)，剥离 context_token 重试"
             );
-            publish_send_event(
-                &self.event_bus,
-                easybot_core::types::event::event_types::MESSAGE_FAILED,
-                &params.chat_id,
-                &fail,
-            );
-            return Ok(fail);
+            // 清除该聊天的过期 token
+            {
+                let mut tokens = self.context_tokens.write().await;
+                tokens.remove(&params.chat_id);
+                save_context_tokens(&tokens);
+            }
+            // 删除 body 中的 context_token，无 token 重试
+            if let Some(obj) = body["msg"].as_object_mut() {
+                obj.remove("context_token");
+            }
+            drop(resp);
+            resp = self.send_media_http(&url, &token, body).await;
         }
 
-        let resp: SendMessageResponse = serde_json::from_str(&resp_text).map_err(|e| {
-            GatewayError::Internal(format!(
-                "WeChat send_media parse failed: {} (body: {})",
-                e,
-                &resp_text[..resp_text.len().min(200)]
-            ))
-        })?;
+        let resp = match resp {
+            Ok(r) => r,
+            Err(e) => {
+                self.errors.fetch_add(1, Ordering::Relaxed);
+                tracing::warn!("WeChat send_media 失败: {}", e);
+                publish_send_event(
+                    &self.event_bus,
+                    easybot_core::types::event::event_types::MESSAGE_FAILED,
+                    &params.chat_id,
+                    &SendResult::fail(e.to_string(), false),
+                );
+                return Err(e);
+            }
+        };
 
         if let Some(ret) = resp.ret
             && ret != 0
@@ -1253,7 +1354,8 @@ async fn longpoll_loop(
     base_url: String,
     event_bus: Arc<EventBus>,
     mut cancel_rx: tokio::sync::broadcast::Receiver<()>,
-    context_token: Arc<tokio::sync::RwLock<Option<String>>>,
+    context_tokens: Arc<tokio::sync::RwLock<HashMap<String, String>>>,
+    sync_buf: Arc<tokio::sync::RwLock<String>>,
     heartbeat: Heartbeat,
 ) {
     let url = format!("{}/ilink/bot/getupdates", base_url);
@@ -1268,14 +1370,21 @@ async fn longpoll_loop(
             }
             result = poll_messages(&client, &url, &token, &buf) => {
                 match result {
-                    Ok(Some((new_buf, msgs))) => {
-                        heartbeat.beat(); // liveness: successful poll
-                        buf = new_buf;
+                    Ok(PollOutcome::Messages(new_buf, msgs)) => {
+                        heartbeat.beat();
+                        buf = new_buf.clone();
                         consecutive_failures = 0;
+
+                        // 持久化 sync_buf 到磁盘
+                        *sync_buf.write().await = new_buf.clone();
+                        save_sync_buf(&new_buf);
+
                         for msg in msgs {
+                            // 持久化每条聊天的 context_token
                             if let Some(ref ct) = msg.context_token {
-                                let mut ctx = context_token.write().await;
-                                *ctx = Some(ct.clone());
+                                let mut tokens = context_tokens.write().await;
+                                tokens.insert(msg.from_user_id.clone(), ct.clone());
+                                save_context_tokens(&tokens);
                             }
                             if let Some(inbound) = convert_message(msg) {
                                 let event = easybot_core::types::event::GatewayEvent::new(
@@ -1287,19 +1396,47 @@ async fn longpoll_loop(
                             }
                         }
                     }
-                    Ok(None) => {
-                        // 超时无消息，继续轮询
-                        heartbeat.beat(); // liveness: poll succeeded, just no messages
+                    Ok(PollOutcome::Timeout) => {
+                        heartbeat.beat();
+                        consecutive_failures = 0;
+                    }
+                    Ok(PollOutcome::SessionExpired(msg)) => {
+                        tracing::warn!(
+                            "WeChat session 过期 (errcode=-14): {} — 暂停 10 分钟后继续轮询，凭据仍然有效",
+                            msg
+                        );
+                        // 暂停 10 分钟，期间每 60 秒打一次 heartbeat
+                        // 防止健康监测误判为断连而触发重连
+                        let pause = Duration::from_secs(600);
+                        let beat_interval = Duration::from_secs(60);
+                        let deadline = tokio::time::Instant::now() + pause;
+                        'session_pause: loop {
+                            tokio::select! {
+                                _ = tokio::time::sleep(beat_interval) => {
+                                    heartbeat.beat(); // 保持健康状态，防止健康监测触发重连
+                                    if tokio::time::Instant::now() >= deadline {
+                                        break 'session_pause;
+                                    }
+                                }
+                                _ = cancel_rx.recv() => {
+                                    tracing::info!("暂停期间收到取消信号，退出长轮询");
+                                    return;
+                                }
+                            }
+                        }
                         consecutive_failures = 0;
                     }
                     Err(e) => {
                         consecutive_failures += 1;
                         tracing::warn!("个人微信长轮询错误 (第{}次): {}", consecutive_failures, e);
 
-                        // 连续 10 次失败，清除凭据并退出（session 可能已过期）
+                        // 连续 10 次失败退出循环，但不清除凭据
+                        // 凭据留在磁盘上，健康监测机制可以自动重连而无需重新扫码
                         if consecutive_failures >= 10 {
-                            tracing::error!("个人微信长轮询连续失败 {} 次，session 可能已过期，清除凭据", consecutive_failures);
-                            clear_credentials();
+                            tracing::error!(
+                                "个人微信长轮询连续失败 {} 次，退出。凭据保留在磁盘上等待健康监测自动重连",
+                                consecutive_failures
+                            );
                             break;
                         }
 
@@ -1317,7 +1454,7 @@ async fn poll_messages(
     url: &str,
     token: &str,
     buf: &str,
-) -> Result<Option<(String, Vec<WeixinMessage>)>, GatewayError> {
+) -> Result<PollOutcome, GatewayError> {
     let body = serde_json::json!({
         "get_updates_buf": buf,
     });
@@ -1355,17 +1492,15 @@ async fn poll_messages(
         ))
     })?;
 
-    // 检测 iLink API 错误：-14 = session 过期，需要重新扫码登录
+    // 检测 iLink API 错误码
     if resp.errcode != 0 {
-        let msg = resp.errmsg.as_deref().unwrap_or("unknown error");
+        let msg = resp.errmsg.unwrap_or_default();
         if resp.errcode == -14 {
-            tracing::warn!("WeChat session 过期 (errcode=-14)，将清除凭据并触发重新登录");
-            return Err(GatewayError::Internal(format!(
-                "WeChat session expired: {}",
-                msg
-            )));
+            // -14 表示 session 过期，但 bot_token 本身仍然有效
+            // 返回 SessionExpired 信号，由调用方暂停后重试
+            return Ok(PollOutcome::SessionExpired(msg));
         }
-        // 其他错误码也上报，但可能可以恢复（如限流），计入失败计数
+        // 其他错误码，计入失败计数
         tracing::warn!(
             "WeChat API 返回错误: errcode={}, errmsg={}",
             resp.errcode,
@@ -1382,9 +1517,9 @@ async fn poll_messages(
         .or(resp.sync_buf)
         .unwrap_or_else(|| buf.to_string());
     if resp.msgs.is_empty() {
-        Ok(None)
+        Ok(PollOutcome::Timeout)
     } else {
-        Ok(Some((new_buf, resp.msgs)))
+        Ok(PollOutcome::Messages(new_buf, resp.msgs))
     }
 }
 
@@ -1441,33 +1576,59 @@ fn convert_message(msg: WeixinMessage) -> Option<InboundMessage> {
         });
 
     let msg_id = msg.message_id.map(|id| id.to_string()).unwrap_or_default();
+    // 修复：群聊时使用 group_id 作为 chat_id
+    let chat_id = if is_group {
+        msg.group_id.clone()
+    } else {
+        msg.from_user_id.clone()
+    };
 
     Some(InboundMessage {
         id: msg_id,
         platform: "wechat".to_string(),
-        chat_id: msg.from_user_id.clone(),
+        msg_type: match msg.item_list.first().map(|i| i.item_type) {
+            Some(1) => MessageType::Text,
+            Some(2) => MessageType::Image,
+            Some(3) => MessageType::Audio,
+            Some(4) => MessageType::File,
+            Some(5) => MessageType::Video,
+            _ => MessageType::Unknown,
+        },
+        text: Some(text),
+        sender: MessageSender {
+            id: msg.from_user_id.clone(),
+            name: Some(msg.from_user_id.clone()),
+            username: None,
+            avatar_url: None,
+            is_bot: false,
+            role: if is_group {
+                Some(SenderRole::Member)
+            } else {
+                None
+            },
+            language_code: None,
+        },
+        recipient: Some(msg.to_user_id),
+        chat_id,
+        chat_name: None,
         chat_type: if is_group {
             ChatType::Group
         } else {
             ChatType::Dm
         },
-        chat_name: None,
-        text: Some(text),
-        author: MessageAuthor {
-            id: msg.from_user_id.clone(),
-            name: Some(msg.from_user_id),
-            is_bot: false,
-        },
+        guild_id: None,
+        thread_id: None,
+        root_id: None,
         timestamp: msg.create_time_ms,
         media,
         command: None,
         callback: None,
         reply_to: None,
-        thread_id: None,
+        mentions: None,
         mentioned: None,
-        is_group,
         metadata: Some(serde_json::json!({
             "session_id": msg.session_id,
+            "context_token": msg.context_token,
         })),
     })
 }
@@ -1587,8 +1748,8 @@ mod tests {
         assert_eq!(inbound.id, "12345");
         assert_eq!(inbound.text.as_deref(), Some("你好"));
         assert_eq!(inbound.chat_type, ChatType::Dm);
-        assert!(!inbound.is_group);
-        assert_eq!(inbound.author.id, "user@im.wechat");
+        assert_eq!(inbound.chat_type, ChatType::Dm);
+        assert_eq!(inbound.sender.id, "user@im.wechat");
         assert_eq!(inbound.timestamp, 1700000000000);
         let meta = inbound.metadata.unwrap();
         assert_eq!(
@@ -1694,7 +1855,7 @@ mod tests {
 
         let inbound = convert_message(msg).unwrap();
         assert_eq!(inbound.text.as_deref(), Some("群聊消息"));
-        assert!(inbound.is_group);
+        assert_eq!(inbound.chat_type, ChatType::Group);
         assert_eq!(inbound.chat_type, ChatType::Group);
     }
 

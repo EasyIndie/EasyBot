@@ -62,7 +62,8 @@ pub(crate) fn save_credentials_to_disk(creds: &WeChatCredentials) {
     }
 }
 
-/// 清除保存的凭据
+/// 清除保存的凭据（保留供手动清理或调试使用）
+#[allow(dead_code)]
 pub(crate) fn clear_credentials() {
     let path = match credential_path() {
         Some(p) => p,
@@ -71,6 +72,97 @@ pub(crate) fn clear_credentials() {
     if path.exists() {
         let _ = std::fs::remove_file(&path);
         tracing::info!("已删除凭据文件: {:?}", path);
+    }
+}
+
+/// 原子写入 JSON 到磁盘（临时文件 + rename，防止写一半崩溃导致文件损坏）
+pub(crate) fn atomic_write_json<T: serde::Serialize>(
+    path: &std::path::Path,
+    value: &T,
+) -> std::io::Result<()> {
+    let json =
+        serde_json::to_string_pretty(value).map_err(|e| std::io::Error::other(e.to_string()))?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let tmp_path = path.with_extension("tmp");
+    std::fs::write(&tmp_path, &json)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&tmp_path, std::fs::Permissions::from_mode(0o600));
+    }
+    std::fs::rename(&tmp_path, path)?;
+    Ok(())
+}
+
+/// 微信数据目录
+fn wechat_data_dir() -> Option<std::path::PathBuf> {
+    dirs::home_dir().map(|h| h.join(".easybot").join("wechat"))
+}
+
+/// 每条聊天的上下文令牌存储路径
+fn context_tokens_path() -> Option<std::path::PathBuf> {
+    wechat_data_dir().map(|d| d.join("context_tokens.json"))
+}
+
+/// 从磁盘加载所有聊天的上下文令牌
+pub(crate) fn load_context_tokens() -> std::collections::HashMap<String, String> {
+    let path = match context_tokens_path() {
+        Some(p) => p,
+        None => return std::collections::HashMap::new(),
+    };
+    if !path.exists() {
+        return std::collections::HashMap::new();
+    }
+    match std::fs::read_to_string(&path) {
+        Ok(s) => serde_json::from_str(&s).unwrap_or_else(|e| {
+            tracing::warn!("解析 context_tokens.json 失败 ({}), 使用空映射", e);
+            std::collections::HashMap::new()
+        }),
+        Err(e) => {
+            tracing::warn!("读取 context_tokens.json 失败: {}", e);
+            std::collections::HashMap::new()
+        }
+    }
+}
+
+/// 保存所有聊天的上下文令牌到磁盘
+pub(crate) fn save_context_tokens(tokens: &std::collections::HashMap<String, String>) {
+    let path = match context_tokens_path() {
+        Some(p) => p,
+        None => return,
+    };
+    if let Err(e) = atomic_write_json(&path, tokens) {
+        tracing::warn!("保存 context_tokens 失败: {}", e);
+    }
+}
+
+/// 长轮询游标文件路径
+fn sync_buf_path() -> Option<std::path::PathBuf> {
+    wechat_data_dir().map(|d| d.join("sync_buf.txt"))
+}
+
+/// 从磁盘加载长轮询游标
+pub(crate) fn load_sync_buf() -> String {
+    let path = match sync_buf_path() {
+        Some(p) => p,
+        None => return String::new(),
+    };
+    if !path.exists() {
+        return String::new();
+    }
+    std::fs::read_to_string(&path).unwrap_or_default()
+}
+
+/// 保存长轮询游标到磁盘
+pub(crate) fn save_sync_buf(buf: &str) {
+    let path = match sync_buf_path() {
+        Some(p) => p,
+        None => return,
+    };
+    if let Err(e) = std::fs::write(&path, buf) {
+        tracing::warn!("保存 sync_buf 失败: {}", e);
     }
 }
 

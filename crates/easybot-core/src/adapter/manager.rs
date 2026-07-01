@@ -474,6 +474,20 @@ impl AdapterManager {
         self.statuses.read().await.get(platform).cloned()
     }
 
+    /// 富化会话来源信息
+    ///
+    /// 通过适配器提供的 enrich_source 方法补充会话中的用户名、角色等信息。
+    /// 如果适配器未连接或 enrich_source 返回 None，则返回 None。
+    pub async fn enrich_session(
+        &self,
+        platform: &str,
+        source: &crate::types::session::SessionSource,
+    ) -> Option<crate::types::session::SessionSource> {
+        let adapters = self.adapters.read().await;
+        let adapter = adapters.get(platform)?;
+        adapter.enrich_source(source).await
+    }
+
     /// 列出所有适配器状态
     pub async fn list_statuses(&self) -> Vec<AdapterStatusSummary> {
         let adapters = self.adapters.read().await;

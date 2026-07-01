@@ -868,6 +868,34 @@ impl PlatformAdapter for FeishuAdapter {
             })
             .collect())
     }
+
+    // ── 会话富化 ──
+
+    async fn enrich_source(
+        &self,
+        source: &easybot_core::types::session::SessionSource,
+    ) -> Option<easybot_core::types::session::SessionSource> {
+        // 通过飞书联系人 API 查询用户信息
+        let user_id = source.user_id.as_ref()?;
+        let path = format!("/open-apis/contact/v3/users/{}", user_id);
+        match self.api_get::<serde_json::Value>(&path).await {
+            Ok(user_info) => {
+                let mut enriched = source.clone();
+                // 从响应中提取用户姓名
+                if let Some(name) = user_info
+                    .get("data")
+                    .and_then(|d| d.get("user"))
+                    .and_then(|u| u.get("name"))
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
+                {
+                    enriched.user_name = Some(name);
+                }
+                Some(enriched)
+            }
+            Err(_) => None,
+        }
+    }
 }
 
 // ── 辅助方法 ──

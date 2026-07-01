@@ -42,9 +42,9 @@ pub async fn handle_message_receive(
     };
 
     // 判断聊天类型
-    let (chat_type, is_group) = match message.chat_type.as_str() {
-        "group" => (ChatType::Group, true),
-        "p2p" => (ChatType::Dm, false),
+    let chat_type = match message.chat_type.as_str() {
+        "group" => ChatType::Group,
+        "p2p" => ChatType::Dm,
         _ => {
             tracing::warn!("飞书未知聊天类型: {}", message.chat_type);
             return;
@@ -60,15 +60,24 @@ pub async fn handle_message_receive(
     let inbound = InboundMessage {
         id: message.message_id,
         platform: "feishu".to_string(),
+        msg_type: MessageType::Text,
         chat_id: message.chat_id,
         chat_type,
+        guild_id: None,
+        root_id: None,
+        mentions: None,
         chat_name: None,
         text: Some(text),
-        author: MessageAuthor {
+        sender: MessageSender {
             id: sender_id.clone(),
             name: Some(sender_id),
-            is_bot: false,
+            username: None,
+            avatar_url: None,
+            is_bot: receive_event.sender.sender_type == "app",
+            role: None,
+            language_code: None,
         },
+        recipient: None,
         timestamp,
         media: None,
         command: None,
@@ -76,7 +85,6 @@ pub async fn handle_message_receive(
         reply_to: None,
         thread_id: None,
         mentioned: None,
-        is_group,
         metadata: None,
     };
 
@@ -135,9 +143,9 @@ mod tests {
         assert_eq!(msg.platform, "feishu");
         assert_eq!(msg.chat_id, "oc_test_chat");
         assert_eq!(msg.text.as_deref(), Some("hello"));
-        assert!(msg.is_group);
         assert_eq!(msg.chat_type, ChatType::Group);
-        assert_eq!(msg.author.id, "ou_test_user");
+        assert_eq!(msg.chat_type, ChatType::Group);
+        assert_eq!(msg.sender.id, "ou_test_user");
         assert_eq!(msg.id, "om_test_msg");
     }
 
@@ -156,7 +164,7 @@ mod tests {
 
         let msg: InboundMessage = serde_json::from_value(event.data).unwrap();
         assert_eq!(msg.text.as_deref(), Some("hi"));
-        assert!(!msg.is_group);
+        assert_eq!(msg.chat_type, ChatType::Dm);
         assert_eq!(msg.chat_type, ChatType::Dm);
     }
 

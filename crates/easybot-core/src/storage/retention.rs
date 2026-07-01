@@ -144,6 +144,8 @@ mod tests {
                 user_id: None,
                 user_name: None,
                 is_bot: false,
+                user_username: None,
+                user_role: None,
             },
             reset_policy: ResetPolicy::Never,
             metadata: serde_json::json!({}),

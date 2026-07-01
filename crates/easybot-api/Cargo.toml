@@ -29,6 +29,7 @@ sysinfo.workspace = true
 [build-dependencies]
 pulldown-cmark = "0.13"
 regex = "1"
+base64.workspace = true
 
 [dev-dependencies]
 sqlx = { workspace = true }
