@@ -48,61 +48,60 @@ fn main() {
 
     // 收集并排序 .md 文件
     let docs_dir = docs_dir.canonicalize().unwrap_or(docs_dir);
-    if !docs_dir.exists() {
-        // docs 目录不存在时生成一个占位页面，继续执行后续的 home/admin 生成
+    if !docs_dir.exists() || std::fs::read_dir(&docs_dir).map_or(true, |mut d| d.next().is_none()) {
+        // docs 目录不存在或为空时生成一个占位页面，继续执行后续的 home/admin 生成
         let fallback = generate_fallback(&template_path);
         std::fs::write(&output_path, fallback).unwrap();
-    }
-
-    let mut entries: Vec<_> = std::fs::read_dir(&docs_dir)
-        .unwrap()
-        .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().is_some_and(|ext| ext == "md"))
-        .collect();
-
-    if entries.is_empty() {
-        let fallback = generate_fallback(&template_path);
-        std::fs::write(&output_path, fallback).unwrap();
-        return;
-    }
-
-    entries.sort_by_key(|e| e.file_name());
-
-    // 解析每个文件：提取标题 + 转 HTML
-    let mut sidebar_items = String::new();
-    let mut doc_sections = String::new();
-
-    for entry in &entries {
-        let path = entry.path();
-        let file_name = entry.file_name().to_string_lossy().to_string();
-        let content = std::fs::read_to_string(&path).unwrap();
-
-        let title = extract_title(&content, &file_name);
-        // 用文件名（去掉 .md）作为锚点 ID
-        let id = file_name.trim_end_matches(".md");
-        let html_content = md_to_html(&content);
-
-        sidebar_items.push_str(&format!("<a href=\"#{}\">{}</a>\n", id, title));
-        doc_sections.push_str(&format!(
-            "<section id=\"{}\"><h2>{}</h2>{}</section>\n",
-            id, title, html_content
-        ));
-    }
-
-    // 注入模板
-    let template = if template_path.exists() {
-        std::fs::read_to_string(&template_path).unwrap()
     } else {
-        generate_default_template()
-    };
+        let mut entries: Vec<_> = std::fs::read_dir(&docs_dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().is_some_and(|ext| ext == "md"))
+            .collect();
 
-    let result = process_includes(&template, manifest_dir)
-        .replace("__SIDEBAR_ITEMS__", &sidebar_items)
-        .replace("__DOCS_CONTENT__", &doc_sections)
-        .replace("__HLJS_CSS__", &hljs_css)
-        .replace("__HLJS_JS__", &hljs_js);
+        if entries.is_empty() {
+            let fallback = generate_fallback(&template_path);
+            std::fs::write(&output_path, fallback).unwrap();
+        } else {
+            entries.sort_by_key(|e| e.file_name());
 
-    std::fs::write(&output_path, &result).unwrap();
+            // 解析每个文件：提取标题 + 转 HTML
+            let mut sidebar_items = String::new();
+            let mut doc_sections = String::new();
+
+            for entry in &entries {
+                let path = entry.path();
+                let file_name = entry.file_name().to_string_lossy().to_string();
+                let content = std::fs::read_to_string(&path).unwrap();
+
+                let title = extract_title(&content, &file_name);
+                // 用文件名（去掉 .md）作为锚点 ID
+                let id = file_name.trim_end_matches(".md");
+                let html_content = md_to_html(&content);
+
+                sidebar_items.push_str(&format!("<a href=\"#{}\">{}</a>\n", id, title));
+                doc_sections.push_str(&format!(
+                    "<section id=\"{}\"><h2>{}</h2>{}</section>\n",
+                    id, title, html_content
+                ));
+            }
+
+            // 注入模板
+            let template = if template_path.exists() {
+                std::fs::read_to_string(&template_path).unwrap()
+            } else {
+                generate_default_template()
+            };
+
+            let result = process_includes(&template, manifest_dir)
+                .replace("__SIDEBAR_ITEMS__", &sidebar_items)
+                .replace("__DOCS_CONTENT__", &doc_sections)
+                .replace("__HLJS_CSS__", &hljs_css)
+                .replace("__HLJS_JS__", &hljs_js);
+
+            std::fs::write(&output_path, &result).unwrap();
+        }
+    }
 
     // ── 读取 favicon/logo 并 base64 编码 ──
     let favicon_path = manifest_dir.join("templates/favicon.png");
