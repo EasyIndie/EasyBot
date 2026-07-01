@@ -35,3 +35,8 @@ manage-service.ps1
 # Environment
 .env
 *.env.local
+
+# Build.rs 生成的模板产物
+crates/easybot-api/templates/admin.html
+crates/easybot-api/templates/docs.html
+crates/easybot-api/templates/home.html
