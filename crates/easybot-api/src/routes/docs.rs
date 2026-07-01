@@ -6,5 +6,5 @@ use axum::response::Html;
 
 /// GET /docs — 项目文档
 pub async fn docs_page() -> Html<&'static str> {
-    Html(include_str!("../../templates/docs.html"))
+    Html(include_str!("../../templates/gen/docs.html"))
 }

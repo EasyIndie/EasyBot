@@ -80,16 +80,39 @@ function cachedApi(path, opts = {}, ttlMs = 30000) {
 // ─── 公共渲染工具 ──────────────────────────────
 
 // 统一消息行渲染
+const MSG_TYPE_LABELS = {
+  Text: '文本', Image: '图片', Audio: '音频', Video: '视频', File: '文件',
+  Sticker: '贴纸', Animation: 'GIF', RichText: '富文本', Interactive: '卡片',
+  Share: '分享', Location: '位置', Contact: '名片', Link: '链接',
+  System: '系统', Unknown: '其他',
+};
+function msgTypeLabel(raw_data) {
+  const t = raw_data?.msg_type;
+  return t ? (MSG_TYPE_LABELS[t] || t) : '文本';
+}
+
 function renderMessageRow(m) {
   const tr = document.createElement('tr');
   tr.style.cursor = 'pointer';
   const role = m.role || 'User';
   const roleBadge = role === 'User' ? 'badge-green' : 'badge-gray';
+  const typeLabel = msgTypeLabel(m.raw_data);
   tr.innerHTML = `<td style="font-size:11px;color:var(--text-muted);white-space:nowrap">${new Date(m.timestamp).toLocaleTimeString()}</td>
     <td><span class="badge badge-blue">${m.platform}</span></td>
     <td style="font-size:12px">${m.chat_id}</td>
     <td><span class="badge ${roleBadge}">${role}</span></td>
-    <td style="font-size:12px;color:var(--text-muted);max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${(m.text || '').substring(0, 80)}</td>`;
+    <td><span class="badge badge-type">${typeLabel}</span></td>
+    <td style="font-size:12px;color:var(--text-muted);max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${(m.text || '').substring(0, 80)}</td>
+    <td><button class="btn btn-sm btn-reply" data-platform="${m.platform}" data-chat-id="${m.chat_id}" title="回复该会话">回复</button></td>`;
+  tr.querySelector('.btn-reply').addEventListener('click', e => {
+    e.stopPropagation();
+    const target = m.platform + ':' + m.chat_id;
+    document.getElementById('msg-target').value = target;
+    const textarea = document.getElementById('msg-text');
+    textarea.focus();
+    textarea.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    showToast('已填充回复目标: ' + target, 'info');
+  });
   tr.addEventListener('click', () => showDetailModal('消息详情', m));
   return tr;
 }
@@ -837,6 +860,7 @@ function prependNewMessagesFromEvent(msg) {
     chat_id: data.chat_id,
     text: data.text,
     role: 'User',
+    raw_data: data,
   });
   tbody.insertBefore(tr, tbody.firstChild);
 }
@@ -863,11 +887,16 @@ async function prependNewMessages() {
 }
 
 document.getElementById('msg-send-btn').addEventListener('click', async () => {
+  const btn = document.getElementById('msg-send-btn');
   const target = document.getElementById('msg-target').value.trim();
   const text = document.getElementById('msg-text').value.trim();
   const parseMode = document.getElementById('msg-parse-mode').value;
   const result = document.getElementById('msg-send-result');
   if (!target || !text) { result.innerHTML = '<span class="error-msg">请输入 Target 和 Text</span>'; return; }
+  // 防连点：禁用按钮并显示加载状态
+  btn.disabled = true;
+  btn.textContent = '发送中...';
+  result.innerHTML = '<span style="color:var(--text-muted)">⏳ 正在发送...</span>';
   try {
     const data = await api('/api/v1/messages/send', { method: 'POST', body: { target, text, parseMode: parseMode || null } });
     result.innerHTML = '<span class="success-msg">✅ 已发送 (id: ' + data.messageId + ', status: ' + data.status + ')</span>';
@@ -877,6 +906,9 @@ document.getElementById('msg-send-btn').addEventListener('click', async () => {
   } catch (e) {
     result.innerHTML = '<span class="error-msg">❌ 发送失败: ' + e.message + '</span>';
     showToast('发送失败: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '发送';
   }
 });
 // Ctrl+Enter to send
@@ -1402,8 +1434,9 @@ function openDebugPanel(id, name, masked, eventFiltersStr) {
 
   const eventFilters = eventFiltersStr ? eventFiltersStr.split(',') : [];
 
-  // 尝试从之前创建 Key 的结果中填充 Key（仅本次会话有效）
-  const savedTestKey = sessionStorage.getItem('easybot_debug_key') || '';
+  // 尝试从之前创建 Key 的结果中填充 Key（仅本次会话有效），
+  // 如果没有则自动填入当前主页面的 API Key
+  const savedTestKey = sessionStorage.getItem('easybot_debug_key') || apiKey || '';
 
   panel.style.display = 'block';
   panel.innerHTML = `

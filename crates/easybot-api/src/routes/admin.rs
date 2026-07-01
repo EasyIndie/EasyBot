@@ -13,7 +13,7 @@ use utoipa::ToSchema;
 
 /// GET /admin — 管理后台 SPA
 pub async fn admin_page() -> Html<&'static str> {
-    Html(include_str!("../../templates/admin.html"))
+    Html(include_str!("../../templates/gen/admin.html"))
 }
 
 /// 登录请求体

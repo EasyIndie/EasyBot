@@ -88,13 +88,13 @@ EasyBot is an independent **IM Gateway** service connecting multiple instant mes
 
 `crates/easybot-api/build.rs` 在编译时从源文件生成 HTML 产物，产物不在 git 中跟踪（见 `.gitignore`）。
 
-| 产物（生成） | 源文件（直接修改） | 修改方式 |
-|-------------|-------------------|---------|
-| `templates/admin.html` ❌ | `templates/admin_layout.html` + `templates/js/admin.js` + `templates/css/admin.css` + 图片 | 改 `admin_layout.html` / `admin.js` / `admin.css` |
-| `templates/docs.html` ❌ | `templates/docs_layout.html` + `docs/*.md` + `templates/vendor/` | 改 `docs_layout.html` 或 `docs/` 下的 Markdown |
-| `templates/home.html` ❌ | `templates/home_layout.html` + 图片 | 改 `home_layout.html` |
+| 产物（生成，在 `templates/gen/` 下） | 源文件（直接修改） | 修改方式 |
+|--------------------------------------|-------------------|---------|
+| `templates/gen/admin.html` ❌ | `templates/admin_layout.html` + `templates/js/admin.js` + `templates/css/admin.css` + 图片 | 改 `admin_layout.html` / `admin.js` / `admin.css` |
+| `templates/gen/docs.html` ❌ | `templates/docs_layout.html` + `docs/*.md` + `templates/vendor/` | 改 `docs_layout.html` 或 `docs/` 下的 Markdown |
+| `templates/gen/home.html` ❌ | `templates/home_layout.html` + 图片 | 改 `home_layout.html` |
 
-**规则：产物文件不要直接编辑，修改源文件后 `cargo build` 自动重新生成。** 产物文件已被 `.gitignore` 排除。
+**规则：产物文件不要直接编辑，修改源文件后 `cargo build` 自动重新生成。** 产物统一输出到 `templates/gen/`，该目录已在 `.gitignore` 中排除，后续新增生成文件无需再改 `.gitignore`。
 
 ### Crate Layout (workspace)
 

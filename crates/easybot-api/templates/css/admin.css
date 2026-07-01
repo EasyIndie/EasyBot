@@ -48,6 +48,7 @@ html { touch-action: manipulation; }
 .badge-red { background: #471a1a; color: var(--danger); }
 .badge-gray { background: var(--border-muted); color: var(--text-muted); }
 .badge-blue { background: #1a2a47; color: var(--accent); }
+.badge-type { background: #2a1a47; color: #d4a0ff; font-size: 11px; }
 table { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 600px; }
 table th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border-muted); }
 table th { background: var(--bg-tertiary); color: var(--text-muted); font-weight: 500; position: sticky; top: 0; }
@@ -63,6 +64,8 @@ table tr:hover { background: #1c1e2e; }
 .btn-danger { background: #da3633; border-color: #da3633; color: #fff; }
 .btn-danger:hover { background: var(--danger); }
 .btn-sm { padding: 4px 10px; font-size: 12px; }
+.btn-reply { background: transparent; border-color: var(--accent); color: var(--accent); min-width: 44px; }
+.btn-reply:hover { background: var(--accent); color: #fff; }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 input, textarea, select { background: var(--bg-tertiary); border: 1px solid var(--border-default); border-radius: 6px; padding: 8px 12px; color: var(--text-secondary); font-size: 14px; width: 100%; }
 input:focus, textarea:focus, select:focus { border-color: var(--accent); outline: none; }

@@ -1,8 +1,12 @@
-//! 构建脚本：自动生成文档页
+//! 构建脚本：自动生成文档页及前端模板
 //!
 //! 扫描项目根目录 `docs/` 中的 `.md` 文件，按文件名前缀数字排序，
 //! 使用 pulldown-cmark 转为 HTML，注入到 `docs_layout.html` 模板中，
-//! 输出 `templates/docs.html`。
+//! 输出 `templates/gen/docs.html`。
+//!
+//! 同时处理 admin.html（admin_layout.html + js + css）和 home.html（home_layout.html）。
+//!
+//! 所有生成产物统一输出到 `templates/gen/` 目录，该目录已在 .gitignore 中排除。
 //!
 //! 新增/修改/删除 `docs/` 下的 `.md` 文件后，重新运行 `cargo build` 即可自动更新。
 
@@ -14,11 +18,15 @@ fn main() {
     // Cargo 对 build.rs 的设置：CARGO_MANIFEST_DIR = 包根目录（crates/easybot-api/）
     let manifest_dir_str = std::env::var("CARGO_MANIFEST_DIR").unwrap();
     let manifest_dir = Path::new(&manifest_dir_str);
+    let gen_dir = manifest_dir.join("templates/gen");
     let docs_dir = manifest_dir.join("../../docs");
     let template_path = manifest_dir.join("templates/docs_layout.html");
-    let output_path = manifest_dir.join("templates/docs.html");
+    let output_path = gen_dir.join("docs.html");
     let hljs_js_path = manifest_dir.join("templates/vendor/highlight.min.js");
     let hljs_css_path = manifest_dir.join("templates/vendor/atom-one-dark.min.css");
+
+    // 确保 gen/ 输出目录存在
+    std::fs::create_dir_all(&gen_dir).ok();
 
     // 告知 Cargo 在内容变更时重新运行 build.rs
     println!("cargo::rerun-if-changed={}", docs_dir.display());
@@ -112,7 +120,7 @@ fn main() {
 
     // ── 首页：从 home_layout.html 生成 home.html（注入 favicon/logo） ──
     let home_layout_path = manifest_dir.join("templates/home_layout.html");
-    let home_output_path = manifest_dir.join("templates/home.html");
+    let home_output_path = gen_dir.join("home.html");
     println!("cargo::rerun-if-changed={}", home_layout_path.display());
     if home_layout_path.exists() {
         let home_html = std::fs::read_to_string(&home_layout_path).unwrap();
@@ -124,7 +132,7 @@ fn main() {
 
     // ── 管理后台：拼接 JS/CSS 模块生成 admin.html ──
     let admin_layout_path = manifest_dir.join("templates/admin_layout.html");
-    let admin_output_path = manifest_dir.join("templates/admin.html");
+    let admin_output_path = gen_dir.join("admin.html");
     let js_dir = manifest_dir.join("templates/js");
     let css_dir = manifest_dir.join("templates/css");
 
