@@ -1401,7 +1401,7 @@ mod tests {
             "id": "gmsg001",
             "group_openid": "GROUP_OPENID_001",
             "content": "@bot hello group",
-            "author": {"member_openid": "MEMBER_001"},
+            "author": {"member_openid": "MEMBER_001", "member_role": "admin"},
             "timestamp": "2026-06-01T12:00:00+00:00"
         });
         let payload = GatewayPayload {

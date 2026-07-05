@@ -181,6 +181,12 @@ pub struct QqMessageAuthor {
 #[derive(Debug, Deserialize, Clone)]
 pub struct QqGroupMessageAuthor {
     pub member_openid: String,
+    /// 消息发送者在群内的身份，枚举值：owner、admin、member
+    #[serde(default)]
+    pub member_role: Option<String>,
+    /// 是否为机器人账号
+    #[serde(default)]
+    pub bot: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Clone)]

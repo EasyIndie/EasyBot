@@ -231,6 +231,16 @@ impl crate::QqAdapter {
             .unwrap_or_else(|_| chrono::Utc::now().timestamp_millis())
     }
 
+    /// 将 QQ 群消息 author.member_role 字符串映射为 SenderRole。
+    fn parse_member_role(member_role: Option<&str>) -> Option<SenderRole> {
+        match member_role {
+            Some("owner") => Some(SenderRole::Owner),
+            Some("admin") => Some(SenderRole::Admin),
+            Some("member") => Some(SenderRole::Member),
+            _ => None,
+        }
+    }
+
     pub(crate) async fn handle_dispatch(
         event_type: &str,
         payload: &crate::types::GatewayPayload<serde_json::Value>,
@@ -327,6 +337,8 @@ impl crate::QqAdapter {
                 let ts = Self::parse_timestamp(&msg_event.timestamp);
                 let openid = msg_event.group_openid.clone();
                 let member_id = msg_event.author.member_openid.clone();
+                let role = Self::parse_member_role(msg_event.author.member_role.as_deref());
+                let is_bot = msg_event.author.bot.unwrap_or(false);
                 let inbound = InboundMessage {
                     id: msg_event.id,
                     platform: "qq".to_string(),
@@ -337,8 +349,8 @@ impl crate::QqAdapter {
                         name: Some(member_id.clone()),
                         username: None,
                         avatar_url: None,
-                        is_bot: false,
-                        role: None,
+                        is_bot,
+                        role,
                         language_code: None,
                     },
                     recipient: Some(bot_id.to_string()),
@@ -388,6 +400,8 @@ impl crate::QqAdapter {
                 let ts = Self::parse_timestamp(&msg_event.timestamp);
                 let openid = msg_event.group_openid.clone();
                 let member_id = msg_event.author.member_openid.clone();
+                let role = Self::parse_member_role(msg_event.author.member_role.as_deref());
+                let is_bot = msg_event.author.bot.unwrap_or(false);
                 let mentions: Option<Vec<MentionInfo>> = if msg_event.mentions.is_empty() {
                     None
                 } else {
@@ -413,8 +427,8 @@ impl crate::QqAdapter {
                         name: Some(member_id.clone()),
                         username: None,
                         avatar_url: None,
-                        is_bot: false,
-                        role: None,
+                        is_bot,
+                        role,
                         language_code: None,
                     },
                     recipient: Some(bot_id.to_string()),
