@@ -46,7 +46,7 @@ check:  ## 快速编译检查
 DEBUG_FLAG ?= --debug
 
 run:  ## 编译并启动（默认 --debug，make run DEBUG= 可去掉）
-	cargo run -- $(DEBUG_FLAG)
+	cargo run --features full -- $(DEBUG_FLAG)
 
 run-init:  ## 初始化隔离目录后启动（不影响 ~/.easybot/）
 	@test -d /tmp/easybot-dev || cargo run -- --dir /tmp/easybot-dev --init
