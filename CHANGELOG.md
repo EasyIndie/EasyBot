@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Default features now include all 5 adapters** (`bin/Cargo.toml`): `default = ["adapter-telegram", "adapter-discord", "adapter-feishu", "adapter-qq", "adapter-wechat"]`. Previously only Telegram was enabled by default. `cargo run` / `cargo build` now compiles all platform adapters. To build a subset, use `cargo build --no-default-features --features "adapter-telegram,adapter-discord"`.
+- Documentation updated (`README.md`, `CONTRIBUTING.md`) and feature matrix corrected (`scripts/verify.sh`, `.github/workflows/ci.yml`) to reflect the new default feature set.
+
 ## [0.0.6] - 2026-06-28
 
 ### Changed

@@ -88,7 +88,7 @@ jobs:
           - "--no-default-features"
           - "--no-default-features --features adapter-telegram"
           - "--no-default-features --features adapter-discord"
-          - "--features adapter-telegram,adapter-discord"
+          - "--no-default-features --features adapter-telegram,adapter-discord"
           - "--no-default-features --features adapter-feishu"
           - "--no-default-features --features adapter-qq"
           - "--no-default-features --features adapter-wechat"

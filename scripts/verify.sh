@@ -167,7 +167,7 @@ FEATURE_COMBOS=(
     "--no-default-features                                               # 无适配器"
     "--no-default-features --features adapter-telegram                   # 仅 Telegram"
     "--no-default-features --features adapter-discord                    # 仅 Discord"
-    "--features adapter-telegram,adapter-discord                         # Telegram + Discord"
+    "--no-default-features --features adapter-telegram,adapter-discord           # Telegram + Discord"
     "--no-default-features --features adapter-feishu                     # 仅飞书"
     "--no-default-features --features adapter-qq                         # 仅 QQ"
     "--no-default-features --features adapter-wechat                     # 仅微信"
