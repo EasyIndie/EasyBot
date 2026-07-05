@@ -24,6 +24,27 @@ pub(crate) struct TelegramUpdate {
     pub update_id: i64,
     #[serde(default)]
     pub message: Option<TelegramMessage>,
+    /// 群组成员变更事件（管理员升/降级等）
+    #[serde(default)]
+    pub chat_member: Option<TelegramChatMemberUpdated>,
+}
+
+/// getChatAdministrators 返回的管理员条目 / chat_member 事件中的成员信息
+#[derive(Debug, Deserialize, Clone)]
+pub(crate) struct TelegramChatMember {
+    pub status: String,
+    pub user: TelegramUser,
+    #[serde(default)]
+    pub is_anonymous: Option<bool>,
+}
+
+/// chat_member 更新事件（getUpdates 的 chat_member 字段）
+#[derive(Debug, Deserialize)]
+pub(crate) struct TelegramChatMemberUpdated {
+    pub chat: TelegramChat,
+    pub from: TelegramUser,
+    pub old_chat_member: TelegramChatMember,
+    pub new_chat_member: TelegramChatMember,
 }
 
 /// Telegram 消息
