@@ -9,9 +9,11 @@
 mod event;
 mod types;
 
+use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use easybot_core::bus::EventBus;
@@ -502,17 +504,73 @@ impl PlatformAdapter for FeishuAdapter {
                 }
             };
 
-            let dispatcher = EventDispatcher::new("", "").skip_sign_verify().on_event(
-                EVENT_MESSAGE_RECEIVE_V1,
-                move |event_data| {
+            // 群成员角色缓存（chat_id:member_open_id → role + TTL），30 秒过期
+            let role_cache: Arc<Mutex<HashMap<String, (SenderRole, Instant)>>> =
+                Arc::new(Mutex::new(HashMap::new()));
+            // 飞书 tenant_access_token 缓存
+            let token_cache: Arc<Mutex<Option<(String, Instant)>>> = Arc::new(Mutex::new(None));
+            let feishu_http = reqwest::Client::new();
+            let feishu_base_url = self.api_base_url().to_string();
+
+            let dispatcher = EventDispatcher::new("", "")
+                .skip_sign_verify()
+                // 处理入站消息
+                .on_event(EVENT_MESSAGE_RECEIVE_V1, {
                     let eb = eb.clone();
                     let bot_id = app_id_owned.clone();
-                    async move {
-                        event::handle_message_receive(event_data, &eb, &bot_id).await;
-                        Ok(())
+                    let secret = app_secret.clone();
+                    let app_id_clone = app_id_owned.clone();
+                    let hc = feishu_http.clone();
+                    let bu = feishu_base_url.clone();
+                    let tc = token_cache.clone();
+                    let rc = role_cache.clone();
+                    move |event_data| {
+                        let eb = eb.clone();
+                        let bot_id = bot_id.clone();
+                        let secret = secret.clone();
+                        let app_id = app_id_clone.clone();
+                        let hc = hc.clone();
+                        let bu = bu.clone();
+                        let tc = tc.clone();
+                        let rc = rc.clone();
+                        async move {
+                            let sender_role = Self::resolve_feishu_role(
+                                &event_data,
+                                &hc,
+                                &bu,
+                                &app_id,
+                                &secret,
+                                &tc,
+                                &rc,
+                            )
+                            .await;
+                            event::handle_message_receive(event_data, &eb, &bot_id, sender_role)
+                                .await;
+                            Ok(())
+                        }
                     }
-                },
-            );
+                })
+                // 监听群配置变更事件（群主转移、管理员变更等）
+                .on_event("im.chat.updated_v1", {
+                    let rc = role_cache.clone();
+                    move |event_data| {
+                        let rc = rc.clone();
+                        async move {
+                            // 清除该群的缓存，下次消息会重新获取角色
+                            if let Some(chat_id) =
+                                event_data.pointer("/chat_id").and_then(|v| v.as_str())
+                            {
+                                if let Ok(mut cache) = rc.lock() {
+                                    cache.retain(|key, _| {
+                                        !key.starts_with(&format!("{}:", chat_id))
+                                    });
+                                }
+                                tracing::info!("飞书群配置变更，已清除群 {} 的角色缓存", chat_id);
+                            }
+                            Ok(())
+                        }
+                    }
+                });
 
             let ws_client = sdk_client.ws_client(dispatcher);
             let log_level = tracing::Level::DEBUG;
@@ -976,6 +1034,137 @@ impl FeishuAdapter {
             .data
             .and_then(|d| d.file_key)
             .ok_or_else(|| GatewayError::Internal("No file_key in upload response".to_string()))
+    }
+
+    // ── 角色解析（WebSocket 事件用） ──
+
+    /// 解析群消息发送者在飞书群内的角色。
+    /// 对非群消息直接返回 None，群消息调用飞书 API 查询后缓存 30 秒。
+    pub(crate) async fn resolve_feishu_role(
+        event_data: &serde_json::Value,
+        client: &reqwest::Client,
+        base_url: &str,
+        app_id: &str,
+        app_secret: &str,
+        token_cache: &Mutex<Option<(String, Instant)>>,
+        role_cache: &Mutex<HashMap<String, (SenderRole, Instant)>>,
+    ) -> Option<SenderRole> {
+        // 只处理群聊消息
+        let chat_type = event_data
+            .pointer("/message/chat_type")
+            .and_then(|v| v.as_str())?;
+        if chat_type != "group" {
+            return None;
+        }
+        let chat_id = event_data
+            .pointer("/message/chat_id")
+            .and_then(|v| v.as_str())?;
+        let sender_id = event_data
+            .pointer("/sender/sender_id/open_id")
+            .and_then(|v| v.as_str())?;
+
+        let cache_key = format!("{}:{}", chat_id, sender_id);
+
+        // 检查缓存（由 im.chat.updated_v1 事件负责失效）
+        {
+            let cache = role_cache.lock().ok()?;
+            if let Some((role, _)) = cache.get(&cache_key) {
+                return Some(role.clone());
+            }
+        }
+
+        // 获取 token
+        let token =
+            Self::get_or_refresh_feishu_token(client, base_url, app_id, app_secret, token_cache)
+                .await?;
+
+        // 使用获取群信息 API 查询群主和管理员列表（无需分页，一次调用即可）
+        let chat_url = format!("{}/im/v1/chats/{}", base_url.trim_end_matches('/'), chat_id);
+        let resp = client
+            .get(&chat_url)
+            .header("Authorization", format!("Bearer {}", token))
+            .send()
+            .await
+            .ok()?;
+
+        if !resp.status().is_success() {
+            tracing::warn!("飞书群信息 API 返回 {}", resp.status());
+            return None;
+        }
+
+        let body: serde_json::Value = resp.json().await.ok()?;
+        let data = body.get("data")?;
+
+        // 获取群主 ID
+        let owner_id = data.get("owner_id").and_then(|v| v.as_str());
+        // 获取管理员 ID 列表
+        let admin_ids: Vec<&str> = data
+            .get("user_manager_id_list")
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
+            .unwrap_or_default();
+
+        // 判断角色
+        let role = if owner_id == Some(sender_id) {
+            SenderRole::Owner
+        } else if admin_ids.contains(&sender_id) {
+            SenderRole::Admin
+        } else {
+            SenderRole::Member
+        };
+
+        // 写入缓存（由 im.chat.updated_v1 事件负责失效，无需 TTL）
+        if let Ok(mut cache) = role_cache.lock() {
+            cache.insert(cache_key, (role.clone(), Instant::now()));
+        }
+
+        Some(role)
+    }
+
+    /// 获取或刷新飞书 tenant_access_token（仅用于 WebSocket 任务的独立 token 管理）
+    pub(crate) async fn get_or_refresh_feishu_token(
+        client: &reqwest::Client,
+        base_url: &str,
+        app_id: &str,
+        app_secret: &str,
+        token_cache: &Mutex<Option<(String, Instant)>>,
+    ) -> Option<String> {
+        // 检查缓存
+        {
+            let cache = token_cache.lock().ok()?;
+            if let Some((token, expiry)) = cache.as_ref()
+                && Instant::now() < *expiry
+            {
+                return Some(token.clone());
+            }
+        }
+
+        // 刷新 token
+        let url = format!(
+            "{}/auth/v3/tenant_access_token/internal",
+            base_url.trim_end_matches('/')
+        );
+        let resp: serde_json::Value = client
+            .post(&url)
+            .json(&serde_json::json!({
+                "app_id": app_id,
+                "app_secret": app_secret,
+            }))
+            .send()
+            .await
+            .ok()?
+            .json()
+            .await
+            .ok()?;
+
+        let token = resp.get("tenant_access_token")?.as_str()?;
+        let expire = resp.get("expire")?.as_u64().unwrap_or(7200);
+
+        let mut cache = token_cache.lock().ok()?;
+        let expiry = Instant::now() + Duration::from_secs(expire.saturating_sub(60));
+        *cache = Some((token.to_string(), expiry));
+
+        Some(token.to_string())
     }
 }
 

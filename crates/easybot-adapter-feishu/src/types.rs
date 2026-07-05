@@ -67,6 +67,24 @@ pub struct FeishuChatListItem {
 /// 消息事件类型常量
 pub const EVENT_MESSAGE_RECEIVE_V1: &str = "im.message.receive_v1";
 
+/// 群成员列表响应
+#[derive(Debug, Deserialize)]
+pub struct FeishuMemberListData {
+    pub items: Vec<FeishuMemberItem>,
+    #[serde(default)]
+    pub has_more: Option<bool>,
+    #[serde(default)]
+    pub page_token: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct FeishuMemberItem {
+    pub member_id: String,
+    pub member_role: String,
+    #[serde(default)]
+    pub name: Option<String>,
+}
+
 /// 入站事件：im.message.receive_v1 的 event 字段
 #[derive(Debug, Deserialize)]
 pub struct FeishuMessageReceiveEvent {
