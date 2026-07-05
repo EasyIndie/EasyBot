@@ -169,10 +169,17 @@ async fn handle_ws(socket: WebSocket, state: AppState, _permit: OwnedSemaphorePe
                 match event {
                     Ok(event) => {
                         event_seq += 1;
+                        // 透传原始 payload 的控制（生产环境隐藏 metadata）
+                        let mut event_data = event.data;
+                        if !state.config.api.raw_payload_enabled
+                            && let Some(obj) = event_data.as_object_mut()
+                        {
+                            obj.remove("metadata");
+                        }
                         let frame = serde_json::json!({
                             "type": "event",
                             "event": event.event_type,
-                            "data": event.data,
+                            "data": event_data,
                             "seq": event_seq,
                             "timestamp": event.timestamp,
                         });

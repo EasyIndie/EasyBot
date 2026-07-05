@@ -121,6 +121,9 @@ pub fn generate_env_example() -> String {
 # PostgreSQL（可选，默认：SQLite）
 # DATABASE_URL=postgresql://user:password@localhost:5432/easybot
 
+# 透传各平台原始 payload 到 WebSocket 事件（开发调试用）
+# EASYBOT_RAW_PAYLOAD_ENABLED=true
+
 # 生产环境安全：release 版本默认要求启用 TLS 或设置以下变量跳过检查
 # 如果已配置反向代理（Nginx/Caddy/Traefik）终止 TLS，可保留此设置
 # 如果直接暴露到公网，请设置 tls.enabled = true 并配置证书
@@ -198,6 +201,8 @@ api:
     enabled: true
     maxClients: 1000
     heartbeatInterval: 30
+  # 透传各平台原始 payload（开发调试用），也可通过环境变量 EASYBOT_RAW_PAYLOAD 覆盖
+  # raw_payload_enabled: ${EASYBOT_RAW_PAYLOAD_ENABLED:-false}
 
 storage:
   storageType: "sqlite"

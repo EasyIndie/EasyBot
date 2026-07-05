@@ -306,7 +306,7 @@ impl crate::QqAdapter {
                     reply_to: None,
                     mentions: None,
                     mentioned: Some(true),
-                    metadata: None,
+                    metadata: Some(data.clone()),
                 };
 
                 let event = GatewayEvent::new(
@@ -367,7 +367,7 @@ impl crate::QqAdapter {
                     reply_to: None,
                     mentions: None,
                     mentioned: Some(true),
-                    metadata: None,
+                    metadata: Some(data.clone()),
                 };
 
                 let event = GatewayEvent::new(
@@ -506,7 +506,7 @@ impl crate::QqAdapter {
                     reply_to: None,
                     mentions: None,
                     mentioned: None,
-                    metadata: None,
+                    metadata: Some(data.clone()),
                 };
 
                 let event = GatewayEvent::new(

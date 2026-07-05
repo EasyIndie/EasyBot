@@ -108,6 +108,8 @@ impl TelegramAdapter {
 
     /// 将 Telegram 消息转换为网关 InboundMessage
     fn convert_message(tg_msg: TelegramMessage) -> Option<InboundMessage> {
+        // 在移出字段前序列化原始数据
+        let raw_payload = serde_json::to_value(&tg_msg).ok();
         let chat_id = tg_msg.chat.id.to_string();
         let platform = "telegram".to_string();
         let text = tg_msg.text.or(tg_msg.caption);
@@ -179,7 +181,7 @@ impl TelegramAdapter {
             reply_to,
             mentions: None,
             mentioned: None,
-            metadata: None,
+            metadata: raw_payload,
         })
     }
 

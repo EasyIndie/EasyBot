@@ -159,6 +159,7 @@ pub fn default_gateway_config() -> GatewayConfig {
                 enabled: false,
                 path: "/metrics".into(),
             },
+            raw_payload_enabled: false,
         },
         ..GatewayConfig::default()
     }

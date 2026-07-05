@@ -7,7 +7,7 @@
 
 #![allow(dead_code)]
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 /// Telegram API 通用响应包装
 #[derive(Debug, Deserialize)]
@@ -27,7 +27,7 @@ pub(crate) struct TelegramUpdate {
 }
 
 /// Telegram 消息
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub(crate) struct TelegramMessage {
     pub message_id: i64,
     #[serde(default)]
@@ -46,7 +46,7 @@ pub(crate) struct TelegramMessage {
 }
 
 /// Telegram 用户
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub(crate) struct TelegramUser {
     pub id: i64,
     pub is_bot: bool,
@@ -60,7 +60,7 @@ pub(crate) struct TelegramUser {
 }
 
 /// Telegram 聊天
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub(crate) struct TelegramChat {
     pub id: i64,
     #[serde(rename = "type")]
@@ -76,7 +76,7 @@ pub(crate) struct TelegramChat {
 }
 
 /// 消息实体（用于检测命令、格式化等）
-#[derive(Debug, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub(crate) struct TelegramMessageEntity {
     #[serde(rename = "type")]
     pub entity_type: String,

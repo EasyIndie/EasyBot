@@ -29,6 +29,9 @@ pub async fn handle_message_receive(
         }
     };
 
+    // 在移出字段前序列化原始数据（用于 metadata）
+    let raw_payload = serde_json::to_value(&receive_event).ok();
+
     let sender_id = receive_event.sender.sender_id.open_id;
     let message = receive_event.message;
 
@@ -89,7 +92,7 @@ pub async fn handle_message_receive(
         reply_to: None,
         thread_id: None,
         mentioned: None,
-        metadata: None,
+        metadata: raw_payload,
     };
 
     let event = GatewayEvent::new(

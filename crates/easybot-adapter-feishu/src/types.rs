@@ -4,7 +4,7 @@
 //! 部分类型字段暂未使用，保留以支持未来入站消息处理和 API 序列化。
 #![allow(dead_code)]
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 /// 通用 API 响应包装
 #[derive(Debug, Deserialize)]
@@ -86,7 +86,7 @@ pub struct FeishuMemberItem {
 }
 
 /// 入站事件：im.message.receive_v1 的 event 字段
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct FeishuMessageReceiveEvent {
     pub sender: FeishuMessageSender,
     pub message: FeishuReceivedMessage,
@@ -218,19 +218,19 @@ mod tests {
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct FeishuMessageSender {
     pub sender_id: FeishuSenderId,
     pub sender_type: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct FeishuSenderId {
     pub open_id: String,
     pub user_id: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct FeishuReceivedMessage {
     pub message_id: String,
     pub root_id: Option<String>,
