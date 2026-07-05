@@ -23,7 +23,7 @@ anyhow.workspace = true
 dirs.workspace = true
 
 [features]
-default = ["adapter-telegram"]
+default = ["adapter-telegram", "adapter-discord", "adapter-feishu", "adapter-qq", "adapter-wechat"]
 adapter-telegram = ["easybot-adapter-telegram"]
 adapter-discord = ["easybot-adapter-discord"]
 adapter-feishu = ["easybot-adapter-feishu"]
