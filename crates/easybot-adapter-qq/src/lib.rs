@@ -358,9 +358,8 @@ impl QqAdapter {
             Err(e) => {
                 if Self::is_not_found_error(&e) {
                     tracing::debug!(
-                        "QQ chat_id {} is not a channel (e={}), trying next endpoint",
-                        chat_id,
-                        e
+                        "QQ chat_id {} is not a channel, trying group endpoint",
+                        chat_id
                     );
                 } else {
                     return Err(e);
@@ -572,9 +571,9 @@ impl QqAdapter {
                 Ok(resp) => return Ok(resp),
                 Err(e) => {
                     tracing::debug!(
-                        "QQ media upload to {} failed: {}, trying next endpoint",
+                        "QQ media upload to {} failed ({}), trying next endpoint",
                         endpoint_type,
-                        e
+                        e.error_code()
                     );
                     last_error = Some(e);
                 }
