@@ -137,6 +137,7 @@ init(config) → connect() → send()/... → disconnect()
 | Target format | `{platform}:{chatId}` — parse via `parse_target()` |
 | Env loading | `load_env()` before `load_config()` in `bin/main.rs`; `.env` at `{config_dir}/.env` |
 | Config precedence | YAML → `.local.yaml` → `${VAR_NAME}` substitution; export/Docker > `.env` |
+| Raw payload passthrough | 各适配器在解析字段前将平台原始 payload 序列化存入 `InboundMessage.metadata`，**仅调试用，不做任何二次处理/消费**。由 `api.raw_payload_enabled`（默认 `false`）控制 WebSocket 事件中是否透传该字段——关闭时 `ws.rs:172-178` 在广播前剥离 `metadata`；可通过配置或 `EASYBOT_RAW_PAYLOAD_ENABLED` 环境变量开启。 |
 
 ## Known Gaps
 
