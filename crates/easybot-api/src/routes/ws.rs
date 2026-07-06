@@ -61,6 +61,16 @@ async fn handle_ws(socket: WebSocket, state: AppState, _permit: OwnedSemaphorePe
     let mut dropped_events: u32 = 0;
     const MAX_DROPPED_EVENTS: u32 = 50; // 连续丢弃超过 N 个事件则断开
 
+    // SECURITY: Limit authentication attempts to prevent brute-force
+    let mut auth_attempts: u32 = 0;
+    const MAX_AUTH_ATTEMPTS: u32 = 5;
+    // SECURITY: Require auth within N seconds after connection
+    let auth_deadline = Instant::now() + std::time::Duration::from_secs(10);
+    // SECURITY: Per-connection frame rate limit (max 10 frames/sec)
+    let mut frame_count: u32 = 0;
+    let mut frame_window_start = Instant::now();
+    const MAX_FRAMES_PER_SEC: u32 = 10;
+
     // 心跳配置
     let heartbeat_secs = state.config.api.websocket.heartbeat_interval_secs.max(5);
     let hb_duration = std::time::Duration::from_secs(heartbeat_secs);
@@ -82,7 +92,40 @@ async fn handle_ws(socket: WebSocket, state: AppState, _permit: OwnedSemaphorePe
             msg = receiver.next() => {
                 match msg {
                     Some(Ok(Message::Text(text))) => {
+                        // SECURITY: Per-connection frame rate limiting
+                        frame_count += 1;
+                        let elapsed = frame_window_start.elapsed();
+                        if elapsed >= std::time::Duration::from_secs(1) {
+                            frame_count = 1;
+                            frame_window_start = Instant::now();
+                        } else if frame_count > MAX_FRAMES_PER_SEC {
+                            warn!("WS client exceeded frame rate limit, disconnecting");
+                            let _ = sender.send(Message::Text(
+                                r#"{"type":"error","message":"Rate limit exceeded"}"#.into()
+                            )).await;
+                            break;
+                        }
+
                         if !authenticated {
+                            // SECURITY: Check auth deadline
+                            if Instant::now() > auth_deadline {
+                                warn!("WS client auth deadline exceeded");
+                                let _ = sender.send(Message::Text(
+                                    r#"{"type":"auth_failed","message":"Authentication timeout"}"#.into()
+                                )).await;
+                                break;
+                            }
+
+                            // SECURITY: Limit auth attempts
+                            auth_attempts += 1;
+                            if auth_attempts > MAX_AUTH_ATTEMPTS {
+                                warn!("WS client exceeded max auth attempts");
+                                let _ = sender.send(Message::Text(
+                                    r#"{"type":"auth_failed","message":"Too many authentication attempts"}"#.into()
+                                )).await;
+                                break;
+                            }
+
                             // 通过 ApiKeyManager 进行真实认证
                             let token = serde_json::from_str::<serde_json::Value>(&text)
                                 .ok()
@@ -113,10 +156,12 @@ async fn handle_ws(socket: WebSocket, state: AppState, _permit: OwnedSemaphorePe
                                             )).await;
                                         }
                                         Err(_) => {
+                                            // SECURITY: Add delay on failed auth to slow brute-force
+                                            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
                                             let _ = sender.send(Message::Text(
                                                 r#"{"type":"auth_failed","message":"Invalid API key"}"#.into()
                                             )).await;
-                                            break;
+                                            // Don't break — allow retry up to MAX_AUTH_ATTEMPTS
                                         }
                                     }
                                 }
@@ -226,6 +271,6 @@ async fn handle_ws(socket: WebSocket, state: AppState, _permit: OwnedSemaphorePe
 /// 处理客户端发来的业务帧
 async fn handle_client_frame(text: &str, _state: &AppState) {
     // Phase 2: 支持客户端发送消息、订阅过滤等
-    // 当前仅做 debug 日志
-    tracing::debug!("WS client frame: {}", text);
+    // SECURITY: Only log frame length, not content (may contain sensitive data)
+    tracing::trace!("WS client frame received ({} bytes)", text.len());
 }

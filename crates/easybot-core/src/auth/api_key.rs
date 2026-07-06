@@ -267,14 +267,17 @@ impl ApiKeyManager {
 
     /// Argon2 验证并构建 AuthInfo
     async fn verify_and_build_auth(stored: &StoredKey, key: &str) -> Result<AuthInfo, String> {
+        // SECURITY: Use unified error message to prevent user enumeration
+        // (distinguishing revoked vs invalid keys leaks information)
         if stored.info.revoked {
-            return Err("API key has been revoked".to_string());
+            return Err("Invalid API key".to_string());
         }
 
+        // SECURITY: Use unified error message to prevent user enumeration
         if let Some(expires) = stored.info.expires_at
             && chrono::Utc::now().timestamp_millis() > expires
         {
-            return Err("API key has expired".to_string());
+            return Err("Invalid API key".to_string());
         }
 
         let auth_info = AuthInfo {

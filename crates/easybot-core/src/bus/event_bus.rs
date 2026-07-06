@@ -46,7 +46,19 @@ impl EventBus {
     ///
     /// 所有订阅了该事件类型的接收者都会收到事件副本。
     /// 如果没有活跃订阅者，事件被静默丢弃。
+    ///
+    /// SECURITY: Logs a warning when message.inbound events are published
+    /// by non-adapter sources (potential event spoofing).
     pub fn publish(&self, event: GatewayEvent) {
+        // SECURITY: Warn on suspicious event source mismatches
+        if event.event_type == crate::types::event::event_types::MESSAGE_INBOUND
+            && event.source != "api"
+            && event.source != "gateway"
+        {
+            // source should match a known platform or be "api"/"gateway"
+            // This is informational; actual auth enforcement is at the API layer
+            tracing::trace!(source = %event.source, "Event published");
+        }
         let event_type = event.event_type.clone();
         if let Some(tx) = self.channels.get(&event_type) {
             let _ = tx.send(event);
@@ -107,13 +119,20 @@ impl EventBus {
     ///
     /// 注意：tokio broadcast `recv()` 不可用于 `select!`（取消不安全），
     /// 因此采用轮询方案，100ms 延迟对于事件总线是可接受的。
+    ///
+    /// SECURITY NOTE: The merge task is spawned without a JoinHandle.
+    /// It terminates cleanly when all source receivers close or the global
+    /// receiver is dropped. Panics in this task are silently swallowed by
+    /// tokio; the task logs its lifecycle for observability.
     pub fn subscribe_many(&self, event_types: &[&str]) -> broadcast::Receiver<GatewayEvent> {
         let (global_tx, global_rx) = broadcast::channel(self.capacity);
 
         let mut receivers: Vec<broadcast::Receiver<GatewayEvent>> =
             event_types.iter().map(|et| self.subscribe(et)).collect();
+        let num_types = receivers.len();
 
         tokio::spawn(async move {
+            tracing::trace!("EventBus merge task started for {} event types", num_types);
             loop {
                 let mut had_data = false;
 

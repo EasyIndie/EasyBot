@@ -113,7 +113,7 @@ pub struct BotInfo {
 /// - `None`（默认）：自动检测 — 凭据环境变量已设置则启用
 /// - `Some(true)`：强制启用，即使未检测到凭据
 /// - `Some(false)`：强制禁用，即使凭据已设置
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, ToSchema)]
+#[derive(Clone, serde::Serialize, serde::Deserialize, ToSchema)]
 pub struct AdapterConfig {
     #[serde(default)]
     pub enabled: Option<bool>,
@@ -124,6 +124,33 @@ pub struct AdapterConfig {
     pub base_url: Option<String>,
     #[serde(default)]
     pub extra: serde_json::Value,
+}
+
+// SECURITY: Manual Debug impl that redacts credential fields
+impl std::fmt::Debug for AdapterConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AdapterConfig")
+            .field("enabled", &self.enabled)
+            .field(
+                "token",
+                &if self.token.is_some() {
+                    Some("***REDACTED***")
+                } else {
+                    None
+                },
+            )
+            .field(
+                "api_key",
+                &if self.api_key.is_some() {
+                    Some("***REDACTED***")
+                } else {
+                    None
+                },
+            )
+            .field("base_url", &self.base_url)
+            .field("extra", &self.extra)
+            .finish()
+    }
 }
 
 impl AdapterConfig {

@@ -29,17 +29,43 @@ pub struct LoginResponse {
 }
 
 /// POST /admin/login — 密码登录，返回 API Key
+///
+/// SECURITY: Uses constant-time comparison to prevent timing side-channel attacks.
+/// Rate limiting is handled by the dedicated admin login rate limiter in server.rs.
 pub async fn admin_login(
     State(state): State<AppState>,
     Json(body): Json<LoginRequest>,
 ) -> Result<Json<LoginResponse>, ApiError> {
-    if body.password != state.admin_password {
+    // SECURITY: Reject empty/default password (admin panel disabled)
+    if state.admin_password.is_empty() {
+        return Err(ApiError(GatewayError::Unauthorized(
+            "管理后台未配置密码".into(),
+        )));
+    }
+
+    // SECURITY: Constant-time comparison to prevent timing attacks
+    if !constant_time_eq(body.password.as_bytes(), state.admin_password.as_bytes()) {
+        tracing::warn!("AUDIT: Admin login failed (incorrect password)");
         return Err(ApiError(GatewayError::Unauthorized("密码错误".into())));
     }
+    tracing::info!("AUDIT: Admin login successful");
     match &state.dev_api_key {
         Some(key) => Ok(Json(LoginResponse { key: key.clone() })),
         None => Err(ApiError(GatewayError::Internal("API Key 未就绪".into()))),
     }
+}
+
+/// Constant-time byte comparison to prevent timing side-channel attacks.
+/// Both slices must have the same length for the comparison to be meaningful.
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut result: u8 = 0;
+    for (x, y) in a.iter().zip(b.iter()) {
+        result |= x ^ y;
+    }
+    result == 0
 }
 
 // ─── API Key 管理 ──────────────────────────────────────────
@@ -135,19 +161,69 @@ pub async fn create_api_key(
     State(state): State<AppState>,
     Json(body): Json<CreateApiKeyRequest>,
 ) -> Result<Json<CreateApiKeyResponse>, ApiError> {
-    if body.name.trim().is_empty() {
+    // Validate name
+    let name = body.name.trim().to_string();
+    if name.is_empty() {
         return Err(ApiError(GatewayError::InvalidRequest(
             "name 不能为空".into(),
+        )));
+    }
+    if name.len() > 128 {
+        return Err(ApiError(GatewayError::InvalidRequest(
+            "name 不能超过 128 个字符".into(),
+        )));
+    }
+    // Only allow alphanumeric, hyphens, underscores, and spaces
+    if !name
+        .chars()
+        .all(|c| c.is_alphanumeric() || c == '-' || c == '_' || c == ' ')
+    {
+        return Err(ApiError(GatewayError::InvalidRequest(
+            "name 只能包含字母、数字、横线、下划线和空格".into(),
+        )));
+    }
+
+    // SECURITY: Validate permissions against allowlist
+    let valid_permissions: Vec<&str> = vec![
+        "*",
+        "messagesread",
+        "messagessend",
+        "adaptersread",
+        "adaptersmanage",
+        "configread",
+        "configwrite",
+        "sessionsread",
+        "sessionsmanage",
+        "websocketconnect",
+        "apikeysmanage",
+    ];
+    for perm in &body.permissions {
+        if perm == "*" {
+            continue; // wildcard is always valid
+        }
+        if !valid_permissions.contains(&perm.as_str()) {
+            return Err(ApiError(GatewayError::InvalidRequest(format!(
+                "无效的权限: {}",
+                perm
+            ))));
+        }
+    }
+
+    // SECURITY: Limit maximum number of API keys
+    let existing_keys = state.auth_manager.list_keys().await;
+    if existing_keys.len() >= 100 {
+        return Err(ApiError(GatewayError::InvalidRequest(
+            "API Key 数量已达到上限 (100)".into(),
         )));
     }
 
     let (id, raw_key) = state
         .auth_manager
-        .create_key(body.name.trim(), body.permissions, None, body.event_filters)
+        .create_key(&name, body.permissions, None, body.event_filters)
         .await
         .map_err(|e| ApiError(GatewayError::InvalidRequest(e)))?;
 
-    // 从 list_keys 获取完整信息（包含 created_at 等）
+    tracing::info!("AUDIT: API key created — id={}, name={}", id, name);
     let keys = state.auth_manager.list_keys().await;
     let info = keys
         .iter()
@@ -182,6 +258,7 @@ pub async fn revoke_api_key(
     Path(id): Path<String>,
 ) -> Result<Json<RevokeResponse>, ApiError> {
     if state.auth_manager.revoke_key(&id).await {
+        tracing::info!("AUDIT: API key revoked — id={}", id);
         Ok(Json(RevokeResponse {
             success: true,
             message: "API Key 已吊销".into(),

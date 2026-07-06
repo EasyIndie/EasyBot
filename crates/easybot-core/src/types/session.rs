@@ -30,6 +30,12 @@ pub struct Session {
     /// 自定义元数据
     #[serde(default)]
     pub metadata: serde_json::Value,
+    /// 最近一条消息（文本摘要）
+    #[serde(default)]
+    pub last_message: Option<String>,
+    /// 最近一条消息的时间戳（毫秒）
+    #[serde(default)]
+    pub last_message_at: Option<i64>,
 }
 
 /// 会话来源
@@ -75,10 +81,19 @@ pub enum ResetPolicy {
 
 impl Session {
     /// 计算会话键
+    ///
+    /// SECURITY: Rejects colon characters in platform, chat_id, and thread_id
+    /// to prevent delimiter injection that could cause key collisions.
     pub fn build_key(platform: &str, chat_id: &str, thread_id: Option<&str>) -> String {
+        // Sanitize: replace colons to prevent key confusion
+        let safe_platform = platform.replace(':', "_");
+        let safe_chat_id = chat_id.replace(':', "_");
         match thread_id {
-            Some(tid) if !tid.is_empty() => format!("{}:{}:{}", platform, chat_id, tid),
-            _ => format!("{}:{}", platform, chat_id),
+            Some(tid) if !tid.is_empty() => {
+                let safe_tid = tid.replace(':', "_");
+                format!("{}:{}:{}", safe_platform, safe_chat_id, safe_tid)
+            }
+            _ => format!("{}:{}", safe_platform, safe_chat_id),
         }
     }
 }

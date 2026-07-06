@@ -22,7 +22,9 @@ CREATE TABLE IF NOT EXISTS sessions (
     updated_at   INTEGER NOT NULL,
     source_json  TEXT NOT NULL,
     reset_policy TEXT NOT NULL,
-    metadata     TEXT NOT NULL DEFAULT '{}'
+    metadata     TEXT NOT NULL DEFAULT '{}',
+    last_message TEXT,
+    last_message_at INTEGER
 );
 
 CREATE INDEX IF NOT EXISTS idx_sessions_platform ON sessions(platform);
@@ -134,6 +136,8 @@ struct SessionRow {
     source_json: String,
     reset_policy: String,
     metadata: String,
+    last_message: Option<String>,
+    last_message_at: Option<i64>,
 }
 
 impl SessionRow {
@@ -161,6 +165,8 @@ impl SessionRow {
             source,
             reset_policy,
             metadata,
+            last_message: self.last_message,
+            last_message_at: self.last_message_at,
         })
     }
 }
@@ -178,6 +184,8 @@ fn row_to_session(row: &sqlx::sqlite::SqliteRow) -> Result<SessionRow, sqlx::Err
         source_json: row.try_get("source_json")?,
         reset_policy: row.try_get("reset_policy")?,
         metadata: row.try_get("metadata")?,
+        last_message: row.try_get("last_message")?,
+        last_message_at: row.try_get("last_message_at")?,
     })
 }
 
@@ -203,13 +211,15 @@ impl SessionStore for SqliteSessionStore {
         let reset_policy = format!("{:?}", session.reset_policy);
 
         sqlx::query(
-            "INSERT INTO sessions (key, platform, chat_id, thread_id, created_at, updated_at, source_json, reset_policy, metadata)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            "INSERT INTO sessions (key, platform, chat_id, thread_id, created_at, updated_at, source_json, reset_policy, metadata, last_message, last_message_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(key) DO UPDATE SET
                 updated_at = excluded.updated_at,
                 source_json = excluded.source_json,
                 reset_policy = excluded.reset_policy,
-                metadata = excluded.metadata"
+                metadata = excluded.metadata,
+                last_message = excluded.last_message,
+                last_message_at = excluded.last_message_at"
         )
         .bind(&session.key)
         .bind(&session.platform)
@@ -220,6 +230,8 @@ impl SessionStore for SqliteSessionStore {
         .bind(&source_json)
         .bind(&reset_policy)
         .bind(&metadata)
+        .bind(&session.last_message)
+        .bind(session.last_message_at)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -227,7 +239,7 @@ impl SessionStore for SqliteSessionStore {
 
     async fn get_session(&self, key: &str) -> Result<Option<Session>, StoreError> {
         let rows = sqlx::query(
-            "SELECT key, platform, chat_id, thread_id, created_at, updated_at, source_json, reset_policy, metadata
+            "SELECT key, platform, chat_id, thread_id, created_at, updated_at, source_json, reset_policy, metadata, last_message, last_message_at
              FROM sessions WHERE key = ?"
         )
         .bind(key)
@@ -253,7 +265,7 @@ impl SessionStore for SqliteSessionStore {
 
     async fn list_sessions(&self, filter: &SessionFilter) -> Result<Vec<Session>, StoreError> {
         let mut builder = sqlx::QueryBuilder::new(
-            "SELECT key, platform, chat_id, thread_id, created_at, updated_at, source_json, reset_policy, metadata \
+            "SELECT key, platform, chat_id, thread_id, created_at, updated_at, source_json, reset_policy, metadata, last_message, last_message_at \
              FROM sessions WHERE 1=1",
         );
 
@@ -298,7 +310,7 @@ impl SessionStore for SqliteSessionStore {
 
     async fn load_all_sessions(&self) -> Result<Vec<Session>, StoreError> {
         let rows = sqlx::query(
-            "SELECT key, platform, chat_id, thread_id, created_at, updated_at, source_json, reset_policy, metadata
+            "SELECT key, platform, chat_id, thread_id, created_at, updated_at, source_json, reset_policy, metadata, last_message, last_message_at
              FROM sessions"
         )
         .fetch_all(&self.pool)
@@ -526,6 +538,8 @@ mod tests {
             },
             reset_policy: ResetPolicy::Never,
             metadata: serde_json::json!({}),
+            last_message: None,
+            last_message_at: None,
         }
     }
 

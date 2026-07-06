@@ -268,9 +268,32 @@ async fn main() -> anyhow::Result<()> {
         .await
     {
         Ok((_id, key)) => {
-            // E2E 测试脚本通过 stdout 提取 key（仅 --debug 模式）
+            // SECURITY: Never print API keys to stdout. In debug mode,
+            // write to a file with restricted permissions instead.
             if cli.debug {
-                println!("E2E_API_KEY={}", key);
+                let key_file_path = paths.home.join("data").join(".dev_api_key");
+                if let Some(parent) = key_file_path.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                match std::fs::write(&key_file_path, &key) {
+                    Ok(()) => {
+                        #[cfg(unix)]
+                        {
+                            use std::os::unix::fs::PermissionsExt;
+                            let _ = std::fs::set_permissions(
+                                &key_file_path,
+                                std::fs::Permissions::from_mode(0o600),
+                            );
+                        }
+                        tracing::info!(
+                            "Dev API key written to {} (permissions 0600)",
+                            key_file_path.display()
+                        );
+                    }
+                    Err(e) => {
+                        tracing::warn!("Failed to write dev API key to file: {}", e);
+                    }
+                }
             }
             dev_api_key = Some(key);
         }
@@ -281,9 +304,10 @@ async fn main() -> anyhow::Result<()> {
     // ConfigManager.new() 内部也会应用此覆盖，确保热重载路径一致。
     let admin_password = std::env::var("EASYBOT_ADMIN_PASSWORD")
         .unwrap_or_else(|_| config.server.admin_password.clone());
-    if admin_password == "easybot" {
+    if admin_password.is_empty() {
         tracing::warn!(
-            "管理后台使用默认密码 'easybot'，请在 .env 或 gateway.yaml 中修改 admin_password"
+            "管理后台密码未设置！请设置 EASYBOT_ADMIN_PASSWORD 环境变量或在 gateway.yaml 中配置 server.admin_password。\n\
+             未设置密码时管理后台登录将始终被拒绝。"
         );
     }
 

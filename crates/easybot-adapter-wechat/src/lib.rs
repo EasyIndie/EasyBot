@@ -350,20 +350,18 @@ impl WeChatAdapter {
             header::CONTENT_TYPE,
             header::HeaderValue::from_static("application/json"),
         );
-        headers.insert(
-            header::AUTHORIZATION,
-            header::HeaderValue::from_str(&format!("Bearer {}", token)).unwrap(),
-        );
+        let auth_value = header::HeaderValue::from_str(&format!("Bearer {}", token))
+            .unwrap_or_else(|_| header::HeaderValue::from_static("Bearer invalid"));
+        headers.insert(header::AUTHORIZATION, auth_value);
         headers.insert(
             header::HeaderName::from_static("authorizationtype"),
             header::HeaderValue::from_static("ilink_bot_token"),
         );
         // X-WECHAT-UIN：防重放，随机 uint32 base64
         let uin = uuid::Uuid::new_v4().as_u64_pair().0 as u32;
-        headers.insert(
-            header::HeaderName::from_static("x-wechat-uin"),
-            header::HeaderValue::from_str(&base64_encode_uin(uin)).unwrap(),
-        );
+        let uin_value = header::HeaderValue::from_str(&base64_encode_uin(uin))
+            .unwrap_or_else(|_| header::HeaderValue::from_static("0"));
+        headers.insert(header::HeaderName::from_static("x-wechat-uin"), uin_value);
         headers
     }
 
@@ -473,10 +471,9 @@ impl WeChatAdapter {
         let ciphertext = aes_128_ecb_encrypt(&file_data, &aes_key_bytes);
 
         tracing::debug!(
-            "WeChat media encrypted: raw={} bytes, padded={} bytes, aes_key_hex={}",
+            "WeChat media encrypted: raw={} bytes, padded={} bytes",
             file_data.len(),
             ciphertext.len(),
-            aeskey_hex,
         );
 
         // 7. 上传到 CDN（使用专用 HTTP/1.1 客户端，避免 HTTP/2 兼容性问题）
@@ -487,10 +484,9 @@ impl WeChatAdapter {
             .map_err(|e| GatewayError::Internal(format!("Failed to create CDN client: {}", e)))?;
 
         tracing::debug!(
-            "WeChat CDN upload: url_len={}, body_len={}, first_16_key={}",
+            "WeChat CDN upload: url_len={}, body_len={}",
             cdn_url.len(),
             ciphertext.len(),
-            &aeskey_hex[..16]
         );
 
         let cdn_resp = cdn_client
@@ -795,8 +791,8 @@ impl PlatformAdapter for WeChatAdapter {
                     tracing::info!("扫描以下二维码登录个人微信：");
                     println!("\n{}", img);
                 }
-                // 将 token 写入日志（stderr），供脚本/Docker/headless 场景提取
-                tracing::info!(
+                // SECURITY: Log qrcode_token at DEBUG level only — it is a session token
+                tracing::debug!(
                     "微信登录 qrcode_token={}，扫码后凭据将自动保存到 ~/.easybot/.wechat-credentials.json",
                     qrcode
                 );

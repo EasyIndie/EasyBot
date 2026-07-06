@@ -30,7 +30,23 @@ allow = [
 ]
 confidence-threshold = 0.8
 
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+
 [bans]
-multiple-versions = "warn"
+multiple-versions = "deny"
 skip = []
-skip-tree = []
+skip-tree = [
+    # larksuite-oapi-sdk-rs pins an older tungstenite — upstream PR needed
+    { name = "tokio-tungstenite", version = "0.26" },
+    # Duplicate sha2 from transitive deps (argon2 vs others)
+    { name = "sha2", version = "0.11" },
+    # Duplicate rand/rand_core from transitive deps
+    { name = "rand", version = "0.9" },
+    { name = "rand_core", version = "0.9" },
+    { name = "webpki-roots", version = "0.26" },
+    { name = "digest", version = "0.11" },
+    { name = "crypto-common", version = "0.2" },
+    { name = "block-buffer", version = "0.11" },
+]

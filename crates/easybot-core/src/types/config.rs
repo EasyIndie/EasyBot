@@ -72,7 +72,10 @@ fn default_port() -> u16 {
 }
 
 fn default_admin_password() -> String {
-    "easybot".to_string()
+    // SECURITY: No default password. If not set via EASYBOT_ADMIN_PASSWORD
+    // or gateway.yaml, the admin panel is disabled (login always fails).
+    // The startup warning in main.rs alerts operators when this is unset.
+    String::new()
 }
 
 /// TLS 配置

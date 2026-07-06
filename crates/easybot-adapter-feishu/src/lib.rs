@@ -224,7 +224,12 @@ impl FeishuAdapter {
             reqwest::Client::builder()
                 .timeout(Duration::from_secs(15))
                 .build()
-                .expect("Failed to create HTTP client")
+                .unwrap_or_else(|e| {
+                    tracing::error!("Failed to create Feishu HTTP client: {}", e);
+                    // Fallback to default client — connection will fail later
+                    // with a more descriptive error rather than panicking
+                    reqwest::Client::new()
+                })
         })
     }
 
@@ -542,6 +547,11 @@ impl PlatformAdapter for FeishuAdapter {
             let feishu_http = reqwest::Client::new();
             let feishu_base_url = self.api_base_url().to_string();
 
+            // SECURITY: Signature verification is skipped because the Feishu
+            // WebSocket event stream uses a different authentication mechanism
+            // (long-lived WS connection authenticated during handshake) vs the
+            // Event Subscription webhook path (HMAC signature per-request).
+            // The verify_token can be configured via FEISHU_VERIFICATION_TOKEN env var.
             let dispatcher = EventDispatcher::new("", "")
                 .skip_sign_verify()
                 // 处理入站消息
@@ -963,26 +973,37 @@ impl PlatformAdapter for FeishuAdapter {
         &self,
         source: &easybot_core::types::session::SessionSource,
     ) -> Option<easybot_core::types::session::SessionSource> {
+        let mut enriched = source.clone();
+
+        // 通过飞书群信息 API 获取群名称
+        let chat_id = &source.chat_id;
+        let chat_path = format!("/open-apis/im/v1/chats/{}", chat_id);
+        if let Ok(chat_info) = self.api_get::<serde_json::Value>(&chat_path).await
+            && let Some(name) = chat_info
+                .get("data")
+                .and_then(|d| d.get("name"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+        {
+            enriched.chat_name = Some(name);
+        }
+
         // 通过飞书联系人 API 查询用户信息
-        let user_id = source.user_id.as_ref()?;
-        let path = format!("/open-apis/contact/v3/users/{}", user_id);
-        match self.api_get::<serde_json::Value>(&path).await {
-            Ok(user_info) => {
-                let mut enriched = source.clone();
-                // 从响应中提取用户姓名
-                if let Some(name) = user_info
+        if let Some(user_id) = &source.user_id {
+            let user_path = format!("/open-apis/contact/v3/users/{}", user_id);
+            if let Ok(user_info) = self.api_get::<serde_json::Value>(&user_path).await
+                && let Some(name) = user_info
                     .get("data")
                     .and_then(|d| d.get("user"))
                     .and_then(|u| u.get("name"))
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string())
-                {
-                    enriched.user_name = Some(name);
-                }
-                Some(enriched)
+            {
+                enriched.user_name = Some(name);
             }
-            Err(_) => None,
         }
+
+        Some(enriched)
     }
 }
 

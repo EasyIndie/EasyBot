@@ -188,9 +188,12 @@ impl QqAdapter {
             .send_api_request_raw(&token, method.clone(), path, body)
             .await;
 
-        // token 过期（HTTP 401）时刷新一次并重试
+        // Token expiry (HTTP 401) — refresh once and retry.
+        // SECURITY: Match the HTTP status in the formatted error message
+        // "QQ API error (METHOD path): STATUS - body" to avoid false positives
+        // from body content that happens to contain "401".
         if let Err(GatewayError::Internal(msg)) = &result
-            && msg.contains("401")
+            && (msg.contains(": 401 ") || msg.contains(": 401 -"))
         {
             tracing::warn!(
                 "QQ API 返回 401 Unauthorized（token 可能已过期），尝试刷新 token 后重试"
@@ -271,9 +274,12 @@ impl QqAdapter {
         let token = self.bot_token()?;
         let result = self.api_delete_raw(&token, path).await;
 
-        // token 过期（HTTP 401）时刷新一次并重试
+        // Token expiry (HTTP 401) — refresh once and retry.
+        // SECURITY: Match the HTTP status in the formatted error message
+        // "QQ API error (METHOD path): STATUS - body" to avoid false positives
+        // from body content that happens to contain "401".
         if let Err(GatewayError::Internal(msg)) = &result
-            && msg.contains("401")
+            && (msg.contains(": 401 ") || msg.contains(": 401 -"))
         {
             tracing::warn!(
                 "QQ API 返回 401 Unauthorized（token 可能已过期），尝试刷新 token 后重试"

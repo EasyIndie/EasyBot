@@ -177,6 +177,8 @@ impl DiscordAdapter {
         let status = resp.status();
         if !status.is_success() {
             let error_text = resp.text().await.unwrap_or_default();
+            // SECURITY: Truncate error body to prevent leaking sensitive data
+            let safe_error: String = error_text.chars().take(256).collect();
             if status.as_u16() == 429 {
                 return Err(GatewayError::RateLimited {
                     retry_after_ms: 1000,
@@ -186,7 +188,7 @@ impl DiscordAdapter {
                 "Discord API {} {}: {}",
                 status.as_u16(),
                 endpoint,
-                error_text
+                safe_error
             )));
         }
 
@@ -814,12 +816,10 @@ impl PlatformAdapter for DiscordAdapter {
             .map_err(|e| GatewayError::Internal(format!("Discord API JSON parse failed: {}", e)))?;
 
         if msg.attachments.is_empty() {
+            // SECURITY: Don't log full payload — may contain sensitive content
             tracing::warn!(
-                "Discord send_media: message {} sent but no attachments returned. \
-                 content={:?}, payload_json text was: {}",
+                "Discord send_media: message {} sent but no attachments returned",
                 msg.id,
-                msg.content,
-                payload_text,
             );
         } else {
             tracing::info!(
@@ -1085,6 +1085,28 @@ impl PlatformAdapter for DiscordAdapter {
             uptime: None,
             messages_in: self.messages_in.load(Ordering::Relaxed),
             messages_out: self.messages_out.load(Ordering::Relaxed),
+        }
+    }
+
+    /// 富化会话来源信息：通过 Discord REST API 获取频道名称
+    async fn enrich_source(
+        &self,
+        source: &easybot_core::types::session::SessionSource,
+    ) -> Option<easybot_core::types::session::SessionSource> {
+        let chat_id = &source.chat_id;
+        let endpoint = format!("/channels/{}", chat_id);
+        match self
+            .api_call::<DiscordChannel>(reqwest::Method::GET, &endpoint, None)
+            .await
+        {
+            Ok(channel) => {
+                let mut enriched = source.clone();
+                if let Some(name) = channel.name.filter(|n| !n.is_empty()) {
+                    enriched.chat_name = Some(name);
+                }
+                Some(enriched)
+            }
+            Err(_) => None,
         }
     }
 }
