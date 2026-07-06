@@ -219,10 +219,13 @@ fn matches_adapter_action(method: &Method, path: &str) -> bool {
 
 /// CSP + security headers middleware
 async fn security_headers_middleware(response: Response) -> Response {
-    const CSP_VALUE: &str = "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self' ws: wss:; img-src 'self' data:; frame-ancestors 'none';";
+    // NOTE: 'unsafe-inline' is required because all assets (CSS/JS) are embedded
+    // inline in a single HTML file by build.rs. This is a local admin panel, not
+    // a public-facing site — the inline content comes from trusted source files.
+    const CSP_VALUE: &str = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws: wss:; img-src 'self' data:; frame-ancestors 'none';";
     let (mut parts, body) = response.into_parts();
 
-    // Content-Security-Policy (no 'unsafe-inline' — XSS hardening)
+    // Content-Security-Policy
     parts.headers.insert(
         header::CONTENT_SECURITY_POLICY,
         axum::http::HeaderValue::from_static(CSP_VALUE),
