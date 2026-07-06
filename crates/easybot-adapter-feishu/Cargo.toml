@@ -13,6 +13,7 @@ serde_json.workspace = true
 tracing.workspace = true
 async-trait.workspace = true
 chrono.workspace = true
+base64.workspace = true
 # 飞书官方 SDK · 当前锁定 0.1.2
 # 审计状态: 2026-06-24 已审阅 token 刷新/WebSocket 重连路径，未见已知漏洞
 # 升级时需验证: token 自动刷新逻辑、WebSocket 重连指数退避、TLS 证书校验

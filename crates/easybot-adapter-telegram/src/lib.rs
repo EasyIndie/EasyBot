@@ -11,9 +11,9 @@
 mod types;
 
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -24,12 +24,12 @@ use easybot_core::types::error::GatewayError;
 use easybot_core::types::event::GatewayEvent;
 use easybot_core::types::event::event_types;
 use easybot_core::types::message::*;
-use tokio::sync::broadcast;
+use tokio::sync::{Mutex as AsyncMutex, broadcast};
 use types::*;
 
 /// 群组管理员列表缓存（chat_id → [(user_id, role)]）
 /// 初始通过 getChatAdministrators 填充，之后由 chat_member 事件实时更新
-type AdminCache = Arc<Mutex<HashMap<i64, Vec<(i64, SenderRole)>>>>;
+type AdminCache = Arc<AsyncMutex<HashMap<i64, Vec<(i64, SenderRole)>>>>;
 
 /// Telegram Bot API 基础 URL
 const TELEGRAM_API: &str = "https://api.telegram.org/bot";
@@ -90,7 +90,7 @@ impl TelegramAdapter {
             cancel_tx: None,
             heartbeat: Heartbeat::new(),
             http_client: OnceLock::new(),
-            admin_cache: Arc::new(Mutex::new(HashMap::new())),
+            admin_cache: Arc::new(AsyncMutex::new(HashMap::new())),
         }
     }
 
@@ -268,7 +268,7 @@ impl TelegramAdapter {
                                 }
                                 // Handle chat_member updates → real-time admin cache update
                                 if let Some(ref member_update) = update.chat_member {
-                                    Self::update_admin_cache(&admin_cache, member_update);
+                                    Self::update_admin_cache(&admin_cache, member_update).await;
                                 }
                                 // Handle messages → resolve sender role from cache/API
                                 if let Some(tg_msg) = update.message {
@@ -378,11 +378,10 @@ impl TelegramAdapter {
     ) -> Option<SenderRole> {
         let user_id = user_id?;
 
-        // 1. 查缓存（同步、无锁争用）
+        // 1. 查缓存（异步锁，等待获取）
         {
-            if let Ok(cache) = admin_cache.try_lock()
-                && let Some(admins) = cache.get(&chat_id)
-            {
+            let cache = admin_cache.lock().await;
+            if let Some(admins) = cache.get(&chat_id) {
                 return admins
                     .iter()
                     .find(|(uid, _)| *uid == user_id)
@@ -399,9 +398,8 @@ impl TelegramAdapter {
                 .map(|(_, role)| role.clone());
 
             // 更新缓存（即使 role 为 None，也缓存空列表避免重复请求）
-            if let Ok(mut cache) = admin_cache.try_lock() {
-                cache.insert(chat_id, admins);
-            }
+            let mut cache = admin_cache.lock().await;
+            cache.insert(chat_id, admins);
 
             return role;
         }
@@ -411,7 +409,7 @@ impl TelegramAdapter {
     }
 
     /// 处理 chat_member 更新事件 → 实时更新 admin 缓存
-    fn update_admin_cache(admin_cache: &AdminCache, event: &TelegramChatMemberUpdated) {
+    async fn update_admin_cache(admin_cache: &AdminCache, event: &TelegramChatMemberUpdated) {
         let chat_id = event.chat.id;
         let user_id = event.new_chat_member.user.id;
         let new_status = event.new_chat_member.status.as_str();
@@ -422,26 +420,25 @@ impl TelegramAdapter {
             return;
         }
 
-        if let Ok(mut cache) = admin_cache.try_lock() {
-            if let Some(admins) = cache.get_mut(&chat_id) {
-                // 已有缓存 → 增/删/改该成员
-                admins.retain(|(uid, _)| *uid != user_id);
-                match new_status {
-                    "creator" => admins.push((user_id, SenderRole::Owner)),
-                    "administrator" => admins.push((user_id, SenderRole::Admin)),
-                    _ => {} // 降级为普通成员 → 已从列表中移除
+        let mut cache = admin_cache.lock().await;
+        if let Some(admins) = cache.get_mut(&chat_id) {
+            // 已有缓存 → 增/删/改该成员
+            admins.retain(|(uid, _)| *uid != user_id);
+            match new_status {
+                "creator" => admins.push((user_id, SenderRole::Owner)),
+                "administrator" => admins.push((user_id, SenderRole::Admin)),
+                _ => {} // 降级为普通成员 → 已从列表中移除
+            }
+        } else {
+            // 首次遇到该群聊 → 仅缓存该单条记录（下一条消息会触发全量填充）
+            match new_status {
+                "creator" => {
+                    cache.insert(chat_id, vec![(user_id, SenderRole::Owner)]);
                 }
-            } else {
-                // 首次遇到该群聊 → 仅缓存该单条记录（下一条消息会触发全量填充）
-                match new_status {
-                    "creator" => {
-                        cache.insert(chat_id, vec![(user_id, SenderRole::Owner)]);
-                    }
-                    "administrator" => {
-                        cache.insert(chat_id, vec![(user_id, SenderRole::Admin)]);
-                    }
-                    _ => {}
+                "administrator" => {
+                    cache.insert(chat_id, vec![(user_id, SenderRole::Admin)]);
                 }
+                _ => {}
             }
         }
     }
@@ -453,7 +450,7 @@ impl Default for TelegramAdapter {
     }
 }
 
-/// Publish send result event via event bus
+/// Publish send result via the unified EventBus method
 fn publish_send_event(
     event_bus: &Option<Arc<EventBus>>,
     event_type: &str,
@@ -461,18 +458,7 @@ fn publish_send_event(
     result: &SendResult,
 ) {
     if let Some(bus) = event_bus {
-        bus.publish(GatewayEvent::new(
-            event_type,
-            "telegram",
-            serde_json::json!({
-                "platform": "telegram",
-                "chat_id": chat_id,
-                "message_id": result.message_id,
-                "success": result.success,
-                "error": result.error,
-                "error_code": result.error_code,
-            }),
-        ));
+        bus.publish_send_result(event_type, "telegram", chat_id, result);
     }
 }
 

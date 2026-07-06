@@ -4,6 +4,7 @@
 //! 支持 publish/subscribe 模式，事件发布后所有活跃订阅者收到副本。
 
 use crate::types::event::GatewayEvent;
+use crate::types::message::SendResult;
 use dashmap::DashMap;
 use std::time::Duration;
 use tokio::sync::broadcast;
@@ -13,7 +14,7 @@ use tracing::warn;
 const DEFAULT_CHANNEL_CAPACITY: usize = 256;
 
 /// 合并循环空闲时的休眠时间
-const MERGE_POLL_INTERVAL_MS: u64 = 100;
+const MERGE_POLL_INTERVAL_MS: u64 = 20;
 
 /// 消息总线
 ///
@@ -50,6 +51,31 @@ impl EventBus {
         if let Some(tx) = self.channels.get(&event_type) {
             let _ = tx.send(event);
         }
+    }
+
+    /// 发布消息发送结果事件（各适配器通用的模板）
+    ///
+    /// 将 `SendResult` 包装为 GatewayEvent 发布到事件总线，
+    /// 消除五个适配器中完全相同的 `publish_send_event` 重复代码。
+    pub fn publish_send_result(
+        &self,
+        event_type: &str,
+        platform: &str,
+        chat_id: &str,
+        result: &SendResult,
+    ) {
+        self.publish(GatewayEvent::new(
+            event_type,
+            platform,
+            serde_json::json!({
+                "platform": platform,
+                "chat_id": chat_id,
+                "message_id": result.message_id,
+                "success": result.success,
+                "error": result.error,
+                "error_code": result.error_code,
+            }),
+        ));
     }
 
     /// 订阅特定事件类型

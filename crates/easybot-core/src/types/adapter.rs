@@ -151,17 +151,23 @@ pub const DEFAULT_LIVENESS_THRESHOLD_MS: i64 = 120_000;
 /// [`age_ms`](Self::age_ms) through the adapter's `heartbeat_age_ms()` method
 /// to decide whether the background task is still alive.
 ///
+/// Also tracks `started_at` for uptime calculation and `started_at` for
+/// uptime calculation (set when the Heartbeat is first created).
+///
 /// Thread-safe and cheap to clone (wraps `Arc<AtomicI64>` internally).
 #[derive(Clone, Debug)]
 pub struct Heartbeat {
     last_beat_ms: Arc<AtomicI64>,
+    started_at_ms: Arc<AtomicI64>,
 }
 
 impl Heartbeat {
     /// Create a new heartbeat tracker, initialised to "now".
     pub fn new() -> Self {
+        let now = chrono::Utc::now().timestamp_millis();
         Self {
-            last_beat_ms: Arc::new(AtomicI64::new(chrono::Utc::now().timestamp_millis())),
+            last_beat_ms: Arc::new(AtomicI64::new(now)),
+            started_at_ms: Arc::new(AtomicI64::new(now)),
         }
     }
 
@@ -181,6 +187,13 @@ impl Heartbeat {
     /// Convenience: is the heartbeat within a given threshold?
     pub fn is_fresh(&self, threshold_ms: i64) -> bool {
         self.age_ms() <= threshold_ms
+    }
+
+    /// Uptime in seconds since this Heartbeat was created.
+    pub fn uptime_secs(&self) -> u64 {
+        let now = chrono::Utc::now().timestamp_millis();
+        let elapsed = now.saturating_sub(self.started_at_ms.load(Ordering::Relaxed));
+        (elapsed as u64) / 1000
     }
 }
 

@@ -37,7 +37,6 @@ use async_trait::async_trait;
 use easybot_core::bus::EventBus;
 use easybot_core::types::adapter::*;
 use easybot_core::types::error::GatewayError;
-use easybot_core::types::event::GatewayEvent;
 use easybot_core::types::event::event_types;
 use easybot_core::types::message::*;
 use tokio::sync::broadcast;
@@ -328,6 +327,15 @@ fn mime_to_file_type(mime_type: &str) -> u32 {
 // ── 消息发送（自动判断频道/群聊） ──
 
 impl QqAdapter {
+    /// 判断错误是否为"资源不存在"（级联到下一个端点），
+    /// 如果是鉴权/限流/其他错误则立即返回，不级联。
+    fn is_not_found_error(e: &GatewayError) -> bool {
+        let msg = e.to_string();
+        // QQ 业务错误码 11263 = 资源不存在（频道/群/用户）
+        // HTTP 404 = 端点不存在
+        msg.contains("404") || msg.contains("11263")
+    }
+
     /// 尝试发送消息，自动判断是频道消息还是群聊消息
     async fn try_send(
         &self,
@@ -342,10 +350,11 @@ impl QqAdapter {
         {
             Ok(resp) => return Ok(resp),
             Err(e) => {
-                if e.to_string().contains("频道不存在") || e.to_string().contains("11263") {
+                if Self::is_not_found_error(&e) {
                     tracing::debug!(
-                        "QQ chat_id {} is not a channel, trying other endpoints",
-                        chat_id
+                        "QQ chat_id {} is not a channel (e={}), trying next endpoint",
+                        chat_id,
+                        e
                     );
                 } else {
                     return Err(e);
@@ -360,10 +369,7 @@ impl QqAdapter {
         {
             Ok(resp) => return Ok(resp),
             Err(e) => {
-                if e.to_string().contains("群")
-                    || e.to_string().contains("group")
-                    || e.to_string().contains("11263")
-                {
+                if Self::is_not_found_error(&e) {
                     tracing::debug!("QQ chat_id {} is not a group, trying C2C endpoint", chat_id);
                 } else {
                     return Err(e);
@@ -581,18 +587,7 @@ fn publish_send_event(
     result: &SendResult,
 ) {
     if let Some(bus) = event_bus {
-        bus.publish(GatewayEvent::new(
-            event_type,
-            "qq",
-            serde_json::json!({
-                "platform": "qq",
-                "chat_id": chat_id,
-                "message_id": result.message_id,
-                "success": result.success,
-                "error": result.error,
-                "error_code": result.error_code,
-            }),
-        ));
+        bus.publish_send_result(event_type, "qq", chat_id, result);
     }
 }
 

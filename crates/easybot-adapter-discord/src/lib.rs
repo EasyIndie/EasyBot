@@ -399,6 +399,11 @@ enum EventAction {
 /// 从 `gateway_shard_loop` 中提取以便对事件分发逻辑进行单元测试。
 /// 泛型参数 `E: Display` 允许在测试中使用 `String` 作为错误类型，
 /// 而生产代码使用 `twilight_gateway::error::ReceiveMessageError`。
+///
+/// # 注意
+/// 生产环境中 `Event::MessageCreate` 在 `gateway_shard_loop` 中被直接处理
+/// （含 guild owner 缓存查查），不会进入此函数。此处的 MessageCreate 分支
+/// 仅用于单元测试覆盖。
 fn handle_gateway_event<E: std::fmt::Display>(
     event: Option<Result<Event, E>>,
     event_bus: &EventBus,
@@ -451,18 +456,7 @@ fn publish_send_event(
     result: &SendResult,
 ) {
     if let Some(bus) = event_bus {
-        bus.publish(GatewayEvent::new(
-            event_type,
-            "discord",
-            serde_json::json!({
-                "platform": "discord",
-                "chat_id": chat_id,
-                "message_id": result.message_id,
-                "success": result.success,
-                "error": result.error,
-                "error_code": result.error_code,
-            }),
-        ));
+        bus.publish_send_result(event_type, "discord", chat_id, result);
     }
 }
 
