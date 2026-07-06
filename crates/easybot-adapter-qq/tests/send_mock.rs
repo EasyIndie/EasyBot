@@ -8,8 +8,8 @@
 
 use easybot_core::types::adapter::{AdapterConfig, AdapterState, PlatformAdapter};
 use easybot_core::types::message::{
-    Button, InlineKeyboard, KeyboardRow, MediaAttachment, MediaType, OutboundMessage, ParseMode,
-    SendInteractiveParams, SendMediaParams, SendTextParams,
+    Button, ChatType, InlineKeyboard, KeyboardRow, MediaAttachment, MediaType, OutboundMessage,
+    ParseMode, SendInteractiveParams, SendMediaParams, SendTextParams,
 };
 use std::sync::Arc;
 use wiremock::matchers::{method, path};
@@ -660,4 +660,198 @@ async fn test_send_media_request_body() {
     assert_eq!(body["msg_type"], 2, "should use msg_type:2 for image+text");
     assert_eq!(body["image"], "https://example.com/cat.png");
     assert_eq!(body["content"], "Look at this cat");
+}
+
+// ── Regression: Group media MUST use upload + msg_type: 7 ──
+// v2 group endpoint does NOT support msg_type: 1 (image embed) or
+// msg_type: 2 (markdown, requires template permission). Sending
+// msg_type: 2 to a group triggers "无效 markdown content" (40034011)
+// or "无markdown模板权限" (40034127). The only reliable path is
+// file upload + msg_type: 7.
+
+/// 1x1 pixel PNG, base64-encoded, for self-contained test media.
+const TEST_PNG_B64: &str = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+
+/// Verify that send_media to a known Group chat uses the file-upload
+/// + msg_type: 7 path (not msg_type: 2).
+#[tokio::test]
+async fn test_send_media_group_routes_to_upload() {
+    let mock_server = MockServer::start().await;
+    mock_qq_token(&mock_server).await;
+    mock_qq_bot_info(&mock_server).await;
+
+    let group_id = "GROUP_OPENID_REGRESSION_001";
+
+    // Step 1: Mock group file upload
+    Mock::given(method("POST"))
+        .and(path(format!("/v2/groups/{}/files", group_id)))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "file_uuid": "test_file_uuid_001",
+            "file_info": "test_file_info_001",
+            "ttl": 86400,
+            "id": "upload_msg_001"
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    // Step 2: Mock group message send (msg_type: 7)
+    let captured_msg_body = Arc::new(std::sync::Mutex::new(None::<serde_json::Value>));
+    let cap = captured_msg_body.clone();
+
+    Mock::given(method("POST"))
+        .and(path(format!("/v2/groups/{}/messages", group_id)))
+        .and(move |req: &wiremock::Request| {
+            if let Ok(body) = serde_json::from_slice::<serde_json::Value>(&req.body) {
+                *cap.lock().unwrap() = Some(body);
+            }
+            true
+        })
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": "group_media_msg_001",
+            "timestamp": "2026-07-06T12:00:00+00:00"
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let mut adapter = easybot_adapter_qq::QqAdapter::new();
+    adapter
+        .init(qq_config_with_auth(mock_server.address().port()))
+        .await
+        .unwrap();
+    adapter.connect().await.unwrap();
+
+    // CRITICAL: pre-register chat type as Group (simulates having received
+    // an inbound group message before sending)
+    adapter.set_chat_type(group_id, ChatType::Group);
+
+    let result = adapter
+        .send_media(SendMediaParams {
+            chat_id: group_id.to_string(),
+            media: MediaAttachment {
+                media_type: MediaType::Image,
+                url: None,
+                data: Some(TEST_PNG_B64.to_string()),
+                mime_type: "image/png".to_string(),
+                filename: Some("test.png".to_string()),
+                caption: None,
+                thumbnail_url: None,
+                file_size: None,
+                duration: None,
+            },
+            text: Some("Group photo".to_string()),
+            reply_to: None,
+        })
+        .await
+        .unwrap();
+
+    assert!(
+        result.success,
+        "Group media send should succeed via upload + msg_type:7, got: {:?}",
+        result.error
+    );
+    assert_eq!(result.message_id, Some("group_media_msg_001".to_string()));
+
+    // Verify the message body uses msg_type: 7 (media), NOT msg_type: 2 (markdown)
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    let msg_body = captured_msg_body.lock().unwrap().take().unwrap();
+    assert_eq!(
+        msg_body["msg_type"], 7,
+        "Group media MUST use msg_type:7 (media), got msg_type:{} — \
+         msg_type:2 is markdown and will fail with 40034011/40034127",
+        msg_body["msg_type"]
+    );
+    assert!(
+        msg_body["media"]["file_info"].as_str().is_some(),
+        "msg_type:7 must include media.file_info from upload response"
+    );
+    // Content must NOT be empty — QQ parses it as markdown and rejects ""
+    assert!(
+        msg_body["content"].as_str().is_some_and(|c| !c.is_empty()),
+        "msg_type:7 content must not be empty (QQ parses it as markdown)"
+    );
+}
+
+/// Verify that send_media to a known Group WITHOUT text still uses
+/// upload + srv_send_msg=true (direct upload send).
+#[tokio::test]
+async fn test_send_media_group_no_text_uses_direct_upload() {
+    let mock_server = MockServer::start().await;
+    mock_qq_token(&mock_server).await;
+    mock_qq_bot_info(&mock_server).await;
+
+    let group_id = "GROUP_OPENID_NO_TEXT_001";
+
+    // Direct upload (srv_send_msg=true) — uploads and sends in one call
+    let captured_upload_body = Arc::new(std::sync::Mutex::new(None::<serde_json::Value>));
+    let cap = captured_upload_body.clone();
+
+    Mock::given(method("POST"))
+        .and(path(format!("/v2/groups/{}/files", group_id)))
+        .and(move |req: &wiremock::Request| {
+            if let Ok(body) = serde_json::from_slice::<serde_json::Value>(&req.body) {
+                *cap.lock().unwrap() = Some(body);
+            }
+            true
+        })
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "file_uuid": "no_text_file_uuid",
+            "file_info": "no_text_file_info",
+            "ttl": 86400,
+            "id": "direct_upload_msg_001",
+            "timestamp": "2026-07-06T12:00:00+00:00"
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let mut adapter = easybot_adapter_qq::QqAdapter::new();
+    adapter
+        .init(qq_config_with_auth(mock_server.address().port()))
+        .await
+        .unwrap();
+    adapter.connect().await.unwrap();
+
+    adapter.set_chat_type(group_id, ChatType::Group);
+
+    let result = adapter
+        .send_media(SendMediaParams {
+            chat_id: group_id.to_string(),
+            media: MediaAttachment {
+                media_type: MediaType::Image,
+                url: None,
+                data: Some(TEST_PNG_B64.to_string()),
+                mime_type: "image/png".to_string(),
+                filename: Some("test_no_text.png".to_string()),
+                caption: None,
+                thumbnail_url: None,
+                file_size: None,
+                duration: None,
+            },
+            text: None, // No text → uses direct upload (srv_send_msg=true)
+            reply_to: None,
+        })
+        .await
+        .unwrap();
+
+    assert!(
+        result.success,
+        "Group media without text should succeed via direct upload, got: {:?}",
+        result.error
+    );
+
+    // Verify the upload body has srv_send_msg=true (direct send, no msg_type:7 needed)
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    let upload_body = captured_upload_body.lock().unwrap().take().unwrap();
+    assert_eq!(
+        upload_body["srv_send_msg"], true,
+        "No-text group upload should use srv_send_msg=true for direct send"
+    );
+    assert!(
+        upload_body["file_data"]
+            .as_str()
+            .is_some_and(|d| !d.is_empty()),
+        "Upload body must contain base64 file_data"
+    );
 }

@@ -339,6 +339,16 @@ fn mime_to_file_type(mime_type: &str) -> u32 {
 // ── 消息发送（自动判断频道/群聊） ──
 
 impl QqAdapter {
+    /// Set the known chat type for a chat_id (used by tests to simulate
+    /// having received an inbound message before sending).
+    #[doc(hidden)]
+    pub fn set_chat_type(&self, chat_id: &str, chat_type: ChatType) {
+        self.chat_types
+            .lock()
+            .unwrap()
+            .insert(chat_id.to_string(), chat_type);
+    }
+
     /// 判断错误是否为"资源不存在"（级联到下一个端点），
     /// 如果是鉴权/限流/其他错误则立即返回，不级联。
     fn is_not_found_error(e: &GatewayError) -> bool {
@@ -624,6 +634,119 @@ impl QqAdapter {
             GatewayError::Internal("QQ upload: all endpoints failed".to_string())
         }))
     }
+
+    /// Upload media and send via msg_type: 7 to a known Group chat.
+    ///
+    /// v2 group endpoint does not support msg_type: 1 (image embed) or
+    /// msg_type: 2 (markdown, requires template permission). This method
+    /// downloads/decodes the media, uploads to the group file endpoint,
+    /// and sends with msg_type: 7.
+    async fn send_group_media_upload(
+        &self,
+        chat_id: &str,
+        media: &MediaAttachment,
+        text: Option<String>,
+    ) -> Result<SendResult, GatewayError> {
+        // Resolve file data from base64 or URL
+        let client = self.client().clone();
+
+        let (file_data, filename, mime_type) = if let Some(data_b64) = &media.data {
+            use base64::Engine;
+            let decoded = base64::engine::general_purpose::STANDARD
+                .decode(data_b64)
+                .map_err(|e| {
+                    GatewayError::Internal(format!("QQ group upload: base64 decode failed: {}", e))
+                })?;
+            let fname = media.filename.clone().unwrap_or_else(|| "file".to_string());
+            (decoded, fname, media.mime_type.clone())
+        } else if let Some(file_url) = &media.url {
+            let resp = client.get(file_url).send().await.map_err(|e| {
+                GatewayError::Internal(format!("QQ group upload: download failed: {}", e))
+            })?;
+            let ct = resp
+                .headers()
+                .get("content-type")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("application/octet-stream")
+                .to_string();
+            let data = resp.bytes().await.map_err(|e| {
+                GatewayError::Internal(format!("QQ group upload: download read failed: {}", e))
+            })?;
+            let fname = media
+                .filename
+                .clone()
+                .or_else(|| file_url.split('/').next_back().map(|s| s.to_string()))
+                .unwrap_or_else(|| "file".to_string());
+            (data.to_vec(), fname, ct)
+        } else {
+            return Err(GatewayError::Internal(
+                "No media data or URL provided for QQ group upload".to_string(),
+            ));
+        };
+
+        // Try group endpoint first, then C2C as fallback
+        let mut last_error = None;
+        for endpoint_type in &["groups", "users"] {
+            let upload_result = if text.as_ref().is_some_and(|t| !t.is_empty()) {
+                self.send_media_via_upload(
+                    chat_id,
+                    endpoint_type,
+                    file_data.clone(),
+                    &filename,
+                    &mime_type,
+                    text.clone(),
+                )
+                .await
+            } else {
+                self.upload_file_via_json(
+                    endpoint_type,
+                    chat_id,
+                    file_data.clone(),
+                    &mime_type,
+                    true,
+                )
+                .await
+                .map(|resp| QqSendMessageResponse {
+                    id: resp
+                        .id
+                        .unwrap_or_else(|| format!("file:{}", resp.file_uuid)),
+                    timestamp: resp.timestamp,
+                })
+            };
+            match upload_result {
+                Ok(resp) => {
+                    self.messages_out.fetch_add(1, Ordering::Relaxed);
+                    let send_result = SendResult {
+                        success: true,
+                        message_id: Some(resp.id),
+                        timestamp: resp.timestamp.and_then(|t| t.parse::<i64>().ok()),
+                        error: None,
+                        error_code: None,
+                        retryable: false,
+                    };
+                    publish_send_event(
+                        &self.event_bus,
+                        event_types::MESSAGE_SENT,
+                        chat_id,
+                        &send_result,
+                    );
+                    return Ok(send_result);
+                }
+                Err(e) => {
+                    tracing::debug!(
+                        "QQ group media upload to {} failed ({}), trying next",
+                        endpoint_type,
+                        e.error_code()
+                    );
+                    last_error = Some(e);
+                }
+            }
+        }
+        self.errors.fetch_add(1, Ordering::Relaxed);
+        Err(last_error.unwrap_or_else(|| {
+            GatewayError::Internal("QQ group upload: all endpoints failed".to_string())
+        }))
+    }
 }
 
 fn publish_send_event(
@@ -875,6 +998,17 @@ impl PlatformAdapter for QqAdapter {
             .get(&params.chat_id)
             .copied();
 
+        // Group (v2 API): use file upload + msg_type: 7.
+        // v2 group endpoint does NOT support msg_type: 1 (image embed) or
+        // msg_type: 2 (markdown, requires template permission). The content
+        // field is always parsed as markdown by the QQ API, so msg_type: 7
+        // is the only reliable way to send media to groups.
+        if known_type == Some(ChatType::Group) {
+            return self
+                .send_group_media_upload(&params.chat_id, &params.media, params.text.clone())
+                .await;
+        }
+
         // If we know this is a C2C chat, use direct C2C upload path
         if params.media.url.is_none()
             && params.media.data.is_some()
@@ -929,7 +1063,8 @@ impl PlatformAdapter for QqAdapter {
             .unwrap_or_default();
         let text_content = params.text.clone().unwrap_or_default();
 
-        // If we know this is a C2C chat, skip msg_type: 2 (not supported) and use msg_type: 1 directly
+        // Dm (v2 API): use msg_type: 1 (image embed with URL).
+        // v2 C2C endpoint interprets msg_type: 2 as markdown, not rich media.
         if known_type == Some(ChatType::Dm) {
             let img_body = serde_json::json!({
                 "msg_type": 1,
@@ -966,7 +1101,7 @@ impl PlatformAdapter for QqAdapter {
             return Ok(send_result);
         }
 
-        // Channel/Group or unknown: try msg_type: 2 (rich media with text)
+        // Channel or unknown: try msg_type: 2 (rich media with text, channel API)
         let body = serde_json::json!({
             "content": text_content,
             "image": image_url,
