@@ -4,7 +4,9 @@
 //! 处理频道消息（AT_MESSAGE_CREATE）、群消息（GROUP_AT_MESSAGE_CREATE、
 //! GROUP_MESSAGE_CREATE）和私聊消息（C2C_MESSAGE_CREATE）。
 
+use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
@@ -30,7 +32,7 @@ impl crate::QqAdapter {
         Ok(ws_stream)
     }
 
-    #[allow(clippy::too_many_lines)]
+    #[allow(clippy::too_many_lines, clippy::too_many_arguments)]
     pub(crate) async fn gateway_loop(
         token_store: QqTokenStore,
         base_url: String,
@@ -39,6 +41,7 @@ impl crate::QqAdapter {
         mut cancel_rx: broadcast::Receiver<()>,
         messages_in: Arc<AtomicU64>,
         heartbeat: easybot_core::types::adapter::Heartbeat,
+        chat_types: Arc<Mutex<HashMap<String, ChatType>>>,
     ) {
         loop {
             // 每次重连前刷新 access token
@@ -184,7 +187,7 @@ impl crate::QqAdapter {
                                         if let Some(ref et) = payload.t {
                                             tracing::debug!("QQ dispatch event: {}", et);
                                             Self::handle_dispatch(
-                                                et, &payload, &event_bus, &bot_id, &messages_in,
+                                                et, &payload, &event_bus, &bot_id, &messages_in, &chat_types,
                                             ).await;
                                         } else {
                                             tracing::debug!("QQ dispatch with no t field");
@@ -247,6 +250,7 @@ impl crate::QqAdapter {
         event_bus: &EventBus,
         bot_id: &str,
         messages_in: &AtomicU64,
+        chat_types: &Arc<Mutex<HashMap<String, ChatType>>>,
     ) {
         let data = match payload.d.as_ref() {
             Some(d) => d,
@@ -295,7 +299,7 @@ impl crate::QqAdapter {
                     recipient: Some(bot_id.to_string()),
                     chat_id: msg_event.channel_id,
                     chat_name: None,
-                    chat_type: ChatType::Group,
+                    chat_type: ChatType::Channel,
                     guild_id: msg_event.guild_id.clone(),
                     thread_id: None,
                     root_id: None,
@@ -308,6 +312,12 @@ impl crate::QqAdapter {
                     mentioned: Some(true),
                     metadata: Some(data.clone()),
                 };
+
+                // Track chat type for direct outbound routing
+                chat_types
+                    .lock()
+                    .unwrap()
+                    .insert(inbound.chat_id.clone(), inbound.chat_type);
 
                 let event = GatewayEvent::new(
                     easybot_core::types::event::event_types::MESSAGE_INBOUND,
@@ -369,6 +379,12 @@ impl crate::QqAdapter {
                     mentioned: Some(true),
                     metadata: Some(data.clone()),
                 };
+
+                // Track chat type for direct outbound routing
+                chat_types
+                    .lock()
+                    .unwrap()
+                    .insert(inbound.chat_id.clone(), inbound.chat_type);
 
                 let event = GatewayEvent::new(
                     easybot_core::types::event::event_types::MESSAGE_INBOUND,
@@ -452,6 +468,12 @@ impl crate::QqAdapter {
                     }),
                 };
 
+                // Track chat type for direct outbound routing
+                chat_types
+                    .lock()
+                    .unwrap()
+                    .insert(inbound.chat_id.clone(), inbound.chat_type);
+
                 let event = GatewayEvent::new(
                     easybot_core::types::event::event_types::MESSAGE_INBOUND,
                     "qq",
@@ -508,6 +530,12 @@ impl crate::QqAdapter {
                     mentioned: None,
                     metadata: Some(data.clone()),
                 };
+
+                // Track chat type for direct outbound routing
+                chat_types
+                    .lock()
+                    .unwrap()
+                    .insert(inbound.chat_id.clone(), inbound.chat_type);
 
                 let event = GatewayEvent::new(
                     easybot_core::types::event::event_types::MESSAGE_INBOUND,

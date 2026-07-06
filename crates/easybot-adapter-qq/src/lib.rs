@@ -30,7 +30,9 @@ mod auth;
 mod gateway;
 mod types;
 
+use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use async_trait::async_trait;
@@ -66,6 +68,9 @@ pub struct QqAdapter {
     http_client: std::sync::OnceLock<reqwest::Client>,
     bot_user_id: Option<String>,
     token_store: Option<QqTokenStore>,
+    /// Tracks chat_id → ChatType mapping, populated from inbound messages.
+    /// Used to route outbound messages directly to the correct endpoint.
+    chat_types: Arc<Mutex<HashMap<String, ChatType>>>,
 }
 
 impl QqAdapter {
@@ -132,6 +137,7 @@ impl QqAdapter {
             http_client: std::sync::OnceLock::new(),
             bot_user_id: None,
             token_store: None,
+            chat_types: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -342,13 +348,48 @@ impl QqAdapter {
         msg.contains("404") || msg.contains("11263")
     }
 
-    /// 尝试发送消息，自动判断是频道消息还是群聊消息
+    /// 发送消息到 QQ，根据已知的 chat type 直接路由到正确端点。
+    ///
+    /// 优先查 chat_types 映射表（由入站消息自动填充），避免盲目的三级回退。
+    /// 仅在 chat type 未知时（如首次主动发消息给新会话）回退到级联尝试。
     async fn try_send(
         &self,
         chat_id: &str,
         body: &serde_json::Value,
     ) -> Result<QqSendMessageResponse, GatewayError> {
-        // 先尝试频道端点
+        // Fast path: route directly based on known chat type
+        // Lock scope: release before any .await to keep the future Send
+        let known_type = { self.chat_types.lock().unwrap().get(chat_id).copied() };
+        if let Some(chat_type) = known_type {
+            let path = match chat_type {
+                ChatType::Channel => format!("/channels/{}/messages", chat_id),
+                ChatType::Group => format!("/v2/groups/{}/messages", chat_id),
+                ChatType::Dm => format!("/v2/users/{}/messages", chat_id),
+                ChatType::Thread => {
+                    // QQ does not use Thread type — fall through to cascade
+                    tracing::debug!(
+                        "QQ unexpected chat_type Thread for {}, falling back to cascade",
+                        chat_id
+                    );
+                    return self.try_send_cascade(chat_id, body).await;
+                }
+            };
+            return self.api_post::<QqSendMessageResponse>(&path, body).await;
+        }
+
+        // Slow path: chat type unknown — cascade through all endpoints
+        // (first outbound message to a chat we haven't received an inbound message from)
+        self.try_send_cascade(chat_id, body).await
+    }
+
+    /// Fallback: cascade through channel → group → C2C endpoints.
+    /// Only used when the chat type is not yet known.
+    async fn try_send_cascade(
+        &self,
+        chat_id: &str,
+        body: &serde_json::Value,
+    ) -> Result<QqSendMessageResponse, GatewayError> {
+        // Try channel endpoint first
         let channel_path = format!("/channels/{}/messages", chat_id);
         match self
             .api_post::<QqSendMessageResponse>(&channel_path, body)
@@ -366,7 +407,7 @@ impl QqAdapter {
                 }
             }
         }
-        // 尝试群聊端点（v2 API）
+        // Try group endpoint (v2 API)
         let group_path = format!("/v2/groups/{}/messages", chat_id);
         match self
             .api_post::<QqSendMessageResponse>(&group_path, body)
@@ -381,7 +422,7 @@ impl QqAdapter {
                 }
             }
         }
-        // 尝试 C2C 私聊端点（v2 API）
+        // Try C2C endpoint (v2 API)
         let c2c_path = format!("/v2/users/{}/messages", chat_id);
         self.api_post::<QqSendMessageResponse>(&c2c_path, body)
             .await
@@ -704,8 +745,12 @@ impl PlatformAdapter for QqAdapter {
                 .and_then(|c| c.base_url.clone())
                 .unwrap_or_else(|| QQ_API.to_string());
             let hb = self.heartbeat.clone();
+            let chat_types = self.chat_types.clone();
             tokio::spawn(async move {
-                Self::gateway_loop(ts_clone, base_url, eb, bot_id, cancel_rx, msg_in, hb).await;
+                Self::gateway_loop(
+                    ts_clone, base_url, eb, bot_id, cancel_rx, msg_in, hb, chat_types,
+                )
+                .await;
             });
         }
 
@@ -823,11 +868,19 @@ impl PlatformAdapter for QqAdapter {
     }
 
     async fn send_media(&self, params: SendMediaParams) -> Result<SendResult, GatewayError> {
-        // 如果有 base64 data 但没有 URL，优先尝试 C2C 文件上传路径
-        // （QQ API 中只有 C2C 端点支持直接二进制文件上传）。
-        // 如果失败（可能因为 chat_id 是频道/群聊而非 C2C 用户），
-        // 则降级到下方的 try_send 链路（频道→群聊→C2C）。
-        if params.media.url.is_none() && params.media.data.is_some() {
+        let known_type = self
+            .chat_types
+            .lock()
+            .unwrap()
+            .get(&params.chat_id)
+            .copied();
+
+        // If we know this is a C2C chat, use direct C2C upload path
+        if params.media.url.is_none()
+            && params.media.data.is_some()
+            && known_type != Some(ChatType::Channel)
+            && known_type != Some(ChatType::Group)
+        {
             match self
                 .send_c2c_media_upload_only(&params.chat_id, &params.media, params.text.clone())
                 .await
@@ -875,7 +928,45 @@ impl PlatformAdapter for QqAdapter {
             })
             .unwrap_or_default();
         let text_content = params.text.clone().unwrap_or_default();
-        // 先试用 msg_type: 2（图文混排），频道/群聊支持此格式
+
+        // If we know this is a C2C chat, skip msg_type: 2 (not supported) and use msg_type: 1 directly
+        if known_type == Some(ChatType::Dm) {
+            let img_body = serde_json::json!({
+                "msg_type": 1,
+                "content": "",
+                "image": image_url,
+            });
+            let send_result = match self.try_send(&params.chat_id, &img_body).await {
+                Ok(resp) => {
+                    self.messages_out.fetch_add(1, Ordering::Relaxed);
+                    SendResult {
+                        success: true,
+                        message_id: Some(resp.id),
+                        timestamp: resp.timestamp.and_then(|t| t.parse::<i64>().ok()),
+                        error: None,
+                        error_code: None,
+                        retryable: false,
+                    }
+                }
+                Err(e) => {
+                    self.errors.fetch_add(1, Ordering::Relaxed);
+                    SendResult::fail(e.to_string(), true)
+                }
+            };
+            publish_send_event(
+                &self.event_bus,
+                if send_result.success {
+                    event_types::MESSAGE_SENT
+                } else {
+                    event_types::MESSAGE_FAILED
+                },
+                &params.chat_id,
+                &send_result,
+            );
+            return Ok(send_result);
+        }
+
+        // Channel/Group or unknown: try msg_type: 2 (rich media with text)
         let body = serde_json::json!({
             "content": text_content,
             "image": image_url,
@@ -1376,6 +1467,7 @@ mod tests {
             &event_bus,
             "bot_id_001",
             &messages_in,
+            &Arc::new(Mutex::new(HashMap::new())),
         )
         .await;
 
@@ -1387,6 +1479,7 @@ mod tests {
         if let Some(e) = event {
             assert_eq!(e.event_type, "message.inbound");
             assert_eq!(e.source, "qq");
+            assert_eq!(e.data["chat_type"], "Channel");
         }
         assert_eq!(messages_in.load(Ordering::Relaxed), 1);
     }
@@ -1417,6 +1510,7 @@ mod tests {
             &event_bus,
             "bot_id",
             &messages_in,
+            &Arc::new(Mutex::new(HashMap::new())),
         )
         .await;
 
@@ -1465,6 +1559,7 @@ mod tests {
             &event_bus,
             "bot_id",
             &messages_in,
+            &Arc::new(Mutex::new(HashMap::new())),
         )
         .await;
 
@@ -1513,6 +1608,7 @@ mod tests {
             &event_bus,
             "bot_id",
             &messages_in,
+            &Arc::new(Mutex::new(HashMap::new())),
         )
         .await;
 
@@ -1554,6 +1650,7 @@ mod tests {
             &event_bus,
             "bot_id",
             &messages_in,
+            &Arc::new(Mutex::new(HashMap::new())),
         )
         .await;
 
@@ -1593,6 +1690,7 @@ mod tests {
             &event_bus,
             "bot_self",
             &messages_in,
+            &Arc::new(Mutex::new(HashMap::new())),
         )
         .await;
 
@@ -1621,6 +1719,7 @@ mod tests {
             &event_bus,
             "bot_id",
             &messages_in,
+            &Arc::new(Mutex::new(HashMap::new())),
         )
         .await;
 
@@ -1648,6 +1747,7 @@ mod tests {
             &event_bus,
             "bot_id",
             &messages_in,
+            &Arc::new(Mutex::new(HashMap::new())),
         )
         .await;
 
@@ -1680,6 +1780,7 @@ mod tests {
             &event_bus,
             "bot_id",
             &messages_in,
+            &Arc::new(Mutex::new(HashMap::new())),
         )
         .await;
 
@@ -1715,6 +1816,7 @@ mod tests {
             &event_bus,
             "bot_self",
             &messages_in,
+            &Arc::new(Mutex::new(HashMap::new())),
         )
         .await;
 
