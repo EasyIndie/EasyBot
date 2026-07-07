@@ -206,20 +206,20 @@ impl WebhookDispatcher {
                     let status = resp.status();
                     if status.is_success() {
                         trace!(
-                            "Webhook '{}' delivered event '{}' to {} (status {})",
-                            wh.name, event_type, wh.url, status,
+                            "Webhook '{}' delivered event '{}' (status {})",
+                            wh.name, event_type, status,
                         );
                     } else {
                         warn!(
-                            "Webhook '{}' returned {} for event '{}' to {}",
-                            wh.name, status, event_type, wh.url,
+                            "Webhook '{}' returned {} for event '{}'",
+                            wh.name, status, event_type,
                         );
                     }
                 }
                 Err(e) => {
                     warn!(
-                        "Webhook '{}' failed to deliver event '{}' to {}: {}",
-                        wh.name, event_type, wh.url, e,
+                        "Webhook '{}' failed to deliver event '{}': {}",
+                        wh.name, event_type, e,
                     );
                 }
             }

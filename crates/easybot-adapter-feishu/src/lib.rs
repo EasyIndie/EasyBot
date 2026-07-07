@@ -613,8 +613,7 @@ impl PlatformAdapter for FeishuAdapter {
                 });
 
             let ws_client = sdk_client.ws_client(dispatcher);
-            let log_level = tracing::Level::DEBUG;
-            let ws_client = ws_client.log_level(log_level);
+            let ws_client = ws_client.log_level(tracing::Level::WARN);
 
             // 在后台任务中运行
             let hb = self.heartbeat.clone();

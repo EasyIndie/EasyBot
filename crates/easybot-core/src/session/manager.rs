@@ -71,7 +71,7 @@ impl SessionManager {
                 if let Some(ref store) = self.store
                     && let Err(e) = store.upsert_session(&session).await
                 {
-                    tracing::warn!(error = %e, session_key = %session.key, "持久化会话更新失败");
+                    tracing::error!(error = %e, session_key = %session.key, "持久化会话更新失败");
                 }
                 session
             }
@@ -95,7 +95,7 @@ impl SessionManager {
                 if let Some(ref store) = self.store
                     && let Err(e) = store.upsert_session(&session).await
                 {
-                    tracing::warn!(error = %e, session_key = %session.key, "持久化新会话失败");
+                    tracing::error!(error = %e, session_key = %session.key, "持久化新会话失败");
                 }
                 session
             }
@@ -116,7 +116,7 @@ impl SessionManager {
             && let Some(ref store) = self.store
             && let Err(e) = store.delete_session(key).await
         {
-            tracing::warn!(error = %e, session_key = %key, "持久化删除会话失败");
+            tracing::error!(error = %e, session_key = %key, "持久化删除会话失败");
         }
         removed
     }
@@ -187,7 +187,7 @@ impl SessionManager {
             if let Some(ref store) = self.store
                 && let Err(e) = store.upsert_session(&cloned).await
             {
-                tracing::warn!(error = %e, session_key = %cloned.key, "持久化会话最近消息失败");
+                tracing::error!(error = %e, session_key = %cloned.key, "持久化会话最近消息失败");
             }
             Some(cloned)
         } else {
@@ -223,7 +223,7 @@ impl SessionManager {
             if let Some(ref store) = self.store
                 && let Err(e) = store.upsert_session(&cloned).await
             {
-                tracing::warn!(error = %e, session_key = %cloned.key, "持久化富化会话失败");
+                tracing::error!(error = %e, session_key = %cloned.key, "持久化富化会话失败");
             }
             Some(cloned)
         } else {
@@ -263,7 +263,7 @@ impl SessionManager {
             if let Some(ref store) = self.store
                 && let Err(e) = store.upsert_session(&cloned).await
             {
-                tracing::warn!(error = %e, session_key = %cloned.key, "持久化会话变更失败");
+                tracing::error!(error = %e, session_key = %cloned.key, "持久化会话变更失败");
             }
             Some(cloned)
         } else {

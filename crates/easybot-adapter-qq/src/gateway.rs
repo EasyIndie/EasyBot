@@ -48,7 +48,7 @@ impl crate::QqAdapter {
             if token_store.needs_refresh()
                 && let Err(e) = token_store.refresh().await
             {
-                tracing::error!("QQ token refresh failed: {}, retry 30s", e);
+                tracing::warn!("QQ token refresh failed: {}, retry 30s", e);
                 tokio::time::sleep(Duration::from_secs(30)).await;
                 continue;
             }
@@ -57,7 +57,7 @@ impl crate::QqAdapter {
             let gw_url = match Self::fetch_gateway_url(&token_store, &base_url).await {
                 Some(url) => url,
                 None => {
-                    tracing::error!("QQ Gateway: failed to get gateway URL, retry 30s");
+                    tracing::warn!("QQ Gateway: failed to get gateway URL, retry 30s");
                     tokio::time::sleep(Duration::from_secs(30)).await;
                     continue;
                 }
@@ -185,7 +185,7 @@ impl crate::QqAdapter {
                                                 continue;
                                             }
                                         if let Some(ref et) = payload.t {
-                                            tracing::debug!("QQ dispatch event: {}", et);
+                                            tracing::trace!("QQ dispatch event: {}", et);
                                             Self::handle_dispatch(
                                                 et, &payload, &event_bus, &bot_id, &messages_in, &chat_types,
                                             ).await;
