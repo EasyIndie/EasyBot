@@ -295,7 +295,7 @@ function renderMetricsVisual(parsed) {
       const status = v.labels.status || '';
       if (!httpByPath[key]) httpByPath[key] = { method: v.labels.method || '', path: v.labels.path || '', ok: 0, err: 0, total: 0 };
       httpByPath[key].total += v.value;
-      if (status.startsWith('2') || status.startsWith('3')) httpByPath[key].ok += v.value;
+      if (status.startsWith('2') || status.startsWith('3') || status === '101') httpByPath[key].ok += v.value;
       else httpByPath[key].err += v.value;
     }
     if (v.name === 'active_websocket_connections') wsConn = v.value;
