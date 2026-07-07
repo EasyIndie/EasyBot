@@ -117,8 +117,7 @@ impl EasyBotPaths {
         println!("│   ├── gateway.db");
         println!("│   └── media_cache/");
         println!("├── logs/");
-        println!("│   ├── easybot.log");
-        println!("│   └── audit.log");
+        println!("│   ├── easybot.YYYY-MM-DD.log  # 当 logging.output = \"file\" 时写入");
         println!("├── plugins/");
         println!("├── certs/");
         println!("└── secrets/");
