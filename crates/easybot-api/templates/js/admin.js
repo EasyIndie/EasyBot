@@ -1732,6 +1732,7 @@ document.getElementById('tabs-bar').addEventListener('keydown', (e) => {
 // ─── WebSocket 事件驱动 ────────────────────────
 let ws = null;
 let wsReconnectTimer = null;
+let wsReconnectDelay = 1; // 指数退避起始秒数
 
 function wsStatus(color, label) {
   let el = document.getElementById('ws-status');
@@ -1763,12 +1764,17 @@ function connectWebSocket() {
         const msg = JSON.parse(e.data);
         if (msg.type === 'auth_ok') {
           console.log('[WS] Authenticated successfully');
+          wsReconnectDelay = 1; // 连接成功时重置指数退避
           wsStatus('var(--success)', 'connected');
           return;
         }
         if (msg.type === 'auth_failed') {
           console.log('[WS] Auth failed — key invalid');
           showLogin();
+          return;
+        }
+        if (msg.type === 'ping') {
+          ws.send(JSON.stringify({ type: 'pong' }));
           return;
         }
         if (msg.type !== 'event') {
@@ -1789,8 +1795,10 @@ function connectWebSocket() {
       console.log('[WS] Closed code=' + ev.code + ' reason=' + ev.reason);
       wsStatus('var(--text-muted)', 'disconnected');
       if (apiKey) {
-        console.log('[WS] Reconnecting in 3s...');
-        wsReconnectTimer = setTimeout(connectWebSocket, 3000);
+        const delay = wsReconnectDelay * 1000;
+        console.log('[WS] Reconnecting in ' + wsReconnectDelay + 's...');
+        wsReconnectDelay = Math.min(wsReconnectDelay * 2, 30);
+        wsReconnectTimer = setTimeout(connectWebSocket, delay);
       }
     };
   } catch (err) {
@@ -1802,6 +1810,7 @@ function connectWebSocket() {
 function disconnectWebSocket() {
   if (wsReconnectTimer) { clearTimeout(wsReconnectTimer); wsReconnectTimer = null; }
   if (ws) { ws.onclose = null; ws.close(); ws = null; }
+  wsReconnectDelay = 1; // 重置指数退避
   console.log('[WS] Disconnected');
   wsStatus('var(--text-muted)', 'disconnected');
 }
