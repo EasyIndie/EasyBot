@@ -24,7 +24,7 @@ html { touch-action: manipulation; }
 .header { background: var(--bg-secondary); border-bottom: 1px solid var(--border-default); padding: 12px 24px; display: flex; align-items: center; gap: 16px; position: sticky; top: 0; z-index: 100; }
 .header h1 { font-size: 18px; color: var(--accent); }
 .header .right { margin-left: auto; display: flex; align-items: center; gap: 12px; font-size: 13px; }
-.header .right .key-display { color: var(--text-muted); }
+
 .header .right .btn-logout { color: var(--danger); cursor: pointer; background: none; border: 1px solid var(--danger); padding: 4px 12px; border-radius: 6px; font-size: 13px; white-space: nowrap; }
 .header .right .btn-logout:hover { background: #f851491a; }
 .tabs { display: flex; background: var(--bg-secondary); border-bottom: 1px solid var(--border-default); padding: 0 24px; position: sticky; top: 52px; z-index: 99; overflow-x: auto; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
@@ -125,8 +125,7 @@ label { display: block; font-size: 13px; color: var(--text-muted); margin-bottom
 .login-box h2 { color: var(--accent); margin-bottom: 8px; }
 .login-box p { color: var(--text-muted); font-size: 13px; margin-bottom: 24px; }
 .login-box input { margin-bottom: 12px; }
-.btn-copy { background: none; border: 1px solid var(--border-default); border-radius: 4px; color: var(--text-muted); cursor: pointer; font-size: 12px; padding: 2px 6px; vertical-align: middle; }
-.btn-copy:hover { background: var(--border-muted); color: var(--text-primary); }
+
 .mbar { height: 6px; background: var(--border-muted); border-radius: 3px; overflow: hidden; min-width: 40px; }
 .mbar .fill { height: 100%; border-radius: 3px; transition: width 0.3s; }
 .mbar-fill-blue { background: var(--accent); }

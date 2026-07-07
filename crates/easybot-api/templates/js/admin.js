@@ -3,30 +3,10 @@
 // exposure of the API key to the current browser session.
 const LS_KEY = 'easybot_api_key';
 let apiKey = sessionStorage.getItem(LS_KEY) || '';
-let currentKeyDisplay = '';
+// key display removed — dev key changes on restart, use API Key tab for permanent keys
 
 function setKey(k) { apiKey = k; sessionStorage.setItem(LS_KEY, k); }
 function clearKey() { apiKey = ''; sessionStorage.removeItem(LS_KEY); }
-
-function updateKeyDisplay() {
-  const el = document.getElementById('key-display');
-  if (apiKey) {
-    const fullKey = apiKey;
-    const masked = fullKey.length > 8 ? fullKey.slice(0, 6) + '****' : fullKey;
-    el.innerHTML = `🔑 ${masked} <button class="btn-copy" onclick="copyApiKey()" title="复制完整 Key">📋</button>
-      <span id="copy-toast" style="font-size:11px;color:var(--success);display:none;margin-left:4px">已复制</span>`;
-    el.style.display = 'inline';
-  } else {
-    el.style.display = 'none';
-  }
-}
-
-function copyApiKey() {
-  if (!apiKey) return;
-  navigator.clipboard.writeText(apiKey).catch(() => {});
-  const toast = document.getElementById('copy-toast');
-  if (toast) { toast.style.display = 'inline'; setTimeout(() => { toast.style.display = 'none'; }, 2000); }
-}
 
 
 // ─── API 请求包装 ──────────────────────────────
@@ -1869,11 +1849,9 @@ function initAuth() {
     api('/api/v1/adapters').then(() => {
       document.getElementById('login-overlay').style.display = 'none';
       document.getElementById('logout-btn').style.display = 'block';
-      updateKeyDisplay();
       restoreTab();
       connectWebSocket();
     }).catch(() => {
-      updateKeyDisplay();
       showLogin();
     });
   } else {
@@ -1902,12 +1880,10 @@ document.getElementById('login-form').addEventListener('submit', async (e) => {
     setKey(data.key);
     document.getElementById('login-overlay').style.display = 'none';
     document.getElementById('logout-btn').style.display = 'block';
-    updateKeyDisplay();
     restoreTab();
     connectWebSocket();
   } catch (e) {
     clearKey();
-    updateKeyDisplay();
     err.textContent = '登录失败：' + e.message;
     err.style.display = 'block';
     err.classList.add('shake');
@@ -1919,7 +1895,6 @@ document.getElementById('login-form').addEventListener('submit', async (e) => {
 
 document.getElementById('logout-btn').addEventListener('click', () => {
   clearKey();
-  updateKeyDisplay();
   // Reset tab contents
   document.querySelectorAll('#ov-stats, #adapters-content, #sessions-content').forEach(e => e.innerHTML = '');
   showLogin();
