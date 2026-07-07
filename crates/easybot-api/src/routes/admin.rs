@@ -17,14 +17,17 @@ pub async fn admin_page() -> Html<&'static str> {
 }
 
 /// 登录请求体
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 pub struct LoginRequest {
+    /// 管理后台密码
+    #[schema(example = "your-password")]
     pub password: String,
 }
 
 /// 登录成功响应
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub struct LoginResponse {
+    /// 用于 API 认证的 Bearer token
     pub key: String,
 }
 
@@ -32,6 +35,16 @@ pub struct LoginResponse {
 ///
 /// SECURITY: Uses constant-time comparison to prevent timing side-channel attacks.
 /// Rate limiting is handled by the dedicated admin login rate limiter in server.rs.
+#[utoipa::path(
+    post,
+    path = "/admin/login",
+    tag = "Admin",
+    request_body = LoginRequest,
+    responses(
+        (status = 200, description = "登录成功，返回 API Key", body = LoginResponse),
+        (status = 401, description = "密码错误或未配置"),
+    )
+)]
 pub async fn admin_login(
     State(state): State<AppState>,
     Json(body): Json<LoginRequest>,
