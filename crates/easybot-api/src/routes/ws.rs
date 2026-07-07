@@ -172,8 +172,15 @@ async fn handle_ws(socket: WebSocket, state: AppState, _permit: OwnedSemaphorePe
                                 }
                             }
                         } else {
-                            // 处理客户端帧 (Phase 2+ 实现)
-                            handle_client_frame(&text, &state).await;
+                            // 检查应用层 pong 心跳回复 — 客户端通过 Text 帧回复 {"type":"pong"}
+                            if let Ok(val) = serde_json::from_str::<serde_json::Value>(&text) {
+                                if val.get("type").and_then(|t| t.as_str()) == Some("pong") {
+                                    last_pong = Instant::now();
+                                } else {
+                                    // 非心跳帧 → 处理业务帧
+                                    handle_client_frame(&text, &state).await;
+                                }
+                            }
                         }
                     }
                     Some(Ok(Message::Ping(data))) => {
@@ -184,6 +191,7 @@ async fn handle_ws(socket: WebSocket, state: AppState, _permit: OwnedSemaphorePe
                         last_pong = Instant::now();
                     }
                     Some(Ok(Message::Pong(_))) => {
+                        // 浏览器自动回复的 Pong（控制帧级别），也更新心跳防超时
                         last_pong = Instant::now();
                     }
                     Some(Ok(Message::Close(_))) | None => break,
@@ -204,7 +212,7 @@ async fn handle_ws(socket: WebSocket, state: AppState, _permit: OwnedSemaphorePe
                     );
                     break;
                 }
-                if sender.send(Message::Ping(axum::body::Bytes::new())).await.is_err() {
+                if sender.send(Message::Text(r#"{"type":"ping"}"#.into())).await.is_err() {
                     break;
                 }
             }

@@ -48,6 +48,9 @@ pub enum GatewayError {
 
     #[error("Internal error: {0}")]
     Internal(String),
+
+    #[error("Request timed out: {0}")]
+    RequestTimeout(String),
 }
 
 impl GatewayError {
@@ -72,6 +75,7 @@ impl GatewayError {
             GatewayError::ConfigError(_) => "CONFIG_ERROR",
             GatewayError::StorageError(_) => "STORAGE_ERROR",
             GatewayError::Internal(_) => "INTERNAL_ERROR",
+            GatewayError::RequestTimeout(_) => "REQUEST_TIMEOUT",
         }
     }
 
@@ -89,6 +93,7 @@ impl GatewayError {
             GatewayError::ConfigError(_)
             | GatewayError::StorageError(_)
             | GatewayError::Internal(_) => 500,
+            GatewayError::RequestTimeout(_) => 504,
         }
     }
 
@@ -117,6 +122,7 @@ impl GatewayError {
             Self::AuthFailed(msg) => format!("Authentication failed: {msg}"),
             Self::Unauthorized(msg) => format!("Unauthorized: {msg}"),
             Self::Forbidden(msg) => format!("Forbidden: {msg}"),
+            Self::RequestTimeout(msg) => format!("Request timed out: {msg}"),
         }
     }
 

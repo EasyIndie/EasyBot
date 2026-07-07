@@ -96,7 +96,12 @@ impl TelegramAdapter {
 
     /// 获取或创建缓存的 HTTP 客户端（延迟初始化，连接池复用）
     fn http_client(&self) -> &reqwest::Client {
-        self.http_client.get_or_init(reqwest::Client::new)
+        self.http_client.get_or_init(|| {
+            reqwest::Client::builder()
+                .timeout(Duration::from_secs(15))
+                .build()
+                .expect("构建 reqwest Client 失败")
+        })
     }
 
     /// 设置事件总线（在 init 之前调用）
