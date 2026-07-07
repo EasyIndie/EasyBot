@@ -14,6 +14,7 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use async_trait::async_trait;
 use easybot_core::bus::EventBus;
@@ -125,7 +126,12 @@ impl DiscordAdapter {
 
     /// 获取或创建缓存的 HTTP 客户端
     fn http_client(&self) -> &reqwest::Client {
-        self.http_client.get_or_init(reqwest::Client::new)
+        self.http_client.get_or_init(|| {
+            reqwest::Client::builder()
+                .timeout(Duration::from_secs(15))
+                .build()
+                .expect("构建 reqwest Client 失败")
+        })
     }
 
     /// 返回 REST API 基础 URL（支持通过 config.base_url 覆盖）
@@ -1602,7 +1608,7 @@ mod tests {
         let event_bus = EventBus::new();
         let heartbeat = Heartbeat::new();
         // 先等待一点时间让 heartbeat 变"旧"
-        std::thread::sleep(std::time::Duration::from_millis(5));
+        std::thread::sleep(Duration::from_millis(5));
 
         let action = handle_gateway_event::<&str>(
             Some(Ok(make_ready_event())),
