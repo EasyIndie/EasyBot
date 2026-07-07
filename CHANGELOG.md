@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.8] - 2026-07-07
+
 ### Fixed
 
 - **长期运行资源耗尽修复** — 全面审计并修复 8 项资源耗尽可能：
