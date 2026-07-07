@@ -460,6 +460,7 @@ let logSince = 0;
 let logPaused = false;
 let logLevel = '';
 let logSearchText = '';
+let logGeneration = 0;    // 递增计数器，过滤变化时丢弃过期响应
 
 function startLogPolling() {
   if (logPollTimer) return;
@@ -470,11 +471,16 @@ function stopLogPolling() { if (logPollTimer) { clearInterval(logPollTimer); log
 
 async function pollLogs() {
   if (logPaused) return;
+  const gen = ++logGeneration;    // 标记当前请求 Generation，丢弃过期响应
   try {
     const params = new URLSearchParams({ since: logSince, limit: '100' });
     if (logLevel) params.set('level', logLevel);
     if (logSearchText) params.set('search', logSearchText);
     const data = await api('/api/v1/logs?' + params.toString());
+
+    // 如果 generation 已变化（过滤条件在请求期间被修改），丢弃过期响应
+    if (gen !== logGeneration) return;
+
     const list = document.getElementById('log-list');
     const container = document.getElementById('log-container');
     const autoScroll = container.scrollHeight - container.scrollTop - container.clientHeight < 100;
