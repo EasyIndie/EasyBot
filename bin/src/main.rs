@@ -325,15 +325,34 @@ async fn main() -> anyhow::Result<()> {
 
     // 创建默认 API Key
     let mut dev_api_key: Option<String> = None;
-    match auth_manager
-        .create_key("dev", vec!["*".to_string()], None, vec![])
-        .await
-    {
-        Ok((_id, key)) => {
-            // SECURITY: Never print API keys to stdout. In debug mode,
-            // write to a file with restricted permissions instead.
-            if cli.debug {
-                let key_file_path = paths.home.join("data").join(".dev_api_key");
+
+    // 尝试复用已有的 dev key，避免每次重启生成新 key 导致浏览器登录失效
+    let key_file_path = paths.home.join("data").join(".dev_api_key");
+    if key_file_path.exists() {
+        if let Ok(stored_key) = std::fs::read_to_string(&key_file_path) {
+            let trimmed = stored_key.trim().to_string();
+            if !trimmed.is_empty() {
+                match auth_manager.authenticate(&trimmed).await {
+                    Ok(_) => {
+                        tracing::info!("Reusing existing dev API key from {:?}", key_file_path);
+                        dev_api_key = Some(trimmed);
+                    }
+                    Err(_) => {
+                        tracing::info!("Stored dev API key is invalid, creating new one");
+                    }
+                }
+            }
+        }
+    }
+
+    if dev_api_key.is_none() {
+        match auth_manager
+            .create_key("dev", vec!["*".to_string()], None, vec![])
+            .await
+        {
+            Ok((_id, key)) => {
+                // SECURITY: Never print API keys to stdout. Write to a file
+                // with restricted permissions for reuse on subsequent starts.
                 if let Some(parent) = key_file_path.parent() {
                     let _ = std::fs::create_dir_all(parent);
                 }
@@ -356,10 +375,10 @@ async fn main() -> anyhow::Result<()> {
                         tracing::warn!("Failed to write dev API key to file: {}", e);
                     }
                 }
+                dev_api_key = Some(key);
             }
-            dev_api_key = Some(key);
+            Err(e) => tracing::warn!("Failed to create dev API key: {}", e),
         }
-        Err(e) => tracing::warn!("Failed to create dev API key: {}", e),
     }
 
     // 解析管理后台密码（优先级：EASYBOT_ADMIN_PASSWORD > gateway.yaml > 默认值）
