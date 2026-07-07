@@ -45,9 +45,16 @@ pub struct AdapterManager {
 }
 
 /// Per-platform reconnect state tracked by the health monitor.
+///
+/// Maximum total reconnection attempts before giving up permanently.
+/// After this many failures, the adapter transitions to a "Failed" state
+/// that requires manual intervention (via API restart).
+const MAX_TOTAL_RECONNECT_ATTEMPTS: u32 = 20;
+
 #[derive(Debug, Clone, Default)]
 struct ReconnectState {
     consecutive_failures: u32,
+    total_failures: u32,
     backoff_until: Option<Instant>,
 }
 
@@ -768,20 +775,32 @@ impl AdapterManager {
                 }
             };
 
+            // SECURITY: Check total failure limit before attempting reconnect
+            if state.total_failures >= MAX_TOTAL_RECONNECT_ATTEMPTS {
+                warn!(
+                    "Reconnect permanently failed for '{}' after {} total attempts. \
+                     Manual intervention required (API restart).",
+                    platform, state.total_failures
+                );
+                continue;
+            }
+
             if needs_reconnect {
                 match self.reconnect_adapter(platform, config.clone()).await {
                     Ok(()) => {
                         state.consecutive_failures = 0;
+                        state.total_failures = 0;
                         state.backoff_until = None;
                         info!("Reconnect succeeded for '{}'", platform);
                     }
                     Err(e) => {
                         state.consecutive_failures += 1;
+                        state.total_failures += 1;
                         let delay = compute_backoff(state.consecutive_failures);
                         state.backoff_until = Some(Instant::now() + delay);
                         warn!(
-                            "Reconnect failed for '{}' (attempt {}): {} — next retry in {:?}",
-                            platform, state.consecutive_failures, e, delay,
+                            "Reconnect failed for '{}' (attempt {}/{}): {} — next retry in {:?}",
+                            platform, state.total_failures, MAX_TOTAL_RECONNECT_ATTEMPTS, e, delay,
                         );
                     }
                 }

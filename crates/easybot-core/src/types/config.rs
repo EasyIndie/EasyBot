@@ -72,7 +72,10 @@ fn default_port() -> u16 {
 }
 
 fn default_admin_password() -> String {
-    "easybot".to_string()
+    // SECURITY: No default password. If not set via EASYBOT_ADMIN_PASSWORD
+    // or gateway.yaml, the admin panel is disabled (login always fails).
+    // The startup warning in main.rs alerts operators when this is unset.
+    String::new()
 }
 
 /// TLS 配置
@@ -165,8 +168,14 @@ pub struct ApiConfig {
 
     #[serde(default)]
     pub metrics: MetricsConfig,
+
+    /// 是否在 WebSocket 事件中透传各平台的原始 payload（metadata 字段）。
+    /// 开发/调试时开启便于排查适配问题，生产环境建议关闭。
+    #[serde(default)]
+    pub raw_payload_enabled: bool,
 }
 
+/// API 基础路径默认值
 fn default_api_base_path() -> String {
     "/api/v1".to_string()
 }
@@ -178,6 +187,7 @@ impl Default for ApiConfig {
             websocket: WebSocketConfig::default(),
             rate_limit: RateLimitConfig::default(),
             metrics: MetricsConfig::default(),
+            raw_payload_enabled: false,
         }
     }
 }

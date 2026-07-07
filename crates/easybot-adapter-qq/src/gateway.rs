@@ -4,7 +4,9 @@
 //! 处理频道消息（AT_MESSAGE_CREATE）、群消息（GROUP_AT_MESSAGE_CREATE、
 //! GROUP_MESSAGE_CREATE）和私聊消息（C2C_MESSAGE_CREATE）。
 
+use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
@@ -30,7 +32,7 @@ impl crate::QqAdapter {
         Ok(ws_stream)
     }
 
-    #[allow(clippy::too_many_lines)]
+    #[allow(clippy::too_many_lines, clippy::too_many_arguments)]
     pub(crate) async fn gateway_loop(
         token_store: QqTokenStore,
         base_url: String,
@@ -39,6 +41,7 @@ impl crate::QqAdapter {
         mut cancel_rx: broadcast::Receiver<()>,
         messages_in: Arc<AtomicU64>,
         heartbeat: easybot_core::types::adapter::Heartbeat,
+        chat_types: Arc<Mutex<HashMap<String, ChatType>>>,
     ) {
         loop {
             // 每次重连前刷新 access token
@@ -184,7 +187,7 @@ impl crate::QqAdapter {
                                         if let Some(ref et) = payload.t {
                                             tracing::debug!("QQ dispatch event: {}", et);
                                             Self::handle_dispatch(
-                                                et, &payload, &event_bus, &bot_id, &messages_in,
+                                                et, &payload, &event_bus, &bot_id, &messages_in, &chat_types,
                                             ).await;
                                         } else {
                                             tracing::debug!("QQ dispatch with no t field");
@@ -231,12 +234,23 @@ impl crate::QqAdapter {
             .unwrap_or_else(|_| chrono::Utc::now().timestamp_millis())
     }
 
+    /// 将 QQ 群消息 author.member_role 字符串映射为 SenderRole。
+    fn parse_member_role(member_role: Option<&str>) -> Option<SenderRole> {
+        match member_role {
+            Some("owner") => Some(SenderRole::Owner),
+            Some("admin") => Some(SenderRole::Admin),
+            Some("member") => Some(SenderRole::Member),
+            _ => None,
+        }
+    }
+
     pub(crate) async fn handle_dispatch(
         event_type: &str,
         payload: &crate::types::GatewayPayload<serde_json::Value>,
         event_bus: &EventBus,
         bot_id: &str,
         messages_in: &AtomicU64,
+        chat_types: &Arc<Mutex<HashMap<String, ChatType>>>,
     ) {
         let data = match payload.d.as_ref() {
             Some(d) => d,
@@ -285,7 +299,7 @@ impl crate::QqAdapter {
                     recipient: Some(bot_id.to_string()),
                     chat_id: msg_event.channel_id,
                     chat_name: None,
-                    chat_type: ChatType::Group,
+                    chat_type: ChatType::Channel,
                     guild_id: msg_event.guild_id.clone(),
                     thread_id: None,
                     root_id: None,
@@ -296,8 +310,14 @@ impl crate::QqAdapter {
                     reply_to: None,
                     mentions: None,
                     mentioned: Some(true),
-                    metadata: None,
+                    metadata: Some(data.clone()),
                 };
+
+                // Track chat type for direct outbound routing
+                chat_types
+                    .lock()
+                    .unwrap()
+                    .insert(inbound.chat_id.clone(), inbound.chat_type);
 
                 let event = GatewayEvent::new(
                     easybot_core::types::event::event_types::MESSAGE_INBOUND,
@@ -327,6 +347,8 @@ impl crate::QqAdapter {
                 let ts = Self::parse_timestamp(&msg_event.timestamp);
                 let openid = msg_event.group_openid.clone();
                 let member_id = msg_event.author.member_openid.clone();
+                let role = Self::parse_member_role(msg_event.author.member_role.as_deref());
+                let is_bot = msg_event.author.bot.unwrap_or(false);
                 let inbound = InboundMessage {
                     id: msg_event.id,
                     platform: "qq".to_string(),
@@ -337,8 +359,8 @@ impl crate::QqAdapter {
                         name: Some(member_id.clone()),
                         username: None,
                         avatar_url: None,
-                        is_bot: false,
-                        role: None,
+                        is_bot,
+                        role,
                         language_code: None,
                     },
                     recipient: Some(bot_id.to_string()),
@@ -355,8 +377,14 @@ impl crate::QqAdapter {
                     reply_to: None,
                     mentions: None,
                     mentioned: Some(true),
-                    metadata: None,
+                    metadata: Some(data.clone()),
                 };
+
+                // Track chat type for direct outbound routing
+                chat_types
+                    .lock()
+                    .unwrap()
+                    .insert(inbound.chat_id.clone(), inbound.chat_type);
 
                 let event = GatewayEvent::new(
                     easybot_core::types::event::event_types::MESSAGE_INBOUND,
@@ -388,6 +416,8 @@ impl crate::QqAdapter {
                 let ts = Self::parse_timestamp(&msg_event.timestamp);
                 let openid = msg_event.group_openid.clone();
                 let member_id = msg_event.author.member_openid.clone();
+                let role = Self::parse_member_role(msg_event.author.member_role.as_deref());
+                let is_bot = msg_event.author.bot.unwrap_or(false);
                 let mentions: Option<Vec<MentionInfo>> = if msg_event.mentions.is_empty() {
                     None
                 } else {
@@ -413,8 +443,8 @@ impl crate::QqAdapter {
                         name: Some(member_id.clone()),
                         username: None,
                         avatar_url: None,
-                        is_bot: false,
-                        role: None,
+                        is_bot,
+                        role,
                         language_code: None,
                     },
                     recipient: Some(bot_id.to_string()),
@@ -437,6 +467,12 @@ impl crate::QqAdapter {
                         })
                     }),
                 };
+
+                // Track chat type for direct outbound routing
+                chat_types
+                    .lock()
+                    .unwrap()
+                    .insert(inbound.chat_id.clone(), inbound.chat_type);
 
                 let event = GatewayEvent::new(
                     easybot_core::types::event::event_types::MESSAGE_INBOUND,
@@ -492,8 +528,14 @@ impl crate::QqAdapter {
                     reply_to: None,
                     mentions: None,
                     mentioned: None,
-                    metadata: None,
+                    metadata: Some(data.clone()),
                 };
+
+                // Track chat type for direct outbound routing
+                chat_types
+                    .lock()
+                    .unwrap()
+                    .insert(inbound.chat_id.clone(), inbound.chat_type);
 
                 let event = GatewayEvent::new(
                     easybot_core::types::event::event_types::MESSAGE_INBOUND,

@@ -9,7 +9,7 @@ use tracing::{info, warn};
 use crate::adapter::AdapterManager;
 use crate::bus::EventBus;
 use crate::session::SessionManager;
-use crate::types::message::InboundMessage;
+use crate::types::message::{InboundMessage, MessageType};
 use crate::types::session::{Session, SessionSource};
 
 /// 会话桥接器
@@ -86,6 +86,26 @@ impl SessionBridge {
 
         let _session = session_manager.get_or_create(&key, source).await;
 
+        // 记录最近消息（异步，不阻塞）
+        let sm = session_manager.clone();
+        let key_for_msg = key.clone();
+        let msg_text = msg.text.clone().or_else(|| match msg.msg_type {
+            MessageType::Image => Some("[图片]".to_string()),
+            MessageType::Audio => Some("[音频]".to_string()),
+            MessageType::Video => Some("[视频]".to_string()),
+            MessageType::File => Some("[文件]".to_string()),
+            MessageType::Sticker => Some("[贴纸]".to_string()),
+            MessageType::Interactive => Some("[卡片]".to_string()),
+            _ => None,
+        });
+        let msg_ts = msg.timestamp;
+        tokio::spawn(async move {
+            if let Some(text) = msg_text {
+                sm.update_last_message(&key_for_msg, Some(text), msg_ts)
+                    .await;
+            }
+        });
+
         // 异步富化：不阻塞消息处理路径
         if let Some(am) = adapter_manager {
             tokio::spawn(async move {
@@ -97,7 +117,8 @@ impl SessionBridge {
                 if let Some(enriched) = am.enrich_session(&platform, &current_source).await
                     && (enriched.user_username.is_some()
                         || enriched.user_role.is_some()
-                        || enriched.user_name.is_some())
+                        || enriched.user_name.is_some()
+                        || enriched.chat_name.is_some())
                 {
                     session_manager.update_source_fields(&key, enriched).await;
                 }

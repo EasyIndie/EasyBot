@@ -24,7 +24,9 @@ services:
       - easybot_data:/var/lib/easybot/data
     environment:
       - EASYBOT_HOME=/var/lib/easybot
-      # Pass secrets through environment — referenced via ${VAR_NAME} in gateway.yaml
+      # SECURITY: Use file-based secrets (Docker secrets / bind mounts) instead
+      # of env vars in production. Env vars are visible via docker inspect.
+      - TELEGRAM_BOT_TOKEN_FILE=${TELEGRAM_BOT_TOKEN_FILE:-}
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
       - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN:-}
       - FEISHU_APP_ID=${FEISHU_APP_ID:-}
@@ -32,19 +34,41 @@ services:
       - QQ_CLIENT_SECRET=${QQ_CLIENT_SECRET:-}
       - QQ_APP_ID=${QQ_APP_ID:-}
       - WECHAT_BOT_TOKEN=${WECHAT_BOT_TOKEN:-}
+    # SECURITY: Drop all capabilities, prevent privilege escalation
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    # SECURITY: Read-only root filesystem (write only to /tmp and data volume)
+    read_only: true
+    tmpfs:
+      - /tmp:size=128M
     restart: unless-stopped
+    # SECURITY: Resource limits to prevent DoS
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 512M
+        reservations:
+          cpus: "0.5"
+          memory: 128M
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 30s
       timeout: 5s
       retries: 3
+    networks:
+      - frontend
+      - backend
 
   postgres:
-    image: postgres:16-alpine
+    image: postgres:16-alpine@sha256:8d3e60157d6f690ea32261484075a9f457c6e8560a9ed847f9117b03a8c562ba
     environment:
       POSTGRES_DB: easybot
       POSTGRES_USER: easybot
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      # SECURITY: Require explicit password (no default). Set POSTGRES_PASSWORD in .env.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?PostgreSQL password is required. Set POSTGRES_PASSWORD in .env}
     volumes:
       - pg_data:/var/lib/postgresql/data
     healthcheck:
@@ -55,10 +79,12 @@ services:
     profiles:
       - postgres
     restart: unless-stopped
+    networks:
+      - backend
 
   # Optional: Prometheus monitoring
   prometheus:
-    image: prom/prometheus:latest
+    image: prom/prometheus:v2.55.0
     ports:
       - "9091:9090"
     volumes:
@@ -66,6 +92,14 @@ services:
     profiles:
       - monitoring
     restart: unless-stopped
+    networks:
+      - frontend
+
+# SECURITY: Separate frontend (internet-facing) and backend (internal) networks
+networks:
+  frontend:
+  backend:
+    internal: true
 
 volumes:
   easybot_data:

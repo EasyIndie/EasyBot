@@ -66,6 +66,7 @@ pub async fn test_app_state() -> (AppState, String) {
                 enabled: false,
                 path: "/metrics".to_string(),
             },
+            raw_payload_enabled: false,
         },
         ..GatewayConfig::default()
     };

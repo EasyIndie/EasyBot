@@ -34,8 +34,75 @@ pub async fn load_config(path: &Path) -> Result<GatewayConfig, crate::types::err
         crate::types::error::GatewayError::ConfigError(format!("failed to parse config: {}", e))
     })?;
 
+    // SECURITY: Validate webhook URLs
+    for wh in &config.webhooks {
+        validate_webhook_url(&wh.url)?;
+    }
+
     info!("Loaded config from {}", path.display());
     Ok(config)
+}
+
+/// SECURITY: Validate webhook URL to prevent SSRF.
+///
+/// Rejects non-HTTP(S) schemes and common internal target patterns.
+pub fn validate_webhook_url(url: &str) -> Result<(), crate::types::error::GatewayError> {
+    validate_url_for_ssrf(url).map_err(|_| {
+        crate::types::error::GatewayError::ConfigError(format!(
+            "Webhook URL targets an internal/blocked host: {}",
+            url
+        ))
+    })
+}
+
+/// SSRF validation error — URL targets an internal/blocked host.
+#[derive(Debug)]
+pub struct SsrError;
+
+impl std::fmt::Display for SsrError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "URL targets a blocked internal host")
+    }
+}
+
+impl std::error::Error for SsrError {}
+
+/// SECURITY: Validate a URL to prevent SSRF attacks.
+///
+/// Returns `Err(SsrError)` if the URL targets a known internal/blocked host.
+/// Used by both webhook config and media download paths.
+pub fn validate_url_for_ssrf(url: &str) -> Result<(), SsrError> {
+    let lower = url.to_lowercase();
+    // Reject non-HTTP(S) schemes
+    if !lower.starts_with("https://") && !lower.starts_with("http://") {
+        return Err(SsrError);
+    }
+
+    // Reject common SSRF targets
+    let blocked_hosts: [&str; 5] = [
+        "localhost",
+        "127.0.0.1",
+        "0.0.0.0",
+        "169.254.169.254",          // AWS metadata
+        "metadata.google.internal", // GCP metadata
+    ];
+
+    let host_with_path = if let Some(h) = lower.strip_prefix("https://") {
+        h
+    } else if let Some(h) = lower.strip_prefix("http://") {
+        h
+    } else {
+        return Err(SsrError);
+    };
+
+    let host = host_with_path.split('/').next().unwrap_or(host_with_path);
+    let host_clean = host.split(':').next().unwrap_or(host);
+
+    if blocked_hosts.contains(&host_clean) {
+        return Err(SsrError);
+    }
+
+    Ok(())
 }
 
 /// 合并配置
@@ -44,7 +111,13 @@ pub async fn load_config(path: &Path) -> Result<GatewayConfig, crate::types::err
 pub fn merge_configs(base: &mut serde_yaml::Value, local: serde_yaml::Value) {
     match (base, local) {
         (base @ serde_yaml::Value::Mapping(_), serde_yaml::Value::Mapping(local_map)) => {
-            let base_map = base.as_mapping_mut().unwrap();
+            // SAFETY: Already matched as Mapping in the outer pattern
+            let Some(base_map) = base.as_mapping_mut() else {
+                tracing::warn!(
+                    "merge_configs: invariant violation — Mapping match but as_mapping_mut failed"
+                );
+                return;
+            };
             for (key, value) in local_map {
                 if base_map.contains_key(&key) && base_map[&key].is_mapping() && value.is_mapping()
                 {
@@ -71,6 +144,25 @@ pub fn load_env(paths: &EasyBotPaths) -> Result<(), crate::types::error::Gateway
     if !env_path.exists() {
         tracing::info!(".env file not found at {}, skipping", env_path.display());
         return Ok(());
+    }
+
+    // SECURITY: Check file permissions on Unix (should be 0600)
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(metadata) = std::fs::metadata(env_path) {
+            let mode = metadata.permissions().mode();
+            // Check if group or other have read access
+            if mode & 0o077 != 0 {
+                tracing::warn!(
+                    ".env file {} has overly permissive permissions ({:o}). \
+                     Run: chmod 600 {}",
+                    env_path.display(),
+                    mode & 0o777,
+                    env_path.display()
+                );
+            }
+        }
     }
 
     // dotenvy::from_path 默认不覆盖已存在的环境变量
@@ -120,6 +212,9 @@ pub fn generate_env_example() -> String {
 
 # PostgreSQL（可选，默认：SQLite）
 # DATABASE_URL=postgresql://user:password@localhost:5432/easybot
+
+# 透传各平台原始 payload 到 WebSocket 事件（开发调试用）
+# EASYBOT_RAW_PAYLOAD_ENABLED=true
 
 # 生产环境安全：release 版本默认要求启用 TLS 或设置以下变量跳过检查
 # 如果已配置反向代理（Nginx/Caddy/Traefik）终止 TLS，可保留此设置
@@ -198,6 +293,8 @@ api:
     enabled: true
     maxClients: 1000
     heartbeatInterval: 30
+  # 透传各平台原始 payload（开发调试用），也可通过环境变量 EASYBOT_RAW_PAYLOAD 覆盖
+  # raw_payload_enabled: ${EASYBOT_RAW_PAYLOAD_ENABLED:-false}
 
 storage:
   storageType: "sqlite"

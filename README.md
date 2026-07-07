@@ -106,13 +106,13 @@ sudo pacman -S protobuf
 git clone https://github.com/EasyIndie/EasyBot.git
 cd easybot
 
-# 默认构建（仅含 Telegram 适配器）
+# 默认构建（包含全部 5 个平台适配器）
 cargo build
 
-# 构建全部适配器
-cargo build --features full
+# 仅编译指定适配器（可节省编译时间）
+cargo build --no-default-features --features "adapter-telegram,adapter-discord"
 
-# 构建全部适配器 + 插件系统
+# 全量构建 + 插件系统
 cargo build --features "full,plugin-system"
 
 # 启动服务
@@ -357,22 +357,19 @@ easybot/
 ### 构建选项
 
 ```bash
-# 仅含 Telegram 适配器（默认）
+# 默认构建（包含全部 5 个平台适配器）
 cargo build
 
-# 全部适配器
-cargo build --features full
+# 指定适配器子集（可节省编译时间）
+cargo build --no-default-features --features "adapter-telegram,adapter-discord"
 
-# 全部适配器 + 插件系统
+# 全量构建 + 插件系统
 cargo build --features "full,plugin-system"
-
-# 仅含指定适配器
-cargo build --features "adapter-telegram,adapter-discord"
 
 # 最小构建（无适配器）
 cargo build --no-default-features
 
-# Release 构建
+# Release 构建（全量）
 cargo build --release --features full
 ```
 

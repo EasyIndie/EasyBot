@@ -113,7 +113,7 @@ pub struct BotInfo {
 /// - `None`（默认）：自动检测 — 凭据环境变量已设置则启用
 /// - `Some(true)`：强制启用，即使未检测到凭据
 /// - `Some(false)`：强制禁用，即使凭据已设置
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, ToSchema)]
+#[derive(Clone, serde::Serialize, serde::Deserialize, ToSchema)]
 pub struct AdapterConfig {
     #[serde(default)]
     pub enabled: Option<bool>,
@@ -124,6 +124,33 @@ pub struct AdapterConfig {
     pub base_url: Option<String>,
     #[serde(default)]
     pub extra: serde_json::Value,
+}
+
+// SECURITY: Manual Debug impl that redacts credential fields
+impl std::fmt::Debug for AdapterConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AdapterConfig")
+            .field("enabled", &self.enabled)
+            .field(
+                "token",
+                &if self.token.is_some() {
+                    Some("***REDACTED***")
+                } else {
+                    None
+                },
+            )
+            .field(
+                "api_key",
+                &if self.api_key.is_some() {
+                    Some("***REDACTED***")
+                } else {
+                    None
+                },
+            )
+            .field("base_url", &self.base_url)
+            .field("extra", &self.extra)
+            .finish()
+    }
 }
 
 impl AdapterConfig {
@@ -151,17 +178,23 @@ pub const DEFAULT_LIVENESS_THRESHOLD_MS: i64 = 120_000;
 /// [`age_ms`](Self::age_ms) through the adapter's `heartbeat_age_ms()` method
 /// to decide whether the background task is still alive.
 ///
+/// Also tracks `started_at` for uptime calculation and `started_at` for
+/// uptime calculation (set when the Heartbeat is first created).
+///
 /// Thread-safe and cheap to clone (wraps `Arc<AtomicI64>` internally).
 #[derive(Clone, Debug)]
 pub struct Heartbeat {
     last_beat_ms: Arc<AtomicI64>,
+    started_at_ms: Arc<AtomicI64>,
 }
 
 impl Heartbeat {
     /// Create a new heartbeat tracker, initialised to "now".
     pub fn new() -> Self {
+        let now = chrono::Utc::now().timestamp_millis();
         Self {
-            last_beat_ms: Arc::new(AtomicI64::new(chrono::Utc::now().timestamp_millis())),
+            last_beat_ms: Arc::new(AtomicI64::new(now)),
+            started_at_ms: Arc::new(AtomicI64::new(now)),
         }
     }
 
@@ -181,6 +214,13 @@ impl Heartbeat {
     /// Convenience: is the heartbeat within a given threshold?
     pub fn is_fresh(&self, threshold_ms: i64) -> bool {
         self.age_ms() <= threshold_ms
+    }
+
+    /// Uptime in seconds since this Heartbeat was created.
+    pub fn uptime_secs(&self) -> u64 {
+        let now = chrono::Utc::now().timestamp_millis();
+        let elapsed = now.saturating_sub(self.started_at_ms.load(Ordering::Relaxed));
+        (elapsed as u64) / 1000
     }
 }
 

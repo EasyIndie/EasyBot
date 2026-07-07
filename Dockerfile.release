@@ -15,10 +15,11 @@ RUN useradd -r -m -s /bin/bash easybot \
 # TARGETARCH is auto-injected by Docker Buildx during multi-platform builds
 # (amd64 for x86_64 builds, arm64 for aarch64 builds)
 ARG TARGETARCH
-COPY dist/easybot-${TARGETARCH} /usr/local/bin/easybot
+COPY --chown=easybot:easybot dist/easybot-${TARGETARCH} /usr/local/bin/easybot
 RUN chmod +x /usr/local/bin/easybot
 
 USER easybot
 EXPOSE 8080
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD ["curl", "-f", "http://localhost:8080/health"]
 ENTRYPOINT ["easybot"]
 CMD ["--config", "/etc/easybot/gateway.yaml"]

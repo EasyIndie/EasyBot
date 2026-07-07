@@ -257,6 +257,13 @@ pub(crate) async fn download_media(
     url: &str,
     client: &reqwest::Client,
 ) -> Result<Vec<u8>, GatewayError> {
+    // SECURITY: Validate URL to prevent SSRF attacks
+    if easybot_core::config::validate_url_for_ssrf(url).is_err() {
+        return Err(GatewayError::Internal(
+            "Media URL targets an internal/blocked host".into(),
+        ));
+    }
+
     let resp =
         client.get(url).send().await.map_err(|e| {
             GatewayError::Internal(format!("Failed to download media from URL: {}", e))

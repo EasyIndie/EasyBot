@@ -116,7 +116,8 @@ cargo test -p e2e-tests
 
 | Flag | Enables |
 |------|---------|
-| `full` | All built-in adapters + plugin system |
+| `default` | All 5 built-in adapters (Telegram, Discord, 飞书, QQ, WeChat) |
+| `full` | All built-in adapters (alias for default) |
 | `adapter-telegram` | Telegram Bot API adapter |
 | `adapter-discord` | Discord Gateway adapter |
 | `adapter-feishu` | 飞书/Lark adapter |

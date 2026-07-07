@@ -350,20 +350,18 @@ impl WeChatAdapter {
             header::CONTENT_TYPE,
             header::HeaderValue::from_static("application/json"),
         );
-        headers.insert(
-            header::AUTHORIZATION,
-            header::HeaderValue::from_str(&format!("Bearer {}", token)).unwrap(),
-        );
+        let auth_value = header::HeaderValue::from_str(&format!("Bearer {}", token))
+            .unwrap_or_else(|_| header::HeaderValue::from_static("Bearer invalid"));
+        headers.insert(header::AUTHORIZATION, auth_value);
         headers.insert(
             header::HeaderName::from_static("authorizationtype"),
             header::HeaderValue::from_static("ilink_bot_token"),
         );
         // X-WECHAT-UIN：防重放，随机 uint32 base64
         let uin = uuid::Uuid::new_v4().as_u64_pair().0 as u32;
-        headers.insert(
-            header::HeaderName::from_static("x-wechat-uin"),
-            header::HeaderValue::from_str(&base64_encode_uin(uin)).unwrap(),
-        );
+        let uin_value = header::HeaderValue::from_str(&base64_encode_uin(uin))
+            .unwrap_or_else(|_| header::HeaderValue::from_static("0"));
+        headers.insert(header::HeaderName::from_static("x-wechat-uin"), uin_value);
         headers
     }
 
@@ -473,10 +471,9 @@ impl WeChatAdapter {
         let ciphertext = aes_128_ecb_encrypt(&file_data, &aes_key_bytes);
 
         tracing::debug!(
-            "WeChat media encrypted: raw={} bytes, padded={} bytes, aes_key_hex={}",
+            "WeChat media encrypted: raw={} bytes, padded={} bytes",
             file_data.len(),
             ciphertext.len(),
-            aeskey_hex,
         );
 
         // 7. 上传到 CDN（使用专用 HTTP/1.1 客户端，避免 HTTP/2 兼容性问题）
@@ -487,10 +484,9 @@ impl WeChatAdapter {
             .map_err(|e| GatewayError::Internal(format!("Failed to create CDN client: {}", e)))?;
 
         tracing::debug!(
-            "WeChat CDN upload: url_len={}, body_len={}, first_16_key={}",
+            "WeChat CDN upload: url_len={}, body_len={}",
             cdn_url.len(),
             ciphertext.len(),
-            &aeskey_hex[..16]
         );
 
         let cdn_resp = cdn_client
@@ -678,18 +674,7 @@ fn publish_send_event(
     result: &SendResult,
 ) {
     if let Some(bus) = event_bus {
-        bus.publish(easybot_core::types::event::GatewayEvent::new(
-            event_type,
-            "wechat",
-            serde_json::json!({
-                "platform": "wechat",
-                "chat_id": chat_id,
-                "message_id": result.message_id,
-                "success": result.success,
-                "error": result.error,
-                "error_code": result.error_code,
-            }),
-        ));
+        bus.publish_send_result(event_type, "wechat", chat_id, result);
     }
 }
 
@@ -806,8 +791,8 @@ impl PlatformAdapter for WeChatAdapter {
                     tracing::info!("扫描以下二维码登录个人微信：");
                     println!("\n{}", img);
                 }
-                // 将 token 写入日志（stderr），供脚本/Docker/headless 场景提取
-                tracing::info!(
+                // SECURITY: Log qrcode_token at DEBUG level only — it is a session token
+                tracing::debug!(
                     "微信登录 qrcode_token={}，扫码后凭据将自动保存到 ~/.easybot/.wechat-credentials.json",
                     qrcode
                 );
@@ -1372,20 +1357,38 @@ async fn longpoll_loop(
                 match result {
                     Ok(PollOutcome::Messages(new_buf, msgs)) => {
                         heartbeat.beat();
-                        buf = new_buf.clone();
                         consecutive_failures = 0;
 
-                        // 持久化 sync_buf 到磁盘
-                        *sync_buf.write().await = new_buf.clone();
-                        save_sync_buf(&new_buf);
-
-                        for msg in msgs {
-                            // 持久化每条聊天的 context_token
+                        // 批量收集 context_tokens，循环结束后统一持久化
+                        let mut tokens_changed = false;
+                        for msg in &msgs {
                             if let Some(ref ct) = msg.context_token {
                                 let mut tokens = context_tokens.write().await;
                                 tokens.insert(msg.from_user_id.clone(), ct.clone());
-                                save_context_tokens(&tokens);
+                                tokens_changed = true;
                             }
+                        }
+
+                        // 只在新游标有变化时才写 sync_buf
+                        if new_buf != buf {
+                            buf = new_buf.clone();
+                            *sync_buf.write().await = new_buf.clone();
+                            let persist_buf = new_buf.clone();
+                            tokio::task::spawn_blocking(move || {
+                                save_sync_buf(&persist_buf);
+                            });
+                        }
+
+                        // 批量持久化 context_tokens（一次性写，避免每条消息都写一次）
+                        if tokens_changed {
+                            let tokens_snapshot = context_tokens.read().await.clone();
+                            tokio::task::spawn_blocking(move || {
+                                save_context_tokens(&tokens_snapshot);
+                            });
+                        }
+
+                        // 处理消息（写 I/O 已移出此循环）
+                        for msg in msgs {
                             if let Some(inbound) = convert_message(msg) {
                                 let event = easybot_core::types::event::GatewayEvent::new(
                                     easybot_core::types::event::event_types::MESSAGE_INBOUND,
@@ -1525,22 +1528,18 @@ async fn poll_messages(
 
 /// 将 iLink 消息转换为 InboundMessage
 fn convert_message(msg: WeixinMessage) -> Option<InboundMessage> {
-    let text = msg
-        .item_list
-        .first()
-        .and_then(|item| match item.item_type {
-            1 => item.text_item.as_ref().map(|t| t.text.clone()),
-            2 => Some("[图片]".to_string()),
-            3 => Some("[语音]".to_string()),
-            4 => item
-                .file_item
-                .as_ref()
-                .and_then(|f| f.file_name.clone())
-                .unwrap_or_else(|| "[文件]".to_string())
-                .into(),
-            _ => Some("[未知消息类型]".to_string()),
-        })
-        .unwrap_or_default();
+    let is_text_message = msg.item_list.first().map(|i| i.item_type) == Some(1);
+
+    let text = if is_text_message {
+        msg.item_list
+            .first()
+            .and_then(|item| item.text_item.as_ref().map(|t| t.text.clone()))
+            .unwrap_or_default()
+    } else {
+        // 非文本消息（图片/语音/文件/视频）不填充占位文本，
+        // 下游通过 msg_type 和 media 字段判断消息类型
+        String::new()
+    };
 
     let is_group = !msg.group_id.is_empty();
 
@@ -1594,7 +1593,11 @@ fn convert_message(msg: WeixinMessage) -> Option<InboundMessage> {
             Some(5) => MessageType::Video,
             _ => MessageType::Unknown,
         },
-        text: Some(text),
+        text: if is_text_message && !text.is_empty() {
+            Some(text)
+        } else {
+            None
+        },
         sender: MessageSender {
             id: msg.from_user_id.clone(),
             name: Some(msg.from_user_id.clone()),
@@ -1786,7 +1789,8 @@ mod tests {
         };
 
         let inbound = convert_message(msg).unwrap();
-        assert_eq!(inbound.text.as_deref(), Some("[图片]"));
+        // 非文本消息不再填充占位文本
+        assert!(inbound.text.is_none());
         assert!(inbound.media.is_some());
         let media_type = &inbound.media.as_ref().unwrap().first().unwrap().media_type;
         assert!(
@@ -1822,13 +1826,15 @@ mod tests {
         };
 
         let inbound = convert_message(msg).unwrap();
-        assert_eq!(inbound.text.as_deref(), Some("report.pdf"));
+        // 非文本消息 text 应为 None，文件名在 metadata 中
+        assert!(inbound.text.is_none());
         assert!(inbound.media.is_some());
-        let media_type = &inbound.media.as_ref().unwrap().first().unwrap().media_type;
+        let media = inbound.media.as_ref().unwrap().first().unwrap();
+        assert_eq!(media.filename.as_deref(), Some("report.pdf"));
         assert!(
-            matches!(media_type, MediaType::Document),
+            matches!(media.media_type, MediaType::Document),
             "expected Document media type, got {:?}",
-            media_type
+            media.media_type
         );
     }
 
@@ -1961,7 +1967,8 @@ mod tests {
             item_list: vec![],
         };
         let inbound = convert_message(msg).unwrap();
-        assert_eq!(inbound.text.as_deref(), Some(""));
+        // 未知消息类型：非文本，text 应为 None
+        assert!(inbound.text.is_none());
     }
 
     #[test]
@@ -1979,7 +1986,8 @@ mod tests {
         };
         let inbound = convert_message(msg).unwrap();
         assert_eq!(inbound.id, "");
-        assert_eq!(inbound.text.as_deref(), Some(""));
+        // 空 item_list 视为非文本消息，text 应为 None
+        assert!(inbound.text.is_none());
     }
 
     #[test]

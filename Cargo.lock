@@ -873,6 +873,7 @@ name = "easybot-adapter-feishu"
 version = "0.0.6"
 dependencies = [
  "async-trait",
+ "base64",
  "chrono",
  "easybot-core",
  "larksuite-oapi-sdk-rs",

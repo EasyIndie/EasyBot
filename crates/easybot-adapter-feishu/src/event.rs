@@ -5,17 +5,21 @@
 
 use easybot_core::bus::EventBus;
 use easybot_core::types::event::GatewayEvent;
-use easybot_core::types::message::*;
+use easybot_core::types::message::{
+    ChatType, InboundMessage, MessageSender, MessageType, SenderRole,
+};
 
 use crate::types::*;
 
 /// 处理 `im.message.receive_v1` 事件
 ///
 /// 解析消息内容、发送者、聊天信息，构建 `InboundMessage` 并发布到 EventBus。
+/// `sender_role` 是可选的群成员角色，由调用方（lib.rs）预先解析。
 pub async fn handle_message_receive(
     event_data: serde_json::Value,
     event_bus: &EventBus,
     _bot_id: &str,
+    sender_role: Option<SenderRole>,
 ) {
     let receive_event: FeishuMessageReceiveEvent = match serde_json::from_value(event_data) {
         Ok(e) => e,
@@ -24,6 +28,9 @@ pub async fn handle_message_receive(
             return;
         }
     };
+
+    // 在移出字段前序列化原始数据（用于 metadata）
+    let raw_payload = serde_json::to_value(&receive_event).ok();
 
     let sender_id = receive_event.sender.sender_id.open_id;
     let message = receive_event.message;
@@ -74,7 +81,7 @@ pub async fn handle_message_receive(
             username: None,
             avatar_url: None,
             is_bot: receive_event.sender.sender_type == "app",
-            role: None,
+            role: sender_role,
             language_code: None,
         },
         recipient: None,
@@ -85,7 +92,7 @@ pub async fn handle_message_receive(
         reply_to: None,
         thread_id: None,
         mentioned: None,
-        metadata: None,
+        metadata: raw_payload,
     };
 
     let event = GatewayEvent::new(
@@ -130,7 +137,7 @@ mod tests {
         let mut rx = bus.subscribe("message.inbound");
 
         let data = make_event_data("group", "text", r#"{"text":"hello"}"#);
-        handle_message_receive(data, &bus, "bot_id").await;
+        handle_message_receive(data, &bus, "bot_id", None).await;
 
         // 验证事件被发布
         let event = tokio::time::timeout(std::time::Duration::from_secs(1), rx.recv())
@@ -155,7 +162,7 @@ mod tests {
         let mut rx = bus.subscribe("message.inbound");
 
         let data = make_event_data("p2p", "text", r#"{"text":"hi"}"#);
-        handle_message_receive(data, &bus, "bot_id").await;
+        handle_message_receive(data, &bus, "bot_id", None).await;
 
         let event = tokio::time::timeout(std::time::Duration::from_secs(1), rx.recv())
             .await
@@ -174,7 +181,7 @@ mod tests {
         let mut rx = bus.subscribe("message.inbound");
 
         let data = make_event_data("group", "image", r#"{"image_key":"img_abc"}"#);
-        handle_message_receive(data, &bus, "bot_id").await;
+        handle_message_receive(data, &bus, "bot_id", None).await;
 
         let event = tokio::time::timeout(std::time::Duration::from_secs(1), rx.recv())
             .await
@@ -192,7 +199,7 @@ mod tests {
         let mut rx = bus.subscribe("message.inbound");
 
         let data = make_event_data("unknown", "text", r#"{"text":"x"}"#);
-        handle_message_receive(data, &bus, "bot_id").await;
+        handle_message_receive(data, &bus, "bot_id", None).await;
 
         // 不应该有事件被发布
         let result = tokio::time::timeout(std::time::Duration::from_millis(200), rx.recv()).await;
@@ -209,7 +216,7 @@ mod tests {
 
         // content 不是有效 JSON
         let data = make_event_data("group", "text", "not_json");
-        handle_message_receive(data, &bus, "bot_id").await;
+        handle_message_receive(data, &bus, "bot_id", None).await;
 
         let event = tokio::time::timeout(std::time::Duration::from_secs(1), rx.recv())
             .await
@@ -228,7 +235,7 @@ mod tests {
 
         // 无效的事件数据（没有 message 字段）
         let invalid_data = serde_json::json!({"invalid": true});
-        handle_message_receive(invalid_data, &bus, "bot_id").await;
+        handle_message_receive(invalid_data, &bus, "bot_id", None).await;
 
         // 不应该发布事件
         let result = tokio::time::timeout(std::time::Duration::from_millis(200), rx.recv()).await;
@@ -255,7 +262,7 @@ mod tests {
                 "create_time": "0"
             }
         });
-        handle_message_receive(data, &bus, "bot_id").await;
+        handle_message_receive(data, &bus, "bot_id", None).await;
 
         // 使用旧字段名 msg_type 会导致解析失败，不应发布事件
         let result = tokio::time::timeout(std::time::Duration::from_millis(200), rx.recv()).await;
@@ -277,7 +284,7 @@ mod tests {
         {
             obj.insert("create_time".to_string(), serde_json::json!("not_a_number"));
         }
-        handle_message_receive(data, &bus, "bot_id").await;
+        handle_message_receive(data, &bus, "bot_id", None).await;
 
         let event = tokio::time::timeout(std::time::Duration::from_secs(1), rx.recv())
             .await

@@ -157,13 +157,26 @@ impl WebhookDispatcher {
             }
 
             // 构造签名头
-            let signature = wh.secret.as_ref().map(|secret| {
-                let mut mac = HmacSha256::new_from_slice(secret.as_bytes())
-                    .expect("HMAC key should be valid");
-                mac.update(&payload_bytes);
-                let result = mac.finalize();
-                let code = result.into_bytes();
-                format!("sha256={}", hex_encode(&code))
+            let signature = wh.secret.as_ref().and_then(|secret| {
+                if secret.is_empty() {
+                    return None;
+                }
+                match HmacSha256::new_from_slice(secret.as_bytes()) {
+                    Ok(mut mac) => {
+                        mac.update(&payload_bytes);
+                        let result = mac.finalize();
+                        let code = result.into_bytes();
+                        Some(format!("sha256={}", hex_encode(&code)))
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            webhook = %wh.name,
+                            error = %e,
+                            "Webhook HMAC key is invalid, skipping signature"
+                        );
+                        None
+                    }
+                }
             });
 
             // 发送 POST 请求

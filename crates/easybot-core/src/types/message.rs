@@ -298,7 +298,7 @@ pub struct DraftResult {
 // ── 支持类型 ──
 
 /// 聊天类型
-#[derive(Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, ToSchema, PartialEq)]
 pub enum ChatType {
     /// 私聊
     Dm,

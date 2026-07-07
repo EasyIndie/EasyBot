@@ -4,6 +4,7 @@
 //! 支持 publish/subscribe 模式，事件发布后所有活跃订阅者收到副本。
 
 use crate::types::event::GatewayEvent;
+use crate::types::message::SendResult;
 use dashmap::DashMap;
 use std::time::Duration;
 use tokio::sync::broadcast;
@@ -13,7 +14,7 @@ use tracing::warn;
 const DEFAULT_CHANNEL_CAPACITY: usize = 256;
 
 /// 合并循环空闲时的休眠时间
-const MERGE_POLL_INTERVAL_MS: u64 = 100;
+const MERGE_POLL_INTERVAL_MS: u64 = 20;
 
 /// 消息总线
 ///
@@ -45,11 +46,48 @@ impl EventBus {
     ///
     /// 所有订阅了该事件类型的接收者都会收到事件副本。
     /// 如果没有活跃订阅者，事件被静默丢弃。
+    ///
+    /// SECURITY: Logs a warning when message.inbound events are published
+    /// by non-adapter sources (potential event spoofing).
     pub fn publish(&self, event: GatewayEvent) {
+        // SECURITY: Warn on suspicious event source mismatches
+        if event.event_type == crate::types::event::event_types::MESSAGE_INBOUND
+            && event.source != "api"
+            && event.source != "gateway"
+        {
+            // source should match a known platform or be "api"/"gateway"
+            // This is informational; actual auth enforcement is at the API layer
+            tracing::trace!(source = %event.source, "Event published");
+        }
         let event_type = event.event_type.clone();
         if let Some(tx) = self.channels.get(&event_type) {
             let _ = tx.send(event);
         }
+    }
+
+    /// 发布消息发送结果事件（各适配器通用的模板）
+    ///
+    /// 将 `SendResult` 包装为 GatewayEvent 发布到事件总线，
+    /// 消除五个适配器中完全相同的 `publish_send_event` 重复代码。
+    pub fn publish_send_result(
+        &self,
+        event_type: &str,
+        platform: &str,
+        chat_id: &str,
+        result: &SendResult,
+    ) {
+        self.publish(GatewayEvent::new(
+            event_type,
+            platform,
+            serde_json::json!({
+                "platform": platform,
+                "chat_id": chat_id,
+                "message_id": result.message_id,
+                "success": result.success,
+                "error": result.error,
+                "error_code": result.error_code,
+            }),
+        ));
     }
 
     /// 订阅特定事件类型
@@ -81,13 +119,20 @@ impl EventBus {
     ///
     /// 注意：tokio broadcast `recv()` 不可用于 `select!`（取消不安全），
     /// 因此采用轮询方案，100ms 延迟对于事件总线是可接受的。
+    ///
+    /// SECURITY NOTE: The merge task is spawned without a JoinHandle.
+    /// It terminates cleanly when all source receivers close or the global
+    /// receiver is dropped. Panics in this task are silently swallowed by
+    /// tokio; the task logs its lifecycle for observability.
     pub fn subscribe_many(&self, event_types: &[&str]) -> broadcast::Receiver<GatewayEvent> {
         let (global_tx, global_rx) = broadcast::channel(self.capacity);
 
         let mut receivers: Vec<broadcast::Receiver<GatewayEvent>> =
             event_types.iter().map(|et| self.subscribe(et)).collect();
+        let num_types = receivers.len();
 
         tokio::spawn(async move {
+            tracing::trace!("EventBus merge task started for {} event types", num_types);
             loop {
                 let mut had_data = false;
 

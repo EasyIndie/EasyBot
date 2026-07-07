@@ -87,6 +87,8 @@ impl SessionManager {
                     source,
                     reset_policy: DEFAULT_RESET_POLICY,
                     metadata: serde_json::json!({}),
+                    last_message: None,
+                    last_message_at: None,
                 };
                 vacant.insert(session.clone());
                 // 持久化新会话
@@ -161,9 +163,41 @@ impl SessionManager {
         self.store.clone()
     }
 
+    /// 更新会话的最近消息记录
+    ///
+    /// 在收到入站消息时调用，记录消息摘要和时间戳。
+    pub async fn update_last_message(
+        &self,
+        key: &str,
+        text: Option<String>,
+        timestamp: i64,
+    ) -> Option<Session> {
+        if let Some(mut entry) = self.sessions.get_mut(key) {
+            let session = entry.value_mut();
+            session.last_message = text.map(|t| {
+                // 取前 100 个字符作为摘要
+                if t.len() > 100 {
+                    format!("{}...", &t[..97])
+                } else {
+                    t
+                }
+            });
+            session.last_message_at = Some(timestamp);
+            let cloned = session.clone();
+            if let Some(ref store) = self.store
+                && let Err(e) = store.upsert_session(&cloned).await
+            {
+                tracing::warn!(error = %e, session_key = %cloned.key, "持久化会话最近消息失败");
+            }
+            Some(cloned)
+        } else {
+            None
+        }
+    }
+
     /// 更新会话 source 字段（专用于 enrichment）
     ///
-    /// 异步调用，不阻塞主处理路径。仅更新 user_username 和 user_role 两个字段。
+    /// 异步调用，不阻塞主处理路径。更新 user_username、user_role、user_name 和 chat_name。
     pub async fn update_source_fields(
         &self,
         key: &str,
@@ -182,6 +216,9 @@ impl SessionManager {
             if enriched.user_name.is_some() {
                 session.source.user_name = enriched.user_name.clone();
             }
+            if enriched.chat_name.is_some() {
+                session.source.chat_name = enriched.chat_name.clone();
+            }
             let cloned = session.clone();
             if let Some(ref store) = self.store
                 && let Err(e) = store.upsert_session(&cloned).await
@@ -194,6 +231,9 @@ impl SessionManager {
         }
     }
 
+    /// SECURITY: Maximum size for session metadata (4KB) to prevent storage bloat.
+    const MAX_SESSION_METADATA_SIZE: usize = 4096;
+
     /// 更新会话
     ///
     /// 更新 DashMap 中的会话，并持久化到存储。
@@ -205,6 +245,17 @@ impl SessionManager {
                 session.reset_policy = policy;
             }
             if let Some(meta) = mutation.metadata {
+                // SECURITY: Validate metadata size to prevent storage bloat
+                let meta_json = serde_json::to_string(&meta).unwrap_or_default();
+                if meta_json.len() > Self::MAX_SESSION_METADATA_SIZE {
+                    tracing::warn!(
+                        session_key = %key,
+                        size = meta_json.len(),
+                        "Rejected oversized session metadata (max {} bytes)",
+                        Self::MAX_SESSION_METADATA_SIZE
+                    );
+                    return None;
+                }
                 session.metadata = meta;
             }
             let cloned = session.clone();

@@ -43,7 +43,7 @@ impl LogCollector {
         limit: usize,
         since: Option<i64>,
     ) -> Vec<LogEntry> {
-        let buf = self.buffer.read().unwrap();
+        let buf = self.buffer.read().unwrap_or_else(|e| e.into_inner());
         let limit = limit.min(500);
 
         let level = level.map(|l| l.to_uppercase());
@@ -80,7 +80,7 @@ impl LogCollector {
 
     /// 获取日志总数
     pub fn total(&self) -> usize {
-        self.buffer.read().unwrap().len()
+        self.buffer.read().unwrap_or_else(|e| e.into_inner()).len()
     }
 }
 
@@ -117,7 +117,7 @@ impl<S: tracing::Subscriber + for<'a> LookupSpan<'a>> Layer<S> for LogCollector 
             message,
         };
 
-        let mut buf = self.buffer.write().unwrap();
+        let mut buf = self.buffer.write().unwrap_or_else(|e| e.into_inner());
         if buf.len() >= self.max_entries {
             buf.pop_front();
         }

@@ -64,6 +64,26 @@ html { touch-action: manipulation; }
 .badge-type-system   { background: #3a1a1a; color: #f85149; }  /* 系统-红 */
 .badge-type-unknown  { background: #2a2a2a; color: #8b949e; }  /* 其他-灰 */
 [class^="badge-type-"] { font-size: 11px; }
+
+/* ── 平台徽标 ── */
+.badge-platform-telegram  { background: #1a2a47; color: #79c0ff; }
+.badge-platform-discord   { background: #1e1a3a; color: #5865F2; }
+.badge-platform-feishu    { background: #1a3a2a; color: #7ee787; }
+.badge-platform-qq        { background: #3a2a1a; color: #e3b341; }
+.badge-platform-wechat    { background: #1a3a30; color: #3eb575; }
+[class^="badge-platform-"] { font-size: 11px; }
+
+/* ── 会话类型徽标 ── */
+.badge-chattype-Dm      { background: #2a1a47; color: #d4a0ff; }
+.badge-chattype-Group   { background: #3a2a1a; color: #e3b341; }
+.badge-chattype-Channel { background: #1a3a47; color: #56d4dd; }
+.badge-chattype-Thread  { background: #3a1a3a; color: #f778ba; }
+[class^="badge-chattype-"] { font-size: 11px; }
+
+/* ── 消息角色徽标 ── */
+.badge-role-User      { background: #1a3a2a; color: #7ee787; }
+.badge-role-Assistant { background: #1a2a47; color: #79c0ff; }
+[class^="badge-role-"] { font-size: 11px; }
 table { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 600px; }
 table th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border-muted); }
 table th { background: var(--bg-tertiary); color: var(--text-muted); font-weight: 500; position: sticky; top: 0; }

@@ -30,14 +30,15 @@ mod auth;
 mod gateway;
 mod types;
 
+use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use async_trait::async_trait;
 use easybot_core::bus::EventBus;
 use easybot_core::types::adapter::*;
 use easybot_core::types::error::GatewayError;
-use easybot_core::types::event::GatewayEvent;
 use easybot_core::types::event::event_types;
 use easybot_core::types::message::*;
 use tokio::sync::broadcast;
@@ -67,6 +68,9 @@ pub struct QqAdapter {
     http_client: std::sync::OnceLock<reqwest::Client>,
     bot_user_id: Option<String>,
     token_store: Option<QqTokenStore>,
+    /// Tracks chat_id → ChatType mapping, populated from inbound messages.
+    /// Used to route outbound messages directly to the correct endpoint.
+    chat_types: Arc<Mutex<HashMap<String, ChatType>>>,
 }
 
 impl QqAdapter {
@@ -133,6 +137,7 @@ impl QqAdapter {
             http_client: std::sync::OnceLock::new(),
             bot_user_id: None,
             token_store: None,
+            chat_types: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -189,9 +194,12 @@ impl QqAdapter {
             .send_api_request_raw(&token, method.clone(), path, body)
             .await;
 
-        // token 过期（HTTP 401）时刷新一次并重试
+        // Token expiry (HTTP 401) — refresh once and retry.
+        // SECURITY: Match the HTTP status in the formatted error message
+        // "QQ API error (METHOD path): STATUS - body" to avoid false positives
+        // from body content that happens to contain "401".
         if let Err(GatewayError::Internal(msg)) = &result
-            && msg.contains("401")
+            && (msg.contains(": 401 ") || msg.contains(": 401 -"))
         {
             tracing::warn!(
                 "QQ API 返回 401 Unauthorized（token 可能已过期），尝试刷新 token 后重试"
@@ -272,9 +280,12 @@ impl QqAdapter {
         let token = self.bot_token()?;
         let result = self.api_delete_raw(&token, path).await;
 
-        // token 过期（HTTP 401）时刷新一次并重试
+        // Token expiry (HTTP 401) — refresh once and retry.
+        // SECURITY: Match the HTTP status in the formatted error message
+        // "QQ API error (METHOD path): STATUS - body" to avoid false positives
+        // from body content that happens to contain "401".
         if let Err(GatewayError::Internal(msg)) = &result
-            && msg.contains("401")
+            && (msg.contains(": 401 ") || msg.contains(": 401 -"))
         {
             tracing::warn!(
                 "QQ API 返回 401 Unauthorized（token 可能已过期），尝试刷新 token 后重试"
@@ -328,13 +339,67 @@ fn mime_to_file_type(mime_type: &str) -> u32 {
 // ── 消息发送（自动判断频道/群聊） ──
 
 impl QqAdapter {
-    /// 尝试发送消息，自动判断是频道消息还是群聊消息
+    /// Set the known chat type for a chat_id (used by tests to simulate
+    /// having received an inbound message before sending).
+    #[doc(hidden)]
+    pub fn set_chat_type(&self, chat_id: &str, chat_type: ChatType) {
+        self.chat_types
+            .lock()
+            .unwrap()
+            .insert(chat_id.to_string(), chat_type);
+    }
+
+    /// 判断错误是否为"资源不存在"（级联到下一个端点），
+    /// 如果是鉴权/限流/其他错误则立即返回，不级联。
+    fn is_not_found_error(e: &GatewayError) -> bool {
+        let msg = e.to_string();
+        // QQ 业务错误码 11263 = 资源不存在（频道/群/用户）
+        // HTTP 404 = 端点不存在
+        msg.contains("404") || msg.contains("11263")
+    }
+
+    /// 发送消息到 QQ，根据已知的 chat type 直接路由到正确端点。
+    ///
+    /// 优先查 chat_types 映射表（由入站消息自动填充），避免盲目的三级回退。
+    /// 仅在 chat type 未知时（如首次主动发消息给新会话）回退到级联尝试。
     async fn try_send(
         &self,
         chat_id: &str,
         body: &serde_json::Value,
     ) -> Result<QqSendMessageResponse, GatewayError> {
-        // 先尝试频道端点
+        // Fast path: route directly based on known chat type
+        // Lock scope: release before any .await to keep the future Send
+        let known_type = { self.chat_types.lock().unwrap().get(chat_id).copied() };
+        if let Some(chat_type) = known_type {
+            let path = match chat_type {
+                ChatType::Channel => format!("/channels/{}/messages", chat_id),
+                ChatType::Group => format!("/v2/groups/{}/messages", chat_id),
+                ChatType::Dm => format!("/v2/users/{}/messages", chat_id),
+                ChatType::Thread => {
+                    // QQ does not use Thread type — fall through to cascade
+                    tracing::debug!(
+                        "QQ unexpected chat_type Thread for {}, falling back to cascade",
+                        chat_id
+                    );
+                    return self.try_send_cascade(chat_id, body).await;
+                }
+            };
+            return self.api_post::<QqSendMessageResponse>(&path, body).await;
+        }
+
+        // Slow path: chat type unknown — cascade through all endpoints
+        // (first outbound message to a chat we haven't received an inbound message from)
+        self.try_send_cascade(chat_id, body).await
+    }
+
+    /// Fallback: cascade through channel → group → C2C endpoints.
+    /// Only used when the chat type is not yet known.
+    async fn try_send_cascade(
+        &self,
+        chat_id: &str,
+        body: &serde_json::Value,
+    ) -> Result<QqSendMessageResponse, GatewayError> {
+        // Try channel endpoint first
         let channel_path = format!("/channels/{}/messages", chat_id);
         match self
             .api_post::<QqSendMessageResponse>(&channel_path, body)
@@ -342,9 +407,9 @@ impl QqAdapter {
         {
             Ok(resp) => return Ok(resp),
             Err(e) => {
-                if e.to_string().contains("频道不存在") || e.to_string().contains("11263") {
+                if Self::is_not_found_error(&e) {
                     tracing::debug!(
-                        "QQ chat_id {} is not a channel, trying other endpoints",
+                        "QQ chat_id {} is not a channel, trying group endpoint",
                         chat_id
                     );
                 } else {
@@ -352,7 +417,7 @@ impl QqAdapter {
                 }
             }
         }
-        // 尝试群聊端点（v2 API）
+        // Try group endpoint (v2 API)
         let group_path = format!("/v2/groups/{}/messages", chat_id);
         match self
             .api_post::<QqSendMessageResponse>(&group_path, body)
@@ -360,17 +425,14 @@ impl QqAdapter {
         {
             Ok(resp) => return Ok(resp),
             Err(e) => {
-                if e.to_string().contains("群")
-                    || e.to_string().contains("group")
-                    || e.to_string().contains("11263")
-                {
+                if Self::is_not_found_error(&e) {
                     tracing::debug!("QQ chat_id {} is not a group, trying C2C endpoint", chat_id);
                 } else {
                     return Err(e);
                 }
             }
         }
-        // 尝试 C2C 私聊端点（v2 API）
+        // Try C2C endpoint (v2 API)
         let c2c_path = format!("/v2/users/{}/messages", chat_id);
         self.api_post::<QqSendMessageResponse>(&c2c_path, body)
             .await
@@ -560,9 +622,9 @@ impl QqAdapter {
                 Ok(resp) => return Ok(resp),
                 Err(e) => {
                     tracing::debug!(
-                        "QQ media upload to {} failed: {}, trying next endpoint",
+                        "QQ media upload to {} failed ({}), trying next endpoint",
                         endpoint_type,
-                        e
+                        e.error_code()
                     );
                     last_error = Some(e);
                 }
@@ -570,6 +632,119 @@ impl QqAdapter {
         }
         Err(last_error.unwrap_or_else(|| {
             GatewayError::Internal("QQ upload: all endpoints failed".to_string())
+        }))
+    }
+
+    /// Upload media and send via msg_type: 7 to a known Group chat.
+    ///
+    /// v2 group endpoint does not support msg_type: 1 (image embed) or
+    /// msg_type: 2 (markdown, requires template permission). This method
+    /// downloads/decodes the media, uploads to the group file endpoint,
+    /// and sends with msg_type: 7.
+    async fn send_group_media_upload(
+        &self,
+        chat_id: &str,
+        media: &MediaAttachment,
+        text: Option<String>,
+    ) -> Result<SendResult, GatewayError> {
+        // Resolve file data from base64 or URL
+        let client = self.client().clone();
+
+        let (file_data, filename, mime_type) = if let Some(data_b64) = &media.data {
+            use base64::Engine;
+            let decoded = base64::engine::general_purpose::STANDARD
+                .decode(data_b64)
+                .map_err(|e| {
+                    GatewayError::Internal(format!("QQ group upload: base64 decode failed: {}", e))
+                })?;
+            let fname = media.filename.clone().unwrap_or_else(|| "file".to_string());
+            (decoded, fname, media.mime_type.clone())
+        } else if let Some(file_url) = &media.url {
+            let resp = client.get(file_url).send().await.map_err(|e| {
+                GatewayError::Internal(format!("QQ group upload: download failed: {}", e))
+            })?;
+            let ct = resp
+                .headers()
+                .get("content-type")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("application/octet-stream")
+                .to_string();
+            let data = resp.bytes().await.map_err(|e| {
+                GatewayError::Internal(format!("QQ group upload: download read failed: {}", e))
+            })?;
+            let fname = media
+                .filename
+                .clone()
+                .or_else(|| file_url.split('/').next_back().map(|s| s.to_string()))
+                .unwrap_or_else(|| "file".to_string());
+            (data.to_vec(), fname, ct)
+        } else {
+            return Err(GatewayError::Internal(
+                "No media data or URL provided for QQ group upload".to_string(),
+            ));
+        };
+
+        // Try group endpoint first, then C2C as fallback
+        let mut last_error = None;
+        for endpoint_type in &["groups", "users"] {
+            let upload_result = if text.as_ref().is_some_and(|t| !t.is_empty()) {
+                self.send_media_via_upload(
+                    chat_id,
+                    endpoint_type,
+                    file_data.clone(),
+                    &filename,
+                    &mime_type,
+                    text.clone(),
+                )
+                .await
+            } else {
+                self.upload_file_via_json(
+                    endpoint_type,
+                    chat_id,
+                    file_data.clone(),
+                    &mime_type,
+                    true,
+                )
+                .await
+                .map(|resp| QqSendMessageResponse {
+                    id: resp
+                        .id
+                        .unwrap_or_else(|| format!("file:{}", resp.file_uuid)),
+                    timestamp: resp.timestamp,
+                })
+            };
+            match upload_result {
+                Ok(resp) => {
+                    self.messages_out.fetch_add(1, Ordering::Relaxed);
+                    let send_result = SendResult {
+                        success: true,
+                        message_id: Some(resp.id),
+                        timestamp: resp.timestamp.and_then(|t| t.parse::<i64>().ok()),
+                        error: None,
+                        error_code: None,
+                        retryable: false,
+                    };
+                    publish_send_event(
+                        &self.event_bus,
+                        event_types::MESSAGE_SENT,
+                        chat_id,
+                        &send_result,
+                    );
+                    return Ok(send_result);
+                }
+                Err(e) => {
+                    tracing::debug!(
+                        "QQ group media upload to {} failed ({}), trying next",
+                        endpoint_type,
+                        e.error_code()
+                    );
+                    last_error = Some(e);
+                }
+            }
+        }
+        self.errors.fetch_add(1, Ordering::Relaxed);
+        Err(last_error.unwrap_or_else(|| {
+            GatewayError::Internal("QQ group upload: all endpoints failed".to_string())
         }))
     }
 }
@@ -581,18 +756,7 @@ fn publish_send_event(
     result: &SendResult,
 ) {
     if let Some(bus) = event_bus {
-        bus.publish(GatewayEvent::new(
-            event_type,
-            "qq",
-            serde_json::json!({
-                "platform": "qq",
-                "chat_id": chat_id,
-                "message_id": result.message_id,
-                "success": result.success,
-                "error": result.error,
-                "error_code": result.error_code,
-            }),
-        ));
+        bus.publish_send_result(event_type, "qq", chat_id, result);
     }
 }
 
@@ -704,8 +868,12 @@ impl PlatformAdapter for QqAdapter {
                 .and_then(|c| c.base_url.clone())
                 .unwrap_or_else(|| QQ_API.to_string());
             let hb = self.heartbeat.clone();
+            let chat_types = self.chat_types.clone();
             tokio::spawn(async move {
-                Self::gateway_loop(ts_clone, base_url, eb, bot_id, cancel_rx, msg_in, hb).await;
+                Self::gateway_loop(
+                    ts_clone, base_url, eb, bot_id, cancel_rx, msg_in, hb, chat_types,
+                )
+                .await;
             });
         }
 
@@ -823,11 +991,30 @@ impl PlatformAdapter for QqAdapter {
     }
 
     async fn send_media(&self, params: SendMediaParams) -> Result<SendResult, GatewayError> {
-        // 如果有 base64 data 但没有 URL，优先尝试 C2C 文件上传路径
-        // （QQ API 中只有 C2C 端点支持直接二进制文件上传）。
-        // 如果失败（可能因为 chat_id 是频道/群聊而非 C2C 用户），
-        // 则降级到下方的 try_send 链路（频道→群聊→C2C）。
-        if params.media.url.is_none() && params.media.data.is_some() {
+        let known_type = self
+            .chat_types
+            .lock()
+            .unwrap()
+            .get(&params.chat_id)
+            .copied();
+
+        // Group (v2 API): use file upload + msg_type: 7.
+        // v2 group endpoint does NOT support msg_type: 1 (image embed) or
+        // msg_type: 2 (markdown, requires template permission). The content
+        // field is always parsed as markdown by the QQ API, so msg_type: 7
+        // is the only reliable way to send media to groups.
+        if known_type == Some(ChatType::Group) {
+            return self
+                .send_group_media_upload(&params.chat_id, &params.media, params.text.clone())
+                .await;
+        }
+
+        // If we know this is a C2C chat, use direct C2C upload path
+        if params.media.url.is_none()
+            && params.media.data.is_some()
+            && known_type != Some(ChatType::Channel)
+            && known_type != Some(ChatType::Group)
+        {
             match self
                 .send_c2c_media_upload_only(&params.chat_id, &params.media, params.text.clone())
                 .await
@@ -875,7 +1062,46 @@ impl PlatformAdapter for QqAdapter {
             })
             .unwrap_or_default();
         let text_content = params.text.clone().unwrap_or_default();
-        // 先试用 msg_type: 2（图文混排），频道/群聊支持此格式
+
+        // Dm (v2 API): use msg_type: 1 (image embed with URL).
+        // v2 C2C endpoint interprets msg_type: 2 as markdown, not rich media.
+        if known_type == Some(ChatType::Dm) {
+            let img_body = serde_json::json!({
+                "msg_type": 1,
+                "content": "",
+                "image": image_url,
+            });
+            let send_result = match self.try_send(&params.chat_id, &img_body).await {
+                Ok(resp) => {
+                    self.messages_out.fetch_add(1, Ordering::Relaxed);
+                    SendResult {
+                        success: true,
+                        message_id: Some(resp.id),
+                        timestamp: resp.timestamp.and_then(|t| t.parse::<i64>().ok()),
+                        error: None,
+                        error_code: None,
+                        retryable: false,
+                    }
+                }
+                Err(e) => {
+                    self.errors.fetch_add(1, Ordering::Relaxed);
+                    SendResult::fail(e.to_string(), true)
+                }
+            };
+            publish_send_event(
+                &self.event_bus,
+                if send_result.success {
+                    event_types::MESSAGE_SENT
+                } else {
+                    event_types::MESSAGE_FAILED
+                },
+                &params.chat_id,
+                &send_result,
+            );
+            return Ok(send_result);
+        }
+
+        // Channel or unknown: try msg_type: 2 (rich media with text, channel API)
         let body = serde_json::json!({
             "content": text_content,
             "image": image_url,
@@ -1376,6 +1602,7 @@ mod tests {
             &event_bus,
             "bot_id_001",
             &messages_in,
+            &Arc::new(Mutex::new(HashMap::new())),
         )
         .await;
 
@@ -1387,6 +1614,7 @@ mod tests {
         if let Some(e) = event {
             assert_eq!(e.event_type, "message.inbound");
             assert_eq!(e.source, "qq");
+            assert_eq!(e.data["chat_type"], "Channel");
         }
         assert_eq!(messages_in.load(Ordering::Relaxed), 1);
     }
@@ -1401,7 +1629,7 @@ mod tests {
             "id": "gmsg001",
             "group_openid": "GROUP_OPENID_001",
             "content": "@bot hello group",
-            "author": {"member_openid": "MEMBER_001"},
+            "author": {"member_openid": "MEMBER_001", "member_role": "admin"},
             "timestamp": "2026-06-01T12:00:00+00:00"
         });
         let payload = GatewayPayload {
@@ -1417,6 +1645,7 @@ mod tests {
             &event_bus,
             "bot_id",
             &messages_in,
+            &Arc::new(Mutex::new(HashMap::new())),
         )
         .await;
 
@@ -1465,6 +1694,7 @@ mod tests {
             &event_bus,
             "bot_id",
             &messages_in,
+            &Arc::new(Mutex::new(HashMap::new())),
         )
         .await;
 
@@ -1513,6 +1743,7 @@ mod tests {
             &event_bus,
             "bot_id",
             &messages_in,
+            &Arc::new(Mutex::new(HashMap::new())),
         )
         .await;
 
@@ -1554,6 +1785,7 @@ mod tests {
             &event_bus,
             "bot_id",
             &messages_in,
+            &Arc::new(Mutex::new(HashMap::new())),
         )
         .await;
 
@@ -1593,6 +1825,7 @@ mod tests {
             &event_bus,
             "bot_self",
             &messages_in,
+            &Arc::new(Mutex::new(HashMap::new())),
         )
         .await;
 
@@ -1621,6 +1854,7 @@ mod tests {
             &event_bus,
             "bot_id",
             &messages_in,
+            &Arc::new(Mutex::new(HashMap::new())),
         )
         .await;
 
@@ -1648,6 +1882,7 @@ mod tests {
             &event_bus,
             "bot_id",
             &messages_in,
+            &Arc::new(Mutex::new(HashMap::new())),
         )
         .await;
 
@@ -1680,6 +1915,7 @@ mod tests {
             &event_bus,
             "bot_id",
             &messages_in,
+            &Arc::new(Mutex::new(HashMap::new())),
         )
         .await;
 
@@ -1715,6 +1951,7 @@ mod tests {
             &event_bus,
             "bot_self",
             &messages_in,
+            &Arc::new(Mutex::new(HashMap::new())),
         )
         .await;
 

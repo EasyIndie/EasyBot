@@ -10,6 +10,7 @@
 
 mod types;
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -23,8 +24,12 @@ use easybot_core::types::error::GatewayError;
 use easybot_core::types::event::GatewayEvent;
 use easybot_core::types::event::event_types;
 use easybot_core::types::message::*;
-use tokio::sync::broadcast;
+use tokio::sync::{Mutex as AsyncMutex, broadcast};
 use types::*;
+
+/// 群组管理员列表缓存（chat_id → [(user_id, role)]）
+/// 初始通过 getChatAdministrators 填充，之后由 chat_member 事件实时更新
+type AdminCache = Arc<AsyncMutex<HashMap<i64, Vec<(i64, SenderRole)>>>>;
 
 /// Telegram Bot API 基础 URL
 const TELEGRAM_API: &str = "https://api.telegram.org/bot";
@@ -49,6 +54,8 @@ pub struct TelegramAdapter {
     heartbeat: Heartbeat,
     /// 缓存的 HTTP 客户端（连接池复用，延迟初始化）
     http_client: OnceLock<reqwest::Client>,
+    /// 群组管理员列表缓存（事件驱动更新，无需 TTL）
+    admin_cache: AdminCache,
 }
 
 impl TelegramAdapter {
@@ -83,6 +90,7 @@ impl TelegramAdapter {
             cancel_tx: None,
             heartbeat: Heartbeat::new(),
             http_client: OnceLock::new(),
+            admin_cache: Arc::new(AsyncMutex::new(HashMap::new())),
         }
     }
 
@@ -107,7 +115,12 @@ impl TelegramAdapter {
     }
 
     /// 将 Telegram 消息转换为网关 InboundMessage
-    fn convert_message(tg_msg: TelegramMessage) -> Option<InboundMessage> {
+    fn convert_message(
+        tg_msg: TelegramMessage,
+        sender_role: Option<SenderRole>,
+    ) -> Option<InboundMessage> {
+        // 在移出字段前序列化原始数据
+        let raw_payload = serde_json::to_value(&tg_msg).ok();
         let chat_id = tg_msg.chat.id.to_string();
         let platform = "telegram".to_string();
         let text = tg_msg.text.or(tg_msg.caption);
@@ -128,7 +141,7 @@ impl TelegramAdapter {
                 username: u.username,
                 avatar_url: None,
                 is_bot: u.is_bot,
-                role: None,
+                role: sender_role,
                 language_code: u.language_code,
             })
             .unwrap_or_else(|| MessageSender {
@@ -179,7 +192,7 @@ impl TelegramAdapter {
             reply_to,
             mentions: None,
             mentioned: None,
-            metadata: None,
+            metadata: raw_payload,
         })
     }
 
@@ -233,6 +246,7 @@ impl TelegramAdapter {
         event_bus: Arc<EventBus>,
         mut cancel_rx: broadcast::Receiver<()>,
         heartbeat: Heartbeat,
+        admin_cache: AdminCache,
     ) {
         let client = reqwest::Client::new();
         let mut offset: i64 = 0;
@@ -252,8 +266,19 @@ impl TelegramAdapter {
                                 if update.update_id >= offset {
                                     offset = update.update_id + 1;
                                 }
-                                if let Some(tg_msg) = update.message
-                                    && let Some(inbound) = Self::convert_message(tg_msg) {
+                                // Handle chat_member updates → real-time admin cache update
+                                if let Some(ref member_update) = update.chat_member {
+                                    Self::update_admin_cache(&admin_cache, member_update).await;
+                                }
+                                // Handle messages → resolve sender role from cache/API
+                                if let Some(tg_msg) = update.message {
+                                    let chat_id = tg_msg.chat.id;
+                                    let user_id = tg_msg.from.as_ref().map(|u| u.id);
+                                    let sender_role = Self::resolve_sender_role(
+                                        &admin_cache, &client, &base_url, &token,
+                                        chat_id, user_id,
+                                    ).await;
+                                    if let Some(inbound) = Self::convert_message(tg_msg, sender_role) {
                                         let event = GatewayEvent::new(
                                             event_types::MESSAGE_INBOUND,
                                             "telegram",
@@ -261,6 +286,7 @@ impl TelegramAdapter {
                                         );
                                         event_bus.publish(event);
                                     }
+                                }
                             }
                         }
                         Err(e) => {
@@ -284,7 +310,7 @@ impl TelegramAdapter {
         let params = serde_json::json!({
             "offset": *offset,
             "timeout": POLL_TIMEOUT,
-            "allowed_updates": ["message"],
+            "allowed_updates": ["message", "chat_member"],
         });
 
         let resp = client
@@ -310,6 +336,112 @@ impl TelegramAdapter {
             ))
         }
     }
+
+    /// 调用 Telegram getChatAdministrators API 获取群组管理员列表
+    async fn fetch_admin_list(
+        client: &reqwest::Client,
+        base_url: &str,
+        token: &str,
+        chat_id: i64,
+    ) -> Option<Vec<(i64, SenderRole)>> {
+        let url = format!("{}{}/getChatAdministrators", base_url, token);
+        let body = serde_json::json!({ "chat_id": chat_id });
+
+        let resp = client.post(&url).json(&body).send().await.ok()?;
+        let api_resp: TelegramApiResponse<Vec<TelegramChatMember>> = resp.json().await.ok()?;
+        if !api_resp.ok {
+            return None;
+        }
+        api_resp.result.map(|members| {
+            members
+                .iter()
+                .map(|m| {
+                    let role = match m.status.as_str() {
+                        "creator" => SenderRole::Owner,
+                        "administrator" => SenderRole::Admin,
+                        _ => SenderRole::Member,
+                    };
+                    (m.user.id, role)
+                })
+                .collect()
+        })
+    }
+
+    /// 解析发送者角色：先查缓存，未命中则调 API 获取后缓存
+    async fn resolve_sender_role(
+        admin_cache: &AdminCache,
+        client: &reqwest::Client,
+        base_url: &str,
+        token: &str,
+        chat_id: i64,
+        user_id: Option<i64>,
+    ) -> Option<SenderRole> {
+        let user_id = user_id?;
+
+        // 1. 查缓存（异步锁，等待获取）
+        {
+            let cache = admin_cache.lock().await;
+            if let Some(admins) = cache.get(&chat_id) {
+                return admins
+                    .iter()
+                    .find(|(uid, _)| *uid == user_id)
+                    .map(|(_, role)| role.clone());
+            }
+        }
+
+        // 2. 缓存未命中 → 调 API 获取全量管理员列表并缓存
+        let admins = Self::fetch_admin_list(client, base_url, token, chat_id).await;
+        if let Some(admins) = admins {
+            let role = admins
+                .iter()
+                .find(|(uid, _)| *uid == user_id)
+                .map(|(_, role)| role.clone());
+
+            // 更新缓存（即使 role 为 None，也缓存空列表避免重复请求）
+            let mut cache = admin_cache.lock().await;
+            cache.insert(chat_id, admins);
+
+            return role;
+        }
+
+        // API 调用失败（私聊/机器人不在群中），不缓存
+        None
+    }
+
+    /// 处理 chat_member 更新事件 → 实时更新 admin 缓存
+    async fn update_admin_cache(admin_cache: &AdminCache, event: &TelegramChatMemberUpdated) {
+        let chat_id = event.chat.id;
+        let user_id = event.new_chat_member.user.id;
+        let new_status = event.new_chat_member.status.as_str();
+        let old_status = event.old_chat_member.status.as_str();
+
+        // 仅角色有实际变化时才更新缓存
+        if new_status == old_status {
+            return;
+        }
+
+        let mut cache = admin_cache.lock().await;
+        if let Some(admins) = cache.get_mut(&chat_id) {
+            // 已有缓存 → 增/删/改该成员
+            admins.retain(|(uid, _)| *uid != user_id);
+            match new_status {
+                "creator" => admins.push((user_id, SenderRole::Owner)),
+                "administrator" => admins.push((user_id, SenderRole::Admin)),
+                _ => {} // 降级为普通成员 → 已从列表中移除
+            }
+        } else {
+            // 首次遇到该群聊 → 仅缓存该单条记录（下一条消息会触发全量填充）
+            match new_status {
+                "creator" => {
+                    cache.insert(chat_id, vec![(user_id, SenderRole::Owner)]);
+                }
+                "administrator" => {
+                    cache.insert(chat_id, vec![(user_id, SenderRole::Admin)]);
+                }
+                _ => {}
+            }
+        }
+    }
 }
 
 impl Default for TelegramAdapter {
@@ -318,7 +450,7 @@ impl Default for TelegramAdapter {
     }
 }
 
-/// Publish send result event via event bus
+/// Publish send result via the unified EventBus method
 fn publish_send_event(
     event_bus: &Option<Arc<EventBus>>,
     event_type: &str,
@@ -326,18 +458,7 @@ fn publish_send_event(
     result: &SendResult,
 ) {
     if let Some(bus) = event_bus {
-        bus.publish(GatewayEvent::new(
-            event_type,
-            "telegram",
-            serde_json::json!({
-                "platform": "telegram",
-                "chat_id": chat_id,
-                "message_id": result.message_id,
-                "success": result.success,
-                "error": result.error,
-                "error_code": result.error_code,
-            }),
-        ));
+        bus.publish_send_result(event_type, "telegram", chat_id, result);
     }
 }
 
@@ -444,9 +565,10 @@ impl PlatformAdapter for TelegramAdapter {
                 .and_then(|c| c.base_url.clone())
                 .unwrap_or_else(|| TELEGRAM_API.to_string());
             let hb = self.heartbeat.clone();
+            let ac = self.admin_cache.clone();
 
             tokio::spawn(async move {
-                Self::polling_loop(token_clone, base_url, event_bus, cancel_rx, hb).await;
+                Self::polling_loop(token_clone, base_url, event_bus, cancel_rx, hb, ac).await;
             });
         }
 
@@ -1227,7 +1349,7 @@ mod tests {
             caption: None,
         };
 
-        let inbound = TelegramAdapter::convert_message(tg_msg).unwrap();
+        let inbound = TelegramAdapter::convert_message(tg_msg, None).unwrap();
         assert_eq!(inbound.id, "42");
         assert_eq!(inbound.platform, "telegram");
         assert_eq!(inbound.chat_id, "-100123456");
@@ -1273,7 +1395,7 @@ mod tests {
             reply_to_message: None,
             entities: None,
         };
-        let inbound = TelegramAdapter::convert_message(msg).unwrap();
+        let inbound = TelegramAdapter::convert_message(msg, None).unwrap();
         assert_eq!(
             inbound.chat_type, expected,
             "chat_type mapping for '{}'",

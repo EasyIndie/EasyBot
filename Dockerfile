@@ -30,8 +30,9 @@ RUN apt-get update && apt-get install -y \
 RUN useradd -r -m -s /bin/bash easybot \
     && mkdir -p /var/lib/easybot/data /var/lib/easybot/logs /var/lib/easybot/plugins /etc/easybot \
     && chown -R easybot:easybot /var/lib/easybot /etc/easybot
-COPY --from=builder /easybot /usr/local/bin/easybot
+COPY --from=builder --chown=easybot:easybot /easybot /usr/local/bin/easybot
 USER easybot
 EXPOSE 8080
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD ["curl", "-f", "http://localhost:8080/health"]
 ENTRYPOINT ["easybot"]
 CMD ["--config", "/etc/easybot/gateway.yaml"]

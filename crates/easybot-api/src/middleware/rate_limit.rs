@@ -92,7 +92,8 @@ impl SlidingWindow {
                     return false;
                 }
                 // 允许突发内的请求，但限制总数量
-                self.timestamps.push_back(now);
+                // SECURITY: Don't record burst timestamps — that would
+                // let attackers sustain burst_size extra req/sec indefinitely.
                 return true;
             }
             return false;
@@ -120,34 +121,15 @@ impl RateLimiter {
         }
     }
 
-    /// 检查单个请求是否允许
-    pub async fn check(&self, client_ip: &str) -> bool {
-        let config = self.config.read().await;
-        if !config.enabled {
-            return true;
-        }
-
-        let max_requests = config.requests_per_minute;
-        let burst = config.burst_size;
-        drop(config);
-
-        let now = chrono::Utc::now().timestamp_millis();
-
-        // 获取或创建客户端的滑动窗口
-        let entry = self
-            .buckets
-            .entry(client_ip.to_string())
-            .or_insert_with(|| Arc::new(RwLock::new(SlidingWindow::new())));
-
-        let mut window = entry.write().await;
-        window.check_and_record(max_requests, burst, now)
-    }
-
     /// 更新配置
     pub async fn update_config(&self, config: RateLimitConfig) {
         let mut c = self.config.write().await;
         *c = config;
     }
+
+    /// SECURITY: Maximum number of tracked IP buckets.
+    /// Prevents memory exhaustion from IP spoofing attacks.
+    const MAX_BUCKETS: usize = 100_000;
 
     /// 启动后台清理任务，定期移除超过 5 分钟未活跃的 IP 条目
     pub fn start_cleanup(&self) {
@@ -164,27 +146,100 @@ impl RateLimiter {
             }
         });
     }
+
+    /// Check a request, respecting the max bucket count limit.
+    /// Returns false (deny) when the bucket limit is exceeded.
+    pub async fn check(&self, client_ip: &str) -> bool {
+        let config = self.config.read().await;
+        if !config.enabled {
+            return true;
+        }
+
+        let max_requests = config.requests_per_minute;
+        let burst = config.burst_size;
+        drop(config);
+
+        let now = chrono::Utc::now().timestamp_millis();
+
+        // SECURITY: Enforce max bucket count to prevent memory exhaustion
+        if self.buckets.len() >= Self::MAX_BUCKETS && !self.buckets.contains_key(client_ip) {
+            // Evict LRU entry if possible, otherwise deny
+            let mut oldest_key: Option<String> = None;
+            let mut oldest_time = i64::MAX;
+            for entry in self.buckets.iter() {
+                if let Ok(w) = entry.value().try_read()
+                    && w.last_access < oldest_time
+                {
+                    oldest_time = w.last_access;
+                    oldest_key = Some(entry.key().clone());
+                }
+            }
+            if let Some(key) = oldest_key {
+                self.buckets.remove(&key);
+            } else {
+                return false; // Cannot evict, deny the request
+            }
+        }
+
+        // 获取或创建客户端的滑动窗口
+        let entry = self
+            .buckets
+            .entry(client_ip.to_string())
+            .or_insert_with(|| Arc::new(RwLock::new(SlidingWindow::new())));
+
+        let mut window = entry.write().await;
+        window.check_and_record(max_requests, burst, now)
+    }
 }
 
-/// 速率限制中间件函数
+/// Trusted proxy CIDRs — only trust X-Forwarded-For from these sources.
+/// Defaults to loopback and common private reverse-proxy ranges.
+const TRUSTED_PROXY_CIDRS: &[&str] = &[
+    "127.0.0.0/8",
+    "::1/128",
+    "10.0.0.0/8",
+    "172.16.0.0/12",
+    "192.168.0.0/16",
+];
+
+/// Rate limiter middleware function.
+/// SECURITY: Only trusts X-Forwarded-For from known proxy IPs to prevent spoofing.
 pub async fn rate_limit_middleware(
     State(rate_limiter): State<RateLimiter>,
     req: Request<axum::body::Body>,
     next: Next,
 ) -> Response {
-    // 获取客户端 IP
-    let client_ip = if let Some(forwarded) = req
-        .headers()
-        .get("X-Forwarded-For")
-        .and_then(|v| v.to_str().ok())
-        // 取最后一个 IP（最靠近本服务的代理，避免客户端伪造 XFF 头绕过限流）
-        .and_then(|v| v.split(',').next_back().map(|s| s.trim().to_string()))
-    {
-        forwarded
-    } else if let Some(addr) = req.extensions().get::<ConnectInfo<std::net::SocketAddr>>() {
-        addr.0.ip().to_string()
-    } else {
-        "unknown".to_string()
+    // Get direct connection IP
+    let direct_ip = req
+        .extensions()
+        .get::<ConnectInfo<std::net::SocketAddr>>()
+        .map(|addr| addr.0.ip());
+
+    // Determine client IP for rate limiting
+    let client_ip = match direct_ip {
+        Some(direct) => {
+            // Only trust X-Forwarded-For from known proxy IPs
+            let is_trusted_proxy = TRUSTED_PROXY_CIDRS.iter().any(|cidr| {
+                // Simple prefix match — covers common private ranges
+                ip_in_cidr(&direct, cidr)
+            });
+
+            if is_trusted_proxy {
+                if let Some(forwarded) = req
+                    .headers()
+                    .get("X-Forwarded-For")
+                    .and_then(|v| v.to_str().ok())
+                    .and_then(|v| v.split(',').next_back().map(|s| s.trim().to_string()))
+                {
+                    forwarded
+                } else {
+                    direct.to_string()
+                }
+            } else {
+                direct.to_string()
+            }
+        }
+        None => "unknown".to_string(),
     };
 
     if rate_limiter.check(&client_ip).await {
@@ -196,6 +251,44 @@ pub async fn rate_limit_middleware(
         })
         .into_response()
     }
+}
+
+/// Simple IP-in-CIDR check for trusted proxy detection.
+fn ip_in_cidr(ip: &std::net::IpAddr, cidr: &str) -> bool {
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+    match ip {
+        IpAddr::V4(v4) => {
+            if let Some((net_str, bits_str)) = cidr.split_once('/')
+                && let (Ok(net), Ok(bits)) = (net_str.parse::<Ipv4Addr>(), bits_str.parse::<u8>())
+            {
+                if bits > 32 {
+                    return false;
+                }
+                let ip_u32 = u32::from(*v4);
+                let net_u32 = u32::from(net);
+                let mask = if bits == 0 { 0 } else { !0u32 << (32 - bits) };
+                return (ip_u32 & mask) == (net_u32 & mask);
+            }
+        }
+        IpAddr::V6(v6) => {
+            // Simplified IPv6 matching — trust full localhost only
+            if cidr == "::1/128" {
+                return v6.is_loopback();
+            }
+            if let Some((net_str, bits_str)) = cidr.split_once('/')
+                && let (Ok(net), Ok(bits)) = (net_str.parse::<Ipv6Addr>(), bits_str.parse::<u8>())
+            {
+                if bits > 128 {
+                    return false;
+                }
+                let ip_u128 = u128::from(*v6);
+                let net_u128 = u128::from(net);
+                let mask = if bits == 0 { 0 } else { !0u128 << (128 - bits) };
+                return (ip_u128 & mask) == (net_u128 & mask);
+            }
+        }
+    }
+    false
 }
 
 #[cfg(test)]

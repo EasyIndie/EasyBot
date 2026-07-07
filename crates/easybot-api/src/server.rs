@@ -94,25 +94,61 @@ impl Server {
             }
         };
 
-        let required = match (req.method(), req.uri().path()) {
-            (&Method::POST, p) if p.ends_with("/start") => Permission::AdaptersManage,
-            (&Method::POST, p) if p.ends_with("/stop") => Permission::AdaptersManage,
-            (&Method::PUT, p) if p.contains("/config") => Permission::ConfigWrite,
-            (&Method::GET, p) if p.contains("/config") => Permission::ConfigRead,
-            (&Method::POST, p) if p.contains("/messages/send") => Permission::MessagesSend,
-            (&Method::POST, p) if p.contains("/messages/batch-send") => Permission::MessagesSend,
-            (&Method::PUT, p) if p.contains("/messages/") => Permission::MessagesSend,
-            (&Method::DELETE, p) if p.contains("/messages/") => Permission::MessagesSend,
-            (&Method::GET, p) if p.contains("/messages") => Permission::MessagesRead,
-            (&Method::DELETE, p) if p.contains("/sessions/") => Permission::SessionsManage,
-            (&Method::GET, p) if p.contains("/sessions") => Permission::SessionsRead,
-            (&Method::GET, p) if p.contains("/adapters") => Permission::AdaptersRead,
+        // SECURITY: Use prefix-based matching against the API base path.
+        // Strip the base path prefix to get the route path, then match exactly.
+        let base = "/api/v1";
+        let path = req.uri().path().to_string();
+        let route_path = if let Some(stripped) = path.strip_prefix(base) {
+            stripped
+        } else {
+            // Not an API route — allow through (e.g. /health, /admin)
+            return next.run(req).await;
+        };
+
+        let required = match (req.method(), route_path) {
+            (
+                &Method::POST,
+                "/adapters/telegram/start"
+                | "/adapters/qq/start"
+                | "/adapters/discord/start"
+                | "/adapters/feishu/start"
+                | "/adapters/wechat/start",
+            ) => Permission::AdaptersManage,
+            (
+                &Method::POST,
+                "/adapters/telegram/stop"
+                | "/adapters/qq/stop"
+                | "/adapters/discord/stop"
+                | "/adapters/feishu/stop"
+                | "/adapters/wechat/stop",
+            ) => Permission::AdaptersManage,
+            // Fallback: match by path prefix for dynamic segments
+            (method, _p) if matches_adapter_action(method, route_path) => {
+                Permission::AdaptersManage
+            }
+            (&Method::PUT, _) if route_path == "/config" => Permission::ConfigWrite,
+            (&Method::GET, _) if route_path == "/config" => Permission::ConfigRead,
+            (&Method::POST, _) if route_path == "/messages/send" => Permission::MessagesSend,
+            (&Method::POST, _) if route_path == "/messages/batch-send" => Permission::MessagesSend,
+            (&Method::PUT, _) if route_path.starts_with("/messages/") => Permission::MessagesSend,
+            (&Method::DELETE, _) if route_path.starts_with("/messages/") => {
+                Permission::MessagesSend
+            }
+            (&Method::GET, _) if route_path == "/messages" => Permission::MessagesRead,
+            (&Method::DELETE, _) if route_path.starts_with("/sessions/") => {
+                Permission::SessionsManage
+            }
+            (&Method::GET, _) if route_path.starts_with("/sessions") => Permission::SessionsRead,
+            (&Method::GET, _) if route_path.starts_with("/adapters") => Permission::AdaptersRead,
             // WebSocket upgrade
-            (&Method::GET, p) if p.ends_with("/ws") => Permission::WebSocketConnect,
-            // API Key 管理
-            (&Method::GET, p) if p.contains("/api-keys") => Permission::ApiKeysManage,
-            (&Method::POST, p) if p.contains("/api-keys") => Permission::ApiKeysManage,
-            (&Method::DELETE, p) if p.contains("/api-keys") => Permission::ApiKeysManage,
+            (&Method::GET, _) if route_path == "/ws" => Permission::WebSocketConnect,
+            // API Key management
+            (_, _) if route_path.starts_with("/api-keys") => Permission::ApiKeysManage,
+            // System and logs endpoints require config read
+            (&Method::GET, _) if route_path == "/system" => Permission::ConfigRead,
+            (&Method::GET, _) if route_path == "/logs" => Permission::ConfigRead,
+            // Chats endpoints require adapters read
+            (&Method::GET, _) if route_path.starts_with("/chats") => Permission::AdaptersRead,
             _ => return next.run(req).await,
         };
 
@@ -166,14 +202,53 @@ impl Server {
     }
 }
 
-/// CSP 中间件：为所有响应添加 Content-Security-Policy header
-async fn csp_middleware(response: Response) -> Response {
-    const CSP_VALUE: &str = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws: wss:; img-src 'self' data:;";
+/// Helper: match adapter start/stop actions on dynamic platform segments.
+/// e.g. "/adapters/{platform}/start" or "/adapters/{platform}/stop"
+fn matches_adapter_action(method: &Method, path: &str) -> bool {
+    if !path.starts_with("/adapters/") {
+        return false;
+    }
+    let parts: Vec<&str> = path.split('/').collect();
+    // Expected: ["", "adapters", "{platform}", "start"|"stop"]
+    if parts.len() == 4 && (method == Method::POST) {
+        matches!(parts[3], "start" | "stop")
+    } else {
+        false
+    }
+}
+
+/// CSP + security headers middleware
+async fn security_headers_middleware(response: Response) -> Response {
+    // NOTE: 'unsafe-inline' is required because all assets (CSS/JS) are embedded
+    // inline in a single HTML file by build.rs. This is a local admin panel, not
+    // a public-facing site — the inline content comes from trusted source files.
+    const CSP_VALUE: &str = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws: wss:; img-src 'self' data:; frame-ancestors 'none';";
     let (mut parts, body) = response.into_parts();
+
+    // Content-Security-Policy
     parts.headers.insert(
         header::CONTENT_SECURITY_POLICY,
         axum::http::HeaderValue::from_static(CSP_VALUE),
     );
+
+    // Prevent clickjacking
+    parts.headers.insert(
+        header::HeaderName::from_static("x-frame-options"),
+        axum::http::HeaderValue::from_static("DENY"),
+    );
+
+    // Prevent MIME type sniffing
+    parts.headers.insert(
+        header::HeaderName::from_static("x-content-type-options"),
+        axum::http::HeaderValue::from_static("nosniff"),
+    );
+
+    // HSTS (only meaningful over HTTPS, but safe to always include)
+    parts.headers.insert(
+        header::STRICT_TRANSPORT_SECURITY,
+        axum::http::HeaderValue::from_static("max-age=31536000; includeSubDomains"),
+    );
+
     Response::from_parts(parts, body)
 }
 
@@ -326,8 +401,11 @@ pub fn create_router(state: AppState) -> Router {
         middleware::from_fn_with_state(state.clone(), crate::metrics::http_metrics_middleware);
 
     // ── CORS 配置 ──
-    // debug 模式保持 permissive 方便开发；release 模式使用配置白名单
-    let cors = if cfg!(debug_assertions) {
+    // Use runtime flag instead of compile-time cfg!() to prevent
+    // accidentally deploying debug builds with permissive CORS.
+    let is_debug = std::env::var("EASYBOT_DEBUG_CORS").is_ok();
+    let cors = if is_debug {
+        tracing::warn!("Permissive CORS enabled via EASYBOT_DEBUG_CORS — not for production!");
         CorsLayer::permissive()
     } else {
         let origins: Vec<_> = state
@@ -335,7 +413,13 @@ pub fn create_router(state: AppState) -> Router {
             .server
             .cors_allowed_origins
             .iter()
-            .filter_map(|o| o.parse::<axum::http::HeaderValue>().ok())
+            .filter_map(|o| {
+                let parsed = o.parse::<axum::http::HeaderValue>();
+                if parsed.is_err() {
+                    tracing::warn!("Invalid CORS origin '{}' ignored", o);
+                }
+                parsed.ok()
+            })
             .collect();
         CorsLayer::new()
             .allow_origin(AllowOrigin::list(origins))
@@ -343,16 +427,38 @@ pub fn create_router(state: AppState) -> Router {
             .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE])
     };
 
+    // ── Admin login rate limiter (strict: 5 attempts/min per IP) ──
+    const ADMIN_LOGIN_RPM: u64 = 5;
+    const ADMIN_LOGIN_BURST: u32 = 2;
+    let admin_login_rl = crate::middleware::rate_limit::RateLimiter::new(
+        crate::middleware::rate_limit::RateLimitConfig {
+            enabled: state.config.api.rate_limit.enabled,
+            requests_per_minute: ADMIN_LOGIN_RPM,
+            burst_size: ADMIN_LOGIN_BURST,
+        },
+    );
+    admin_login_rl.start_cleanup();
+
     // ── 静态页面路由（无需认证）──
 
     // 主页
     let homepage = Router::new().route("/", get(routes::home::home_page));
     // 文档页
     let docs = Router::new().route("/docs", get(routes::docs::docs_page));
-    // 管理后台（SPA + 密码登录 API）
+    // 管理后台（SPA + 密码登录 API，带严格的速率限制）
     let admin = Router::new()
         .route("/admin", get(routes::admin::admin_page))
-        .route("/admin/login", post(routes::admin::admin_login));
+        .route("/admin/login", post(routes::admin::admin_login))
+        .route_layer(middleware::from_fn_with_state(
+            admin_login_rl,
+            crate::middleware::rate_limit::rate_limit_middleware,
+        ));
+
+    // ── TraceLayer with sensitive header redaction ──
+    // SECURITY: Authorization header values are not logged
+    let trace_layer = TraceLayer::new_for_http()
+        .make_span_with(tower_http::trace::DefaultMakeSpan::new().level(tracing::Level::INFO))
+        .on_request(tower_http::trace::DefaultOnRequest::new().level(tracing::Level::INFO));
 
     // 基础路径
     let base_path = &state.config.api.base_path;
@@ -362,10 +468,10 @@ pub fn create_router(state: AppState) -> Router {
         .merge(admin)
         .merge(swagger)
         .nest(base_path, api_routes)
-        .layer(TraceLayer::new_for_http())
+        .layer(trace_layer)
         .layer(RequestBodyLimitLayer::new(10 * 1024 * 1024)) // 10MB
         .layer(cors)
         .route_layer(metrics_middleware)
-        .layer(middleware::map_response(csp_middleware))
+        .layer(middleware::map_response(security_headers_middleware))
         .with_state(state.clone())
 }

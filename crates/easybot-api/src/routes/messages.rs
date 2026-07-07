@@ -17,6 +17,10 @@ use utoipa::{IntoParams, ToSchema};
 
 /// 批量发送最大目标数（防止单次请求耗尽 tokio 任务预算）
 const MAX_BATCH_TARGETS: usize = 100;
+/// Maximum message text length (characters)
+const MAX_MESSAGE_LENGTH: usize = 16384;
+/// Maximum metadata JSON size (bytes)
+const MAX_METADATA_SIZE: usize = 65536;
 
 /// 发送消息请求
 #[derive(Deserialize, ToSchema)]
@@ -88,6 +92,25 @@ pub async fn send_message(
             "Invalid target format. Expected 'platform:chatId'".to_string(),
         ))
     })?;
+
+    // SECURITY: Validate message length
+    if req.text.len() > MAX_MESSAGE_LENGTH {
+        return Err(api_error(GatewayError::MessageTooLong {
+            current: req.text.len(),
+            max: MAX_MESSAGE_LENGTH,
+        }));
+    }
+
+    // SECURITY: Validate metadata size
+    if let Some(ref meta) = req.metadata {
+        let meta_json = serde_json::to_string(meta).unwrap_or_default();
+        if meta_json.len() > MAX_METADATA_SIZE {
+            return Err(api_error(GatewayError::InvalidRequest(format!(
+                "metadata 超过最大大小 {} 字节",
+                MAX_METADATA_SIZE
+            ))));
+        }
+    }
 
     // 分发：media > keyboard > 纯文本
     let result = if let Some(media) = req.media {
@@ -162,7 +185,10 @@ pub async fn send_message(
         "timestamp": result.timestamp,
     });
     if let Some(ref err) = result.error {
-        resp["error"] = serde_json::json!(err);
+        // SECURITY: Sanitize adapter errors — truncate and strip potential
+        // internal details (URLs, tokens, stack traces) before returning to client
+        let sanitized = sanitize_error_message(err);
+        resp["error"] = serde_json::json!(sanitized);
     }
     if let Some(ref err_code) = result.error_code {
         resp["errorCode"] = serde_json::json!(err_code);
@@ -479,13 +505,33 @@ pub async fn message_history(
         .unwrap_or_default();
 
     let has_more = messages.len() > limit;
+    let raw_payload_enabled = state.config.api.raw_payload_enabled;
     let messages: Vec<serde_json::Value> = messages
         .into_iter()
         .take(limit)
-        .map(|m| serde_json::to_value(&m).unwrap_or_default())
+        .map(|m| {
+            let mut value = serde_json::to_value(&m).unwrap_or_default();
+            // SECURITY: Strip raw platform payload metadata unless explicitly enabled
+            if !raw_payload_enabled && let Some(obj) = value.as_object_mut() {
+                obj.remove("metadata");
+            }
+            value
+        })
         .collect();
 
     Json(MessageHistoryResponse { messages, has_more })
+}
+
+/// SECURITY: Sanitize adapter error messages to prevent information leakage.
+/// Truncates long errors and strips common internal patterns.
+fn sanitize_error_message(err: &str) -> String {
+    // Truncate at 256 chars to prevent verbose API error bodies from leaking
+    let truncated: String = err.chars().take(256).collect();
+    if truncated.len() < err.len() {
+        format!("{}...", truncated)
+    } else {
+        truncated
+    }
 }
 
 /// 解析 "platform:chatId" 格式

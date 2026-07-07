@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **QQ 适配器 Group 媒体消息回归修复** — QQ v2 群聊端点 (`/v2/groups/{id}/messages`)
+  不支持 `msg_type: 1` (image embed) 和 `msg_type: 2` (markdown，需要模板权限)。
+  `dd5c1cf` (直接路由优化) 让已知 Group chat 跳过三级回退，直接命中群聊端点并发送
+  `msg_type: 2`，导致 `40034011 "无效 markdown content"` 或
+  `40034127 "无markdown模板权限"`。修复：新增 `send_group_media_upload()` 方法，
+  通过文件上传 + `msg_type: 7` (media) 发送群聊媒体消息。新增 2 个回归测试。
+
+### Changed
+
+- **Default features now include all 5 adapters** (`bin/Cargo.toml`): `default = ["adapter-telegram", "adapter-discord", "adapter-feishu", "adapter-qq", "adapter-wechat"]`. Previously only Telegram was enabled by default. `cargo run` / `cargo build` now compiles all platform adapters. To build a subset, use `cargo build --no-default-features --features "adapter-telegram,adapter-discord"`.
+- Documentation updated (`README.md`, `CONTRIBUTING.md`) and feature matrix corrected (`scripts/verify.sh`, `.github/workflows/ci.yml`) to reflect the new default feature set.
+
 ## [0.0.6] - 2026-06-28
 
 ### Changed

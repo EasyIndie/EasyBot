@@ -149,6 +149,8 @@ mod tests {
             },
             reset_policy: ResetPolicy::Never,
             metadata: serde_json::json!({}),
+            last_message: None,
+            last_message_at: None,
         }
     }
 

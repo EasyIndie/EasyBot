@@ -1,9 +1,12 @@
+// SECURITY: Use sessionStorage instead of localStorage.
+// sessionStorage is cleared when the tab/browser closes, limiting
+// exposure of the API key to the current browser session.
 const LS_KEY = 'easybot_api_key';
-let apiKey = localStorage.getItem(LS_KEY) || '';
+let apiKey = sessionStorage.getItem(LS_KEY) || '';
 let currentKeyDisplay = '';
 
-function setKey(k) { apiKey = k; localStorage.setItem(LS_KEY, k); }
-function clearKey() { apiKey = ''; localStorage.removeItem(LS_KEY); }
+function setKey(k) { apiKey = k; sessionStorage.setItem(LS_KEY, k); }
+function clearKey() { apiKey = ''; sessionStorage.removeItem(LS_KEY); }
 
 function updateKeyDisplay() {
   const el = document.getElementById('key-display');
@@ -108,12 +111,11 @@ function renderMessageRow(m) {
   const tr = document.createElement('tr');
   tr.style.cursor = 'pointer';
   const role = m.role || 'User';
-  const roleBadge = role === 'User' ? 'badge-green' : 'badge-gray';
   const typeLabel = msgTypeLabel(m.raw_data);
   tr.innerHTML = `<td style="font-size:11px;color:var(--text-muted);white-space:nowrap">${new Date(m.timestamp).toLocaleTimeString()}</td>
-    <td><span class="badge badge-blue">${m.platform}</span></td>
+    <td><span class="badge ${platformBadgeClass(m.platform)}">${m.platform}</span></td>
     <td style="font-size:12px">${m.chat_id}</td>
-    <td><span class="badge ${roleBadge}">${role}</span></td>
+    <td><span class="badge ${msgRoleBadgeClass(role)}">${role}</span></td>
     <td><span class="badge ${msgTypeBadgeClass(m.raw_data)}">${typeLabel}</span></td>
     <td style="font-size:12px;color:var(--text-muted);max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${(m.text || '').substring(0, 80)}</td>
     <td><button class="btn btn-sm btn-reply" data-platform="${m.platform}" data-chat-id="${m.chat_id}" title="回复该会话">回复</button></td>`;
@@ -137,6 +139,18 @@ function statusBadgeClass(status, connected) {
   if (status === 'Connecting' || status === 'Starting' || status === 'Disconnecting' || status === 'Stopping') return 'badge-blue';
   if (status === 'Reconnecting') return 'badge-yellow';
   return 'badge-gray';
+}
+
+// 平台 → badge class
+function platformBadgeClass(p) { return 'badge-platform-' + p; }
+
+// 会话类型 → badge class
+function chatTypeBadgeClass(t) { return 'badge-chattype-' + t; }
+
+// 消息角色 → badge class
+function msgRoleBadgeClass(r) {
+  const map = { 'User': 'badge-role-User', 'Assistant': 'badge-role-Assistant' };
+  return map[r] || 'badge-gray';
 }
 
 // 统一进度条 HTML（百分比，标签）
@@ -213,7 +227,7 @@ async function loadOverview() {
     content.style.display = 'block';
     loadMetrics();
   } catch (e) {
-    loading.innerHTML = '加载失败: ' + e.message;
+    loading.innerHTML = '加载失败: ' + escapeHtml(e.message);
   }
 }
 
@@ -431,11 +445,11 @@ async function loadMetrics(isRefresh) {
     status.textContent = `共 ${Object.keys(parsed).length} 条指标数据`;
   } catch (e) {
     if (!isRefresh) {
-      loading.innerHTML = '加载失败: ' + e.message;
+      loading.innerHTML = '加载失败: ' + escapeHtml(e.message);
       visual.style.display = 'none';
       pre.style.display = 'none';
     }
-    err.textContent = '加载失败: ' + e.message;
+    err.textContent = '加载失败: ' + escapeHtml(e.message);
     err.style.display = 'block';
     status.textContent = '';
   }
@@ -490,7 +504,7 @@ async function pollLogs() {
       const t = new Date(e.timestamp).toLocaleTimeString();
       const div = document.createElement('div');
       div.className = 'log-entry log-' + e.level;
-      div.innerHTML = `<span style="color:var(--text-faint)">${t}</span> [<strong>${e.level}</strong>] <span style="color:var(--text-muted)">${e.target}</span> ${e.message}`;
+      div.innerHTML = `<span style="color:var(--text-faint)">${t}</span> [<strong>${escapeHtml(e.level)}</strong>] <span style="color:var(--text-muted)">${escapeHtml(e.target)}</span> ${escapeHtml(e.message)}`;
       frag.appendChild(div);
     }
     list.appendChild(frag);
@@ -557,7 +571,7 @@ async function loadAdapters() {
     loading.style.display = 'none';
     content.style.display = 'block';
   } catch (e) {
-    loading.innerHTML = '加载失败: ' + e.message;
+    loading.innerHTML = '加载失败: ' + escapeHtml(e.message);
   }
 }
 
@@ -686,7 +700,7 @@ async function loadConfig() {
     view.style.display = 'block';
     if (!configEditMode) document.getElementById('config-editor').value = JSON.stringify(configData, null, 2);
   } catch (e) {
-    loading.innerHTML = '加载失败: ' + e.message;
+    loading.innerHTML = '加载失败: ' + escapeHtml(e.message);
   }
 }
 
@@ -729,7 +743,7 @@ document.getElementById('config-save-btn').addEventListener('click', async () =>
       editor.setSelectionRange(pos, pos);
       editor.scrollTop = editor.scrollHeight * (line / (raw.split('\n').length || 1));
     }
-    msg.innerHTML = '<span class="error-msg" style="display:inline-block;background:#471a1a;border:1px solid #f851494d;border-radius:6px;padding:6px 10px">❌ JSON 格式错误' + hint + '<br><span style="font-size:11px;color:#f85149cc">' + e.message + '</span></span>';
+    msg.innerHTML = '<span class="error-msg" style="display:inline-block;background:#471a1a;border:1px solid #f851494d;border-radius:6px;padding:6px 10px">❌ JSON 格式错误' + escapeHtml(hint) + '<br><span style="font-size:11px;color:#f85149cc">' + escapeHtml(e.message) + '</span></span>';
     return;
   }
   editor.style.borderColor = '';
@@ -744,21 +758,47 @@ document.getElementById('config-save-btn').addEventListener('click', async () =>
     document.getElementById('config-edit-btn').style.display = 'inline-block';
     loadConfig();
   } catch (e) {
-    msg.innerHTML = '<span class="error-msg">❌ 保存失败: ' + e.message + '</span>';
+    msg.innerHTML = '<span class="error-msg">❌ 保存失败: ' + escapeHtml(e.message) + '</span>';
   }
 });
 
 
 // ─── Sessions Tab ──────────────────────────────
 
+// 构造会话显示名称
+// 优先 chat_name（群名/频道名），其次 user_name（发送者昵称），最后根据 chat_type 构造回退
+function getDisplayName(s) {
+  if (s.source?.chat_name) return s.source.chat_name;
+  if (s.source?.user_name) return s.source.user_name;
+  const labels = { 'Dm': '用户', 'Group': '群组', 'Channel': '频道', 'Thread': '话题' };
+  const label = labels[s.source?.chat_type] || '聊天';
+  return label + ' (' + s.chat_id + ')';
+}
+
+// 复制 session key 到剪贴板，带视觉反馈
+function copyKey(el, key) {
+  navigator.clipboard.writeText(key).then(() => {
+    const orig = el.textContent;
+    el.textContent = '✓ 已复制';
+    el.style.color = 'var(--success, #22c55e)';
+    setTimeout(() => {
+      el.textContent = orig;
+      el.style.color = '';
+    }, 1200);
+  }).catch(() => {});
+}
+
 // 渲染单个 session 行（供初始渲染和增量更新复用）
 function renderSessionRow(s) {
   const tr = document.createElement('tr');
   tr.setAttribute('data-session-key', s.key);
-  tr.innerHTML = `<td style="font-family:monospace;font-size:12px">${s.key}</td>
-    <td>${s.platform}</td>
-    <td>${s.source?.user_name || s.source?.chat_name || s.chat_id}</td>
-    <td><span class="badge badge-blue">${s.source?.chat_type || '-'}</span></td>
+  tr.innerHTML = `<td>
+    <div style="font-weight:600;color:var(--text-primary)">${getDisplayName(s)}</div>
+    <div style="margin-top:5px;font-size:11px;color:var(--text-faint);font-family:var(--font-mono);cursor:pointer" onclick="copyKey(this,'${s.key}')" title="点击复制">${s.key}</div>
+  </td>
+    <td><span class="badge ${platformBadgeClass(s.platform)}">${s.platform}</span></td>
+    <td><span class="badge ${chatTypeBadgeClass(s.source?.chat_type)}">${s.source?.chat_type || '-'}</span></td>
+    <td style="max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;color:var(--text-secondary)" title="${(s.last_message || '').replace(/"/g, '&quot;')}">${s.last_message || '-'}</td>
     <td style="font-size:12px;color:var(--text-muted)">${new Date(s.created_at).toLocaleString()}</td>
     <td><button class="btn btn-sm btn-danger" onclick="deleteSession('${s.key}')">删除</button></td>`;
   return tr;
@@ -770,7 +810,7 @@ function renderSessionsTable(sessions) {
   const wrapper = document.createElement('div');
   wrapper.className = 'table-wrapper';
   const table = document.createElement('table');
-  table.innerHTML = '<thead><tr><th>Key</th><th>平台</th><th>用户</th><th>类型</th><th>创建时间</th><th>操作</th></tr></thead>';
+  table.innerHTML = '<thead><tr><th>名称</th><th>平台</th><th>类型</th><th>最近消息</th><th>创建时间</th><th>操作</th></tr></thead>';
   const tbody = document.createElement('tbody');
   sessions.forEach(s => tbody.appendChild(renderSessionRow(s)));
   table.appendChild(tbody);
@@ -829,7 +869,7 @@ async function loadSessions(isRefresh) {
     }
   } catch (e) {
     if (!isRefresh) {
-      loading.innerHTML = '加载失败: ' + e.message;
+      loading.innerHTML = '加载失败: ' + escapeHtml(e.message);
     }
   }
 }
@@ -917,7 +957,7 @@ document.getElementById('msg-send-btn').addEventListener('click', async () => {
     document.getElementById('msg-text').value = '';
     prependNewMessages();
   } catch (e) {
-    result.innerHTML = '<span class="error-msg">❌ 发送失败: ' + e.message + '</span>';
+    result.innerHTML = '<span class="error-msg">❌ 发送失败: ' + escapeHtml(e.message) + '</span>';
     showToast('发送失败: ' + e.message, 'error');
   } finally {
     btn.disabled = false;
@@ -968,7 +1008,7 @@ async function loadMessages(append = false) {
   } catch (e) {
     // 忽略 AbortError（标签页切换导致的取消），避免显示错误信息
     if (e.name === 'AbortError') return;
-    if (!append) loading.innerHTML = '加载失败: ' + e.message;
+    if (!append) loading.innerHTML = '加载失败: ' + escapeHtml(e.message);
   }
 }
 
@@ -1145,9 +1185,9 @@ async function loadApiKeys() {
 
   } catch (e) {
     if (isFirstLoad) {
-      loading.innerHTML = '加载失败: ' + e.message;
+      loading.innerHTML = '加载失败: ' + escapeHtml(e.message);
     } else {
-      content.innerHTML = '<div class="error-msg" style="padding:12px">刷新失败: ' + e.message + '</div>';
+      content.innerHTML = '<div class="error-msg" style="padding:12px">刷新失败: ' + escapeHtml(e.message) + '</div>';
     }
   }
 }

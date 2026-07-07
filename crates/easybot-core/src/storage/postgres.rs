@@ -21,7 +21,9 @@ CREATE TABLE IF NOT EXISTS sessions (
     updated_at   BIGINT NOT NULL,
     source_json  TEXT NOT NULL,
     reset_policy VARCHAR(32) NOT NULL,
-    metadata     JSONB NOT NULL DEFAULT '{}'
+    metadata     JSONB NOT NULL DEFAULT '{}',
+    last_message TEXT,
+    last_message_at BIGINT
 );
 
 CREATE INDEX IF NOT EXISTS idx_sessions_platform ON sessions(platform);
@@ -79,6 +81,8 @@ struct SessionRow {
     source_json: String,
     reset_policy: String,
     metadata: serde_json::Value,
+    last_message: Option<String>,
+    last_message_at: Option<i64>,
 }
 
 impl SessionRow {
@@ -104,6 +108,8 @@ impl SessionRow {
             source,
             reset_policy,
             metadata: self.metadata,
+            last_message: self.last_message,
+            last_message_at: self.last_message_at,
         })
     }
 }
@@ -121,6 +127,8 @@ fn row_to_session(row: &sqlx::postgres::PgRow) -> Result<SessionRow, sqlx::Error
         source_json: row.try_get("source_json")?,
         reset_policy: row.try_get("reset_policy")?,
         metadata: row.try_get("metadata")?,
+        last_message: row.try_get("last_message")?,
+        last_message_at: row.try_get("last_message_at")?,
     })
 }
 
@@ -146,13 +154,15 @@ impl SessionStore for PgSessionStore {
         let reset_policy = format!("{:?}", session.reset_policy);
 
         sqlx::query(
-            "INSERT INTO sessions (key, platform, chat_id, thread_id, created_at, updated_at, source_json, reset_policy, metadata)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            "INSERT INTO sessions (key, platform, chat_id, thread_id, created_at, updated_at, source_json, reset_policy, metadata, last_message, last_message_at)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
              ON CONFLICT (key) DO UPDATE SET
                 updated_at = EXCLUDED.updated_at,
                 source_json = EXCLUDED.source_json,
                 reset_policy = EXCLUDED.reset_policy,
-                metadata = EXCLUDED.metadata"
+                metadata = EXCLUDED.metadata,
+                last_message = EXCLUDED.last_message,
+                last_message_at = EXCLUDED.last_message_at"
         )
         .bind(&session.key)
         .bind(&session.platform)
@@ -163,6 +173,8 @@ impl SessionStore for PgSessionStore {
         .bind(&source_json)
         .bind(&reset_policy)
         .bind(&metadata)
+        .bind(&session.last_message)
+        .bind(session.last_message_at)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -170,7 +182,7 @@ impl SessionStore for PgSessionStore {
 
     async fn get_session(&self, key: &str) -> Result<Option<Session>, StoreError> {
         let rows = sqlx::query(
-            "SELECT key, platform, chat_id, thread_id, created_at, updated_at, source_json, reset_policy, metadata
+            "SELECT key, platform, chat_id, thread_id, created_at, updated_at, source_json, reset_policy, metadata, last_message, last_message_at
              FROM sessions WHERE key = $1"
         )
         .bind(key)
@@ -204,7 +216,7 @@ impl SessionStore for PgSessionStore {
 
     async fn list_sessions(&self, filter: &SessionFilter) -> Result<Vec<Session>, StoreError> {
         let mut builder = sqlx::QueryBuilder::new(
-            "SELECT key, platform, chat_id, thread_id, created_at, updated_at, source_json, reset_policy, metadata \
+            "SELECT key, platform, chat_id, thread_id, created_at, updated_at, source_json, reset_policy, metadata, last_message, last_message_at \
              FROM sessions WHERE 1=1",
         );
 
@@ -241,7 +253,7 @@ impl SessionStore for PgSessionStore {
 
     async fn load_all_sessions(&self) -> Result<Vec<Session>, StoreError> {
         let rows = sqlx::query(
-            "SELECT key, platform, chat_id, thread_id, created_at, updated_at, source_json, reset_policy, metadata
+            "SELECT key, platform, chat_id, thread_id, created_at, updated_at, source_json, reset_policy, metadata, last_message, last_message_at
              FROM sessions"
         )
         .fetch_all(&self.pool)

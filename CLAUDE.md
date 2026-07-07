@@ -137,6 +137,10 @@ init(config) → connect() → send()/... → disconnect()
 | Target format | `{platform}:{chatId}` — parse via `parse_target()` |
 | Env loading | `load_env()` before `load_config()` in `bin/main.rs`; `.env` at `{config_dir}/.env` |
 | Config precedence | YAML → `.local.yaml` → `${VAR_NAME}` substitution; export/Docker > `.env` |
+| Raw payload passthrough | 各适配器在解析字段前将平台原始 payload 序列化存入 `InboundMessage.metadata`，**仅调试用，不做任何二次处理/消费**。由 `api.raw_payload_enabled`（默认 `false`）控制 WebSocket 事件中是否透传该字段——关闭时 `ws.rs:172-178` 在广播前剥离 `metadata`；可通过配置或 `EASYBOT_RAW_PAYLOAD_ENABLED` 环境变量开启。 |
+| QQ chat type routing | QQ 适配器通过 `chat_types: Arc<Mutex<HashMap<String, ChatType>>>` 记录已知会话类型（由入站 Gateway 事件自动填充）。`try_send()` 优先查表直接路由到正确端点（`/channels/`, `/v2/groups/`, `/v2/users/`），仅在 chat type 未知时回退到三级级联。**改 media 发送时必须按 chat type 区分 msg_type，不可统一使用同一值。** |
+| QQ media msg_type | **Channel**: `msg_type:2` (rich media, image+text)。**Dm (C2C)**: `msg_type:1` (image embed, v2 API 不支持 msg_type:2)。**Group**: 必须走文件上传 + `msg_type:7` (media)，v2 群聊端点的 `msg_type:1/2` 均不可用——`content` 字段被 QQ API 统一按 markdown 解析，msg_type:2 触发 `40034011`/`40034127`。上传使用 JSON body + base64 `file_data`（非 multipart）。详见 `send_media()` / `send_group_media_upload()`。 |
+| QQ file upload | `/v2/{users\|groups}/{id}/files` — JSON body: `{"file_type": 1|2|3, "srv_send_msg": bool, "file_data": "<base64>"}`。`srv_send_msg=true` 上传后自动发送（不含文本）；`srv_send_msg=false` 仅获取 `file_info`，再通过 `msg_type:7` + `media.file_info` 手动发送。 |
 
 ## Known Gaps
 
