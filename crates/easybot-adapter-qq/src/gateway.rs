@@ -250,8 +250,43 @@ impl crate::QqAdapter {
     fn detect_qq_msg_type(
         message_type: Option<u32>,
         content: &Option<String>,
+        attachments: &[crate::types::QQAttachment],
     ) -> (MessageType, Option<Vec<MediaAttachment>>) {
-        // 优先通过 message_type 判断
+        // 优先检查 attachments 中的媒体文件
+        if !attachments.is_empty() {
+            let mut media_list: Vec<MediaAttachment> = Vec::new();
+            for att in attachments {
+                let media_type = match att.content_type.as_deref() {
+                    Some(ct) if ct.starts_with("image/") => MediaType::Image,
+                    Some(ct) if ct.starts_with("video/") => MediaType::Video,
+                    Some(ct) if ct.starts_with("audio/") => MediaType::Audio,
+                    _ => MediaType::Document,
+                };
+                media_list.push(MediaAttachment {
+                    media_type,
+                    url: att.url.clone(),
+                    data: None,
+                    mime_type: att
+                        .content_type
+                        .clone()
+                        .unwrap_or_else(|| "application/octet-stream".to_string()),
+                    filename: att.filename.clone(),
+                    caption: None,
+                    thumbnail_url: None,
+                    file_size: att.size,
+                    duration: None,
+                });
+            }
+            let primary_type = match media_list.first() {
+                Some(m) if m.media_type == MediaType::Image => MessageType::Image,
+                Some(m) if m.media_type == MediaType::Video => MessageType::Video,
+                Some(m) if m.media_type == MediaType::Audio => MessageType::Audio,
+                _ => MessageType::File,
+            };
+            return (primary_type, Some(media_list));
+        }
+
+        // 其次通过 message_type 判断
         if let Some(mt) = message_type
             && mt != 0
         {
@@ -323,7 +358,8 @@ impl crate::QqAdapter {
                 messages_in.fetch_add(1, Ordering::Relaxed);
                 let ts = Self::parse_timestamp(&msg_event.timestamp);
 
-                let (msg_type, media) = Self::detect_qq_msg_type(None, &msg_event.content);
+                let (msg_type, media) =
+                    Self::detect_qq_msg_type(None, &msg_event.content, &msg_event.attachments);
 
                 let inbound = InboundMessage {
                     id: msg_event.id,
@@ -393,7 +429,8 @@ impl crate::QqAdapter {
                 let role = Self::parse_member_role(msg_event.author.member_role.as_deref());
                 let is_bot = msg_event.author.bot.unwrap_or(false);
                 // 旧协议 GROUP_AT_MESSAGE_CREATE 无 message_type 字段
-                let (msg_type, media) = Self::detect_qq_msg_type(None, &msg_event.content);
+                let (msg_type, media) =
+                    Self::detect_qq_msg_type(None, &msg_event.content, &msg_event.attachments);
 
                 let inbound = InboundMessage {
                     id: msg_event.id,
@@ -480,8 +517,11 @@ impl crate::QqAdapter {
                     )
                 };
                 // QqGroupMessageCreateEvent 有 message_type 字段
-                let (msg_type, media) =
-                    Self::detect_qq_msg_type(msg_event.message_type, &msg_event.content);
+                let (msg_type, media) = Self::detect_qq_msg_type(
+                    msg_event.message_type,
+                    &msg_event.content,
+                    &msg_event.attachments,
+                );
 
                 let inbound = InboundMessage {
                     id: msg_event.id,
@@ -550,7 +590,8 @@ impl crate::QqAdapter {
                 messages_in.fetch_add(1, Ordering::Relaxed);
                 let ts = Self::parse_timestamp(&msg_event.timestamp);
                 let user_openid = msg_event.author.user_openid.clone();
-                let (msg_type, media) = Self::detect_qq_msg_type(None, &msg_event.content);
+                let (msg_type, media) =
+                    Self::detect_qq_msg_type(None, &msg_event.content, &msg_event.attachments);
 
                 let inbound = InboundMessage {
                     id: msg_event.id,
