@@ -113,52 +113,66 @@ pub async fn send_message(
     }
 
     // 分发：media > keyboard > 纯文本
-    let result = if let Some(media) = req.media {
-        state
-            .adapter_manager
-            .send_media(
-                &platform,
-                SendMediaParams {
-                    chat_id: chat_id.clone(),
-                    media,
-                    text: Some(req.text.clone()),
-                    reply_to: req.reply_to,
-                },
-            )
-            .await
-            .map_err(api_error)?
-    } else if let Some(keyboard) = req.keyboard {
-        state
-            .adapter_manager
-            .send_interactive(
-                &platform,
-                SendInteractiveParams {
-                    chat_id: chat_id.clone(),
-                    text: req.text.clone(),
-                    keyboard,
-                    reply_to: req.reply_to,
-                },
-            )
-            .await
-            .map_err(api_error)?
-    } else {
-        state
-            .adapter_manager
-            .send_message(
-                &platform,
-                SendTextParams {
-                    chat_id: chat_id.clone(),
-                    message: OutboundMessage {
-                        text: req.text.clone(),
-                        parse_mode: req.parse_mode.unwrap_or_default(),
+    const SEND_TIMEOUT_SECS: u64 = 15;
+    let send_fut = async {
+        if let Some(media) = req.media {
+            state
+                .adapter_manager
+                .send_media(
+                    &platform,
+                    SendMediaParams {
+                        chat_id: chat_id.clone(),
+                        media,
+                        text: Some(req.text.clone()),
+                        reply_to: req.reply_to,
                     },
-                    reply_to: req.reply_to,
-                    metadata: req.metadata,
-                },
-            )
-            .await
-            .map_err(api_error)?
+                )
+                .await
+        } else if let Some(keyboard) = req.keyboard {
+            state
+                .adapter_manager
+                .send_interactive(
+                    &platform,
+                    SendInteractiveParams {
+                        chat_id: chat_id.clone(),
+                        text: req.text.clone(),
+                        keyboard,
+                        reply_to: req.reply_to,
+                    },
+                )
+                .await
+        } else {
+            state
+                .adapter_manager
+                .send_message(
+                    &platform,
+                    SendTextParams {
+                        chat_id: chat_id.clone(),
+                        message: OutboundMessage {
+                            text: req.text.clone(),
+                            parse_mode: req.parse_mode.unwrap_or_default(),
+                        },
+                        reply_to: req.reply_to,
+                        metadata: req.metadata,
+                    },
+                )
+                .await
+        }
     };
+
+    let result =
+        match tokio::time::timeout(std::time::Duration::from_secs(SEND_TIMEOUT_SECS), send_fut)
+            .await
+        {
+            Ok(Ok(r)) => r,
+            Ok(Err(e)) => return Err(api_error(e)),
+            Err(_) => {
+                return Err(api_error(GatewayError::RequestTimeout(format!(
+                    "send_message 超时 ({}s)",
+                    SEND_TIMEOUT_SECS
+                ))));
+            }
+        };
 
     // 记录出站消息指标
     if let Some(ref metrics) = state.metrics {
