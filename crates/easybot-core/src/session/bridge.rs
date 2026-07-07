@@ -86,9 +86,7 @@ impl SessionBridge {
 
         let _session = session_manager.get_or_create(&key, source).await;
 
-        // 记录最近消息（异步，不阻塞）
-        let sm = session_manager.clone();
-        let key_for_msg = key.clone();
+        // 记录最近消息（内联执行，不 spawn 额外任务）
         let msg_text = msg.text.clone().or_else(|| match msg.msg_type {
             MessageType::Image => Some("[图片]".to_string()),
             MessageType::Audio => Some("[音频]".to_string()),
@@ -98,31 +96,22 @@ impl SessionBridge {
             MessageType::Interactive => Some("[卡片]".to_string()),
             _ => None,
         });
-        let msg_ts = msg.timestamp;
-        tokio::spawn(async move {
-            if let Some(text) = msg_text {
-                sm.update_last_message(&key_for_msg, Some(text), msg_ts)
-                    .await;
-            }
-        });
+        if let Some(text) = msg_text {
+            session_manager
+                .update_last_message(&key, Some(text), msg.timestamp)
+                .await;
+        }
 
-        // 异步富化：不阻塞消息处理路径
-        if let Some(am) = adapter_manager {
-            tokio::spawn(async move {
-                let current = session_manager.get(&key);
-                let current_source = match current {
-                    Some(ref s) => s.source.clone(),
-                    None => return,
-                };
-                if let Some(enriched) = am.enrich_session(&platform, &current_source).await
-                    && (enriched.user_username.is_some()
-                        || enriched.user_role.is_some()
-                        || enriched.user_name.is_some()
-                        || enriched.chat_name.is_some())
-                {
-                    session_manager.update_source_fields(&key, enriched).await;
-                }
-            });
+        // 异步富化：内联执行，不 spawn 额外任务
+        if let Some(ref am) = adapter_manager
+            && let Some(current) = session_manager.get(&key)
+            && let Some(enriched) = am.enrich_session(&platform, &current.source).await
+            && (enriched.user_username.is_some()
+                || enriched.user_role.is_some()
+                || enriched.user_name.is_some()
+                || enriched.chat_name.is_some())
+        {
+            session_manager.update_source_fields(&key, enriched).await;
         }
     }
 }

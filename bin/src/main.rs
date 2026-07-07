@@ -204,6 +204,7 @@ async fn main() -> anyhow::Result<()> {
     // 写回 config，使 API 返回的配置始终反映运行时实际路径
     config.storage.path = db_path.to_string_lossy().to_string();
     let mut auth_pool: Option<sqlx::SqlitePool> = None;
+    let mut retention_pool: Option<sqlx::SqlitePool> = None;
     let (message_store, session_manager) = match config.storage.storage_type.as_str() {
         "postgres" => {
             let conn_str = if !config.storage.connection_string.is_empty() {
@@ -253,6 +254,7 @@ async fn main() -> anyhow::Result<()> {
                     tracing::info!("SQLite storage initialized: {}", db_path.display());
 
                     auth_pool = Some(pool.clone());
+                    retention_pool = Some(pool.clone());
                     let store: Arc<dyn easybot_core::storage::SessionStore> = Arc::new(
                         easybot_core::storage::sqlite::SqliteSessionStore::new(pool.clone()),
                     );
@@ -386,10 +388,12 @@ async fn main() -> anyhow::Result<()> {
 
     // 提取 TTL 清理所需数据（后续 config/session_manager 将被消费）
     let ttl_session_store = session_manager.store_ref();
+    let ttl_session_ttl_days = config.storage.retention.session_ttl_days;
+    let ttl_cleanup_interval_secs = config.storage.retention.cleanup_interval_secs;
     let ttl_config = easybot_core::storage::retention::RetentionConfig {
         message_ttl_days: config.storage.retention.message_ttl_days,
-        session_ttl_days: config.storage.retention.session_ttl_days,
-        cleanup_interval_secs: config.storage.retention.cleanup_interval_secs,
+        session_ttl_days: ttl_session_ttl_days,
+        cleanup_interval_secs: ttl_cleanup_interval_secs,
     };
 
     // 创建指标注册表
@@ -404,6 +408,9 @@ async fn main() -> anyhow::Result<()> {
 
     // 提前暂存适配器配置（config 稍后会被移动进 AppState）
     let adapters_config = config.adapters.clone();
+
+    // 提前暂存 session_manager 引用（稍后被移动进 AppState，但 DashMap 清理需要它）
+    let sm_for_prune = session_manager.clone();
 
     // 创建配置管理器（用于热重载）
     // 优先使用 --config 指定的路径，否则使用默认配置路径
@@ -510,6 +517,46 @@ async fn main() -> anyhow::Result<()> {
     } else {
         tracing::info!("No session store available, TTL retention disabled");
     }
+
+    // 启动 SQLite WAL checkpoint 后台任务（防止 WAL 文件无限增长）
+    if let Some(ref pool) = retention_pool {
+        let pool = pool.clone();
+        let interval = std::time::Duration::from_secs(ttl_cleanup_interval_secs);
+        tokio::spawn(async move {
+            tokio::time::sleep(interval).await; // 与 RetentionWorker 相同的首次延迟
+            loop {
+                tokio::time::sleep(interval).await;
+                if let Err(e) = sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
+                    .execute(&pool)
+                    .await
+                {
+                    tracing::warn!("WAL checkpoint failed: {}", e);
+                }
+            }
+        });
+        tracing::info!(
+            "SQLite WAL checkpoint task started (interval: {:?})",
+            interval
+        );
+    }
+
+    // 启动 SessionManager 内存清理任务（配合 RetentionWorker 的数据库 TTL）
+    let sm_prune = sm_for_prune.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_secs(ttl_cleanup_interval_secs)).await;
+        loop {
+            let cutoff = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as i64
+                - (ttl_session_ttl_days as i64 * 86_400_000);
+            let count = sm_prune.prune_expired(cutoff);
+            if count > 0 {
+                tracing::info!("Cleaned {} stale sessions from memory", count);
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(ttl_cleanup_interval_secs)).await;
+        }
+    });
 
     // 发布网关启动事件
     event_bus.publish(GatewayEvent::new(

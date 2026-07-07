@@ -563,8 +563,14 @@ impl TelegramAdapter {
                 .map(|(_, role)| role.clone());
 
             // 更新缓存（即使 role 为 None，也缓存空列表避免重复请求）
-            let mut cache = admin_cache.lock().await;
-            cache.insert(chat_id, admins);
+            {
+                let mut cache = admin_cache.lock().await;
+                cache.insert(chat_id, admins);
+                const ADMIN_CACHE_LIMIT: usize = 5_000;
+                if cache.len() > ADMIN_CACHE_LIMIT {
+                    cache.clear();
+                }
+            }
 
             return role;
         }

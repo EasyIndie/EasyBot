@@ -392,11 +392,15 @@ impl crate::QqAdapter {
                     metadata: Some(data.clone()),
                 };
 
-                // Track chat type for direct outbound routing
-                chat_types
-                    .lock()
-                    .unwrap()
-                    .insert(inbound.chat_id.clone(), inbound.chat_type);
+                // Track chat type for direct outbound routing, with size cap
+                {
+                    let mut ct = chat_types.lock().unwrap();
+                    ct.insert(inbound.chat_id.clone(), inbound.chat_type);
+                    const CHAT_TYPE_CACHE_LIMIT: usize = 10_000;
+                    if ct.len() > CHAT_TYPE_CACHE_LIMIT {
+                        ct.clear();
+                    }
+                }
 
                 let event = GatewayEvent::new(
                     easybot_core::types::event::event_types::MESSAGE_INBOUND,
@@ -463,11 +467,15 @@ impl crate::QqAdapter {
                     metadata: Some(data.clone()),
                 };
 
-                // Track chat type for direct outbound routing
-                chat_types
-                    .lock()
-                    .unwrap()
-                    .insert(inbound.chat_id.clone(), inbound.chat_type);
+                // Track chat type for direct outbound routing, with size cap
+                {
+                    let mut ct = chat_types.lock().unwrap();
+                    ct.insert(inbound.chat_id.clone(), inbound.chat_type);
+                    const CHAT_TYPE_CACHE_LIMIT: usize = 10_000;
+                    if ct.len() > CHAT_TYPE_CACHE_LIMIT {
+                        ct.clear();
+                    }
+                }
 
                 let event = GatewayEvent::new(
                     easybot_core::types::event::event_types::MESSAGE_INBOUND,
@@ -558,11 +566,15 @@ impl crate::QqAdapter {
                     }),
                 };
 
-                // Track chat type for direct outbound routing
-                chat_types
-                    .lock()
-                    .unwrap()
-                    .insert(inbound.chat_id.clone(), inbound.chat_type);
+                // Track chat type for direct outbound routing, with size cap
+                {
+                    let mut ct = chat_types.lock().unwrap();
+                    ct.insert(inbound.chat_id.clone(), inbound.chat_type);
+                    const CHAT_TYPE_CACHE_LIMIT: usize = 10_000;
+                    if ct.len() > CHAT_TYPE_CACHE_LIMIT {
+                        ct.clear();
+                    }
+                }
 
                 let event = GatewayEvent::new(
                     easybot_core::types::event::event_types::MESSAGE_INBOUND,
@@ -624,11 +636,15 @@ impl crate::QqAdapter {
                     metadata: Some(data.clone()),
                 };
 
-                // Track chat type for direct outbound routing
-                chat_types
-                    .lock()
-                    .unwrap()
-                    .insert(inbound.chat_id.clone(), inbound.chat_type);
+                // Track chat type for direct outbound routing, with size cap
+                {
+                    let mut ct = chat_types.lock().unwrap();
+                    ct.insert(inbound.chat_id.clone(), inbound.chat_type);
+                    const CHAT_TYPE_CACHE_LIMIT: usize = 10_000;
+                    if ct.len() > CHAT_TYPE_CACHE_LIMIT {
+                        ct.clear();
+                    }
+                }
 
                 let event = GatewayEvent::new(
                     easybot_core::types::event::event_types::MESSAGE_INBOUND,

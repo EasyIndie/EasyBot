@@ -391,6 +391,10 @@ impl DiscordAdapter {
                                                     .get("owner_id")
                                                     .and_then(|v| v.as_str())
                                                     && let Ok(mut cache) = cache.try_lock() {
+                                                        const GUILD_CACHE_LIMIT: usize = 5_000;
+                                                        if cache.len() > GUILD_CACHE_LIMIT {
+                                                            cache.clear();
+                                                        }
                                                         cache.insert(g, oid.to_string());
                                                     }
                                     });
@@ -411,6 +415,10 @@ impl DiscordAdapter {
                         }
                         Some(Ok(Event::GuildUpdate(guild))) => {
                             if let Ok(mut cache) = guild_owner_cache.try_lock() {
+                                const GUILD_CACHE_LIMIT: usize = 5_000;
+                                if cache.len() > GUILD_CACHE_LIMIT {
+                                    cache.clear();
+                                }
                                 cache.insert(
                                     guild.id.to_string(),
                                     guild.owner_id.to_string(),

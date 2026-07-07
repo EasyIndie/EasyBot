@@ -1118,11 +1118,15 @@ impl FeishuAdapter {
 
         let cache_key = format!("{}:{}", chat_id, sender_id);
 
-        // 检查缓存（由 im.chat.updated_v1 事件负责失效）
+        // 检查缓存（30 秒 TTL 过期后重新查询）
         {
-            let cache = role_cache.lock().ok()?;
-            if let Some((role, _)) = cache.get(&cache_key) {
-                return Some(role.clone());
+            let mut cache = role_cache.lock().ok()?;
+            if let Some((role, expiry)) = cache.get(&cache_key) {
+                if expiry.elapsed() < Duration::from_secs(30) {
+                    return Some(role.clone());
+                }
+                // 缓存过期，移除
+                cache.remove(&cache_key);
             }
         }
 
@@ -1167,7 +1171,7 @@ impl FeishuAdapter {
             SenderRole::Member
         };
 
-        // 写入缓存（由 im.chat.updated_v1 事件负责失效，无需 TTL）
+        // 写入缓存（30 秒 TTL + im.chat.updated_v1 事件双重失效机制）
         if let Ok(mut cache) = role_cache.lock() {
             cache.insert(cache_key, (role.clone(), Instant::now()));
         }

@@ -163,6 +163,23 @@ impl SessionManager {
         self.store.clone()
     }
 
+    /// 从 DashMap 中删除 updated_at 早于 before 的过期会话（内存清理）
+    ///
+    /// 配合 RetentionWorker 的数据库 TTL 清理使用，确保内存中不堆积过期会话。
+    /// 返回删除的条目数。
+    pub fn prune_expired(&self, before: i64) -> usize {
+        let mut count = 0;
+        self.sessions.retain(|_key, session| {
+            if session.updated_at < before {
+                count += 1;
+                false
+            } else {
+                true
+            }
+        });
+        count
+    }
+
     /// 更新会话的最近消息记录
     ///
     /// 在收到入站消息时调用，记录消息摘要和时间戳。
