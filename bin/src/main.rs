@@ -328,18 +328,16 @@ async fn main() -> anyhow::Result<()> {
 
     // 尝试复用已有的 dev key，避免每次重启生成新 key 导致浏览器登录失效
     let key_file_path = paths.home.join("data").join(".dev_api_key");
-    if key_file_path.exists() {
-        if let Ok(stored_key) = std::fs::read_to_string(&key_file_path) {
-            let trimmed = stored_key.trim().to_string();
-            if !trimmed.is_empty() {
-                match auth_manager.authenticate(&trimmed).await {
-                    Ok(_) => {
-                        tracing::info!("Reusing existing dev API key from {:?}", key_file_path);
-                        dev_api_key = Some(trimmed);
-                    }
-                    Err(_) => {
-                        tracing::info!("Stored dev API key is invalid, creating new one");
-                    }
+    if let Ok(stored_key) = std::fs::read_to_string(&key_file_path) {
+        let trimmed = stored_key.trim().to_string();
+        if !trimmed.is_empty() {
+            match auth_manager.authenticate(&trimmed).await {
+                Ok(_) => {
+                    tracing::info!("Reusing existing dev API key from {:?}", key_file_path);
+                    dev_api_key = Some(trimmed);
+                }
+                Err(_) => {
+                    tracing::info!("Stored dev API key is invalid, creating new one");
                 }
             }
         }
