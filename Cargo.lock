@@ -1003,6 +1003,7 @@ dependencies = [
  "easybot-adapter-wechat",
  "easybot-api",
  "easybot-core",
+ "rustls",
  "serde_json",
  "serde_yaml",
  "sqlx",
