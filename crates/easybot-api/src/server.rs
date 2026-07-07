@@ -222,7 +222,7 @@ async fn security_headers_middleware(response: Response) -> Response {
     // NOTE: 'unsafe-inline' is required because all assets (CSS/JS) are embedded
     // inline in a single HTML file by build.rs. This is a local admin panel, not
     // a public-facing site — the inline content comes from trusted source files.
-    const CSP_VALUE: &str = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws: wss:; img-src 'self' data:; frame-ancestors 'none';";
+    const CSP_VALUE: &str = "default-src 'self'; script-src 'self' 'unsafe-inline' https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; connect-src 'self' ws: wss:; img-src 'self' data:; frame-ancestors 'none';";
     let (mut parts, body) = response.into_parts();
 
     // Content-Security-Policy
