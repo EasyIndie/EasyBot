@@ -13,7 +13,7 @@ use utoipa::{IntoParams, ToSchema};
 #[derive(Debug, Deserialize, ToSchema, IntoParams)]
 #[into_params(parameter_in = Query)]
 pub struct LogQuery {
-    /// 过滤级别: ERROR / WARN / INFO / DEBUG
+    /// 过滤级别: ERROR / WARN / INFO / DEBUG / TRACE
     pub level: Option<String>,
     /// 文本搜索
     pub search: Option<String>,
