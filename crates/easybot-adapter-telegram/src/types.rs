@@ -64,6 +64,31 @@ pub(crate) struct TelegramMessage {
     pub reply_to_message: Option<Box<TelegramMessage>>,
     #[serde(default)]
     pub caption: Option<String>,
+    // ── 媒体字段 ──
+    /// 图片（最大分辨率在最后）
+    #[serde(default)]
+    pub photo: Option<Vec<TelegramPhotoSize>>,
+    /// 通用文件
+    #[serde(default)]
+    pub document: Option<TelegramDocument>,
+    /// 视频
+    #[serde(default)]
+    pub video: Option<TelegramVideo>,
+    /// 音频
+    #[serde(default)]
+    pub audio: Option<TelegramAudio>,
+    /// 语音消息
+    #[serde(default)]
+    pub voice: Option<TelegramVoice>,
+    /// 贴纸
+    #[serde(default)]
+    pub sticker: Option<TelegramSticker>,
+    /// 动画/GIF
+    #[serde(default)]
+    pub animation: Option<TelegramAnimation>,
+    /// 视频笔记
+    #[serde(default)]
+    pub video_note: Option<TelegramVideoNote>,
 }
 
 /// Telegram 用户
@@ -115,4 +140,121 @@ pub(crate) struct TelegramBotInfo {
     pub username: Option<String>,
     #[serde(default)]
     pub last_name: Option<String>,
+}
+
+// ─── Telegram 媒体消息类型 ─────────────────────────
+
+/// 照片尺寸
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub(crate) struct TelegramPhotoSize {
+    pub file_id: String,
+    pub file_unique_id: String,
+    pub width: i64,
+    pub height: i64,
+    #[serde(default)]
+    pub file_size: Option<i64>,
+}
+
+/// 文档/文件
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub(crate) struct TelegramDocument {
+    pub file_id: String,
+    pub file_unique_id: String,
+    #[serde(default)]
+    pub thumbnail: Option<TelegramPhotoSize>,
+    #[serde(default)]
+    pub file_name: Option<String>,
+    #[serde(default)]
+    pub mime_type: Option<String>,
+    #[serde(default)]
+    pub file_size: Option<i64>,
+}
+
+/// 视频
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub(crate) struct TelegramVideo {
+    pub file_id: String,
+    pub file_unique_id: String,
+    pub width: i64,
+    pub height: i64,
+    pub duration: i64,
+    #[serde(default)]
+    pub thumbnail: Option<TelegramPhotoSize>,
+    #[serde(default)]
+    pub mime_type: Option<String>,
+    #[serde(default)]
+    pub file_size: Option<i64>,
+}
+
+/// 音频
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub(crate) struct TelegramAudio {
+    pub file_id: String,
+    pub file_unique_id: String,
+    pub duration: i64,
+    #[serde(default)]
+    pub performer: Option<String>,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub mime_type: Option<String>,
+    #[serde(default)]
+    pub file_size: Option<i64>,
+}
+
+/// 语音
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub(crate) struct TelegramVoice {
+    pub file_id: String,
+    pub file_unique_id: String,
+    pub duration: i64,
+    #[serde(default)]
+    pub mime_type: Option<String>,
+    #[serde(default)]
+    pub file_size: Option<i64>,
+}
+
+/// 贴纸
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub(crate) struct TelegramSticker {
+    pub file_id: String,
+    pub file_unique_id: String,
+    pub width: i64,
+    pub height: i64,
+    pub is_animated: bool,
+    #[serde(default)]
+    pub is_video: bool,
+    #[serde(default)]
+    pub thumbnail: Option<TelegramPhotoSize>,
+    #[serde(default)]
+    pub file_size: Option<i64>,
+}
+
+/// 动画/GIF
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub(crate) struct TelegramAnimation {
+    pub file_id: String,
+    pub file_unique_id: String,
+    pub width: i64,
+    pub height: i64,
+    pub duration: i64,
+    #[serde(default)]
+    pub thumbnail: Option<TelegramPhotoSize>,
+    #[serde(default)]
+    pub mime_type: Option<String>,
+    #[serde(default)]
+    pub file_size: Option<i64>,
+}
+
+/// 视频笔记（圆形视频）
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub(crate) struct TelegramVideoNote {
+    pub file_id: String,
+    pub file_unique_id: String,
+    pub length: i64,
+    pub duration: i64,
+    #[serde(default)]
+    pub thumbnail: Option<TelegramPhotoSize>,
+    #[serde(default)]
+    pub file_size: Option<i64>,
 }

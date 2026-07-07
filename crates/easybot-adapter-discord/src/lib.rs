@@ -264,10 +264,13 @@ impl DiscordAdapter {
 
         let timestamp = msg.timestamp.as_micros() / 1000;
 
+        // 检测消息类型和媒体附件
+        let (msg_type, media) = Self::detect_discord_msg_type(msg);
+
         Some(InboundMessage {
             id: msg.id.to_string(),
             platform: "discord".to_string(),
-            msg_type: MessageType::Text,
+            msg_type,
             text: Some(msg.content.clone()).filter(|s| !s.is_empty()),
             sender,
             recipient: Some(bot_user_id.to_string()),
@@ -278,7 +281,7 @@ impl DiscordAdapter {
             thread_id: None,
             root_id: None,
             timestamp,
-            media: None,
+            media,
             command: None,
             callback: None,
             reply_to: None,
@@ -286,6 +289,51 @@ impl DiscordAdapter {
             mentioned: None,
             metadata: serde_json::to_value(msg).ok(),
         })
+    }
+
+    /// 检测 Discord 消息类型并提取媒体附件
+    fn detect_discord_msg_type(
+        msg: &twilight_model::channel::Message,
+    ) -> (MessageType, Option<Vec<MediaAttachment>>) {
+        use MediaType as MT;
+        use MessageType as MsgT;
+
+        if msg.attachments.is_empty() {
+            return (MsgT::Text, None);
+        }
+
+        let mut media_list: Vec<MediaAttachment> = Vec::new();
+        let mut primary_type = MsgT::Text;
+
+        for att in &msg.attachments {
+            let (media_type, msg_type) = match att.content_type.as_deref() {
+                Some(ct) if ct.starts_with("image/") => (MT::Image, MsgT::Image),
+                Some(ct) if ct.starts_with("video/") => (MT::Video, MsgT::Video),
+                Some(ct) if ct.starts_with("audio/") => (MT::Audio, MsgT::Audio),
+                _ => (MT::Document, MsgT::File),
+            };
+
+            if primary_type == MsgT::Text {
+                primary_type = msg_type;
+            }
+
+            media_list.push(MediaAttachment {
+                media_type,
+                url: Some(att.url.clone()),
+                data: None,
+                mime_type: att
+                    .content_type
+                    .clone()
+                    .unwrap_or_else(|| "application/octet-stream".to_string()),
+                filename: Some(att.filename.clone()),
+                caption: None,
+                thumbnail_url: Some(att.proxy_url.clone()),
+                file_size: Some(att.size),
+                duration: None,
+            });
+        }
+
+        (primary_type, Some(media_list))
     }
 
     /// Gateway Shard 事件循环（使用 twilight-gateway SDK）

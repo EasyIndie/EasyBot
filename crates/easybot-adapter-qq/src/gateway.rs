@@ -244,6 +244,47 @@ impl crate::QqAdapter {
         }
     }
 
+    /// 检测 QQ 消息类型及媒体附件。
+    /// `message_type` 仅在 GROUP_MESSAGE_CREATE 事件中可用（0=文本，其他=未知/媒体）。
+    /// `content` 中可能包含图片 URL（格式: <img src="url"/> 或 markdown 图片链接）。
+    fn detect_qq_msg_type(
+        message_type: Option<u32>,
+        content: &Option<String>,
+    ) -> (MessageType, Option<Vec<MediaAttachment>>) {
+        // 优先通过 message_type 判断
+        if let Some(mt) = message_type
+            && mt != 0
+        {
+            // 非文本类型，尝试从 content 中提取图片 URL
+            if let Some(text) = content {
+                // QQ 图片格式: <img src="http://..." />
+                if let Some(start) = text.find("<img src=\"") {
+                    let after = &text[start + 10..];
+                    if let Some(end) = after.find('"') {
+                        let url = &after[..end];
+                        return (
+                            MessageType::Image,
+                            Some(vec![MediaAttachment {
+                                media_type: MediaType::Image,
+                                url: Some(url.to_string()),
+                                data: None,
+                                mime_type: "image/jpeg".to_string(),
+                                filename: None,
+                                caption: None,
+                                thumbnail_url: None,
+                                file_size: None,
+                                duration: None,
+                            }]),
+                        );
+                    }
+                }
+            }
+            // 无法提取详情，标记为 File
+            return (MessageType::File, None);
+        }
+        (MessageType::Text, None)
+    }
+
     pub(crate) async fn handle_dispatch(
         event_type: &str,
         payload: &crate::types::GatewayPayload<serde_json::Value>,
@@ -282,10 +323,12 @@ impl crate::QqAdapter {
                 messages_in.fetch_add(1, Ordering::Relaxed);
                 let ts = Self::parse_timestamp(&msg_event.timestamp);
 
+                let (msg_type, media) = Self::detect_qq_msg_type(None, &msg_event.content);
+
                 let inbound = InboundMessage {
                     id: msg_event.id,
                     platform: "qq".to_string(),
-                    msg_type: MessageType::Text,
+                    msg_type,
                     text: msg_event.content,
                     sender: MessageSender {
                         id: msg_event.author.id,
@@ -304,7 +347,7 @@ impl crate::QqAdapter {
                     thread_id: None,
                     root_id: None,
                     timestamp: ts,
-                    media: None,
+                    media,
                     command: None,
                     callback: None,
                     reply_to: None,
@@ -349,10 +392,13 @@ impl crate::QqAdapter {
                 let member_id = msg_event.author.member_openid.clone();
                 let role = Self::parse_member_role(msg_event.author.member_role.as_deref());
                 let is_bot = msg_event.author.bot.unwrap_or(false);
+                // 旧协议 GROUP_AT_MESSAGE_CREATE 无 message_type 字段
+                let (msg_type, media) = Self::detect_qq_msg_type(None, &msg_event.content);
+
                 let inbound = InboundMessage {
                     id: msg_event.id,
                     platform: "qq".to_string(),
-                    msg_type: MessageType::Text,
+                    msg_type,
                     text: msg_event.content,
                     sender: MessageSender {
                         id: member_id.clone(),
@@ -371,7 +417,7 @@ impl crate::QqAdapter {
                     thread_id: None,
                     root_id: None,
                     timestamp: ts,
-                    media: None,
+                    media,
                     command: None,
                     callback: None,
                     reply_to: None,
@@ -433,10 +479,14 @@ impl crate::QqAdapter {
                             .collect(),
                     )
                 };
+                // QqGroupMessageCreateEvent 有 message_type 字段
+                let (msg_type, media) =
+                    Self::detect_qq_msg_type(msg_event.message_type, &msg_event.content);
+
                 let inbound = InboundMessage {
                     id: msg_event.id,
                     platform: "qq".to_string(),
-                    msg_type: MessageType::Text,
+                    msg_type,
                     text: msg_event.content,
                     sender: MessageSender {
                         id: member_id.clone(),
@@ -455,7 +505,7 @@ impl crate::QqAdapter {
                     thread_id: None,
                     root_id: None,
                     timestamp: ts,
-                    media: None,
+                    media,
                     command: None,
                     callback: None,
                     reply_to: None,
@@ -500,10 +550,12 @@ impl crate::QqAdapter {
                 messages_in.fetch_add(1, Ordering::Relaxed);
                 let ts = Self::parse_timestamp(&msg_event.timestamp);
                 let user_openid = msg_event.author.user_openid.clone();
+                let (msg_type, media) = Self::detect_qq_msg_type(None, &msg_event.content);
+
                 let inbound = InboundMessage {
                     id: msg_event.id,
                     platform: "qq".to_string(),
-                    msg_type: MessageType::Text,
+                    msg_type,
                     text: msg_event.content,
                     sender: MessageSender {
                         id: user_openid.clone(),
@@ -522,7 +574,7 @@ impl crate::QqAdapter {
                     thread_id: None,
                     root_id: None,
                     timestamp: ts,
-                    media: None,
+                    media,
                     command: None,
                     callback: None,
                     reply_to: None,
