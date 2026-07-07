@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **长期运行资源耗尽修复** — 全面审计并修复 8 项资源耗尽可能：
+  - SQLite WAL 文件无限增长：新增后台 WAL checkpoint 任务，按 TTL 清理间隔运行 `PRAGMA wal_checkpoint(TRUNCATE)`
+  - Webhook 分发无并发控制：新增 `Semaphore` 上限 16 并发，防止事件洪水压垮运行时
+  - SessionBridge 每消息 spawn 两个任务：改为内联执行，消除无限制任务增长
+  - SessionManager DashMap 内存堆积：新增 `prune_expired()` 方法，按 TTL 周期清理过期会话的内存残留
+  - QQ `chat_types` 缓存：4 处插入点加 10,000 条上限，超限时自动清空
+  - Telegram `admin_cache` 缓存：插入点加 5,000 条上限
+  - Discord `guild_owner_cache` 缓存：2 处插入点加 5,000 条上限
+  - 飞书 `role_cache` 30 秒 TTL 实际生效：缓存读取时检查 `Instant::elapsed()`，过期自动移除
+
 ## [0.0.7] - 2026-07-07
 
 ### Fixed
