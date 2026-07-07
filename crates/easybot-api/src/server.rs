@@ -457,8 +457,8 @@ pub fn create_router(state: AppState) -> Router {
     // ── TraceLayer with sensitive header redaction ──
     // SECURITY: Authorization header values are not logged
     let trace_layer = TraceLayer::new_for_http()
-        .make_span_with(tower_http::trace::DefaultMakeSpan::new().level(tracing::Level::INFO))
-        .on_request(tower_http::trace::DefaultOnRequest::new().level(tracing::Level::INFO));
+        .make_span_with(tower_http::trace::DefaultMakeSpan::new().level(tracing::Level::DEBUG))
+        .on_request(tower_http::trace::DefaultOnRequest::new().level(tracing::Level::DEBUG));
 
     // 基础路径
     let base_path = &state.config.api.base_path;

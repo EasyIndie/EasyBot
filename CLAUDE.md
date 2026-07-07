@@ -150,3 +150,30 @@ Full checklist: `docs/TODO.md`. P4 deferred items:
 |---|---|---|
 | RBAC | `crates/easybot-core/src/auth/permissions.rs` | Role-based access control (暂缓) |
 | TLS termination | `crates/easybot-api/src/server.rs` | Cert loading/serving not wired (暂缓) |
+
+## 资源管理指南 (Resource Management)
+
+长期运行稳定性依赖以下机制协同工作，修改相关代码时请保持这些模式的完整性：
+
+### 已实现的资源保护
+
+| 保护层 | 机制 | 文件 |
+|---|---|---|
+| SQLite WAL checkpoint | 后台任务按 TTL 间隔循环 `PRAGMA wal_checkpoint(TRUNCATE)` | `bin/src/main.rs` |
+| SQLite TTL 数据保留 | `RetentionWorker` 每小时删除过期消息/会话 (默认: 消息90天, 会话365天) | `core/src/storage/retention.rs` |
+| Session 内存清理 | `SessionManager::prune_expired()` 按 TTL 周期同步清理 DashMap | `core/src/session/manager.rs` |
+| 事件总线 | tokio `broadcast` 有界通道 (cap 256)，慢消费者 Lagged 丢事件 | `core/src/bus/event_bus.rs` |
+| WebSocket 上限 | Semaphore 最大 `max_clients` (默认1000)，发送超时 100ms，连续丢 50 事件断开 | `api/src/routes/ws.rs` |
+| Webhook 并发 | Semaphore 上限 16 并发分发 | `core/src/webhook/mod.rs` |
+| 速率限制 | IP 滑动窗口，Max 100,000 桶，5 分钟 LRU 清理 | `api/src/middleware/rate_limit.rs` |
+| 环形日志 | `LogCollector` 固定 5000 条环形缓冲 | `api/src/log_collector.rs` |
+| Prometheus 指标 | 固定标签集，路径归一化防标签爆炸 | `api/src/metrics.rs` |
+| 适配器重连 | 指数退避 5s→300s，最多 20 次封顶 | `core/src/adapter/manager.rs` |
+| 适配器缓存上限 | QQ 10K / Telegram 5K / Discord 5K / 飞书 30s TTL | 各 adapter crate |
+
+### 新增功能时需注意
+
+- **所有适配器缓存必须有大小上限或 TTL 淘汰** — 参考 `CHAT_TYPE_CACHE_LIMIT` / `ADMIN_CACHE_LIMIT` / `GUILD_CACHE_LIMIT` 模式
+- **所有 tokio::spawn 循环必须考虑并发上限** — 使用 `Semaphore` 或 `JoinSet`
+- **SQLite 清理后需配合 WAL checkpoint** — 避免 WAL 文件无限增长
+- **内存 Session 清理必须匹配数据库 TTL** — `SessionManager::prune_expired()` 调用周期需与 `RetentionWorker` 一致

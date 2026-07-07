@@ -1,3 +1,4 @@
+#![allow(unused_qualifications)]
 //! 日志查询 API
 
 use crate::AppState;
@@ -6,9 +7,11 @@ use axum::{
     extract::{Query, State},
 };
 use serde::Deserialize;
+use utoipa::{IntoParams, ToSchema};
 
 /// 日志查询参数
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, ToSchema, IntoParams)]
+#[into_params(parameter_in = Query)]
 pub struct LogQuery {
     /// 过滤级别: ERROR / WARN / INFO / DEBUG
     pub level: Option<String>,
@@ -20,7 +23,16 @@ pub struct LogQuery {
     pub since: Option<i64>,
 }
 
-/// GET /api/v1/logs — 查询日志条目
+/// 查询日志条目
+#[utoipa::path(
+    get,
+    path = "/api/v1/logs",
+    tag = "Logs",
+    params(LogQuery),
+    responses(
+        (status = 200, description = "日志条目列表", body = serde_json::Value),
+    )
+)]
 pub async fn log_entries(
     State(state): State<AppState>,
     Query(params): Query<LogQuery>,

@@ -48,7 +48,7 @@ impl crate::QqAdapter {
             if token_store.needs_refresh()
                 && let Err(e) = token_store.refresh().await
             {
-                tracing::error!("QQ token refresh failed: {}, retry 30s", e);
+                tracing::warn!("QQ token refresh failed: {}, retry 30s", e);
                 tokio::time::sleep(Duration::from_secs(30)).await;
                 continue;
             }
@@ -57,7 +57,7 @@ impl crate::QqAdapter {
             let gw_url = match Self::fetch_gateway_url(&token_store, &base_url).await {
                 Some(url) => url,
                 None => {
-                    tracing::error!("QQ Gateway: failed to get gateway URL, retry 30s");
+                    tracing::warn!("QQ Gateway: failed to get gateway URL, retry 30s");
                     tokio::time::sleep(Duration::from_secs(30)).await;
                     continue;
                 }
@@ -185,7 +185,7 @@ impl crate::QqAdapter {
                                                 continue;
                                             }
                                         if let Some(ref et) = payload.t {
-                                            tracing::debug!("QQ dispatch event: {}", et);
+                                            tracing::trace!("QQ dispatch event: {}", et);
                                             Self::handle_dispatch(
                                                 et, &payload, &event_bus, &bot_id, &messages_in, &chat_types,
                                             ).await;
@@ -244,6 +244,82 @@ impl crate::QqAdapter {
         }
     }
 
+    /// 检测 QQ 消息类型及媒体附件。
+    /// `message_type` 仅在 GROUP_MESSAGE_CREATE 事件中可用（0=文本，其他=未知/媒体）。
+    /// `content` 中可能包含图片 URL（格式: <img src="url"/> 或 markdown 图片链接）。
+    fn detect_qq_msg_type(
+        message_type: Option<u32>,
+        content: &Option<String>,
+        attachments: &[crate::types::QQAttachment],
+    ) -> (MessageType, Option<Vec<MediaAttachment>>) {
+        // 优先检查 attachments 中的媒体文件
+        if !attachments.is_empty() {
+            let mut media_list: Vec<MediaAttachment> = Vec::new();
+            for att in attachments {
+                let media_type = match att.content_type.as_deref() {
+                    Some(ct) if ct.starts_with("image/") => MediaType::Image,
+                    Some(ct) if ct.starts_with("video/") => MediaType::Video,
+                    Some(ct) if ct.starts_with("audio/") => MediaType::Audio,
+                    _ => MediaType::Document,
+                };
+                media_list.push(MediaAttachment {
+                    media_type,
+                    url: att.url.clone(),
+                    data: None,
+                    mime_type: att
+                        .content_type
+                        .clone()
+                        .unwrap_or_else(|| "application/octet-stream".to_string()),
+                    filename: att.filename.clone(),
+                    caption: None,
+                    thumbnail_url: None,
+                    file_size: att.size,
+                    duration: None,
+                });
+            }
+            let primary_type = match media_list.first() {
+                Some(m) if m.media_type == MediaType::Image => MessageType::Image,
+                Some(m) if m.media_type == MediaType::Video => MessageType::Video,
+                Some(m) if m.media_type == MediaType::Audio => MessageType::Audio,
+                _ => MessageType::File,
+            };
+            return (primary_type, Some(media_list));
+        }
+
+        // 其次通过 message_type 判断
+        if let Some(mt) = message_type
+            && mt != 0
+        {
+            // 非文本类型，尝试从 content 中提取图片 URL
+            if let Some(text) = content {
+                // QQ 图片格式: <img src="http://..." />
+                if let Some(start) = text.find("<img src=\"") {
+                    let after = &text[start + 10..];
+                    if let Some(end) = after.find('"') {
+                        let url = &after[..end];
+                        return (
+                            MessageType::Image,
+                            Some(vec![MediaAttachment {
+                                media_type: MediaType::Image,
+                                url: Some(url.to_string()),
+                                data: None,
+                                mime_type: "image/jpeg".to_string(),
+                                filename: None,
+                                caption: None,
+                                thumbnail_url: None,
+                                file_size: None,
+                                duration: None,
+                            }]),
+                        );
+                    }
+                }
+            }
+            // 无法提取详情，标记为 File
+            return (MessageType::File, None);
+        }
+        (MessageType::Text, None)
+    }
+
     pub(crate) async fn handle_dispatch(
         event_type: &str,
         payload: &crate::types::GatewayPayload<serde_json::Value>,
@@ -282,10 +358,13 @@ impl crate::QqAdapter {
                 messages_in.fetch_add(1, Ordering::Relaxed);
                 let ts = Self::parse_timestamp(&msg_event.timestamp);
 
+                let (msg_type, media) =
+                    Self::detect_qq_msg_type(None, &msg_event.content, &msg_event.attachments);
+
                 let inbound = InboundMessage {
                     id: msg_event.id,
                     platform: "qq".to_string(),
-                    msg_type: MessageType::Text,
+                    msg_type,
                     text: msg_event.content,
                     sender: MessageSender {
                         id: msg_event.author.id,
@@ -304,7 +383,7 @@ impl crate::QqAdapter {
                     thread_id: None,
                     root_id: None,
                     timestamp: ts,
-                    media: None,
+                    media,
                     command: None,
                     callback: None,
                     reply_to: None,
@@ -313,11 +392,15 @@ impl crate::QqAdapter {
                     metadata: Some(data.clone()),
                 };
 
-                // Track chat type for direct outbound routing
-                chat_types
-                    .lock()
-                    .unwrap()
-                    .insert(inbound.chat_id.clone(), inbound.chat_type);
+                // Track chat type for direct outbound routing, with size cap
+                {
+                    let mut ct = chat_types.lock().unwrap();
+                    ct.insert(inbound.chat_id.clone(), inbound.chat_type);
+                    const CHAT_TYPE_CACHE_LIMIT: usize = 10_000;
+                    if ct.len() > CHAT_TYPE_CACHE_LIMIT {
+                        ct.clear();
+                    }
+                }
 
                 let event = GatewayEvent::new(
                     easybot_core::types::event::event_types::MESSAGE_INBOUND,
@@ -349,10 +432,14 @@ impl crate::QqAdapter {
                 let member_id = msg_event.author.member_openid.clone();
                 let role = Self::parse_member_role(msg_event.author.member_role.as_deref());
                 let is_bot = msg_event.author.bot.unwrap_or(false);
+                // 旧协议 GROUP_AT_MESSAGE_CREATE 无 message_type 字段
+                let (msg_type, media) =
+                    Self::detect_qq_msg_type(None, &msg_event.content, &msg_event.attachments);
+
                 let inbound = InboundMessage {
                     id: msg_event.id,
                     platform: "qq".to_string(),
-                    msg_type: MessageType::Text,
+                    msg_type,
                     text: msg_event.content,
                     sender: MessageSender {
                         id: member_id.clone(),
@@ -371,7 +458,7 @@ impl crate::QqAdapter {
                     thread_id: None,
                     root_id: None,
                     timestamp: ts,
-                    media: None,
+                    media,
                     command: None,
                     callback: None,
                     reply_to: None,
@@ -380,11 +467,15 @@ impl crate::QqAdapter {
                     metadata: Some(data.clone()),
                 };
 
-                // Track chat type for direct outbound routing
-                chat_types
-                    .lock()
-                    .unwrap()
-                    .insert(inbound.chat_id.clone(), inbound.chat_type);
+                // Track chat type for direct outbound routing, with size cap
+                {
+                    let mut ct = chat_types.lock().unwrap();
+                    ct.insert(inbound.chat_id.clone(), inbound.chat_type);
+                    const CHAT_TYPE_CACHE_LIMIT: usize = 10_000;
+                    if ct.len() > CHAT_TYPE_CACHE_LIMIT {
+                        ct.clear();
+                    }
+                }
 
                 let event = GatewayEvent::new(
                     easybot_core::types::event::event_types::MESSAGE_INBOUND,
@@ -433,10 +524,17 @@ impl crate::QqAdapter {
                             .collect(),
                     )
                 };
+                // QqGroupMessageCreateEvent 有 message_type 字段
+                let (msg_type, media) = Self::detect_qq_msg_type(
+                    msg_event.message_type,
+                    &msg_event.content,
+                    &msg_event.attachments,
+                );
+
                 let inbound = InboundMessage {
                     id: msg_event.id,
                     platform: "qq".to_string(),
-                    msg_type: MessageType::Text,
+                    msg_type,
                     text: msg_event.content,
                     sender: MessageSender {
                         id: member_id.clone(),
@@ -455,7 +553,7 @@ impl crate::QqAdapter {
                     thread_id: None,
                     root_id: None,
                     timestamp: ts,
-                    media: None,
+                    media,
                     command: None,
                     callback: None,
                     reply_to: None,
@@ -468,11 +566,15 @@ impl crate::QqAdapter {
                     }),
                 };
 
-                // Track chat type for direct outbound routing
-                chat_types
-                    .lock()
-                    .unwrap()
-                    .insert(inbound.chat_id.clone(), inbound.chat_type);
+                // Track chat type for direct outbound routing, with size cap
+                {
+                    let mut ct = chat_types.lock().unwrap();
+                    ct.insert(inbound.chat_id.clone(), inbound.chat_type);
+                    const CHAT_TYPE_CACHE_LIMIT: usize = 10_000;
+                    if ct.len() > CHAT_TYPE_CACHE_LIMIT {
+                        ct.clear();
+                    }
+                }
 
                 let event = GatewayEvent::new(
                     easybot_core::types::event::event_types::MESSAGE_INBOUND,
@@ -500,10 +602,13 @@ impl crate::QqAdapter {
                 messages_in.fetch_add(1, Ordering::Relaxed);
                 let ts = Self::parse_timestamp(&msg_event.timestamp);
                 let user_openid = msg_event.author.user_openid.clone();
+                let (msg_type, media) =
+                    Self::detect_qq_msg_type(None, &msg_event.content, &msg_event.attachments);
+
                 let inbound = InboundMessage {
                     id: msg_event.id,
                     platform: "qq".to_string(),
-                    msg_type: MessageType::Text,
+                    msg_type,
                     text: msg_event.content,
                     sender: MessageSender {
                         id: user_openid.clone(),
@@ -522,7 +627,7 @@ impl crate::QqAdapter {
                     thread_id: None,
                     root_id: None,
                     timestamp: ts,
-                    media: None,
+                    media,
                     command: None,
                     callback: None,
                     reply_to: None,
@@ -531,11 +636,15 @@ impl crate::QqAdapter {
                     metadata: Some(data.clone()),
                 };
 
-                // Track chat type for direct outbound routing
-                chat_types
-                    .lock()
-                    .unwrap()
-                    .insert(inbound.chat_id.clone(), inbound.chat_type);
+                // Track chat type for direct outbound routing, with size cap
+                {
+                    let mut ct = chat_types.lock().unwrap();
+                    ct.insert(inbound.chat_id.clone(), inbound.chat_type);
+                    const CHAT_TYPE_CACHE_LIMIT: usize = 10_000;
+                    if ct.len() > CHAT_TYPE_CACHE_LIMIT {
+                        ct.clear();
+                    }
+                }
 
                 let event = GatewayEvent::new(
                     easybot_core::types::event::event_types::MESSAGE_INBOUND,

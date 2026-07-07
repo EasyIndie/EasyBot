@@ -52,7 +52,10 @@ storage:
   # retention:
   #   messageTtlDays: 90          # 消息保留天数
   #   sessionTtlDays: 365         # 会话保留天数
-  #   cleanupIntervalSecs: 3600  # 清理间隔（秒）
+  #   cleanupIntervalSecs: 3600  # 清理间隔（秒，默认 1 小时）
+  #
+  # 注意：TTL 清理会自动触发 PRAGMA wal_checkpoint(TRUNCATE)
+  # 回收 WAL 文件空间，防止长期运行后磁盘占满。
 
 logging:
   level: "info"             # debug / info / warn / error

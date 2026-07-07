@@ -121,6 +121,10 @@ impl TelegramAdapter {
     ) -> Option<InboundMessage> {
         // 在移出字段前序列化原始数据
         let raw_payload = serde_json::to_value(&tg_msg).ok();
+
+        // 检测消息类型和媒体（在移动字段前借用 tg_msg）
+        let (msg_type, media) = Self::detect_msg_type(&tg_msg);
+
         let chat_id = tg_msg.chat.id.to_string();
         let platform = "telegram".to_string();
         let text = tg_msg.text.or(tg_msg.caption);
@@ -175,7 +179,7 @@ impl TelegramAdapter {
         Some(InboundMessage {
             id: tg_msg.message_id.to_string(),
             platform,
-            msg_type: MessageType::Text,
+            msg_type,
             text,
             sender,
             recipient: None,
@@ -186,7 +190,7 @@ impl TelegramAdapter {
             thread_id: None,
             root_id: None,
             timestamp: tg_msg.date * 1000,
-            media: None,
+            media,
             command,
             callback: None,
             reply_to,
@@ -194,6 +198,167 @@ impl TelegramAdapter {
             mentioned: None,
             metadata: raw_payload,
         })
+    }
+
+    /// 检测 Telegram 消息类型并提取媒体信息
+    fn detect_msg_type(tg_msg: &TelegramMessage) -> (MessageType, Option<Vec<MediaAttachment>>) {
+        use MediaType as MT;
+        use MessageType as MsgT;
+
+        // 检测优先级：photo > document > video > audio > voice > sticker > animation > video_note > text
+        if let Some(sizes) = &tg_msg.photo {
+            let best = sizes.iter().max_by_key(|p| p.width * p.height);
+            (
+                MsgT::Image,
+                Some(vec![MediaAttachment {
+                    media_type: MT::Image,
+                    url: best.map(|p| p.file_id.clone()),
+                    data: None,
+                    mime_type: "image/jpeg".to_string(),
+                    filename: None,
+                    caption: tg_msg.caption.clone(),
+                    thumbnail_url: None,
+                    file_size: best.and_then(|p| p.file_size).map(|s| s as u64),
+                    duration: None,
+                }]),
+            )
+        } else if let Some(doc) = &tg_msg.document {
+            let mime = doc.mime_type.as_deref().unwrap_or("");
+            let media_type = if mime.starts_with("image/") {
+                MT::Image
+            } else if mime.starts_with("video/") {
+                MT::Video
+            } else if mime.starts_with("audio/") {
+                MT::Audio
+            } else {
+                MT::Document
+            };
+            (
+                MsgT::File,
+                Some(vec![MediaAttachment {
+                    media_type,
+                    url: Some(doc.file_id.clone()),
+                    data: None,
+                    mime_type: doc
+                        .mime_type
+                        .clone()
+                        .unwrap_or_else(|| "application/octet-stream".to_string()),
+                    filename: doc.file_name.clone(),
+                    caption: tg_msg.caption.clone(),
+                    thumbnail_url: doc.thumbnail.as_ref().map(|t| t.file_id.clone()),
+                    file_size: doc.file_size.map(|s| s as u64),
+                    duration: None,
+                }]),
+            )
+        } else if let Some(vid) = &tg_msg.video {
+            (
+                MsgT::Video,
+                Some(vec![MediaAttachment {
+                    media_type: MT::Video,
+                    url: Some(vid.file_id.clone()),
+                    data: None,
+                    mime_type: vid
+                        .mime_type
+                        .clone()
+                        .unwrap_or_else(|| "video/mp4".to_string()),
+                    filename: None,
+                    caption: tg_msg.caption.clone(),
+                    thumbnail_url: vid.thumbnail.as_ref().map(|t| t.file_id.clone()),
+                    file_size: vid.file_size.map(|s| s as u64),
+                    duration: Some(vid.duration as f64),
+                }]),
+            )
+        } else if let Some(aud) = &tg_msg.audio {
+            (
+                MsgT::Audio,
+                Some(vec![MediaAttachment {
+                    media_type: MT::Audio,
+                    url: Some(aud.file_id.clone()),
+                    data: None,
+                    mime_type: aud
+                        .mime_type
+                        .clone()
+                        .unwrap_or_else(|| "audio/mpeg".to_string()),
+                    filename: None,
+                    caption: None,
+                    thumbnail_url: None,
+                    file_size: aud.file_size.map(|s| s as u64),
+                    duration: Some(aud.duration as f64),
+                }]),
+            )
+        } else if let Some(voice) = &tg_msg.voice {
+            (
+                MsgT::Audio,
+                Some(vec![MediaAttachment {
+                    media_type: MT::Audio,
+                    url: Some(voice.file_id.clone()),
+                    data: None,
+                    mime_type: voice
+                        .mime_type
+                        .clone()
+                        .unwrap_or_else(|| "audio/ogg".to_string()),
+                    filename: None,
+                    caption: None,
+                    thumbnail_url: None,
+                    file_size: voice.file_size.map(|s| s as u64),
+                    duration: Some(voice.duration as f64),
+                }]),
+            )
+        } else if let Some(sticker) = &tg_msg.sticker {
+            (
+                MsgT::Sticker,
+                Some(vec![MediaAttachment {
+                    media_type: MT::Sticker,
+                    url: Some(sticker.file_id.clone()),
+                    data: None,
+                    mime_type: if sticker.is_video {
+                        "video/webm".to_string()
+                    } else {
+                        "image/webp".to_string()
+                    },
+                    filename: None,
+                    caption: None,
+                    thumbnail_url: sticker.thumbnail.as_ref().map(|t| t.file_id.clone()),
+                    file_size: sticker.file_size.map(|s| s as u64),
+                    duration: None,
+                }]),
+            )
+        } else if let Some(anim) = &tg_msg.animation {
+            (
+                MsgT::Animation,
+                Some(vec![MediaAttachment {
+                    media_type: MT::Animation,
+                    url: Some(anim.file_id.clone()),
+                    data: None,
+                    mime_type: anim
+                        .mime_type
+                        .clone()
+                        .unwrap_or_else(|| "video/mp4".to_string()),
+                    filename: None,
+                    caption: tg_msg.caption.clone(),
+                    thumbnail_url: anim.thumbnail.as_ref().map(|t| t.file_id.clone()),
+                    file_size: anim.file_size.map(|s| s as u64),
+                    duration: Some(anim.duration as f64),
+                }]),
+            )
+        } else if let Some(vn) = &tg_msg.video_note {
+            (
+                MsgT::Video,
+                Some(vec![MediaAttachment {
+                    media_type: MT::Video,
+                    url: Some(vn.file_id.clone()),
+                    data: None,
+                    mime_type: "video/mp4".to_string(),
+                    filename: None,
+                    caption: None,
+                    thumbnail_url: vn.thumbnail.as_ref().map(|t| t.file_id.clone()),
+                    file_size: vn.file_size.map(|s| s as u64),
+                    duration: Some(vn.duration as f64),
+                }]),
+            )
+        } else {
+            (MsgT::Text, None)
+        }
     }
 
     /// 调用 Telegram API 的辅助方法
@@ -398,8 +563,14 @@ impl TelegramAdapter {
                 .map(|(_, role)| role.clone());
 
             // 更新缓存（即使 role 为 None，也缓存空列表避免重复请求）
-            let mut cache = admin_cache.lock().await;
-            cache.insert(chat_id, admins);
+            {
+                let mut cache = admin_cache.lock().await;
+                cache.insert(chat_id, admins);
+                const ADMIN_CACHE_LIMIT: usize = 5_000;
+                if cache.len() > ADMIN_CACHE_LIMIT {
+                    cache.clear();
+                }
+            }
 
             return role;
         }
@@ -1347,6 +1518,14 @@ mod tests {
             entities: None,
             reply_to_message: None,
             caption: None,
+            photo: None,
+            document: None,
+            video: None,
+            audio: None,
+            voice: None,
+            sticker: None,
+            animation: None,
+            video_note: None,
         };
 
         let inbound = TelegramAdapter::convert_message(tg_msg, None).unwrap();
@@ -1394,6 +1573,14 @@ mod tests {
             from: None,
             reply_to_message: None,
             entities: None,
+            photo: None,
+            document: None,
+            video: None,
+            audio: None,
+            voice: None,
+            sticker: None,
+            animation: None,
+            video_note: None,
         };
         let inbound = TelegramAdapter::convert_message(msg, None).unwrap();
         assert_eq!(

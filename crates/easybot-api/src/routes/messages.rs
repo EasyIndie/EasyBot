@@ -168,7 +168,7 @@ pub async fn send_message(
     // 持久化出站消息
     let stored = StoredMessage::from_outbound(&platform, &chat_id, None, &req.text, &result);
     if let Err(e) = state.message_store.store_message(&stored).await {
-        tracing::warn!("Failed to persist outbound message: {}", e);
+        tracing::error!("Failed to persist outbound message: {}", e);
     }
 
     // 发布事件

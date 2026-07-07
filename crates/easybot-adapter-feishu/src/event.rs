@@ -6,10 +6,92 @@
 use easybot_core::bus::EventBus;
 use easybot_core::types::event::GatewayEvent;
 use easybot_core::types::message::{
-    ChatType, InboundMessage, MessageSender, MessageType, SenderRole,
+    ChatType, InboundMessage, MediaAttachment, MediaType, MessageSender, MessageType, SenderRole,
 };
 
 use crate::types::*;
+
+/// 检测飞书消息类型并提取媒体信息
+fn detect_feishu_msg_type(
+    msg_type_str: &str,
+    content: &str,
+) -> (MessageType, Option<Vec<MediaAttachment>>) {
+    match msg_type_str {
+        "image" => {
+            let key = serde_json::from_str::<serde_json::Value>(content)
+                .ok()
+                .and_then(|v| {
+                    v.get("image_key")
+                        .and_then(|k| k.as_str())
+                        .map(String::from)
+                });
+            (
+                MessageType::Image,
+                Some(vec![MediaAttachment {
+                    media_type: MediaType::Image,
+                    url: key,
+                    data: None,
+                    mime_type: "image/jpeg".to_string(),
+                    filename: None,
+                    caption: None,
+                    thumbnail_url: None,
+                    file_size: None,
+                    duration: None,
+                }]),
+            )
+        }
+        "audio" => {
+            let parsed = serde_json::from_str::<serde_json::Value>(content).ok();
+            let file_key = parsed
+                .as_ref()
+                .and_then(|v| v.get("file_key").and_then(|k| k.as_str()).map(String::from));
+            let duration = parsed
+                .as_ref()
+                .and_then(|v| v.get("duration").and_then(|d| d.as_f64()));
+            (
+                MessageType::Audio,
+                Some(vec![MediaAttachment {
+                    media_type: MediaType::Audio,
+                    url: file_key,
+                    data: None,
+                    mime_type: "audio/mpeg".to_string(),
+                    filename: None,
+                    caption: None,
+                    thumbnail_url: None,
+                    file_size: None,
+                    duration,
+                }]),
+            )
+        }
+        "file" => {
+            let parsed = serde_json::from_str::<serde_json::Value>(content).ok();
+            let file_key = parsed
+                .as_ref()
+                .and_then(|v| v.get("file_key").and_then(|k| k.as_str()).map(String::from));
+            let file_name = parsed.as_ref().and_then(|v| {
+                v.get("file_name")
+                    .and_then(|n| n.as_str())
+                    .map(String::from)
+            });
+            (
+                MessageType::File,
+                Some(vec![MediaAttachment {
+                    media_type: MediaType::Document,
+                    url: file_key,
+                    data: None,
+                    mime_type: "application/octet-stream".to_string(),
+                    filename: file_name,
+                    caption: None,
+                    thumbnail_url: None,
+                    file_size: None,
+                    duration: None,
+                }]),
+            )
+        }
+        "sticker" => (MessageType::Sticker, None),
+        _ => (MessageType::Text, None),
+    }
+}
 
 /// 处理 `im.message.receive_v1` 事件
 ///
@@ -64,10 +146,13 @@ pub async fn handle_message_receive(
         .parse()
         .unwrap_or_else(|_| chrono::Utc::now().timestamp_millis());
 
+    // 检测消息类型和媒体
+    let (msg_type, media) = detect_feishu_msg_type(&message.msg_type, &message.content);
+
     let inbound = InboundMessage {
         id: message.message_id,
         platform: "feishu".to_string(),
-        msg_type: MessageType::Text,
+        msg_type,
         chat_id: message.chat_id,
         chat_type,
         guild_id: None,
@@ -86,7 +171,7 @@ pub async fn handle_message_receive(
         },
         recipient: None,
         timestamp,
-        media: None,
+        media,
         command: None,
         callback: None,
         reply_to: None,

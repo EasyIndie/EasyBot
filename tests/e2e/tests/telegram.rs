@@ -81,7 +81,7 @@ fn send_message_response() -> Value {
 }
 
 fn send_photo_response() -> Value {
-    serde_json::json!({"ok": true, "result": {"message_id": 100, "date": 1000003, "chat": {"id": 123, "type": "private"}, "from": {"id": 1, "is_bot": true, "first_name": "Bot"}, "photo": [{"file_id": "abc123", "width": 100, "height": 100}]}})
+    serde_json::json!({"ok": true, "result": {"message_id": 100, "date": 1000003, "chat": {"id": 123, "type": "private"}, "from": {"id": 1, "is_bot": true, "first_name": "Bot"}, "photo": [{"file_id": "abc123", "file_unique_id": "abc123_unique", "width": 100, "height": 100}]}})
 }
 
 fn edit_message_response() -> Value {

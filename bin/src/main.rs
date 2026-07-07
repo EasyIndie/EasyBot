@@ -37,35 +37,20 @@ struct Cli {
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
-    // 初始化日志（含内存日志收集器供管理后台使用）
-    let log_level = if cli.debug { "debug" } else { "info" };
+    // 创建内存日志收集器（不依赖配置，提前创建供管理后台使用）
     let log_collector = Arc::new(easybot_api::log_collector::LogCollector::new(5000));
-    // 克隆以共享同一个内部缓冲（Arc<RwLock<VecDeque>>）
-    let tracing_collector = (*log_collector).clone();
-    use tracing_subscriber::EnvFilter;
-    use tracing_subscriber::Layer;
-    use tracing_subscriber::Registry;
-    use tracing_subscriber::fmt;
-    use tracing_subscriber::layer::SubscriberExt;
-    use tracing_subscriber::util::SubscriberInitExt;
-    Registry::default()
-        .with(
-            fmt::layer()
-                .with_writer(std::io::stderr)
-                .with_filter(EnvFilter::new(format!("easybot={}", log_level))),
-        )
-        .with(tracing_collector)
-        .init();
 
-    // 处理 init 命令
+    // 处理 init 命令（独立运行，无需加载配置）
     if cli.init {
+        // handle_init 内部使用 print_tree() 和 println!，无需 tracing
         return handle_init(cli).await;
     }
 
     // 解析配置根目录
     let home = easybot_core::config::resolve_home(cli.dir.map(std::path::PathBuf::from));
     let paths = easybot_core::config::EasyBotPaths::new(home.clone())?;
-    tracing::info!("EasyBot home: {}", home.display());
+    // 日志系统尚未初始化，用 eprintln 输出启动信息
+    eprintln!("EasyBot home: {}", home.display());
 
     // 在加载任何配置之前，先从配置主目录加载 .env 文件。
     // Shell export / Docker environment 优先于 .env（dotenvy 默认行为）。
@@ -77,13 +62,88 @@ async fn main() -> anyhow::Result<()> {
     } else if paths.config_file.exists() {
         easybot_core::config::load_config(&paths.config_file).await?
     } else {
-        tracing::warn!(
-            "No configuration file found at {}. Using defaults.",
+        eprintln!(
+            "[warn] No configuration file found at {}. Using defaults.",
             paths.config_file.display()
         );
-        tracing::info!("Run `easybot --init` to create a default configuration.");
+        eprintln!("[info] Run `easybot --init` to create a default configuration.");
         easybot_core::types::config::GatewayConfig::default()
     };
+
+    // ── 根据配置初始化 tracing 日志系统 ─────────────────────────
+    // CLI --debug 优先于配置文件中的 level
+    let log_level = if cli.debug {
+        "debug".to_string()
+    } else {
+        config.logging.level.clone()
+    };
+    let log_format = config.logging.format.clone();
+    let log_output = config.logging.output.clone();
+
+    use tracing_subscriber::EnvFilter;
+    use tracing_subscriber::Layer;
+    use tracing_subscriber::Registry;
+    use tracing_subscriber::fmt;
+    use tracing_subscriber::fmt::writer::BoxMakeWriter;
+    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::util::SubscriberInitExt;
+
+    // 保留文件日志的 WorkerGuard 直到进程退出，确保日志刷新
+    let _file_log_guard: std::sync::Mutex<Option<tracing_appender::non_blocking::WorkerGuard>> =
+        std::sync::Mutex::new(None);
+
+    let filter = EnvFilter::new(format!("easybot={}", log_level));
+    let make_writer: BoxMakeWriter = match log_output.as_str() {
+        "stdout" => BoxMakeWriter::new(std::io::stdout),
+        "file" => {
+            // 确保日志目录存在
+            let _ = std::fs::create_dir_all(&paths.logs_dir);
+            match tracing_appender::rolling::RollingFileAppender::builder()
+                .rotation(tracing_appender::rolling::Rotation::DAILY)
+                .filename_prefix("easybot")
+                .build(&paths.logs_dir)
+            {
+                Ok(file_appender) => {
+                    let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
+                    if let Ok(mut guard_holder) = _file_log_guard.lock() {
+                        *guard_holder = Some(guard);
+                    }
+                    BoxMakeWriter::new(non_blocking)
+                }
+                Err(e) => {
+                    eprintln!(
+                        "[warn] Failed to create file appender (falling back to stderr): {e}"
+                    );
+                    BoxMakeWriter::new(std::io::stderr)
+                }
+            }
+        }
+        _ => BoxMakeWriter::new(std::io::stderr),
+    };
+
+    if log_format == "json" {
+        Registry::default()
+            .with(
+                fmt::layer()
+                    .json()
+                    .with_writer(make_writer)
+                    .with_filter(filter),
+            )
+            .with((*log_collector).clone())
+            .init();
+    } else {
+        Registry::default()
+            .with(fmt::layer().with_writer(make_writer).with_filter(filter))
+            .with((*log_collector).clone())
+            .init();
+    }
+
+    tracing::info!(
+        "EasyBot configured: level={}, output={}, format={}",
+        log_level,
+        log_output,
+        log_format
+    );
 
     // 合并 gateway.local.yaml（存在时覆盖基础配置）
     if paths.local_config_file.exists() {
@@ -144,6 +204,7 @@ async fn main() -> anyhow::Result<()> {
     // 写回 config，使 API 返回的配置始终反映运行时实际路径
     config.storage.path = db_path.to_string_lossy().to_string();
     let mut auth_pool: Option<sqlx::SqlitePool> = None;
+    let mut retention_pool: Option<sqlx::SqlitePool> = None;
     let (message_store, session_manager) = match config.storage.storage_type.as_str() {
         "postgres" => {
             let conn_str = if !config.storage.connection_string.is_empty() {
@@ -193,6 +254,7 @@ async fn main() -> anyhow::Result<()> {
                     tracing::info!("SQLite storage initialized: {}", db_path.display());
 
                     auth_pool = Some(pool.clone());
+                    retention_pool = Some(pool.clone());
                     let store: Arc<dyn easybot_core::storage::SessionStore> = Arc::new(
                         easybot_core::storage::sqlite::SqliteSessionStore::new(pool.clone()),
                     );
@@ -326,10 +388,12 @@ async fn main() -> anyhow::Result<()> {
 
     // 提取 TTL 清理所需数据（后续 config/session_manager 将被消费）
     let ttl_session_store = session_manager.store_ref();
+    let ttl_session_ttl_days = config.storage.retention.session_ttl_days;
+    let ttl_cleanup_interval_secs = config.storage.retention.cleanup_interval_secs;
     let ttl_config = easybot_core::storage::retention::RetentionConfig {
         message_ttl_days: config.storage.retention.message_ttl_days,
-        session_ttl_days: config.storage.retention.session_ttl_days,
-        cleanup_interval_secs: config.storage.retention.cleanup_interval_secs,
+        session_ttl_days: ttl_session_ttl_days,
+        cleanup_interval_secs: ttl_cleanup_interval_secs,
     };
 
     // 创建指标注册表
@@ -344,6 +408,9 @@ async fn main() -> anyhow::Result<()> {
 
     // 提前暂存适配器配置（config 稍后会被移动进 AppState）
     let adapters_config = config.adapters.clone();
+
+    // 提前暂存 session_manager 引用（稍后被移动进 AppState，但 DashMap 清理需要它）
+    let sm_for_prune = session_manager.clone();
 
     // 创建配置管理器（用于热重载）
     // 优先使用 --config 指定的路径，否则使用默认配置路径
@@ -450,6 +517,46 @@ async fn main() -> anyhow::Result<()> {
     } else {
         tracing::info!("No session store available, TTL retention disabled");
     }
+
+    // 启动 SQLite WAL checkpoint 后台任务（防止 WAL 文件无限增长）
+    if let Some(ref pool) = retention_pool {
+        let pool = pool.clone();
+        let interval = std::time::Duration::from_secs(ttl_cleanup_interval_secs);
+        tokio::spawn(async move {
+            tokio::time::sleep(interval).await; // 与 RetentionWorker 相同的首次延迟
+            loop {
+                tokio::time::sleep(interval).await;
+                if let Err(e) = sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
+                    .execute(&pool)
+                    .await
+                {
+                    tracing::warn!("WAL checkpoint failed: {}", e);
+                }
+            }
+        });
+        tracing::info!(
+            "SQLite WAL checkpoint task started (interval: {:?})",
+            interval
+        );
+    }
+
+    // 启动 SessionManager 内存清理任务（配合 RetentionWorker 的数据库 TTL）
+    let sm_prune = sm_for_prune.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_secs(ttl_cleanup_interval_secs)).await;
+        loop {
+            let cutoff = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as i64
+                - (ttl_session_ttl_days as i64 * 86_400_000);
+            let count = sm_prune.prune_expired(cutoff);
+            if count > 0 {
+                tracing::info!("Cleaned {} stale sessions from memory", count);
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(ttl_cleanup_interval_secs)).await;
+        }
+    });
 
     // 发布网关启动事件
     event_bus.publish(GatewayEvent::new(

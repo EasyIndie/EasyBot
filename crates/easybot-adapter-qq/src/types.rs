@@ -91,6 +91,29 @@ pub struct QqUser {
 
 // ── 消息 ──
 
+/// QQ Bot 消息附件
+#[derive(Debug, Deserialize, Clone)]
+pub struct QQAttachment {
+    /// 文件访问 URL
+    #[serde(default)]
+    pub url: Option<String>,
+    /// MIME 类型
+    #[serde(default)]
+    pub content_type: Option<String>,
+    /// 文件名
+    #[serde(default)]
+    pub filename: Option<String>,
+    /// 文件大小
+    #[serde(default)]
+    pub size: Option<u64>,
+    /// 图片宽度
+    #[serde(default)]
+    pub width: Option<u64>,
+    /// 图片高度
+    #[serde(default)]
+    pub height: Option<u64>,
+}
+
 /// 频道消息事件数据（AT_MESSAGE_CREATE）
 #[derive(Debug, Deserialize)]
 pub struct QqChannelMessageEvent {
@@ -102,6 +125,9 @@ pub struct QqChannelMessageEvent {
     pub content: Option<String>,
     pub author: QqMessageAuthor,
     pub timestamp: String,
+    /// 附件列表
+    #[serde(default)]
+    pub attachments: Vec<QQAttachment>,
 }
 
 /// 群聊消息事件数据（GROUP_AT_MESSAGE_CREATE — 旧协议，仅 @消息）
@@ -113,6 +139,9 @@ pub struct QqGroupMessageEvent {
     pub content: Option<String>,
     pub author: QqGroupMessageAuthor,
     pub timestamp: String,
+    /// 附件列表
+    #[serde(default)]
+    pub attachments: Vec<QQAttachment>,
 }
 
 /// 群聊全量消息事件数据（GROUP_MESSAGE_CREATE — 2026 新协议，全部群消息）
@@ -133,6 +162,9 @@ pub struct QqGroupMessageCreateEvent {
     /// 消息类型（0=文本）
     #[serde(default)]
     pub message_type: Option<u32>,
+    /// 附件列表
+    #[serde(default)]
+    pub attachments: Vec<QQAttachment>,
 }
 
 /// @提及信息
@@ -167,6 +199,9 @@ pub struct QqC2cMessageEvent {
     pub content: Option<String>,
     pub author: QqC2cMessageAuthor,
     pub timestamp: String,
+    /// 附件列表
+    #[serde(default)]
+    pub attachments: Vec<QQAttachment>,
 }
 
 #[derive(Debug, Deserialize, Clone)]

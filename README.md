@@ -1,5 +1,7 @@
 <h1 align="center">
   <br>
+  <img src="assets/EasyBot.png" alt="EasyBot Logo" width="200">
+  <br>
   EasyBot
   <br>
 </h1>
@@ -33,6 +35,7 @@
 - 🐳 **Docker 就绪** — 多阶段构建，一行命令部署
 - 📊 **可观测性** — Prometheus 指标、结构化日志、健康检查
 - ⚙️ **热重载配置** — 运行时更新配置无需重启
+- 🛡️ **资源管理** — 自动 TTL 清理、WAL checkpoint、有界通道、适配器缓存上限，长期运行不泄漏
 
 ---
 

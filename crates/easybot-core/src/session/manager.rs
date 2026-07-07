@@ -71,7 +71,7 @@ impl SessionManager {
                 if let Some(ref store) = self.store
                     && let Err(e) = store.upsert_session(&session).await
                 {
-                    tracing::warn!(error = %e, session_key = %session.key, "持久化会话更新失败");
+                    tracing::error!(error = %e, session_key = %session.key, "持久化会话更新失败");
                 }
                 session
             }
@@ -95,7 +95,7 @@ impl SessionManager {
                 if let Some(ref store) = self.store
                     && let Err(e) = store.upsert_session(&session).await
                 {
-                    tracing::warn!(error = %e, session_key = %session.key, "持久化新会话失败");
+                    tracing::error!(error = %e, session_key = %session.key, "持久化新会话失败");
                 }
                 session
             }
@@ -116,7 +116,7 @@ impl SessionManager {
             && let Some(ref store) = self.store
             && let Err(e) = store.delete_session(key).await
         {
-            tracing::warn!(error = %e, session_key = %key, "持久化删除会话失败");
+            tracing::error!(error = %e, session_key = %key, "持久化删除会话失败");
         }
         removed
     }
@@ -163,6 +163,23 @@ impl SessionManager {
         self.store.clone()
     }
 
+    /// 从 DashMap 中删除 updated_at 早于 before 的过期会话（内存清理）
+    ///
+    /// 配合 RetentionWorker 的数据库 TTL 清理使用，确保内存中不堆积过期会话。
+    /// 返回删除的条目数。
+    pub fn prune_expired(&self, before: i64) -> usize {
+        let mut count = 0;
+        self.sessions.retain(|_key, session| {
+            if session.updated_at < before {
+                count += 1;
+                false
+            } else {
+                true
+            }
+        });
+        count
+    }
+
     /// 更新会话的最近消息记录
     ///
     /// 在收到入站消息时调用，记录消息摘要和时间戳。
@@ -187,7 +204,7 @@ impl SessionManager {
             if let Some(ref store) = self.store
                 && let Err(e) = store.upsert_session(&cloned).await
             {
-                tracing::warn!(error = %e, session_key = %cloned.key, "持久化会话最近消息失败");
+                tracing::error!(error = %e, session_key = %cloned.key, "持久化会话最近消息失败");
             }
             Some(cloned)
         } else {
@@ -223,7 +240,7 @@ impl SessionManager {
             if let Some(ref store) = self.store
                 && let Err(e) = store.upsert_session(&cloned).await
             {
-                tracing::warn!(error = %e, session_key = %cloned.key, "持久化富化会话失败");
+                tracing::error!(error = %e, session_key = %cloned.key, "持久化富化会话失败");
             }
             Some(cloned)
         } else {
@@ -263,7 +280,7 @@ impl SessionManager {
             if let Some(ref store) = self.store
                 && let Err(e) = store.upsert_session(&cloned).await
             {
-                tracing::warn!(error = %e, session_key = %cloned.key, "持久化会话变更失败");
+                tracing::error!(error = %e, session_key = %cloned.key, "持久化会话变更失败");
             }
             Some(cloned)
         } else {

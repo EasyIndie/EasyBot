@@ -78,6 +78,11 @@ impl Modify for SecurityAddon {
         routes::admin::revoke_api_key,
         routes::admin::purge_api_key,
         routes::admin::list_api_key_types,
+        routes::admin::admin_login,
+        // System
+        routes::system::system_info,
+        // Logs
+        routes::logs::log_entries,
     ),
     components(
         schemas(
@@ -87,6 +92,8 @@ impl Modify for SecurityAddon {
             routes::admin::CreateApiKeyResponse,
             routes::admin::RevokeResponse,
             routes::admin::ApiKeyTypesResponse,
+            routes::admin::LoginRequest,
+            routes::admin::LoginResponse,
             // Health
             routes::health::HealthResponse,
             routes::health::AdapterSummary,
@@ -158,6 +165,8 @@ impl Modify for SecurityAddon {
             // Error
             easybot_core::types::error::ApiErrorResponse,
             easybot_core::types::error::ApiErrorDetail,
+            // Logs
+            routes::logs::LogQuery,
         )
     ),
     tags(
@@ -169,6 +178,9 @@ impl Modify for SecurityAddon {
         (name = "Config", description = "网关配置管理"),
         (name = "WebSocket", description = "WebSocket 实时事件推送"),
         (name = "API Keys", description = "API Key 管理（创建/列出/吊销/删除）"),
+        (name = "System", description = "系统信息查询"),
+        (name = "Logs", description = "日志查询"),
+        (name = "Admin", description = "管理后台登录"),
     )
 )]
 pub struct ApiDoc;

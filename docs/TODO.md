@@ -1,6 +1,6 @@
 # EasyBot TODO — 待办事项清单
 
-> 最后更新: 2026-06-28
+> 最后更新: 2026-07-07
 
 ---
 
@@ -16,7 +16,17 @@
 
 ---
 
-## 已完成项 (本轮开发)
+## 已完成项 (当前开发)
+
+### 资源耗尽审计与修复（2026-07-07）
+- [x] **SQLite WAL 文件增长** — 新增后台 WAL checkpoint 任务，`PRAGMA wal_checkpoint(TRUNCATE)` 按 TTL 周期运行
+- [x] **Webhook 并发保护** — Semaphore 上限 16 并发分发，防止事件洪水压垮运行时
+- [x] **SessionBridge 任务泄漏** — 移除每条入站消息 spawn 2 个 tokio 任务，改为内联执行
+- [x] **SessionManager 内存清理** — 新增 `prune_expired()` 方法，按 TTL 周期同步清理 DashMap 过期会话
+- [x] **QQ chat_types 缓存** — 4 处插入点加 10,000 条上限
+- [x] **Telegram admin_cache 缓存** — 插入点加 5,000 条上限
+- [x] **Discord guild_owner_cache 缓存** — 2 处插入点加 5,000 条上限
+- [x] **飞书 role_cache TTL** — 缓存读取时检查 30s 过期，到期自动移除重新查询
 
 ### 前端优化（2026-06-28）
 - [x] **Sessions Tab 闪烁** — 增量 DOM 更新（`data-session-key` 属性 diff）

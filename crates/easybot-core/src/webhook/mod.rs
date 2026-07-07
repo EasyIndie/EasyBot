@@ -8,11 +8,15 @@ use reqwest::Client;
 use sha2::Sha256;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::Semaphore;
 use tracing::{error, info, trace, warn};
 
 use crate::bus::EventBus;
 use crate::types::config::WebhookConfig;
 use crate::types::event::GatewayEvent;
+
+/// Webhook 并发分发上限，防止事件洪水压垮运行时或目标服务器
+const MAX_CONCURRENT_DISPATCHES: usize = 16;
 
 /// HMAC-SHA256 类型别名
 type HmacSha256 = Hmac<Sha256>;
@@ -81,6 +85,9 @@ impl WebhookDispatcher {
 
         let mut rx = event_bus.subscribe_many(&all_types);
 
+        // 并发分发上限，防止事件洪水压垮运行时或目标服务器
+        let dispatch_semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT_DISPATCHES));
+
         loop {
             match rx.recv().await {
                 Ok(event) => {
@@ -92,13 +99,13 @@ impl WebhookDispatcher {
                         .unwrap_or("unknown")
                         .to_string();
 
-                    tokio::spawn(Self::dispatch_event(
-                        client.clone(),
-                        webhooks.clone(),
-                        event,
-                        event_type,
-                        platform,
-                    ));
+                    let sem = dispatch_semaphore.clone();
+                    let client = client.clone();
+                    let webhooks = webhooks.clone();
+                    tokio::spawn(async move {
+                        let _permit = sem.acquire().await.expect("Semaphore not closed");
+                        Self::dispatch_event(client, webhooks, event, event_type, platform).await;
+                    });
                 }
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
                     warn!("Webhook dispatcher lagged by {} events", n);
@@ -206,20 +213,20 @@ impl WebhookDispatcher {
                     let status = resp.status();
                     if status.is_success() {
                         trace!(
-                            "Webhook '{}' delivered event '{}' to {} (status {})",
-                            wh.name, event_type, wh.url, status,
+                            "Webhook '{}' delivered event '{}' (status {})",
+                            wh.name, event_type, status,
                         );
                     } else {
                         warn!(
-                            "Webhook '{}' returned {} for event '{}' to {}",
-                            wh.name, status, event_type, wh.url,
+                            "Webhook '{}' returned {} for event '{}'",
+                            wh.name, status, event_type,
                         );
                     }
                 }
                 Err(e) => {
                     warn!(
-                        "Webhook '{}' failed to deliver event '{}' to {}: {}",
-                        wh.name, event_type, wh.url, e,
+                        "Webhook '{}' failed to deliver event '{}': {}",
+                        wh.name, event_type, e,
                     );
                 }
             }

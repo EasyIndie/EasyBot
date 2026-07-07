@@ -301,11 +301,24 @@ impl SessionStore for SqliteSessionStore {
     }
 
     async fn delete_expired_sessions(&self, before: i64) -> Result<u64, StoreError> {
-        let result = sqlx::query("DELETE FROM sessions WHERE updated_at < ?")
+        // 分批删除，避免单条 DELETE 锁定表太久导致慢查询
+        let mut total = 0u64;
+        const CHUNK: i64 = 500;
+        loop {
+            let result = sqlx::query(
+                "DELETE FROM sessions WHERE rowid IN (SELECT rowid FROM sessions WHERE updated_at < ? LIMIT ?)",
+            )
             .bind(before)
+            .bind(CHUNK)
             .execute(&self.pool)
             .await?;
-        Ok(result.rows_affected())
+            let affected = result.rows_affected();
+            total += affected;
+            if affected < CHUNK as u64 {
+                break;
+            }
+        }
+        Ok(total)
     }
 
     async fn load_all_sessions(&self) -> Result<Vec<Session>, StoreError> {
@@ -422,9 +435,38 @@ impl MessageStore for SqliteMessageStore {
     }
 
     async fn store_messages(&self, msgs: &[StoredMessage]) -> Result<(), StoreError> {
+        // 使用事务包装批量写入，减少单条提交开销和 WAL 写入放大
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| StoreError::Database(format!("Failed to begin transaction: {}", e)))?;
         for msg in msgs {
-            self.store_message(msg).await?;
+            let role_str = match msg.role {
+                MessageRole::User => "user",
+                MessageRole::Assistant => "assistant",
+            };
+            let raw_json = serde_json::to_string(&msg.raw_data)?;
+
+            sqlx::query(
+                "INSERT OR IGNORE INTO messages (id, session_key, platform, chat_id, role, text, raw_data, timestamp, created_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            )
+            .bind(&msg.id)
+            .bind(&msg.session_key)
+            .bind(&msg.platform)
+            .bind(&msg.chat_id)
+            .bind(role_str)
+            .bind(&msg.text)
+            .bind(&raw_json)
+            .bind(msg.timestamp)
+            .bind(msg.created_at)
+            .execute(&mut *tx)
+            .await?;
         }
+        tx.commit()
+            .await
+            .map_err(|e| StoreError::Database(format!("Failed to commit batch insert: {}", e)))?;
         Ok(())
     }
 
@@ -480,11 +522,24 @@ impl MessageStore for SqliteMessageStore {
     }
 
     async fn delete_expired_messages(&self, before: i64) -> Result<u64, StoreError> {
-        let result = sqlx::query("DELETE FROM messages WHERE created_at < ?")
+        // 分批删除，避免单条 DELETE 锁定表太久导致慢查询
+        let mut total = 0u64;
+        const CHUNK: i64 = 500;
+        loop {
+            let result = sqlx::query(
+                "DELETE FROM messages WHERE rowid IN (SELECT rowid FROM messages WHERE created_at < ? LIMIT ?)",
+            )
             .bind(before)
+            .bind(CHUNK)
             .execute(&self.pool)
             .await?;
-        Ok(result.rows_affected())
+            let affected = result.rows_affected();
+            total += affected;
+            if affected < CHUNK as u64 {
+                break;
+            }
+        }
+        Ok(total)
     }
 }
 
