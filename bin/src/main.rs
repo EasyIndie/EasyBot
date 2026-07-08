@@ -877,7 +877,7 @@ async fn register_builtin_adapters(
         "wechat",
         "个人微信",
         easybot_adapter_wechat::WeChatAdapter,
-        &[] // 个人微信可通过扫码登录，无需强制凭据
+        &["WECHAT_BOT_TOKEN"]
     );
 
     #[cfg(not(any(
