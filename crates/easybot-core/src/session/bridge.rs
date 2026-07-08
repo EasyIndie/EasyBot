@@ -68,7 +68,7 @@ impl SessionBridge {
         msg: InboundMessage,
         adapter_manager: Option<Arc<AdapterManager>>,
     ) {
-        let platform = msg.platform.clone();
+        let platform = msg.platform.to_string();
         let key = Session::build_key(&platform, &msg.chat_id, msg.thread_id.as_deref());
 
         let source = SessionSource {
@@ -134,7 +134,7 @@ mod tests {
     ) -> InboundMessage {
         InboundMessage {
             id: id.to_string(),
-            platform: platform.to_string(),
+            platform: platform.to_string().into(),
             msg_type: MessageType::Text,
             text: Some("test".to_string()),
             sender: MessageSender {

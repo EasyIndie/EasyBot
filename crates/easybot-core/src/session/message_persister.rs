@@ -155,7 +155,7 @@ mod tests {
     fn test_inbound_message() -> InboundMessage {
         InboundMessage {
             id: uuid::Uuid::new_v4().to_string(),
-            platform: "telegram".to_string(),
+            platform: "telegram".to_string().into(),
             msg_type: MessageType::Text,
             text: Some("Hello from test".to_string()),
             sender: MessageSender {
@@ -323,7 +323,7 @@ mod tests {
         // 发布入站消息
         let msg = InboundMessage {
             id: "pipe-001".to_string(),
-            platform: "test".to_string(),
+            platform: "test".to_string().into(),
             msg_type: MessageType::Text,
             text: Some("pipeline test".to_string()),
             sender: MessageSender {

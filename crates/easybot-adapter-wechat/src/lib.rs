@@ -27,6 +27,7 @@
 //! - 仅支持 DM（一对一聊天），不支持群聊
 //! - 不支持 Markdown、贴纸、小程序消息
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -1644,7 +1645,7 @@ fn convert_message(msg: WeixinMessage) -> Option<InboundMessage> {
 
     Some(InboundMessage {
         id: msg_id,
-        platform: "wechat".to_string(),
+        platform: Cow::Borrowed("wechat"),
         msg_type: match msg.item_list.first().map(|i| i.item_type) {
             Some(1) => MessageType::Text,
             Some(2) => MessageType::Image,

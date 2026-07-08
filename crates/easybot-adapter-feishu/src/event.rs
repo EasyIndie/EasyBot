@@ -9,6 +9,8 @@ use easybot_core::types::message::{
     ChatType, InboundMessage, MediaAttachment, MediaType, MessageSender, MessageType, SenderRole,
 };
 
+use std::borrow::Cow;
+
 use crate::types::*;
 
 /// 检测飞书消息类型并提取媒体信息
@@ -151,7 +153,7 @@ pub async fn handle_message_receive(
 
     let inbound = InboundMessage {
         id: message.message_id,
-        platform: "feishu".to_string(),
+        platform: Cow::Borrowed("feishu"),
         msg_type,
         chat_id: message.chat_id,
         chat_type,

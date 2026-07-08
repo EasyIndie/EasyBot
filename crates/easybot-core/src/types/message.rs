@@ -4,6 +4,7 @@
 //! 媒体附件、交互式按钮等数据模型。
 
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 use utoipa::ToSchema;
 
 /// 入站消息（从 IM 平台接收的消息）
@@ -12,7 +13,7 @@ pub struct InboundMessage {
     /// 平台消息 ID
     pub id: String,
     /// 来源平台标识
-    pub platform: String,
+    pub platform: Cow<'static, str>,
 
     // ── 消息类型与内容 ──
     /// 消息内容类型

@@ -10,6 +10,7 @@
 
 mod types;
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -285,7 +286,7 @@ impl DiscordAdapter {
 
         Some(InboundMessage {
             id: msg.id.to_string(),
-            platform: "discord".to_string(),
+            platform: Cow::Borrowed("discord"),
             msg_type,
             text: Some(msg.content.clone()).filter(|s| !s.is_empty()),
             sender,

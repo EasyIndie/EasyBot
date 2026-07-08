@@ -138,7 +138,7 @@ impl StoredMessage {
         Self {
             id: format!("inbound:{}:{}", msg.platform, msg.id),
             session_key,
-            platform: msg.platform.clone(),
+            platform: msg.platform.to_string(),
             chat_id: msg.chat_id.clone(),
             role: MessageRole::User,
             text: msg.text.clone(),

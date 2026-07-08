@@ -10,6 +10,7 @@
 
 mod types;
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::OnceLock;
@@ -131,7 +132,7 @@ impl TelegramAdapter {
         let (msg_type, media) = Self::detect_msg_type(&tg_msg);
 
         let chat_id = tg_msg.chat.id.to_string();
-        let platform = "telegram".to_string();
+        let platform = Cow::Borrowed("telegram");
         let text = tg_msg.text.or(tg_msg.caption);
 
         let chat_type = match tg_msg.chat.chat_type.as_str() {

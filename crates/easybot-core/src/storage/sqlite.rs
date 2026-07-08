@@ -710,7 +710,7 @@ mod tests {
     fn make_test_inbound() -> InboundMessage {
         InboundMessage {
             id: "msg1".to_string(),
-            platform: "telegram".to_string(),
+            platform: "telegram".to_string().into(),
             msg_type: MessageType::Text,
             text: Some("Hello".to_string()),
             sender: MessageSender {

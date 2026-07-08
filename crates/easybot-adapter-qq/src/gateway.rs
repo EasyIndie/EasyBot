@@ -5,6 +5,7 @@
 //! GROUP_MESSAGE_CREATE）和私聊消息（C2C_MESSAGE_CREATE）。
 
 use parking_lot::Mutex;
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -378,7 +379,7 @@ impl crate::QqAdapter {
 
                 let inbound = InboundMessage {
                     id: msg_event.id,
-                    platform: "qq".to_string(),
+                    platform: Cow::Borrowed("qq"),
                     msg_type,
                     text: msg_event.content,
                     sender: MessageSender {
@@ -453,7 +454,7 @@ impl crate::QqAdapter {
 
                 let inbound = InboundMessage {
                     id: msg_event.id,
-                    platform: "qq".to_string(),
+                    platform: Cow::Borrowed("qq"),
                     msg_type,
                     text: msg_event.content,
                     sender: MessageSender {
@@ -548,7 +549,7 @@ impl crate::QqAdapter {
 
                 let inbound = InboundMessage {
                     id: msg_event.id,
-                    platform: "qq".to_string(),
+                    platform: Cow::Borrowed("qq"),
                     msg_type,
                     text: msg_event.content,
                     sender: MessageSender {
@@ -623,7 +624,7 @@ impl crate::QqAdapter {
 
                 let inbound = InboundMessage {
                     id: msg_event.id,
-                    platform: "qq".to_string(),
+                    platform: Cow::Borrowed("qq"),
                     msg_type,
                     text: msg_event.content,
                     sender: MessageSender {
