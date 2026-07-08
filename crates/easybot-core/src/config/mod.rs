@@ -352,7 +352,7 @@ pub fn generate_local_config_example() -> String {
 #     enabled: false
 #   # 个人微信（无需强制凭据，支持扫码登录）
 #   wechat:
-#     enabled: true
+#     enabled: false
 #     base_url: "http://192.168.1.100:8080"
 
 # ── 服务端覆盖 ─────────────────────────────
