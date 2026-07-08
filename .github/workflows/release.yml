@@ -17,7 +17,7 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  # ── Prepare release: extract version from tag, bump files, save patch ──
+  # ── Prepare release: extract version from tag, bump files, push to main ──
   prepare-release:
     runs-on: ubuntu-latest
     permissions:
@@ -56,43 +56,53 @@ jobs:
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Extracted version: $VERSION from tag: v$VERSION"
 
-      - name: Update Cargo.toml version
+      # ── Idempotent version bump steps ──
+      # Each step checks if already applied so re-running a failed release is safe.
+
+      - name: Update Cargo.toml version (idempotent)
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          sed -i "s/^version = \".*\"/version = \"$VERSION\"/" Cargo.toml
+          CURRENT=$(grep -E '^version\s*=' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
+          if [ "$CURRENT" != "$VERSION" ]; then
+            sed -i "s/^version = \".*\"/version = \"$VERSION\"/" Cargo.toml
+            echo "Updated Cargo.toml: $CURRENT → $VERSION"
+          else
+            echo "Cargo.toml already at $VERSION — skipping"
+          fi
 
       - name: Regenerate Cargo.lock after version bump
         run: cargo generate-lockfile
 
-      - name: Update CHANGELOG.md — add version header under [Unreleased]
+      - name: Update CHANGELOG.md — add version header (idempotent)
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          DATE=$(date +%Y-%m-%d)
-          # CHANGELOG.md 的 [Unreleased] 下方已在日常 PR 中积累了内容，
-          # 此处只插入版本号 header，原有内容自动归入此版本
-          sed -i "/^## \[Unreleased\]/a\\\n## [$VERSION] - $DATE" CHANGELOG.md
+          if grep -q "^## \[$VERSION\]" CHANGELOG.md; then
+            echo "CHANGELOG already has [$VERSION] header — skipping"
+          else
+            DATE=$(date +%Y-%m-%d)
+            sed -i "/^## \[Unreleased\]/a\\\n## [$VERSION] - $DATE" CHANGELOG.md
+            echo "Added [$VERSION] - $DATE header to CHANGELOG"
+          fi
 
-      - name: Update insta snapshots to match new version
+      - name: Update insta snapshots to match new version (idempotent)
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           SNAP="crates/easybot-api/tests/snapshots/routes__health_response.snap"
           if [ -f "$SNAP" ]; then
-            sed -i 's/"version": ".*"/"version": "'"$VERSION"'"/' "$SNAP"
+            CURRENT=$(grep -o '"version": "[^"]*"' "$SNAP" | head -1 | sed 's/"version": "\(.*\)"/\1/')
+            if [ "$CURRENT" != "$VERSION" ]; then
+              sed -i 's/"version": ".*"/"version": "'"$VERSION"'"/' "$SNAP"
+              echo "Updated snapshot: $CURRENT → $VERSION"
+            else
+              echo "Snapshot already at $VERSION — skipping"
+            fi
           fi
 
-      # Save diff patch for downstream jobs (they checkout tag, not main)
-      # The version bump commit is pushed to main separately below
-      - name: Save version bump as patch
-        run: git diff HEAD > /tmp/version-bump.patch
-
-      - name: Upload version bump patch
-        uses: actions/upload-artifact@v7
-        with:
-          name: version-bump-patch
-          path: /tmp/version-bump.patch
+      # Downstream jobs apply the version bump directly via sed (no patch file),
+      # because the tag ref may differ from main by the time they run.
 
       - name: Extract release body from CHANGELOG.md
         run: |
@@ -112,7 +122,7 @@ jobs:
           name: release-body
           path: release_body.md
 
-      # Commit version bump and push to main (patch is already saved for other jobs)
+      # Commit version bump and push to main (skipped if no changes — re-run safe)
       - name: Commit version bump and push to main
         env:
           VERSION: ${{ steps.version.outputs.version }}
@@ -121,15 +131,18 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add Cargo.toml CHANGELOG.md Cargo.lock \
             crates/easybot-api/tests/snapshots/routes__health_response.snap
-          git commit -m "chore: bump version to v$VERSION"
-          # Rebase to avoid push conflicts (extremely rare for these files)
-          git fetch origin main
-          git rebase origin/main || {
-            echo "❌ Rebase conflict — someone modified Cargo.toml/CHANGELOG simultaneously"
-            echo "   Please resolve manually and re-run the release"
-            exit 1
-          }
-          git push origin main
+          if git diff --cached --quiet; then
+            echo "No changes to commit — version already at v$VERSION"
+          else
+            git commit -m "chore: bump version to v$VERSION"
+            git fetch origin main
+            git rebase origin/main || {
+              echo "❌ Rebase conflict — someone modified Cargo.toml/CHANGELOG simultaneously"
+              echo "   Please resolve manually and re-run the release"
+              exit 1
+            }
+            git push origin main
+          fi
 
   # ── Verify: run full CI checks before releasing ────
   verify:
@@ -142,12 +155,15 @@ jobs:
           fetch-depth: 0
 
       - name: Apply version bump
-        uses: actions/download-artifact@v8
-        with:
-          name: version-bump-patch
-
-      - name: Apply version bump patch
-        run: git apply version-bump.patch
+        env:
+          VERSION: ${{ needs.prepare-release.outputs.version }}
+        run: |
+          # Use sed directly instead of a patch file — avoids tag-vs-main mismatch
+          sed -i "s/^version = \".*\"/version = \"$VERSION\"/" Cargo.toml
+          SNAP="crates/easybot-api/tests/snapshots/routes__health_response.snap"
+          if [ -f "$SNAP" ]; then
+            sed -i 's/"version": ".*"/"version": "'"$VERSION"'"/' "$SNAP"
+          fi
 
       - uses: ./.github/actions/setup-rust
         with:
@@ -203,12 +219,15 @@ jobs:
           ref: ${{ github.ref }}
 
       - name: Apply version bump
-        uses: actions/download-artifact@v8
-        with:
-          name: version-bump-patch
-
-      - name: Apply version bump patch
-        run: git apply version-bump.patch
+        env:
+          VERSION: ${{ needs.prepare-release.outputs.version }}
+        run: |
+          # Use sed directly instead of a patch file — avoids tag-vs-main mismatch
+          sed -i "s/^version = \".*\"/version = \"$VERSION\"/" Cargo.toml
+          SNAP="crates/easybot-api/tests/snapshots/routes__health_response.snap"
+          if [ -f "$SNAP" ]; then
+            sed -i 's/"version": ".*"/"version": "'"$VERSION"'"/' "$SNAP"
+          fi
 
       - uses: ./.github/actions/setup-rust
         with:
@@ -312,12 +331,15 @@ jobs:
           token: ${{ secrets.GH_RELEASE_PAT || github.token }}
 
       - name: Apply version bump
-        uses: actions/download-artifact@v8
-        with:
-          name: version-bump-patch
-
-      - name: Apply version bump patch
-        run: git apply version-bump.patch
+        env:
+          VERSION: ${{ needs.prepare-release.outputs.version }}
+        run: |
+          # Use sed directly instead of a patch file — avoids tag-vs-main mismatch
+          sed -i "s/^version = \".*\"/version = \"$VERSION\"/" Cargo.toml
+          SNAP="crates/easybot-api/tests/snapshots/routes__health_response.snap"
+          if [ -f "$SNAP" ]; then
+            sed -i 's/"version": ".*"/"version": "'"$VERSION"'"/' "$SNAP"
+          fi
 
       - name: Clean up any previous failed release for this tag
         env:
@@ -375,12 +397,15 @@ jobs:
           ref: ${{ github.ref }}
 
       - name: Apply version bump
-        uses: actions/download-artifact@v8
-        with:
-          name: version-bump-patch
-
-      - name: Apply version bump patch
-        run: git apply version-bump.patch
+        env:
+          VERSION: ${{ needs.prepare-release.outputs.version }}
+        run: |
+          # Use sed directly instead of a patch file — avoids tag-vs-main mismatch
+          sed -i "s/^version = \".*\"/version = \"$VERSION\"/" Cargo.toml
+          SNAP="crates/easybot-api/tests/snapshots/routes__health_response.snap"
+          if [ -f "$SNAP" ]; then
+            sed -i 's/"version": ".*"/"version": "'"$VERSION"'"/' "$SNAP"
+          fi
 
       - name: Download linux x86_64 binary
         uses: actions/download-artifact@v8
