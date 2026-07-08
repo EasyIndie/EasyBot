@@ -30,9 +30,9 @@ mod auth;
 mod gateway;
 mod types;
 
+use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use async_trait::async_trait;
@@ -345,7 +345,6 @@ impl QqAdapter {
     pub fn set_chat_type(&self, chat_id: &str, chat_type: ChatType) {
         self.chat_types
             .lock()
-            .unwrap()
             .insert(chat_id.to_string(), chat_type);
     }
 
@@ -369,7 +368,7 @@ impl QqAdapter {
     ) -> Result<QqSendMessageResponse, GatewayError> {
         // Fast path: route directly based on known chat type
         // Lock scope: release before any .await to keep the future Send
-        let known_type = { self.chat_types.lock().unwrap().get(chat_id).copied() };
+        let known_type = { self.chat_types.lock().get(chat_id).copied() };
         if let Some(chat_type) = known_type {
             let path = match chat_type {
                 ChatType::Channel => format!("/channels/{}/messages", chat_id),
@@ -991,12 +990,7 @@ impl PlatformAdapter for QqAdapter {
     }
 
     async fn send_media(&self, params: SendMediaParams) -> Result<SendResult, GatewayError> {
-        let known_type = self
-            .chat_types
-            .lock()
-            .unwrap()
-            .get(&params.chat_id)
-            .copied();
+        let known_type = self.chat_types.lock().get(&params.chat_id).copied();
 
         // Group (v2 API): use file upload + msg_type: 7.
         // v2 group endpoint does NOT support msg_type: 1 (image embed) or

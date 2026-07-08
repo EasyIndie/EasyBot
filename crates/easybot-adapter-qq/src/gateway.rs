@@ -4,9 +4,9 @@
 //! 处理频道消息（AT_MESSAGE_CREATE）、群消息（GROUP_AT_MESSAGE_CREATE、
 //! GROUP_MESSAGE_CREATE）和私聊消息（C2C_MESSAGE_CREATE）。
 
+use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
@@ -409,7 +409,7 @@ impl crate::QqAdapter {
 
                 // Track chat type for direct outbound routing, with size cap
                 {
-                    let mut ct = chat_types.lock().unwrap();
+                    let mut ct = chat_types.lock();
                     ct.insert(inbound.chat_id.clone(), inbound.chat_type);
                     const CHAT_TYPE_CACHE_LIMIT: usize = 10_000;
                     if ct.len() > CHAT_TYPE_CACHE_LIMIT {
@@ -484,7 +484,7 @@ impl crate::QqAdapter {
 
                 // Track chat type for direct outbound routing, with size cap
                 {
-                    let mut ct = chat_types.lock().unwrap();
+                    let mut ct = chat_types.lock();
                     ct.insert(inbound.chat_id.clone(), inbound.chat_type);
                     const CHAT_TYPE_CACHE_LIMIT: usize = 10_000;
                     if ct.len() > CHAT_TYPE_CACHE_LIMIT {
@@ -584,7 +584,7 @@ impl crate::QqAdapter {
 
                 // Track chat type for direct outbound routing, with size cap
                 {
-                    let mut ct = chat_types.lock().unwrap();
+                    let mut ct = chat_types.lock();
                     ct.insert(inbound.chat_id.clone(), inbound.chat_type);
                     const CHAT_TYPE_CACHE_LIMIT: usize = 10_000;
                     if ct.len() > CHAT_TYPE_CACHE_LIMIT {
@@ -654,7 +654,7 @@ impl crate::QqAdapter {
 
                 // Track chat type for direct outbound routing, with size cap
                 {
-                    let mut ct = chat_types.lock().unwrap();
+                    let mut ct = chat_types.lock();
                     ct.insert(inbound.chat_id.clone(), inbound.chat_type);
                     const CHAT_TYPE_CACHE_LIMIT: usize = 10_000;
                     if ct.len() > CHAT_TYPE_CACHE_LIMIT {

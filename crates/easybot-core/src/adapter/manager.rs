@@ -497,15 +497,17 @@ impl AdapterManager {
 
     /// 列出所有适配器状态
     pub async fn list_statuses(&self) -> Vec<AdapterStatusSummary> {
-        let adapters = self.adapters.read().await;
+        // 先从已连接适配器收集实时状态（读锁，不阻塞 statuses 的其他读取）
+        let fresh_statuses: Vec<AdapterStatusSummary> = {
+            let adapters = self.adapters.read().await;
+            adapters.values().map(|a| a.status_summary()).collect()
+        };
+
+        // 仅更新缓存时获取写锁（缩短写锁持有时间）
         let mut statuses = self.statuses.write().await;
-
-        // 从已连接适配器拉取全量实时状态
-        for (platform, adapter) in adapters.iter() {
-            let fresh = adapter.status_summary();
-            statuses.insert(platform.clone(), fresh);
+        for s in &fresh_statuses {
+            statuses.insert(s.platform.clone(), s.clone());
         }
-
         statuses.values().cloned().collect()
     }
 
@@ -742,10 +744,10 @@ impl AdapterManager {
 
     /// Internal: one iteration of the health check.
     async fn run_health_check(&self, reconnect_state: &mut HashMap<String, ReconnectState>) {
-        // Snapshot the configs we know about.
-        let configs: HashMap<String, AdapterConfig> = { self.configs.read().await.clone() };
+        // 先收集所有已知平台（只 clone 轻量的 String key，避免全量 config clone）
+        let platforms: Vec<String> = { self.configs.read().await.keys().cloned().collect() };
 
-        for (platform, config) in &configs {
+        for platform in &platforms {
             let state = reconnect_state.entry(platform.clone()).or_default();
 
             // Respect backoff window
@@ -786,7 +788,13 @@ impl AdapterManager {
             }
 
             if needs_reconnect {
-                match self.reconnect_adapter(platform, config.clone()).await {
+                // 仅在需要重连时获取 config（避免为健康适配器克隆含 token 的 AdapterConfig）
+                let config = { self.configs.read().await.get(platform).cloned() };
+                let config = match config {
+                    Some(c) => c,
+                    None => continue,
+                };
+                match self.reconnect_adapter(platform, config).await {
                     Ok(()) => {
                         state.consecutive_failures = 0;
                         state.total_failures = 0;
