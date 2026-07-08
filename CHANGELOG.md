@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.12] - 2026-07-08
+
 ### Performance
 
 - **全链路性能优化 (P0–P3)** — 分阶段覆盖构建、数据流、存储、锁竞争和网络层：
