@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.11] - 2026-07-08
+
 ### Fixed
 
 - **文档与 CI 中已废弃 full feature 引用清除** — 将 `Makefile`、`verify.sh`、`.github/workflows/ci.yml`、
