@@ -102,6 +102,7 @@ lto = "fat"
 codegen-units = 1
 strip = "symbols"
 panic = "abort"
+debug = 0
 
 [workspace.lints.rust]
 unsafe_code = "deny"
