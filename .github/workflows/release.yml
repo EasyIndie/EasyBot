@@ -157,16 +157,16 @@ jobs:
         run: cargo fmt --all --check
 
       - name: Clippy
-        run: cargo clippy --workspace --features "full,plugin-system" --all-targets --locked -- -D warnings
+        run: cargo clippy --workspace --features "default,plugin-system" --all-targets --locked -- -D warnings
 
       - name: Build
-        run: cargo build --workspace --features "full,plugin-system" --locked
+        run: cargo build --workspace --features "default,plugin-system" --locked
 
       - name: Build mock-adapter
         run: cargo build -p mock-adapter --locked
 
       - name: Test
-        run: cargo test --workspace --features "full,plugin-system" --locked
+        run: cargo test --workspace --features "default,plugin-system" --locked
 
   # ── Cross-compile release binaries ─────────────────
   build-binaries:
@@ -218,13 +218,13 @@ jobs:
 
       - name: Build release binary (musl — static linking)
         if: contains(matrix.target, 'musl')
-        run: cargo zigbuild --bin easybot --release --features "full,plugin-system" --target ${{ matrix.target }} --locked
+        run: cargo zigbuild --bin easybot --release --features "default,plugin-system" --target ${{ matrix.target }} --locked
 
       - name: Build release binary (native)
         if: ${{ !contains(matrix.target, 'musl') }}
         env:
           MACOSX_DEPLOYMENT_TARGET: ${{ matrix.macos-deployment-target || '' }}
-        run: cargo build --release --features "full,plugin-system" --target ${{ matrix.target }} --locked
+        run: cargo build --release --features "default,plugin-system" --target ${{ matrix.target }} --locked
 
       # ── macOS 签名 + 公证（可选，凭据存在时自动执行） ──
       - name: Check macOS signing credentials

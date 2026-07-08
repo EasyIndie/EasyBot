@@ -106,8 +106,8 @@ cargo test -p e2e-tests
 1. Fork the repository and create a feature branch.
 2. Make your changes, following the code style guidelines.
 3. Add tests for new functionality.
-4. Ensure all tests pass: `cargo test --workspace --features "full,plugin-system"`
-5. Run clippy: `cargo clippy --all-targets --features full`
+4. Ensure all tests pass: `cargo test --workspace --features "default,plugin-system"`
+5. Run clippy: `cargo clippy --all-targets --features "default,plugin-system"`
 6. Run format check: `cargo fmt --all -- --check`
 7. Update documentation if needed.
 8. Submit a pull request.
@@ -117,7 +117,7 @@ cargo test -p e2e-tests
 | Flag | Enables |
 |------|---------|
 | `default` | All 5 built-in adapters (Telegram, Discord, 飞书, QQ, WeChat) |
-| `full` | All built-in adapters (alias for default) |
+| `default` | All 5 built-in adapters (Telegram, Discord, 飞书, QQ, WeChat) |
 | `adapter-telegram` | Telegram Bot API adapter |
 | `adapter-discord` | Discord Gateway adapter |
 | `adapter-feishu` | 飞书/Lark adapter |

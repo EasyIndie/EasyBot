@@ -359,18 +359,11 @@ match item.item_type {
 
 **建议**: 使用 `Option::None`（或专门的 `media_only` 标记）替代占位文本，让下游逻辑能正确区分"纯媒体消息"和"文本消息"。
 
-### 6.3 声明的能力与实际支持不匹配
+### 6.3 声明的能力与实际支持不匹配（已修复）
 
-```rust
-capabilities: vec![
-    Capability { name: CapabilityName::Group, supported: true, ... },  // ❌ 不支持群聊
-    Capability { name: CapabilityName::Audio, supported: true, ... },  // ❌ 从不出现在当前能力列表
-]
-```
+WeChat 适配器当前的能力声明为：Text、Image、Audio、Video、Document，均为真实支持。**Group 未声明**（无需额外代码，`capabilities` 列表中不含 `Group`），且 `get_chat_info` 始终返回 `ChatType::Dm`，`list_chats` 返回空。
 
-而文档注释写着 `仅支持 DM（一对一聊天），不支持群聊`，且 `get_chat_info` 始终返回 `ChatType::Dm`，`list_chats` 返回空。
-
-**建议**: `capabilities()` 应当返回真实的声明，Group → false。
+> 之前版本曾错误声明 `Group: true`，已在清理后移除。
 
 ### 6.4 `send_text_http` 和 `send_media_http` 有大量重复模板
 
@@ -394,7 +387,7 @@ let uin = uuid::Uuid::new_v4().as_u64_pair().0 as u32;
 
 ## 7. 核心层性能评估
 
-### 7.1 EventBus: `subscribe_many` 使用轮询引入 100ms 延迟
+### 7.1 EventBus: `subscribe_many` 使用轮询引入延迟
 
 ```rust
 pub fn subscribe_many(&self, event_types: &[&str]) -> broadcast::Receiver<GatewayEvent> {
@@ -412,18 +405,18 @@ pub fn subscribe_many(&self, event_types: &[&str]) -> broadcast::Receiver<Gatewa
             if had_data {
                 tokio::task::yield_now().await;
             } else {
-                tokio::time::sleep(Duration::from_millis(100)).await;  // ← 100ms 延迟
+                tokio::time::sleep(Duration::from_millis(MERGE_POLL_INTERVAL_MS)).await;
             }
         }
     });
 }
 ```
 
-**问题**: 当事件频率低时，每条事件的延迟增加约 100ms（从 publish 到 merge channel 可读的时间）。虽然对 IM 场景（通常延迟容忍度 > 500ms）不明显，但在高吞吐场景下可能成为瓶颈。
+**问题**: 当事件频率低时，每条事件的延迟增加约 20ms（从 publish 到 merge channel 可读的时间）。虽然对 IM 场景（通常延迟容忍度 > 500ms）不明显，但在高吞吐场景下可能成为瓶颈。
 
-**建议**:
-- 如果事件流足够密集，可以降低 MERGE_POLL_INTERVAL_MS 到 20ms
-- 或者直接不合并，让调用方分别订阅各事件类型
+**已实施**:
+- `MERGE_POLL_INTERVAL_MS` 已设为 20ms，无需进一步降低
+- 如果延迟敏感度提高，可考虑直接不合并，让调用方分别订阅各事件类型
 
 ### 7.2 AdapterManager 的 `statuses` 缓存与适配器实时状态不一致
 

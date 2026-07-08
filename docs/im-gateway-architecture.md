@@ -313,9 +313,9 @@ Response 200: { "ok": true, "requiresRestart": true }
 
 **连接地址：** `ws(s)://<gateway-host>:<port>/api/v1/ws`
 
-**连接认证（双层）：**
-- HTTP 升级时需 `Authorization: Bearer <key>` 头
-- 连接后可发送 `{"token":"..."}` 二次认证
+**连接认证：**
+- 连接成功后发送 `{"token":"..."}` JSON 帧进行认证
+- 无需 HTTP `Authorization` 头（部分 WebSocket 客户端不支持自定义 HTTP 头）
 
 **服务器推送事件格式：**
 ```json

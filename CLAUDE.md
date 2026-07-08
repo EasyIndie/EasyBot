@@ -107,10 +107,15 @@ init(config) → connect() → send()/... → disconnect()
 | `/sessions/{key}` | GET/DELETE | Details / delete |
 | `/chats/{p}[/{chat_id}]` | GET | List / info |
 | `/config` | GET/PUT | Get / hot-reload |
-| `/ws` | GET | WebSocket stream (Auth: Bearer header + `{"token":"..."}`) |
+| `/ws` | GET | WebSocket stream (Auth: JSON frame `{"token":"..."}`) |
 | `/metrics` | GET | Prometheus |
 | `/swagger` | GET | OpenAPI browser |
 | `/openapi.json` | GET | OpenAPI 3.1 schema |
+| `/system` | GET | System info (CPU, memory) |
+| `/logs` | GET | Log stream (ring buffer) |
+| `/api-keys/types` | GET | List API key types |
+| `/api-keys/{id}` | DELETE | Revoke API key |
+| `/api-keys/{id}/purge` | DELETE | Purge API key entirely |
 
 ### Roadmap
 

@@ -7,9 +7,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.0.10] - 2026-07-07
+### Fixed
+
+- **文档与 CI 中已废弃 full feature 引用清除** — 将 `Makefile`、`verify.sh`、`.github/workflows/ci.yml`、
+  `README.md`、`CONTRIBUTING.md` 中所有 `--features "full,..."` 替换为 `--features "default,..."`，
+  因 `full` feature 已于 v0.0.7 移除（default 已包含全部 5 个适配器）。
+
+## [0.0.10] - 2026-07-08
+
+### Fixed
+
+- **QQ 适配器 rustls CryptoProvider 未初始化 panic** — QQ Gateway WebSocket 连接因 `rustls`
+  `CryptoProvider` 未调用 `install_default()` 导致 TLS 握手时 panic。现已在 QQ 适配器
+  `connect()` 中初始化 `aws-lc-rs` provider。
+- **`QrCodeResponse` dead_code 警告** — 移除 WeChat 模块中未使用的 `errmsg` 字段。
+
+### Changed
+
+- **WeChat 适配器从 default features 中移除** — 不再默认启用（`d6d16e9`）。需要构建时
+  通过 `--features adapter-wechat` 或 `--no-default-features --features adapter-wechat`
+  显式启用，以保持默认构建一致性（WeChat 适配器依赖 iLink Bot API 运行环境）。
+- **移除已废弃的 `WECHAT_BOT_TOKEN` 环境变量** — WeChat 适配器仅通过扫码登录，
+  `WECHAT_BOT_TOKEN` 不再支持（`ebd4a26`）。添加 `qrcode` 依赖用于 QR 码生成。
+
+### Cleanup
+
+- **`gateway.local.yaml` 模板修正** — 更新适配器配置示例以匹配当前代码。
+- **无用代码、依赖和文件清理** — 移除 dead code、未使用依赖和遗留文件。
 
 ## [0.0.9] - 2026-07-07
+
+### Fixed
+
+- **WebSocket 频繁断开重连问题** — 修复 WebSocket 连接因多种原因异常断开导致的反复重连循环。
+- **WebSocket 升级成功(101) 被管理后台误计为 err** — HTTP 101 Switching Protocols 是正常
+  WebSocket 升级响应，不再计入错误计数。
+- **dev API key 跨重启复用** — `dev_api_key` 改为懒创建并持久化存储，避免每次启动生成新 key。
+- **`send_message` handler 添加 15s 超时** — 防止慢平台阻塞 API 请求处理。
+- **Telegram 和 Discord 适配器 HTTP 客户端添加 15s 请求超时** — 防止外部 API 超时导致
+  内部请求堆积。
+- **CSP script-src 添加 `static.cloudflareinsights.com`** — 允许 Cloudflare Insights 脚本加载。
+- **管理后台 log tab 页面** — 修正日志标签页渲染错误。
+- **管理后台按钮文字折行** — `white-space: nowrap` 防止窄窗口下文字换行。
 
 ## [0.0.8] - 2026-07-07
 

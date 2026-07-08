@@ -10,8 +10,8 @@
 #   Step 4 (Feature Matrix)      → ci.yml test-feature-matrix
 #   Step 5 (cargo build)         → ci.yml test-default
 #   Step 6 (Test default)        → ci.yml test-default
-#   Step 7 (build mock-adapter)  → ci.yml test-full
-#   Step 8 (Test full)           → ci.yml test-full
+#   Step 7 (build mock-adapter)  → ci.yml test-all
+#   Step 8 (Test all)            → ci.yml test-all
 #
 # 用法：
 #   bash scripts/verify.sh              # 跑全部检查
@@ -144,7 +144,7 @@ echo "  日期: $(date '+%Y-%m-%d %H:%M:%S')"
 echo ""
 
 # ── 1. 编译检查 ──────────────────────────────────────────────────
-run_step "cargo check (workspace + full features)" \
+run_step "cargo check (workspace + all features)" \
   $CARGO check --workspace --features "default,plugin-system" $LOCKED
 
 # ── 2. 格式化检查（全量提交时必做）───────────────────────────────
@@ -213,7 +213,7 @@ run_step "cargo build -p mock-adapter" \
   $CARGO build -p mock-adapter $LOCKED
 
 # ── 8. 全特性测试（验证所有适配器 + 插件系统 + E2E）─────────────
-run_step "$TEST_LABEL (full features + plugin-system)" \
+run_step "$TEST_LABEL (all features + plugin-system)" \
   $TEST_RUNNER --workspace --features "default,plugin-system" $LOCKED
 
 # ── 汇总报告 ─────────────────────────────────────────────────────

@@ -187,14 +187,14 @@ phase1_build_and_start() {
     if [ "$QUICK_MODE" = true ]; then
         info "快速模式：跳过编译"
     else
-        info "编译 easybot (features: full)..."
-        cargo build --features full 2>&1 | tail -3
+        info "编译 easybot..."
+        cargo build 2>&1 | tail -3
         pass "编译完成"
     fi
 
     info "启动 easybot --debug （日志: ${LOG_FILE}）..."
     # stderr → 日志文件（tracing），stdout → 文件（println! 如 QR 码 / API Key）
-    cargo run --features full -- --debug >"$STDOUT_FILE" 2>"$LOG_FILE" &
+    cargo run -- --debug >"$STDOUT_FILE" 2>"$LOG_FILE" &
     E2E_PID=$!
     # 后台 tail stdout 到终端，让用户可以看到 QR 码等输出
     tail -f "$STDOUT_FILE" &

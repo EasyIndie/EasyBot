@@ -130,7 +130,7 @@ adapters:
 ### 启动服务
 
 ```bash
-FEISHU_APP_ID="cli_xxx" FEISHU_APP_SECRET="xxx" cargo run --features full -- --debug
+FEISHU_APP_ID="cli_xxx" FEISHU_APP_SECRET="xxx" cargo run -- --debug
 ```
 
 ### 验证适配器状态

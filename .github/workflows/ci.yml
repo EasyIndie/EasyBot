@@ -35,10 +35,10 @@ jobs:
         run: cargo fmt --all --check
 
       - name: Clippy
-        run: cargo clippy --workspace --features "full,plugin-system" --all-targets --locked -- -D warnings
+        run: cargo clippy --workspace --features "default,plugin-system" --all-targets --locked -- -D warnings
 
-      - name: Check (full features)
-        run: cargo check --workspace --features "full,plugin-system" --locked
+      - name: Check (all features)
+        run: cargo check --workspace --features "default,plugin-system" --locked
 
   # ── Test: default features ──────────────────────────────────────────
   test-default:
@@ -58,8 +58,8 @@ jobs:
       - name: Test (default features)
         run: cargo nextest run --workspace --locked
 
-  # ── Test: full features + plugin system ─────────────────────────────
-  test-full:
+  # ── Test: all features + plugin system ──────────────────────────────
+  test-all:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -70,14 +70,14 @@ jobs:
         with:
           tool: cargo-nextest
 
-      - name: Build (full features)
-        run: cargo build --workspace --features "full,plugin-system" --locked
+      - name: Build (all features)
+        run: cargo build --workspace --features "default,plugin-system" --locked
 
       - name: Build mock-adapter
         run: cargo build -p mock-adapter --locked
 
-      - name: Test (full features + plugin-system)
-        run: cargo nextest run --workspace --features "full,plugin-system" --locked
+      - name: Test (all features + plugin-system)
+        run: cargo nextest run --workspace --features "default,plugin-system" --locked
 
   # ── Feature matrix: validate edge feature combinations ─────────────
   test-feature-matrix:
@@ -115,11 +115,11 @@ jobs:
         with:
           cache-cargo-registry: "true"
 
-      - name: Check (full features)
-        run: cargo check --workspace --features full --locked
+      - name: Check (all features)
+        run: cargo check --workspace --locked
 
-      - name: Build (full features)
-        run: cargo build --workspace --features full --locked
+      - name: Build (all features)
+        run: cargo build --workspace --locked
 
   # ── Code coverage ───────────────────────────────────────────────────
   coverage:
@@ -135,13 +135,13 @@ jobs:
           tool: cargo-llvm-cov
 
       - name: Build workspace (for integration tests)
-        run: cargo build --workspace --features "full,plugin-system" --locked
+        run: cargo build --workspace --features "default,plugin-system" --locked
 
       - name: Build mock-adapter
         run: cargo build -p mock-adapter --locked
 
       - name: Generate code coverage
-        run: cargo llvm-cov --workspace --features "full,plugin-system" --locked --lcov --output-path lcov.info
+        run: cargo llvm-cov --workspace --features "default,plugin-system" --locked --lcov --output-path lcov.info
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v7
@@ -163,7 +163,7 @@ jobs:
         run: rustup target add x86_64-unknown-linux-musl aarch64-unknown-linux-musl
 
       - name: Build (x86_64-unknown-linux-musl)
-        run: cargo zigbuild --bin easybot --target x86_64-unknown-linux-musl --features "full,plugin-system" --locked
+        run: cargo zigbuild --bin easybot --target x86_64-unknown-linux-musl --features "default,plugin-system" --locked
 
       - name: Verify static linking
         run: |
@@ -173,4 +173,4 @@ jobs:
             { echo "❌ FAIL: binary is not statically linked"; file "$BINARY"; exit 1; }
 
       - name: Build (aarch64-unknown-linux-musl — cross-compile check only)
-        run: cargo zigbuild --bin easybot --target aarch64-unknown-linux-musl --features "full,plugin-system" --locked
+        run: cargo zigbuild --bin easybot --target aarch64-unknown-linux-musl --features "default,plugin-system" --locked

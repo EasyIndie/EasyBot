@@ -59,7 +59,7 @@ cd my-adapter
 [package]
 name = "my-adapter"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 [lib]
 crate-type = ["cdylib"]

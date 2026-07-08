@@ -116,7 +116,7 @@ cargo build
 cargo build --no-default-features --features "adapter-telegram,adapter-discord"
 
 # 全量构建 + 插件系统
-cargo build --features "full,plugin-system"
+cargo build --features "default,plugin-system"
 
 # 启动服务
 cargo run -- --debug
@@ -230,7 +230,7 @@ FEISHU_APP_ID=cli_xxx
 FEISHU_APP_SECRET=your_secret
 QQ_APP_ID=your_app_id
 QQ_CLIENT_SECRET=your_secret
-# WECHAT_BOT_TOKEN 已废弃          # 个人微信仅支持扫码登录
+# WECHAT_BOT_TOKEN 已废弃（个人微信仅支持扫码登录，无需环境变量）
 ```
 
 > 各平台所需的环境变量参见 `.env.example`。高级用户可通过 `gateway.local.yaml` 覆盖默认值或显式禁用某平台。
@@ -260,27 +260,25 @@ QQ_CLIENT_SECRET=your_secret
 | `/chats/{platform}/{chat_id}` | GET | 获取聊天详情 |
 | `/config` | GET | 获取当前配置 |
 | `/config` | PUT | 热更新配置 |
-| `/ws` | GET | WebSocket 实时事件流（需 `Authorization` 头 + 连接后发送 `{"token":"..."}`） |
+| `/ws` | GET | WebSocket 实时事件流（连接后发送 `{"token":"..."}` 认证） |
 | `/metrics` | GET | Prometheus 指标 |
 | `/swagger` | GET | Swagger UI (OpenAPI 文档浏览器) |
 | `/openapi.json` | GET | OpenAPI 3.1 JSON schema |
 
 ### WebSocket 事件
 
-WebSocket 端点有**两层认证**：
-1. **HTTP 升级请求**必须携带 `Authorization: Bearer <api-key>` 头
-2. 连接成功后，发送 JSON 认证帧：
+WebSocket 端点为**JSON 帧认证**：连接成功后发送认证帧，无需 HTTP `Authorization` 头（部分 WebSocket 客户端不支持自定义 HTTP 头）。
 
 ```json
 {"token": "your-api-key"}
 ```
 
-连接成功后，会收到实时事件推送，例如：
+认证成功后，会收到实时事件推送，格式如下：
 
 ```json
-{"type": "message.inbound", "data": {"platform": "telegram", "text": "hello", ...}}
-{"type": "adapter.connected", "data": {"platform": "telegram", ...}}
-{"type": "adapter.disconnected", "data": {"platform": "discord", ...}}
+{"type": "event", "event": "message.inbound", "data": {"platform": "telegram", "text": "hello", ...}, "seq": 1, "timestamp": ...}
+{"type": "event", "event": "adapter.connected", "data": {"platform": "telegram", ...}, "seq": 2, "timestamp": ...}
+{"type": "event", "event": "adapter.disconnected", "data": {"platform": "discord", ...}, "seq": 3, "timestamp": ...}
 ```
 
 ---
@@ -367,20 +365,20 @@ cargo build
 cargo build --no-default-features --features "adapter-telegram,adapter-discord"
 
 # 全量构建 + 插件系统
-cargo build --features "full,plugin-system"
+cargo build --features "default,plugin-system"
 
 # 最小构建（无适配器）
 cargo build --no-default-features
 
-# Release 构建（全量）
-cargo build --release --features full
+# Release 构建
+cargo build --release
 ```
 
 ### 运行测试
 
 ```bash
 # 全部测试
-cargo test --workspace --features "full,plugin-system"
+cargo test --workspace --features "default,plugin-system"
 
 # 指定 crate 测试
 cargo test -p easybot-core
@@ -397,7 +395,7 @@ cargo test -p easybot-core config::tests
 
 ```bash
 # Lint 检查
-cargo clippy --all-targets --features "full,plugin-system"
+cargo clippy --all-targets --features "default,plugin-system"
 
 # 格式化
 cargo fmt

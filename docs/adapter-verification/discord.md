@@ -71,11 +71,11 @@ adapters:
 EOF
 ```
 
-> 注意：Discord 不是默认启用的编译特性，需要手动指定：
+> 注意：Discord 默认包含在 `default` feature 中，无需手动指定。
 > ```bash
-> cargo run --features adapter-discord -- --debug
+> cargo run -- --debug
 > ```
-> 或者同时启用所有适配器：`cargo run --features full -- --debug`
+> 如果希望通过最小构建测试 Discord，可使用：`cargo run --features adapter-discord -- --debug`
 
 ### 常见调试问题
 
