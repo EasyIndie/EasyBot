@@ -119,14 +119,14 @@ for arg in "$@"; do
       echo "  bash scripts/verify.sh --fast --locked  快速 + 锁定依赖版本"
       echo ""
       echo "  步骤:"
-      echo "    1. cargo check    (full + plugin-system)"
+      echo "    1. cargo check    (default + plugin-system)"
       echo "    2. cargo fmt --check"
       echo "    3. cargo clippy"
       echo "    4. Feature Matrix (7 种适配器组合的 cargo check)"
       echo "    5. cargo build --workspace"
       echo "    6. 测试 (default features) — 自动选择 nextest 或 cargo test"
       echo "    7. cargo build -p mock-adapter"
-      echo "    8. 测试 (full + plugin-system)"
+      echo "    8. 测试 (default + plugin-system)"
       echo ""
       echo "  安装 cargo-nextest 可加速测试: cargo install cargo-nextest"
       exit 0
@@ -145,7 +145,7 @@ echo ""
 
 # ── 1. 编译检查 ──────────────────────────────────────────────────
 run_step "cargo check (workspace + full features)" \
-  $CARGO check --workspace --features "full,plugin-system" $LOCKED
+  $CARGO check --workspace --features "default,plugin-system" $LOCKED
 
 # ── 2. 格式化检查（全量提交时必做）───────────────────────────────
 if [ "$FAST" = false ]; then
@@ -156,7 +156,7 @@ fi
 # ── 3. Clippy lint（全量提交时必做）───────────────────────────────
 if [ "$FAST" = false ]; then
   run_step "cargo clippy (all targets + warnings as errors)" \
-    $CARGO clippy --workspace --features "full,plugin-system" --all-targets $LOCKED -- -D warnings
+    $CARGO clippy --workspace --features "default,plugin-system" --all-targets $LOCKED -- -D warnings
 fi
 
 # ── 4. Feature Matrix 检查（与 CI test-feature-matrix 一致）─────
@@ -214,7 +214,7 @@ run_step "cargo build -p mock-adapter" \
 
 # ── 8. 全特性测试（验证所有适配器 + 插件系统 + E2E）─────────────
 run_step "$TEST_LABEL (full features + plugin-system)" \
-  $TEST_RUNNER --workspace --features "full,plugin-system" $LOCKED
+  $TEST_RUNNER --workspace --features "default,plugin-system" $LOCKED
 
 # ── 汇总报告 ─────────────────────────────────────────────────────
 echo ""
