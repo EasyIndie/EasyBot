@@ -5,28 +5,6 @@ use serde::{Deserialize, Serialize};
 
 // ── Gateway WebSocket ──
 
-/// Gateway OpCode
-#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum QqOpCode {
-    #[serde(rename = "0")]
-    Dispatch = 0,
-    #[serde(rename = "1")]
-    Heartbeat = 1,
-    #[serde(rename = "2")]
-    Identify = 2,
-    #[serde(rename = "6")]
-    Resume = 6,
-    #[serde(rename = "7")]
-    Reconnect = 7,
-    #[serde(rename = "9")]
-    InvalidSession = 9,
-    #[serde(rename = "10")]
-    Hello = 10,
-    #[serde(rename = "11")]
-    HeartbeatAck = 11,
-}
-
 /// Gateway 消息帧
 #[derive(Debug, Deserialize, Serialize)]
 pub struct GatewayPayload<T = serde_json::Value> {
@@ -316,20 +294,6 @@ pub struct QqChannelInfo {
     pub name: String,
     #[serde(rename = "type")]
     pub channel_type: u32,
-}
-
-/// 群信息
-#[derive(Debug, Deserialize)]
-pub struct QqGroupInfo {
-    pub group_openid: String,
-    pub group_name: Option<String>,
-}
-
-/// API 错误响应
-#[derive(Debug, Deserialize)]
-pub struct QqApiError {
-    pub code: u64,
-    pub message: String,
 }
 
 /// 文件上传响应（C2C 文件上传端点）

@@ -62,19 +62,6 @@ pub(crate) fn save_credentials_to_disk(creds: &WeChatCredentials) {
     }
 }
 
-/// 清除保存的凭据（保留供手动清理或调试使用）
-#[allow(dead_code)]
-pub(crate) fn clear_credentials() {
-    let path = match credential_path() {
-        Some(p) => p,
-        None => return,
-    };
-    if path.exists() {
-        let _ = std::fs::remove_file(&path);
-        tracing::info!("已删除凭据文件: {:?}", path);
-    }
-}
-
 /// 原子写入 JSON 到磁盘（临时文件 + rename，防止写一半崩溃导致文件损坏）
 pub(crate) fn atomic_write_json<T: serde::Serialize>(
     path: &std::path::Path,

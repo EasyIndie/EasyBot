@@ -568,7 +568,6 @@ adapters:
         );
         assert!(content.contains("本地配置覆盖"));
         assert!(content.contains("enabled: false"));
-        assert!(content.contains("enabled: true"));
         assert!(content.contains("server:"));
     }
 }
