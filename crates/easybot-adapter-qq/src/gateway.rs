@@ -45,6 +45,8 @@ impl crate::QqAdapter {
         chat_types: Arc<Mutex<HashMap<String, ChatType>>>,
     ) {
         let mut reconnect_attempts: u32 = 0;
+        let mut seq: u64 = 0;
+        let mut session_id: Option<String> = None;
         loop {
             // 每次重连前刷新 access token
             if token_store.needs_refresh()
@@ -122,7 +124,7 @@ impl crate::QqAdapter {
             reconnect_attempts = 0;
             tracing::info!("QQ Gateway connected");
 
-            // 发送 Identify（使用 QQBot {access_token} 格式）
+            // 尝试 RESUME（如果有之前的 session_id）或完整 Identify
             let token_str = match token_store.get() {
                 Ok(t) => t,
                 Err(e) => {
@@ -130,28 +132,60 @@ impl crate::QqAdapter {
                     continue;
                 }
             };
-            let identify = serde_json::json!({
-                "op": 2,
-                "d": {
-                    "token": token_str,
-                    "intents": crate::types::intents::AT_MESSAGE
-                        | crate::types::intents::C2C_MESSAGE
-                        | crate::types::intents::GROUP_AT_MESSAGE,
-                    "shard": [0, 1],
-                }
-            });
-            if write
-                .send(Message::Text(identify.to_string().into()))
-                .await
-                .is_err()
+            let tried_resume = if let Some(sid) = &session_id
+                && seq > 0
             {
-                tracing::error!("QQ identify send failed");
-                continue;
+                let resume = serde_json::json!({
+                    "op": 6,
+                    "d": {
+                        "token": token_str,
+                        "session_id": sid.as_str(),
+                        "seq": seq,
+                    }
+                });
+                tracing::info!(
+                    "QQ Gateway attempting RESUME (session={}, seq={})",
+                    sid,
+                    seq
+                );
+                if write
+                    .send(Message::Text(resume.to_string().into()))
+                    .await
+                    .is_err()
+                {
+                    tracing::warn!("QQ resume send failed");
+                    false
+                } else {
+                    true
+                }
+            } else {
+                false
+            };
+
+            if !tried_resume {
+                let identify = serde_json::json!({
+                    "op": 2,
+                    "d": {
+                        "token": token_str,
+                        "intents": crate::types::intents::AT_MESSAGE
+                            | crate::types::intents::C2C_MESSAGE
+                            | crate::types::intents::GROUP_AT_MESSAGE,
+                        "shard": [0, 1],
+                    }
+                });
+                if write
+                    .send(Message::Text(identify.to_string().into()))
+                    .await
+                    .is_err()
+                {
+                    tracing::error!("QQ identify send failed");
+                    continue;
+                }
             }
 
             // 事件循环
-            let mut seq: u64 = 0;
             let mut identified = false;
+            let mut resumed = false;
             let mut hb_timer = tokio::time::interval(hb_interval);
             hb_timer.tick().await; // 跳过第一次立即触发
 
@@ -194,12 +228,24 @@ impl crate::QqAdapter {
                                 match payload.op {
                                     0 => {
                                         heartbeat.beat(); // liveness: Gateway event received
-                                        if !identified
+                                        if !identified && !resumed
                                             && payload.t.as_deref() == Some("READY") {
                                                 identified = true;
+                                                // 保存 session_id 用于后续 RESUME
+                                                if let Some(d) = &payload.d
+                                                    && let Ok(ready) = serde_json::from_value::<crate::types::ReadyData>(d.clone())
+                                                {
+                                                    session_id = Some(ready.session_id.clone());
+                                                }
                                                 tracing::info!("QQ Gateway ready");
                                                 continue;
                                             }
+                                        if payload.t.as_deref() == Some("RESUMED") {
+                                            resumed = true;
+                                            identified = true;
+                                            tracing::info!("QQ Gateway resumed");
+                                            continue;
+                                        }
                                         if let Some(ref et) = payload.t {
                                             tracing::trace!("QQ dispatch event: {}", et);
                                             Self::handle_dispatch(
@@ -210,7 +256,11 @@ impl crate::QqAdapter {
                                         }
                                     }
                                     7 => { tracing::info!("QQ reconnect requested"); break; }
-                                    9 => { tracing::error!("QQ invalid session"); break; }
+                                    9 => {
+                                        tracing::error!("QQ invalid session, clearing for full re-identify");
+                                        session_id = None;
+                                        break;
+                                    }
                                     11 => {
                                         heartbeat.beat(); // liveness: heartbeat ack received
                                         tracing::trace!("QQ heartbeat ack");
