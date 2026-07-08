@@ -19,7 +19,7 @@ COPY bin/ ./bin/
 COPY tests/ ./tests/
 RUN --mount=type=cache,target=/app/target \
     --mount=type=cache,target=/usr/local/cargo/registry \
-    cargo build --locked --release --features "full,plugin-system" --bin easybot && \
+    cargo build --locked --release --features "default,plugin-system" --bin easybot && \
     cp target/release/easybot /easybot
 
 FROM debian:bookworm-slim
