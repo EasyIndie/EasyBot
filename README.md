@@ -1,6 +1,6 @@
 <h1 align="center">
   <br>
-  <img src="assets/EasyBot.png" alt="EasyBot Logo" width="200">
+  <img src="assets/EasyBot-Rounded.png" alt="EasyBot Logo" width="200">
   <br>
   EasyBot
   <br>
