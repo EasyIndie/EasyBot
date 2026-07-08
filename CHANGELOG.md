@@ -7,7 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.0.11] - 2026-07-08
+### Performance
+
+- **全链路性能优化 (P0–P3)** — 分阶段覆盖构建、数据流、存储、锁竞争和网络层：
+  - **P0 构建优化** — `[profile.release]` 启用 `LTO=fat`、`codegen-units=1`、`strip`、`panic=abort`；
+    引入 mimalloc 全局分配器降低内存分配开销；tokio features 从 `"full"` 缩小到最小必需集。
+  - **P1 数据流重写** — EventBus 订阅从 `subscribe_many` + 100ms 轮询改为 `BroadcastStream` + `SelectAll`
+    （零空闲 CPU、零延迟）；WebSocket 帧序列化从 `serde_json::json!()` 宏（中间
+    `Value` 树）改为直接 `Serializer`；`InboundMessage.metadata` 从
+    `Option<serde_json::Value>` 改为预序列化的 `Option<String>`。
+  - **P1 存储修复** — PostgreSQL `store_messages` 从 N 次单条 INSERT 改为事务批量写入；
+    SQLite/PostgreSQL 单行查询改用 `fetch_optional()` 避免 `Vec` 分配。
+  - **P2 速率限制器重构** — 4 个独立限流器合并为 1 个共享桶池（1 个清理任务）；滑动窗口容量随配置动态调整；
+    LRU 淘汰改为采样 20 条（原遍历 100K）。
+  - **P2 指数退避+抖动** — 新增 `util::backoff_with_jitter()`（1s→2s→…→30s 上限，±25% 抖动）；
+    Telegram/QQ/WeChat 三个适配器的固定 sleep 全部替换。
+  - **P2 HTTP 客户端复用** — Telegram 轮询复用适配器 `reqwest::Client` 连接池；
+    WeChat CDN 上传缓存为 `OnceLock`；Discord 429 读取真实 `Retry-After` 头。
+  - **P3 锁竞争降低** — `AdapterManager` 读锁用于 `status_summary()`、缩短写锁区间、延迟加载配置；
+    QQ `chat_types` 从 `std::sync::Mutex` 改为 `parking_lot::Mutex`（无中毒、更快的 async 锁）。
+- **`InboundMessage.platform` 使用 `Cow<'static, str>`** — 适配器直接返回 `Cow::Borrowed("telegram"/...)`，
+  零分配，`Clone` 仅指针+长度复制，`serde`/`sqlx` 兼容（涉及 10 个文件）。
+- **SQLite 连接池分离** — 会话和消息使用独立连接池，降低读写竞争。
+- **QQ Gateway RESUME 支持** — Gateway WebSocket 断线后通过 RESUME opcode 快速恢复会话，
+  避免完整重连握手（`gateway.rs` +70/-20 行）。
+- **WebSocket 事件广播去重** — 序列化一次，共享给所有 WS 客户端，消除 N 次重复序列化开销。
+- **媒体大小限制** — Telegram/Discord/飞书/QQ 四适配器添加媒体文件大小上限校验。
+- **健康检查退避** — AdapterManager 健康检查在非健康适配器上采用退避策略，减少空闲检查频率。
+- **Retention 优化** — RetentionWorker 调整清理周期和批处理逻辑。
+
+### Build
+
+- **Release profile 去除调试符号** — `debug = false`，缩减二进制体积。
+
+### Docs
+
+- **README logo 更新** — 替换为新项目图标。
 
 ### Fixed
 
