@@ -3,7 +3,7 @@
 //! 外部客户端通过 WebSocket 连接接收实时事件推送。
 //! 连接数受 config.api.websocket.max_clients 限制，超出返回 503。
 
-use crate::AppState;
+use crate::{AppState, WsSerializedEvent};
 use axum::{
     extract::{
         State,
@@ -11,23 +11,10 @@ use axum::{
     },
     response::{IntoResponse, Response},
 };
-use easybot_core::types::event::event_types;
 use futures::{SinkExt, StreamExt};
-use serde::Serialize;
 use std::time::Instant;
 use tokio::sync::OwnedSemaphorePermit;
 use tracing::{info, warn};
-
-/// 直接序列化的 WebSocket 事件帧（避免 serde_json::json!() 宏创建中间 Value 树）
-#[derive(Serialize)]
-struct WsEventFrame<'a> {
-    #[serde(rename = "type")]
-    type_: &'a str,
-    event: &'a str,
-    data: &'a serde_json::Value,
-    seq: u64,
-    timestamp: i64,
-}
 
 /// WebSocket 实时事件流
 ///
@@ -64,12 +51,11 @@ pub async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> 
 async fn handle_ws(socket: WebSocket, state: AppState, _permit: OwnedSemaphorePermit) {
     let (mut sender, mut receiver) = socket.split();
 
-    // 认证前使用空流（pending() 永远不产生事件），认证后才创建真实订阅
-    let mut event_stream: std::pin::Pin<
-        Box<dyn futures::Stream<Item = easybot_core::types::event::GatewayEvent> + Send>,
-    > = Box::pin(futures::stream::pending());
+    // 认证前使用哑接收器，认证后替换为真实订阅
+    let (_dummy_tx, mut event_rx) = tokio::sync::broadcast::channel::<WsSerializedEvent>(1);
 
     let mut authenticated = false;
+    let mut event_filters: Vec<String> = Vec::new();
     let mut event_seq: u64 = 0;
     let mut dropped_events: u32 = 0;
     const MAX_DROPPED_EVENTS: u32 = 50; // 连续丢弃超过 N 个事件则断开
@@ -148,21 +134,9 @@ async fn handle_ws(socket: WebSocket, state: AppState, _permit: OwnedSemaphorePe
                                 Some(ref key) => {
                                     match state.auth_manager.authenticate(key).await {
                                         Ok(auth_info) => {
-                                            // 根据 API Key 的 event_filters 订阅事件
-                                            let event_refs: Vec<&str> =
-                                                if auth_info.event_filters.is_empty() {
-                                                    // 空数组 = 全部事件（向后兼容）
-                                                    event_types::all().to_vec()
-                                                } else {
-                                                    auth_info
-                                                        .event_filters
-                                                        .iter()
-                                                        .map(|s| s.as_str())
-                                                        .collect()
-                                                };
-                                            event_stream = Box::pin(
-                                                state.event_bus.subscribe_many(&event_refs),
-                                            );
+                                            // 保存事件过滤器（共享广播器含所有事件，客户端自行过滤）
+                                            event_filters = auth_info.event_filters.clone();
+                                            event_rx = state.ws_event_tx.subscribe();
                                             authenticated = true;
                                             let _ = sender.send(Message::Text(
                                                 r#"{"type":"auth_ok"}"#.into()
@@ -230,35 +204,27 @@ async fn handle_ws(socket: WebSocket, state: AppState, _permit: OwnedSemaphorePe
                 }
             }
 
-            // 推送网关事件到客户端（带背压处理）
-            event = event_stream.next() => {
+            // 推送网关事件到客户端（背压处理）
+            event = event_rx.recv() => {
                 match event {
-                    Some(event) => {
-                        event_seq += 1;
-                        // 透传原始 payload 的控制（生产环境隐藏 metadata）
-                        // metadata 现在是预序列化的 JSON 字符串（优化：避免 Value 树分配）
-                        let mut event_data = event.data;
-                        if !state.config.api.raw_payload_enabled {
-                            if let Some(obj) = event_data.as_object_mut() {
-                                obj.remove("metadata");
-                            }
-                        } else if let Some(obj) = event_data.as_object_mut() {
-                            // raw_payload_enabled: 将字符串 metadata 解析回 Value 保持兼容
-                            if let Some(serde_json::Value::String(s)) = obj.get("metadata")
-                                && let Ok(parsed) = serde_json::from_str::<serde_json::Value>(s)
-                            {
-                                obj["metadata"] = parsed;
-                            }
+                    Ok(serialized) => {
+                        // 检查客户端是否订阅了此事件类型（按 API Key 的 event_filters 过滤）
+                        if !event_filters.is_empty()
+                            && !event_filters.iter().any(|f| f == &serialized.event_type)
+                        {
+                            continue;
                         }
 
-                        // 直接序列化帧（避免 serde_json::json!() 宏创建中间 Value 树）
-                        let frame = serde_json::to_string(&WsEventFrame {
-                            type_: "event",
-                            event: &event.event_type,
-                            data: &event_data,
-                            seq: event_seq,
-                            timestamp: event.timestamp,
-                        }).unwrap_or_default();
+                        event_seq += 1;
+
+                        // 使用预序列化的 data 构建帧（避免 Value 序列化）
+                        let frame = format!(
+                            r#"{{"type":"event","event":"{}","data":{},"seq":{},"timestamp":{}}}"#,
+                            serialized.event_type,
+                            serialized.data,
+                            event_seq,
+                            serialized.timestamp,
+                        );
 
                         // 超时发送：100ms 内发不出去则丢弃，防止慢客户端反压
                         let msg = Message::Text(frame.into());
@@ -281,7 +247,7 @@ async fn handle_ws(socket: WebSocket, state: AppState, _permit: OwnedSemaphorePe
                             }
                         }
                     }
-                    None => break,
+                    Err(_) => break,
                 }
             }
         }
