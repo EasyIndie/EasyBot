@@ -59,8 +59,8 @@ impl crate::QqAdapter {
 
             // 获取 Gateway URL
             let gw_url = match Self::fetch_gateway_url(&token_store, &base_url).await {
-                Some(url) => url,
-                None => {
+                FetchGatewayResult::Success(url) => url,
+                FetchGatewayResult::Transient => {
                     reconnect_attempts += 1;
                     let delay = easybot_core::util::backoff_with_jitter(reconnect_attempts);
                     tracing::warn!(
@@ -70,6 +70,51 @@ impl crate::QqAdapter {
                     );
                     tokio::time::sleep(delay).await;
                     continue;
+                }
+                FetchGatewayResult::AuthError(body) => {
+                    // Token 被 QQ 拒绝（可能是提前过期或凭据无效）。
+                    // 先主动刷新一次 token（即使本地 TTL 还没到），再重试。
+                    tracing::warn!(
+                        "QQ Gateway: auth error (11244), attempting token refresh and retry... \
+                         Body: {}",
+                        body,
+                    );
+                    if let Err(e) = token_store.refresh().await {
+                        tracing::error!(
+                            "QQ Gateway: token refresh also failed after auth error: {}. \
+                             Credentials may be invalid. Stopping gateway loop.",
+                            e,
+                        );
+                        return;
+                    }
+                    tracing::info!(
+                        "QQ token refreshed after auth error, retrying gateway URL fetch"
+                    );
+                    // 刷新后重试获取 gateway URL
+                    match Self::fetch_gateway_url(&token_store, &base_url).await {
+                        FetchGatewayResult::Success(url) => url,
+                        FetchGatewayResult::Transient => {
+                            reconnect_attempts += 1;
+                            let delay = easybot_core::util::backoff_with_jitter(reconnect_attempts);
+                            tracing::warn!(
+                                "QQ Gateway: failed to get gateway URL after token refresh \
+                                 (attempt {}), retry in {:?}",
+                                reconnect_attempts,
+                                delay
+                            );
+                            tokio::time::sleep(delay).await;
+                            continue;
+                        }
+                        FetchGatewayResult::AuthError(body2) => {
+                            tracing::error!(
+                                "QQ Gateway: auth error persists after token refresh — \
+                                 credentials (app_id / client_secret) may be invalid. \
+                                 Body: {}. Stopping gateway loop.",
+                                body2,
+                            );
+                            return;
+                        }
+                    }
                 }
             };
 
@@ -276,22 +321,40 @@ impl crate::QqAdapter {
             }
         }
     }
+}
 
+/// Gateway URL 获取结果
+pub(crate) enum FetchGatewayResult {
+    /// 成功获得 Gateway URL
+    Success(String),
+    /// 临时性失败（网络/服务器错误），适合带退避重试
+    Transient,
+    /// 致命鉴权错误（token 无效/已过期），重试无意义
+    AuthError(String),
+}
+
+impl crate::QqAdapter {
     pub(crate) async fn fetch_gateway_url(
         token_store: &QqTokenStore,
         base_url: &str,
-    ) -> Option<String> {
+    ) -> FetchGatewayResult {
         let token = match token_store.get() {
             Ok(t) => t,
             Err(e) => {
                 tracing::warn!("QQ fetch_gateway_url: token error: {}", e);
-                return None;
+                return FetchGatewayResult::Transient;
             }
         };
-        let client = reqwest::Client::builder()
+        let client = match reqwest::Client::builder()
             .timeout(Duration::from_secs(15))
             .build()
-            .ok()?;
+        {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::warn!("QQ fetch_gateway_url: failed to build HTTP client: {}", e);
+                return FetchGatewayResult::Transient;
+            }
+        };
         let url = format!("{}/gateway/bot", base_url);
         let resp = match client
             .get(&url)
@@ -302,25 +365,41 @@ impl crate::QqAdapter {
             Ok(r) => r,
             Err(e) => {
                 tracing::warn!("QQ fetch_gateway_url: request to {} failed: {}", url, e);
-                return None;
+                return FetchGatewayResult::Transient;
             }
         };
         let status = resp.status();
         if !status.is_success() {
             let body = resp.text().await.unwrap_or_default();
+            // 解析错误响应体，检测致命鉴权错误
+            if let Ok(err_body) = serde_json::from_str::<serde_json::Value>(&body)
+                && let Some(code) = err_body.get("code").and_then(|c| c.as_i64())
+                && code == 11244
+            {
+                // 11244 = "token not exist or expire" — 凭据无效，无需重试
+                tracing::error!(
+                    "QQ fetch_gateway_url: {} returned {} — body: {} \
+                     (code={}: token invalid or expired — stopping retries)",
+                    url,
+                    status,
+                    body,
+                    code,
+                );
+                return FetchGatewayResult::AuthError(body);
+            }
             tracing::warn!(
                 "QQ fetch_gateway_url: {} returned {} — body: {}",
                 url,
                 status,
                 body
             );
-            return None;
+            return FetchGatewayResult::Transient;
         }
         match resp.json::<crate::types::GatewayResponse>().await {
-            Ok(data) => Some(data.url),
+            Ok(data) => FetchGatewayResult::Success(data.url),
             Err(e) => {
                 tracing::warn!("QQ fetch_gateway_url: JSON parse failed: {}", e);
-                None
+                FetchGatewayResult::Transient
             }
         }
     }
