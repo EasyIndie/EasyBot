@@ -71,6 +71,7 @@ const CDN_BASE_URL: &str = "https://novac2c.cdn.weixin.qq.com/c2c";
 
 /// QR 码响应
 #[derive(Debug, serde::Deserialize)]
+#[allow(dead_code)]
 struct QrCodeResponse {
     ret: i64,
     errmsg: Option<String>,
@@ -678,6 +679,28 @@ fn publish_send_event(
     }
 }
 
+/// 将 URL 生成为 Unicode 半块字符 QR 码并打印到终端。
+///
+/// 用户可直接用手机微信扫描终端中的二维码，无需打开浏览器。
+/// 如果 QR 生成失败（数据过长等），回退到打印纯文本 URL。
+fn display_qr_code_url(url: &str) {
+    match qrcode::QrCode::new(url.as_bytes()) {
+        Ok(code) => {
+            let qr_str = code
+                .render::<qrcode::render::unicode::Dense1x2>()
+                .dark_color(qrcode::render::unicode::Dense1x2::Dark)
+                .light_color(qrcode::render::unicode::Dense1x2::Light)
+                .build();
+            tracing::info!("请使用手机微信扫描以下二维码：");
+            println!("\n{}", qr_str);
+        }
+        Err(e) => {
+            tracing::warn!("无法生成二维码 ({}), 请手动打开以下链接:", e);
+            println!("\n    {}\n", url);
+        }
+    }
+}
+
 #[async_trait]
 impl PlatformAdapter for WeChatAdapter {
     fn platform_name(&self) -> &str {
@@ -751,114 +774,141 @@ impl PlatformAdapter for WeChatAdapter {
         if self.bot_token.read().await.is_none() {
             tracing::info!("个人微信适配器：需要扫码登录");
 
-            // 获取 QR 码
-            let qr_url = format!(
-                "{}/ilink/bot/get_bot_qrcode?bot_type=3",
-                self.api_base_url()
-            );
-            let qr_resp: QrCodeResponse = client
-                .get(&qr_url)
-                .send()
-                .await
-                .map_err(|e| GatewayError::Internal(format!("Failed to get QR code: {}", e)))?
-                .json()
-                .await
-                .map_err(|e| {
-                    GatewayError::Internal(format!("Failed to parse QR response: {}", e))
-                })?;
+            let poll_start = std::time::Instant::now();
+            const QR_TOTAL_TIMEOUT: Duration = Duration::from_secs(300);
+            const POLL_ITERATIONS: u32 = 120;
 
-            if qr_resp.ret != 0 {
-                return Err(GatewayError::Internal(format!(
-                    "Get QR code failed: {} (ret {})",
-                    qr_resp.errmsg.unwrap_or_default(),
-                    qr_resp.ret
-                )));
-            }
+            // 外层循环：获取 QR 码并轮询，过期/超时时自动刷新
+            let (bot_token, ilink_bot_id, ilink_user_id, baseurl) = 'qr_loop: loop {
+                // 5 分钟总超时守卫
+                if poll_start.elapsed() > QR_TOTAL_TIMEOUT {
+                    return Err(GatewayError::Internal(
+                        "扫码登录超时（5分钟），请重新启动适配器".to_string(),
+                    ));
+                }
 
-            let qrcode = qr_resp
-                .qrcode
-                .ok_or_else(|| GatewayError::Internal("No qrcode in response".to_string()))?;
+                // 获取 QR 码
+                let qr_url = format!(
+                    "{}/ilink/bot/get_bot_qrcode?bot_type=3",
+                    self.api_base_url()
+                );
+                let qr_resp: QrCodeResponse = client
+                    .get(&qr_url)
+                    .send()
+                    .await
+                    .map_err(|e| GatewayError::Internal(format!("Failed to get QR code: {}", e)))?
+                    .json()
+                    .await
+                    .map_err(|e| {
+                        GatewayError::Internal(format!("Failed to parse QR response: {}", e))
+                    })?;
 
-            // 显示 QR 码（可能是 URL 链接或 ASCII 二维码）
-            if let Some(img) = &qr_resp.qrcode_img {
-                if img.starts_with("http://") || img.starts_with("https://") {
-                    // iLink API 返回的是微信 liteapp 链接（浏览器打开后扫码）
-                    tracing::info!("微信登录链接请在浏览器打开后扫码：");
-                    println!("\n    {}\n", img);
-                    tracing::info!("微信登录链接: {}", img);
-                } else {
-                    // 旧格式：ASCII 二维码
-                    tracing::info!("扫描以下二维码登录个人微信：");
-                    println!("\n{}", img);
+                if qr_resp.ret != 0 {
+                    // API 错误，短暂等待后重试
+                    tracing::warn!("获取二维码失败 (ret {}), 2 秒后重试...", qr_resp.ret);
+                    tokio::time::sleep(Duration::from_secs(2)).await;
+                    continue 'qr_loop;
+                }
+
+                let qrcode = qr_resp
+                    .qrcode
+                    .ok_or_else(|| GatewayError::Internal("API 返回的二维码为空".to_string()))?;
+
+                // 显示 QR 码（URL → 终端 QR；旧格式 → ASCII 直接打印）
+                match &qr_resp.qrcode_img {
+                    Some(img) if img.starts_with("http://") || img.starts_with("https://") => {
+                        display_qr_code_url(img);
+                    }
+                    Some(img) => {
+                        tracing::info!("扫描以下二维码登录个人微信：");
+                        println!("\n{}", img);
+                    }
+                    None => {
+                        tracing::debug!("API 未返回二维码图片 (token={})", qrcode);
+                    }
                 }
                 // SECURITY: Log qrcode_token at DEBUG level only — it is a session token
                 tracing::debug!(
                     "微信登录 qrcode_token={}，扫码后凭据将自动保存到 ~/.easybot/.wechat-credentials.json",
                     qrcode
                 );
-            }
 
-            // 轮询扫码状态（最多 120 秒）
-            let status_url = format!(
-                "{}/ilink/bot/get_qrcode_status?qrcode={}",
-                self.api_base_url(),
-                qrcode
-            );
-            let mut logged = false;
-            let mut token: Option<String> = None;
-            let mut bot_id: Option<String> = None;
-            let mut user_id: Option<String> = None;
-            let mut baseurl: Option<String> = None;
+                // 轮询扫码状态（每个 QR 码最多 POLL_ITERATIONS 秒）
+                let status_url = format!(
+                    "{}/ilink/bot/get_qrcode_status?qrcode={}",
+                    self.api_base_url(),
+                    qrcode
+                );
+                let mut logged_wait = false;
+                let mut logged_scanned = false;
 
-            for _ in 0..120 {
-                tokio::time::sleep(Duration::from_secs(1)).await;
-                let status_resp: QrCodeStatusResponse = client
-                    .get(&status_url)
-                    .send()
-                    .await
-                    .map_err(|e| GatewayError::Internal(format!("QR status poll failed: {}", e)))?
-                    .json()
-                    .await
-                    .map_err(|e| {
-                        GatewayError::Internal(format!("QR status parse failed: {}", e))
-                    })?;
-
-                match status_resp.status.as_deref() {
-                    Some("confirmed") => {
-                        token = status_resp.bot_token;
-                        bot_id = status_resp.ilink_bot_id;
-                        user_id = status_resp.ilink_user_id;
-                        baseurl = status_resp.baseurl;
-                        break;
+                for _ in 0..POLL_ITERATIONS {
+                    // 内层也检查总超时
+                    if poll_start.elapsed() > QR_TOTAL_TIMEOUT {
+                        return Err(GatewayError::Internal(
+                            "扫码登录超时（5分钟），请重新启动适配器".to_string(),
+                        ));
                     }
-                    Some("scaned") => {
-                        if !logged {
-                            tracing::info!("微信已扫码，请在手机上确认");
-                            logged = true;
+
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                    let status_resp: QrCodeStatusResponse = client
+                        .get(&status_url)
+                        .send()
+                        .await
+                        .map_err(|e| {
+                            GatewayError::Internal(format!("QR status poll failed: {}", e))
+                        })?
+                        .json()
+                        .await
+                        .map_err(|e| {
+                            GatewayError::Internal(format!("QR status parse failed: {}", e))
+                        })?;
+
+                    match status_resp.status.as_deref() {
+                        Some("confirmed") => {
+                            // 成功：手机上确认
+                            break 'qr_loop (
+                                status_resp.bot_token,
+                                status_resp.ilink_bot_id,
+                                status_resp.ilink_user_id,
+                                status_resp.baseurl,
+                            );
+                        }
+                        Some("scaned") => {
+                            if !logged_scanned {
+                                tracing::info!("微信已扫码，请在手机上确认");
+                                logged_scanned = true;
+                            }
+                        }
+                        Some("wait") | None => {
+                            if !logged_wait {
+                                tracing::info!("等待扫码...");
+                                logged_wait = true;
+                            }
+                        }
+                        Some("expired") => {
+                            tracing::info!("二维码已过期，正在刷新...");
+                            continue 'qr_loop;
+                        }
+                        other => {
+                            tracing::debug!("扫码状态未知: {:?}", other);
                         }
                     }
-                    Some("wait") | None => {
-                        if !logged {
-                            tracing::info!("等待扫码...");
-                            logged = true;
-                        }
-                    }
-                    Some("expired") => {
-                        return Err(GatewayError::Internal("QR code expired".to_string()));
-                    }
-                    _ => {}
                 }
-            }
 
-            let bot_token = token
-                .ok_or_else(|| GatewayError::Internal("QR login timeout or failed".to_string()))?;
+                // POLL_ITERATIONS 次循环结束仍未确认 — 超时，自动刷新
+                tracing::info!("扫码等待超时，正在刷新二维码...");
+            };
 
             // 保存凭据（内存）
+            let bot_token = bot_token.ok_or_else(|| {
+                GatewayError::Internal("扫码登录失败：未获取到 bot_token".to_string())
+            })?;
             *self.bot_token.write().await = Some(bot_token.clone());
-            if let Some(id) = bot_id {
+            if let Some(id) = ilink_bot_id {
                 *self.ilink_bot_id.write().await = Some(id.clone());
             }
-            if let Some(uid) = user_id {
+            if let Some(uid) = ilink_user_id {
                 *self.ilink_user_id.write().await = Some(uid.clone());
             }
             if let Some(ref url) = baseurl {
