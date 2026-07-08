@@ -1,0 +1,24 @@
+name: Apply version bump
+description: >
+  Update Cargo.toml version and insta snapshots to match the release version.
+  Centralizes the sed commands so they aren't duplicated across jobs.
+inputs:
+  version:
+    description: "The new version string (e.g., 0.1.0)"
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        VERSION="${{ inputs.version }}"
+
+        # ── Cargo.toml ──
+        sed -i "s/^version = \".*\"/version = \"$VERSION\"/" Cargo.toml
+
+        # ── insta snapshots (only health response includes version string) ──
+        SNAP="crates/easybot-api/tests/snapshots/routes__health_response.snap"
+        if [ -f "$SNAP" ]; then
+          sed -i 's/"version": ".*"/"version": "'"$VERSION"'"/' "$SNAP"
+        fi
