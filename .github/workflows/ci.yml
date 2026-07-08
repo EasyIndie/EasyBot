@@ -150,27 +150,3 @@ jobs:
           files: lcov.info
           fail_ci_if_error: false
 
-  # ── Musl check: verify static Linux compilation ────────────────────────
-  musl-check:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: ./.github/actions/setup-rust
-        with:
-          install-zigbuild: true
-
-      - name: Install musl targets
-        run: rustup target add x86_64-unknown-linux-musl aarch64-unknown-linux-musl
-
-      - name: Build (x86_64-unknown-linux-musl)
-        run: cargo zigbuild --bin easybot --target x86_64-unknown-linux-musl --features "default,plugin-system" --locked
-
-      - name: Verify static linking
-        run: |
-          BINARY="target/x86_64-unknown-linux-musl/debug/easybot"
-          file "$BINARY" | grep -q "statically linked" && \
-            echo "✅ OK: x86_64 musl binary is statically linked" || \
-            { echo "❌ FAIL: binary is not statically linked"; file "$BINARY"; exit 1; }
-
-      - name: Build (aarch64-unknown-linux-musl — cross-compile check only)
-        run: cargo zigbuild --bin easybot --target aarch64-unknown-linux-musl --features "default,plugin-system" --locked

@@ -213,7 +213,6 @@ jobs:
       - uses: ./.github/actions/setup-rust
         with:
           target: ${{ matrix.target }}
-          install-protoc: auto
           install-zigbuild: ${{ contains(matrix.target, 'musl') }}
 
       - name: Build release binary (musl — static linking)

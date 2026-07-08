@@ -10,13 +10,20 @@ ENV CARGO_NET_RETRY=5 \
 WORKDIR /app
 RUN apt-get update && apt-get install -y \
     pkg-config \
-    protobuf-compiler \
     curl \
     && rm -rf /var/lib/apt/lists/*
 COPY Cargo.toml Cargo.lock ./
 COPY crates/ ./crates/
 COPY bin/ ./bin/
-COPY tests/ ./tests/
+# Only Cargo.toml + minimal stubs for workspace member resolution (--bin easybot skips test compilation)
+COPY tests/plugins/mock-adapter/Cargo.toml tests/plugins/mock-adapter/
+COPY tests/plugins/mock-adapter/src/ tests/plugins/mock-adapter/src/
+COPY tests/integration/Cargo.toml tests/integration/
+COPY tests/integration/src/ tests/integration/src/
+COPY tests/e2e/Cargo.toml tests/e2e/
+COPY tests/e2e/src/ tests/e2e/src/
+COPY tests/fixtures/Cargo.toml tests/fixtures/
+COPY tests/fixtures/src/ tests/fixtures/src/
 RUN --mount=type=cache,target=/app/target \
     --mount=type=cache,target=/usr/local/cargo/registry \
     cargo build --locked --release --features "default,plugin-system" --bin easybot && \

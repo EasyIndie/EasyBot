@@ -37,6 +37,7 @@ jobs:
           push: false
           platforms: linux/amd64
           cache-from: type=gha
+          cache-to: type=gha,mode=max
 
   # ── amd64: 原生 x64 构建 ──
   build-amd64:
