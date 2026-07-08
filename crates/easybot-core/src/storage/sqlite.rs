@@ -117,6 +117,44 @@ pub async fn create_pool(db_path: &std::path::Path) -> Result<SqlitePool, StoreE
     Ok(pool)
 }
 
+/// 创建第二个 SQLite 连接池（指向同一数据库，用于读写分离）
+///
+/// 与 `create_pool` 创建的池共享同一个 SQLite 数据库文件。
+/// 两池间通过 WAL 模式的并发读写能力协同工作——写入不阻塞读取。
+pub async fn create_shared_pool(db_path: &std::path::Path) -> Result<SqlitePool, StoreError> {
+    use sqlx::sqlite::SqliteConnectOptions;
+
+    let is_memory = db_path.to_string_lossy() == ":memory:";
+    if is_memory {
+        return SqlitePool::connect(":memory:")
+            .await
+            .map_err(|e| StoreError::Database(format!("Failed to connect to SQLite: {}", e)));
+    }
+
+    let connect_opts = SqliteConnectOptions::new()
+        .filename(db_path)
+        .read_only(false)
+        .create_if_missing(false);
+    let pool = SqlitePool::connect_with(connect_opts)
+        .await
+        .map_err(|e| StoreError::Database(format!("Failed to connect secondary pool: {}", e)))?;
+
+    sqlx::query("PRAGMA journal_mode=WAL")
+        .execute(&pool)
+        .await
+        .ok();
+    sqlx::query("PRAGMA busy_timeout=5000")
+        .execute(&pool)
+        .await
+        .ok();
+    sqlx::query("PRAGMA synchronous=NORMAL")
+        .execute(&pool)
+        .await
+        .ok();
+
+    Ok(pool)
+}
+
 /// 运行数据库迁移（幂等）
 pub async fn run_migrations(pool: &SqlitePool) -> Result<(), StoreError> {
     sqlx::query(SCHEMA_SQL).execute(pool).await?;

@@ -264,10 +264,19 @@ async fn main() -> anyhow::Result<()> {
                         .map_err(|e| anyhow::anyhow!("Migration failed: {}", e))?;
                     tracing::info!("SQLite storage initialized: {}", db_path.display());
 
+                    // 使用独立连接池：Session 读取不阻塞 Message 写入（反之亦然）
+                    // WAL 模式虽已支持并发读写，分离池可避免写入长事务阻塞会话查询
+                    let session_pool = easybot_core::storage::sqlite::create_shared_pool(&db_path)
+                        .await
+                        .unwrap_or_else(|_| pool.clone());
+                    easybot_core::storage::sqlite::run_migrations(&session_pool)
+                        .await
+                        .ok();
+
                     auth_pool = Some(pool.clone());
                     retention_pool = Some(pool.clone());
                     let store: Arc<dyn easybot_core::storage::SessionStore> = Arc::new(
-                        easybot_core::storage::sqlite::SqliteSessionStore::new(pool.clone()),
+                        easybot_core::storage::sqlite::SqliteSessionStore::new(session_pool),
                     );
                     let msg_store: Arc<dyn easybot_core::storage::MessageStore> =
                         Arc::new(easybot_core::storage::sqlite::SqliteMessageStore::new(pool));
