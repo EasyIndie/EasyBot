@@ -994,6 +994,16 @@ impl FeishuAdapter {
                 .send()
                 .await
                 .map_err(|e| GatewayError::Internal(format!("Download media failed: {}", e)))?;
+            // SECURITY: Reject oversized downloads to prevent OOM
+            if let Some(content_length) = resp.content_length() {
+                const MAX_DOWNLOAD_BYTES: u64 = 25 * 1024 * 1024; // 25MB
+                if content_length > MAX_DOWNLOAD_BYTES {
+                    return Err(GatewayError::Internal(format!(
+                        "Rejected media download: {} bytes exceeds {} limit",
+                        content_length, MAX_DOWNLOAD_BYTES
+                    )));
+                }
+            }
             resp.bytes()
                 .await
                 .map_err(|e| GatewayError::Internal(format!("Read media bytes failed: {}", e)))?

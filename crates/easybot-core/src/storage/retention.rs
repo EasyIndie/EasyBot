@@ -39,14 +39,15 @@ impl RetentionWorker {
     ///
     /// 当 `cleanup_interval_secs > 0` 时启用。
     /// 首个清理在 `T + interval` 后运行，避免启动时争用。
+    /// 返回 `JoinHandle`，可在优雅关闭时 `await` 等待任务结束。
     pub fn start(
         message_store: Arc<dyn MessageStore>,
         session_store: Arc<dyn SessionStore>,
         config: RetentionConfig,
-    ) {
+    ) -> Option<tokio::task::JoinHandle<()>> {
         if config.cleanup_interval_secs == 0 {
             tracing::info!("TTL retention cleanup is disabled");
-            return;
+            return None;
         }
 
         tracing::info!(
@@ -56,7 +57,7 @@ impl RetentionWorker {
             config.cleanup_interval_secs,
         );
 
-        tokio::spawn(async move {
+        Some(tokio::spawn(async move {
             // 首个清理在 T + interval 后运行
             tokio::time::sleep(std::time::Duration::from_secs(config.cleanup_interval_secs)).await;
 
@@ -103,7 +104,7 @@ impl RetentionWorker {
                 tokio::time::sleep(std::time::Duration::from_secs(config.cleanup_interval_secs))
                     .await;
             }
-        });
+        }))
     }
 }
 

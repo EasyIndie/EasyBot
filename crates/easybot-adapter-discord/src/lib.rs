@@ -786,6 +786,16 @@ impl PlatformAdapter for DiscordAdapter {
                 .and_then(|v| v.to_str().ok())
                 .unwrap_or("application/octet-stream")
                 .to_string();
+            // SECURITY: Reject oversized downloads to prevent OOM
+            const MAX_DOWNLOAD_BYTES: u64 = 25 * 1024 * 1024; // 25MB
+            if let Some(content_length) = resp.content_length()
+                && content_length > MAX_DOWNLOAD_BYTES
+            {
+                return Err(GatewayError::Internal(format!(
+                    "Rejected media download: {} bytes exceeds {} limit",
+                    content_length, MAX_DOWNLOAD_BYTES
+                )));
+            }
             let data = resp
                 .bytes()
                 .await

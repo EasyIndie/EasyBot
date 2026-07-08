@@ -567,6 +567,15 @@ impl QqAdapter {
             let resp = client.get(file_url).send().await.map_err(|e| {
                 GatewayError::Internal(format!("QQ upload: download failed: {}", e))
             })?;
+            // SECURITY: Reject oversized downloads to prevent OOM
+            let content_length = resp.content_length().unwrap_or(0);
+            const MAX_DOWNLOAD_BYTES: u64 = 25 * 1024 * 1024; // 25MB
+            if content_length > MAX_DOWNLOAD_BYTES {
+                return Err(GatewayError::Internal(format!(
+                    "Rejected media download: {} bytes exceeds {} limit",
+                    content_length, MAX_DOWNLOAD_BYTES
+                )));
+            }
             let ct = resp
                 .headers()
                 .get("content-type")
@@ -662,6 +671,15 @@ impl QqAdapter {
             let resp = client.get(file_url).send().await.map_err(|e| {
                 GatewayError::Internal(format!("QQ group upload: download failed: {}", e))
             })?;
+            // SECURITY: Reject oversized downloads to prevent OOM
+            if let Some(cl) = resp.content_length()
+                && cl > 25 * 1024 * 1024
+            {
+                return Err(GatewayError::Internal(format!(
+                    "Rejected media download: {} bytes exceeds 25MB limit",
+                    cl
+                )));
+            }
             let ct = resp
                 .headers()
                 .get("content-type")

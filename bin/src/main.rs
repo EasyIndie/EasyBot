@@ -546,7 +546,7 @@ async fn main() -> anyhow::Result<()> {
 
     // 启动 TTL 保留清理 worker（服务器启动后运行，避免启动时争用）
     if let Some(session_store) = ttl_session_store {
-        easybot_core::storage::retention::RetentionWorker::start(
+        let _jh = easybot_core::storage::retention::RetentionWorker::start(
             message_store,
             session_store,
             ttl_config,

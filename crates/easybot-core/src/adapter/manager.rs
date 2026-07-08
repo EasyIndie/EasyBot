@@ -845,9 +845,10 @@ impl AdapterManager {
         // Step 2: start (non-blocking — connect runs in background)
         match self.start(platform, config).await {
             Ok(result) if result.ok => {
-                // Step 3: wait for connection to complete (max 60s)
+                // Step 3: wait for connection to complete (max 60s, with exponential backoff)
                 info!("Waiting for adapter '{}' to connect...", platform);
                 let deadline = Instant::now() + Duration::from_secs(60);
+                let mut poll_delay = Duration::from_millis(100);
                 while Instant::now() < deadline {
                     // Check if no longer pending (completed or failed)
                     if !self.pending_connections.read().await.contains_key(platform)
@@ -870,7 +871,8 @@ impl AdapterManager {
                             return Err(GatewayError::Internal(err));
                         }
                     }
-                    tokio::time::sleep(Duration::from_millis(500)).await;
+                    tokio::time::sleep(poll_delay).await;
+                    poll_delay = (poll_delay * 2).min(Duration::from_secs(5));
                 }
                 // Timeout
                 let err = format!("Reconnect timeout for '{}'", platform);
