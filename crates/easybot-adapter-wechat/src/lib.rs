@@ -1679,10 +1679,13 @@ fn convert_message(msg: WeixinMessage) -> Option<InboundMessage> {
         reply_to: None,
         mentions: None,
         mentioned: None,
-        metadata: Some(serde_json::json!({
-            "session_id": msg.session_id,
-            "context_token": msg.context_token,
-        })),
+        metadata: Some(
+            serde_json::to_string(&serde_json::json!({
+                "session_id": msg.session_id,
+                "context_token": msg.context_token,
+            }))
+            .unwrap_or_default(),
+        ),
     })
 }
 
@@ -1804,7 +1807,8 @@ mod tests {
         assert_eq!(inbound.chat_type, ChatType::Dm);
         assert_eq!(inbound.sender.id, "user@im.wechat");
         assert_eq!(inbound.timestamp, 1700000000000);
-        let meta = inbound.metadata.unwrap();
+        let meta_str = inbound.metadata.unwrap();
+        let meta: serde_json::Value = serde_json::from_str(&meta_str).unwrap();
         assert_eq!(
             meta.get("session_id").and_then(|v| v.as_str()),
             Some("session_abc")

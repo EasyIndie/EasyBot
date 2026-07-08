@@ -18,6 +18,8 @@ tokio.workspace = true
 async-trait.workspace = true
 dashmap.workspace = true
 tracing.workspace = true
+futures.workspace = true
+tokio-stream = { workspace = true, features = ["sync"] }
 sqlx.workspace = true
 regex.workspace = true
 dirs.workspace = true

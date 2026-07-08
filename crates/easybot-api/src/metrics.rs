@@ -279,42 +279,34 @@ pub fn start_metrics_event_listener(
     event_bus: std::sync::Arc<easybot_core::bus::EventBus>,
 ) -> tokio::task::JoinHandle<()> {
     use easybot_core::types::event::event_types;
+    use futures::StreamExt;
 
-    let mut rx = event_bus.subscribe_many(&[
+    let mut stream = event_bus.subscribe_many(&[
         event_types::MESSAGE_INBOUND,
         event_types::ADAPTER_CONNECTED,
         event_types::ADAPTER_DISCONNECTED,
     ]);
 
     tokio::spawn(async move {
-        loop {
-            match rx.recv().await {
-                Ok(event) => match event.event_type.as_str() {
-                    event_types::MESSAGE_INBOUND => {
-                        // 从 data 中提取 platform
-                        if let Some(platform) = event.data.get("platform").and_then(|v| v.as_str())
-                        {
-                            metrics.record_inbound_message(platform);
-                        }
+        while let Some(event) = stream.next().await {
+            match event.event_type.as_str() {
+                event_types::MESSAGE_INBOUND => {
+                    // 从 data 中提取 platform
+                    if let Some(platform) = event.data.get("platform").and_then(|v| v.as_str()) {
+                        metrics.record_inbound_message(platform);
                     }
-                    event_types::ADAPTER_CONNECTED => {
-                        if let Some(platform) = event.data.get("platform").and_then(|v| v.as_str())
-                        {
-                            metrics.set_adapter_connected(platform, true);
-                        }
-                    }
-                    event_types::ADAPTER_DISCONNECTED => {
-                        if let Some(platform) = event.data.get("platform").and_then(|v| v.as_str())
-                        {
-                            metrics.set_adapter_connected(platform, false);
-                        }
-                    }
-                    _ => {}
-                },
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                    warn!("Metrics event listener lagged by {} events", n);
                 }
+                event_types::ADAPTER_CONNECTED => {
+                    if let Some(platform) = event.data.get("platform").and_then(|v| v.as_str()) {
+                        metrics.set_adapter_connected(platform, true);
+                    }
+                }
+                event_types::ADAPTER_DISCONNECTED => {
+                    if let Some(platform) = event.data.get("platform").and_then(|v| v.as_str()) {
+                        metrics.set_adapter_connected(platform, false);
+                    }
+                }
+                _ => {}
             }
         }
     })

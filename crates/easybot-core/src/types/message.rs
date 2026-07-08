@@ -61,8 +61,8 @@ pub struct InboundMessage {
     pub mentioned: Option<bool>,
 
     // ── 平台扩展 ──
-    /// 平台特有元数据
-    pub metadata: Option<serde_json::Value>,
+    /// 平台特有元数据（JSON 字符串，使用 String 避免 serde_json::to_value 热路径创建 Value 树）
+    pub metadata: Option<String>,
 }
 
 /// 消息内容类型（平台无关）

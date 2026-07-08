@@ -13,10 +13,21 @@ use axum::{
 };
 use easybot_core::types::event::event_types;
 use futures::{SinkExt, StreamExt};
+use serde::Serialize;
 use std::time::Instant;
 use tokio::sync::OwnedSemaphorePermit;
-use tokio::sync::broadcast;
 use tracing::{info, warn};
+
+/// 直接序列化的 WebSocket 事件帧（避免 serde_json::json!() 宏创建中间 Value 树）
+#[derive(Serialize)]
+struct WsEventFrame<'a> {
+    #[serde(rename = "type")]
+    type_: &'a str,
+    event: &'a str,
+    data: &'a serde_json::Value,
+    seq: u64,
+    timestamp: i64,
+}
 
 /// WebSocket 实时事件流
 ///
@@ -53,8 +64,10 @@ pub async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> 
 async fn handle_ws(socket: WebSocket, state: AppState, _permit: OwnedSemaphorePermit) {
     let (mut sender, mut receiver) = socket.split();
 
-    // 认证前使用哑 channel，不订阅任何事件（认证后才创建真实订阅）
-    let (_dummy_tx, mut event_rx) = broadcast::channel(1);
+    // 认证前使用空流（pending() 永远不产生事件），认证后才创建真实订阅
+    let mut event_stream: std::pin::Pin<
+        Box<dyn futures::Stream<Item = easybot_core::types::event::GatewayEvent> + Send>,
+    > = Box::pin(futures::stream::pending());
 
     let mut authenticated = false;
     let mut event_seq: u64 = 0;
@@ -147,9 +160,9 @@ async fn handle_ws(socket: WebSocket, state: AppState, _permit: OwnedSemaphorePe
                                                         .map(|s| s.as_str())
                                                         .collect()
                                                 };
-                                            event_rx = state
-                                                .event_bus
-                                                .subscribe_many(&event_refs);
+                                            event_stream = Box::pin(
+                                                state.event_bus.subscribe_many(&event_refs),
+                                            );
                                             authenticated = true;
                                             let _ = sender.send(Message::Text(
                                                 r#"{"type":"auth_ok"}"#.into()
@@ -218,27 +231,37 @@ async fn handle_ws(socket: WebSocket, state: AppState, _permit: OwnedSemaphorePe
             }
 
             // 推送网关事件到客户端（带背压处理）
-            event = event_rx.recv() => {
+            event = event_stream.next() => {
                 match event {
-                    Ok(event) => {
+                    Some(event) => {
                         event_seq += 1;
                         // 透传原始 payload 的控制（生产环境隐藏 metadata）
+                        // metadata 现在是预序列化的 JSON 字符串（优化：避免 Value 树分配）
                         let mut event_data = event.data;
-                        if !state.config.api.raw_payload_enabled
-                            && let Some(obj) = event_data.as_object_mut()
-                        {
-                            obj.remove("metadata");
+                        if !state.config.api.raw_payload_enabled {
+                            if let Some(obj) = event_data.as_object_mut() {
+                                obj.remove("metadata");
+                            }
+                        } else if let Some(obj) = event_data.as_object_mut() {
+                            // raw_payload_enabled: 将字符串 metadata 解析回 Value 保持兼容
+                            if let Some(serde_json::Value::String(s)) = obj.get("metadata")
+                                && let Ok(parsed) = serde_json::from_str::<serde_json::Value>(s)
+                            {
+                                obj["metadata"] = parsed;
+                            }
                         }
-                        let frame = serde_json::json!({
-                            "type": "event",
-                            "event": event.event_type,
-                            "data": event_data,
-                            "seq": event_seq,
-                            "timestamp": event.timestamp,
-                        });
+
+                        // 直接序列化帧（避免 serde_json::json!() 宏创建中间 Value 树）
+                        let frame = serde_json::to_string(&WsEventFrame {
+                            type_: "event",
+                            event: &event.event_type,
+                            data: &event_data,
+                            seq: event_seq,
+                            timestamp: event.timestamp,
+                        }).unwrap_or_default();
 
                         // 超时发送：100ms 内发不出去则丢弃，防止慢客户端反压
-                        let msg = Message::Text(frame.to_string().into());
+                        let msg = Message::Text(frame.into());
                         let send_fut = sender.send(msg);
                         tokio::select! {
                             result = send_fut => {
@@ -258,12 +281,7 @@ async fn handle_ws(socket: WebSocket, state: AppState, _permit: OwnedSemaphorePe
                             }
                         }
                     }
-                    Err(broadcast::error::RecvError::Lagged(n)) => {
-                        let _ = sender.send(Message::Text(
-                            serde_json::json!({"type":"lagged","dropped":n}).to_string().into()
-                        )).await;
-                    }
-                    Err(_) => break,
+                    None => break,
                 }
             }
         }

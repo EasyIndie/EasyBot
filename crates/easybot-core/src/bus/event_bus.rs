@@ -6,15 +6,13 @@
 use crate::types::event::GatewayEvent;
 use crate::types::message::SendResult;
 use dashmap::DashMap;
-use std::time::Duration;
+use futures::stream::SelectAll;
 use tokio::sync::broadcast;
+use tokio_stream::wrappers::BroadcastStream;
 use tracing::warn;
 
 /// 默认广播通道容量
 const DEFAULT_CHANNEL_CAPACITY: usize = 256;
-
-/// 合并循环空闲时的休眠时间
-const MERGE_POLL_INTERVAL_MS: u64 = 20;
 
 /// 消息总线
 ///
@@ -113,67 +111,28 @@ impl EventBus {
 
     /// 订阅多个事件类型
     ///
-    /// 创建一个合并的接收器，订阅列表中所有事件类型。
-    /// 使用单个后台任务轮询所有 channel：`try_recv()` 非阻塞排空，
-    /// 有事件时 yield 让出 CPU，无事件时 sleep 100ms 避免忙轮询。
-    ///
-    /// 注意：tokio broadcast `recv()` 不可用于 `select!`（取消不安全），
-    /// 因此采用轮询方案，100ms 延迟对于事件总线是可接受的。
-    ///
-    /// SECURITY NOTE: The merge task is spawned without a JoinHandle.
-    /// It terminates cleanly when all source receivers close or the global
-    /// receiver is dropped. Panics in this task are silently swallowed by
-    /// tokio; the task logs its lifecycle for observability.
-    pub fn subscribe_many(&self, event_types: &[&str]) -> broadcast::Receiver<GatewayEvent> {
-        let (global_tx, global_rx) = broadcast::channel(self.capacity);
+    /// 返回一个 `Stream`，通过 `BroadcastStream` + `SelectAll` 事件驱动合并，
+    /// 无需后台轮询任务，零空闲 CPU 消耗，零延迟。
+    pub fn subscribe_many(
+        &self,
+        event_types: &[&str],
+    ) -> impl futures::Stream<Item = GatewayEvent> + Unpin + use<> {
+        use futures::StreamExt;
 
-        let mut receivers: Vec<broadcast::Receiver<GatewayEvent>> =
-            event_types.iter().map(|et| self.subscribe(et)).collect();
-        let num_types = receivers.len();
+        let streams: Vec<BroadcastStream<GatewayEvent>> = event_types
+            .iter()
+            .map(|et| BroadcastStream::new(self.subscribe(et)))
+            .collect();
 
-        tokio::spawn(async move {
-            tracing::trace!("EventBus merge task started for {} event types", num_types);
-            loop {
-                let mut had_data = false;
-
-                // 非阻塞排空所有 receiver
-                for i in (0..receivers.len()).rev() {
-                    loop {
-                        match receivers[i].try_recv() {
-                            Ok(event) => {
-                                had_data = true;
-                                if global_tx.send(event).is_err() {
-                                    return; // 下游 receiver 已 drop
-                                }
-                            }
-                            Err(broadcast::error::TryRecvError::Empty) => break,
-                            Err(broadcast::error::TryRecvError::Closed) => {
-                                receivers.swap_remove(i);
-                                break;
-                            }
-                            Err(broadcast::error::TryRecvError::Lagged(n)) => {
-                                warn!("EventBus merge lagged by {} events", n);
-                                had_data = true;
-                            }
-                        }
-                    }
+        SelectAll::from_iter(streams).filter_map(|result| {
+            futures::future::ready(match result {
+                Ok(event) => Some(event),
+                Err(err) => {
+                    warn!("EventBus merge lagged: {}", err);
+                    None
                 }
-
-                if receivers.is_empty() {
-                    break;
-                }
-
-                if had_data {
-                    // 有数据流动时 yield 而非 sleep，减少延迟
-                    tokio::task::yield_now().await;
-                } else {
-                    // 空闲时 sleep 避免忙轮询
-                    tokio::time::sleep(Duration::from_millis(MERGE_POLL_INTERVAL_MS)).await;
-                }
-            }
-        });
-
-        global_rx
+            })
+        })
     }
 }
 
@@ -197,7 +156,7 @@ mod tests {
         let event = GatewayEvent::new("test.event", "test", serde_json::json!({"key": "value"}));
         bus.publish(event);
 
-        let received = tokio::time::timeout(tokio::time::Duration::from_secs(1), rx.recv())
+        let received = tokio::time::timeout(Duration::from_secs(1), rx.recv())
             .await
             .expect("should receive event")
             .expect("event should be valid");
@@ -232,6 +191,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_subscribe_many_receives_all_types() {
+        use futures::StreamExt;
         let bus = EventBus::new();
         let mut rx = bus.subscribe_many(&["event.a", "event.b"]);
 
@@ -248,23 +208,25 @@ mod tests {
             serde_json::json!({"n": 2}),
         ));
 
-        // 两个事件都应收到
-        let e1 = tokio::time::timeout(Duration::from_secs(1), rx.recv()).await;
+        // 两个事件都应收到（使用 Stream::next() 替代 broadcast::recv()）
+        let e1 = tokio::time::timeout(Duration::from_secs(1), rx.next()).await;
         assert!(e1.is_ok(), "subscribe_many should receive event.a");
-        let e2 = tokio::time::timeout(Duration::from_secs(1), rx.recv()).await;
+        assert!(e1.unwrap().is_some(), "should receive Some(event)");
+        let e2 = tokio::time::timeout(Duration::from_secs(1), rx.next()).await;
         assert!(e2.is_ok(), "subscribe_many should receive event.b");
+        assert!(e2.unwrap().is_some(), "should receive Some(event)");
     }
 
     #[tokio::test]
-    async fn test_subscribe_many_dropped_receiver_stops_task() {
+    async fn test_subscribe_many_stream_cleanup() {
+        // 验证丢弃 stream 后不会 panic
         let bus = Arc::new(EventBus::new());
         let rx = bus.subscribe_many(&["test.event"]);
-        drop(rx); // 丢弃接收器，后台任务应退出
+        drop(rx);
 
-        // 给后台任务一点时间清理
-        tokio::time::sleep(Duration::from_millis(200)).await;
+        tokio::time::sleep(Duration::from_millis(100)).await;
 
-        // 后台任务已退出，此发布仅用于验证无 panic
+        // stream 已 drop，此发布仅用于验证无 panic
         bus.publish(GatewayEvent::new(
             "test.event",
             "test",

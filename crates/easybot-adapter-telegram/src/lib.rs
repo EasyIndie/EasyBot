@@ -124,8 +124,8 @@ impl TelegramAdapter {
         tg_msg: TelegramMessage,
         sender_role: Option<SenderRole>,
     ) -> Option<InboundMessage> {
-        // 在移出字段前序列化原始数据
-        let raw_payload = serde_json::to_value(&tg_msg).ok();
+        // 在移出字段前序列化原始数据（使用 to_string 避免创建 Value 树）
+        let raw_payload = serde_json::to_string(&tg_msg).ok();
 
         // 检测消息类型和媒体（在移动字段前借用 tg_msg）
         let (msg_type, media) = Self::detect_msg_type(&tg_msg);

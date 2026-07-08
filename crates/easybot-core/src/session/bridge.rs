@@ -31,8 +31,7 @@ impl SessionBridge {
         session_manager: Arc<SessionManager>,
         adapter_manager: Option<Arc<AdapterManager>>,
     ) {
-        let mut event_rx =
-            event_bus.subscribe_many(&[crate::types::event::event_types::MESSAGE_INBOUND]);
+        let mut event_rx = event_bus.subscribe(crate::types::event::event_types::MESSAGE_INBOUND);
 
         tokio::spawn(async move {
             info!("Session bridge started");

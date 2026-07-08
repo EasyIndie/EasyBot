@@ -3,6 +3,7 @@
 //! 订阅 EventBus 事件，根据配置将事件通过 HTTP POST 转发到外部 URL。
 //! 支持 HMAC-SHA256 签名验证，按事件类型和平台过滤。
 
+use futures::StreamExt;
 use hmac::{Hmac, KeyInit, Mac};
 use reqwest::Client;
 use sha2::Sha256;
@@ -83,14 +84,14 @@ impl WebhookDispatcher {
             return;
         }
 
-        let mut rx = event_bus.subscribe_many(&all_types);
+        let mut stream = event_bus.subscribe_many(&all_types);
 
         // 并发分发上限，防止事件洪水压垮运行时或目标服务器
         let dispatch_semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT_DISPATCHES));
 
         loop {
-            match rx.recv().await {
-                Ok(event) => {
+            match stream.next().await {
+                Some(event) => {
                     let event_type = event.event_type.clone();
                     let platform = event
                         .data
@@ -107,10 +108,7 @@ impl WebhookDispatcher {
                         Self::dispatch_event(client, webhooks, event, event_type, platform).await;
                     });
                 }
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                    warn!("Webhook dispatcher lagged by {} events", n);
-                }
-                Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                None => {
                     info!("Webhook dispatcher stopped (EventBus closed)");
                     break;
                 }

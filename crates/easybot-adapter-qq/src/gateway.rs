@@ -389,7 +389,7 @@ impl crate::QqAdapter {
                     reply_to: None,
                     mentions: None,
                     mentioned: Some(true),
-                    metadata: Some(data.clone()),
+                    metadata: serde_json::to_string(&data).ok(),
                 };
 
                 // Track chat type for direct outbound routing, with size cap
@@ -464,7 +464,7 @@ impl crate::QqAdapter {
                     reply_to: None,
                     mentions: None,
                     mentioned: Some(true),
-                    metadata: Some(data.clone()),
+                    metadata: serde_json::to_string(&data).ok(),
                 };
 
                 // Track chat type for direct outbound routing, with size cap
@@ -560,9 +560,10 @@ impl crate::QqAdapter {
                     mentions,
                     mentioned: Some(is_mentioned),
                     metadata: msg_event.message_scene.as_ref().map(|s| {
-                        serde_json::json!({
+                        serde_json::to_string(&serde_json::json!({
                             "message_scene": s,
-                        })
+                        }))
+                        .unwrap_or_default()
                     }),
                 };
 
@@ -633,7 +634,7 @@ impl crate::QqAdapter {
                     reply_to: None,
                     mentions: None,
                     mentioned: None,
-                    metadata: Some(data.clone()),
+                    metadata: serde_json::to_string(&data).ok(),
                 };
 
                 // Track chat type for direct outbound routing, with size cap

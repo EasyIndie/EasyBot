@@ -12,6 +12,9 @@ use clap::Parser;
 use easybot_core::PlatformAdapter;
 use easybot_core::types::event::{GatewayEvent, event_types};
 use std::sync::Arc;
+
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 /// EasyBot 命令行参数
 #[derive(Parser)]
 #[command(name = "easybot", version, about = "EasyBot - IM Gateway Service")]

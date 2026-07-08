@@ -8,6 +8,7 @@
 //! 消息先进入内存缓冲区，每隔 1 秒或缓冲区满（50 条）时批量写入存储层。
 //! 写入失败时自动重试（最多 3 次，指数退避），重试耗尽后记录错误并丢弃该批次。
 
+use futures::StreamExt;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
@@ -34,10 +35,9 @@ pub struct MessagePersister;
 impl MessagePersister {
     /// 启动消息持久化后台任务
     ///
-    /// 单任务设计：用 `try_recv()` 排空事件总线，非空时刷新缓冲区，
-    /// 空闲时等待 FLUSH_INTERVAL 后再检查。事件总线关闭时退出。
+    /// 使用事件驱动的订阅流 + 定时刷新，无轮询、零空闲 CPU 消耗。
     pub fn start(event_bus: Arc<EventBus>, message_store: Arc<dyn MessageStore>) {
-        let mut event_rx =
+        let mut event_stream =
             event_bus.subscribe_many(&[crate::types::event::event_types::MESSAGE_INBOUND]);
 
         let buffer: Arc<Mutex<Vec<StoredMessage>>> =
@@ -45,64 +45,44 @@ impl MessagePersister {
 
         tokio::spawn(async move {
             info!(
-                "Message persister started (batch mode, {}ms flush, batch={})",
+                "Message persister started (event-driven, {}ms flush, batch={})",
                 FLUSH_INTERVAL.as_millis(),
                 BATCH_SIZE
             );
 
-            let mut last_flush = tokio::time::Instant::now();
+            let mut flush_timer = tokio::time::interval(FLUSH_INTERVAL);
+            flush_timer.tick().await; // skip first immediate tick
 
             loop {
-                // 1. 排空事件总线（非阻塞）
-                let mut had_event = false;
-                loop {
-                    match event_rx.try_recv() {
-                        Ok(event) => {
-                            had_event = true;
-                            if let Ok(inbound) =
-                                serde_json::from_value::<InboundMessage>(event.data)
-                            {
-                                let stored = StoredMessage::from_inbound(&inbound);
-                                let should_flush = {
-                                    let mut buf = buffer.lock().await;
-                                    buf.push(stored);
-                                    buf.len() >= BATCH_SIZE
-                                };
-                                if should_flush {
-                                    flush_batch(&buffer, &message_store).await;
-                                    last_flush = tokio::time::Instant::now();
+                tokio::select! {
+                    event = event_stream.next() => {
+                        match event {
+                            Some(event) => {
+                                if let Ok(inbound) =
+                                    serde_json::from_value::<InboundMessage>(event.data)
+                                {
+                                    let stored = StoredMessage::from_inbound(&inbound);
+                                    let should_flush = {
+                                        let mut buf = buffer.lock().await;
+                                        buf.push(stored);
+                                        buf.len() >= BATCH_SIZE
+                                    };
+                                    if should_flush {
+                                        flush_batch(&buffer, &message_store).await;
+                                        flush_timer.reset();
+                                    }
                                 }
                             }
-                        }
-                        Err(tokio::sync::broadcast::error::TryRecvError::Empty) => break,
-                        Err(tokio::sync::broadcast::error::TryRecvError::Closed) => {
-                            // 最终刷新并退出
-                            flush_batch(&buffer, &message_store).await;
-                            info!("Message persister stopped (event bus closed)");
-                            return;
-                        }
-                        Err(tokio::sync::broadcast::error::TryRecvError::Lagged(n)) => {
-                            warn!("Message persister lagged by {} events", n);
-                            had_event = true;
+                            None => {
+                                // 事件流关闭，最终刷新并退出
+                                flush_batch(&buffer, &message_store).await;
+                                info!("Message persister stopped (event bus closed)");
+                                return;
+                            }
                         }
                     }
-                }
-
-                // 2. 定时刷新：距上次刷新超过 FLUSH_INTERVAL 且有事件积压
-                if had_event || last_flush.elapsed() >= FLUSH_INTERVAL {
-                    flush_batch(&buffer, &message_store).await;
-                    last_flush = tokio::time::Instant::now();
-                }
-
-                // 3. 等待下次检查（无事件时避免忙轮询）
-                //    有事件刚处理完时 yield 而非 sleep，减少延迟
-                if had_event {
-                    tokio::task::yield_now().await;
-                } else {
-                    // 计算下次需要刷新的时间
-                    let elapsed = last_flush.elapsed();
-                    if elapsed < FLUSH_INTERVAL {
-                        tokio::time::sleep(FLUSH_INTERVAL - elapsed).await;
+                    _ = flush_timer.tick() => {
+                        flush_batch(&buffer, &message_store).await;
                     }
                 }
             }

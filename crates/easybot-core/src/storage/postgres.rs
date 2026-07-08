@@ -181,17 +181,17 @@ impl SessionStore for PgSessionStore {
     }
 
     async fn get_session(&self, key: &str) -> Result<Option<Session>, StoreError> {
-        let rows = sqlx::query(
+        let row = sqlx::query(
             "SELECT key, platform, chat_id, thread_id, created_at, updated_at, source_json, reset_policy, metadata, last_message, last_message_at
              FROM sessions WHERE key = $1"
         )
         .bind(key)
-        .fetch_all(&self.pool)
+        .fetch_optional(&self.pool)
         .await?;
 
-        match rows.first() {
-            Some(row) => {
-                let s = row_to_session(row)?;
+        match row {
+            Some(ref r) => {
+                let s = row_to_session(r)?;
                 Ok(Some(s.into_session()?))
             }
             None => Ok(None),
@@ -365,9 +365,41 @@ impl MessageStore for PgMessageStore {
     }
 
     async fn store_messages(&self, msgs: &[StoredMessage]) -> Result<(), StoreError> {
-        for msg in msgs {
-            self.store_message(msg).await?;
+        if msgs.is_empty() {
+            return Ok(());
         }
+        let mut tx = self
+            .pool
+            .begin()
+            .await
+            .map_err(|e| StoreError::Database(format!("Failed to begin transaction: {}", e)))?;
+        for msg in msgs {
+            let role_str = match msg.role {
+                MessageRole::User => "user",
+                MessageRole::Assistant => "assistant",
+            };
+            let raw_data = serde_json::to_value(&msg.raw_data)?;
+
+            sqlx::query(
+                "INSERT INTO messages (id, session_key, platform, chat_id, role, text, raw_data, timestamp, created_at)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                 ON CONFLICT (id) DO NOTHING"
+            )
+            .bind(&msg.id)
+            .bind(&msg.session_key)
+            .bind(&msg.platform)
+            .bind(&msg.chat_id)
+            .bind(role_str)
+            .bind(&msg.text)
+            .bind(&raw_data)
+            .bind(msg.timestamp)
+            .bind(msg.created_at)
+            .execute(&mut *tx)
+            .await?;
+        }
+        tx.commit()
+            .await
+            .map_err(|e| StoreError::Database(format!("Failed to commit batch insert: {}", e)))?;
         Ok(())
     }
 

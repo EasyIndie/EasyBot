@@ -238,17 +238,17 @@ impl SessionStore for SqliteSessionStore {
     }
 
     async fn get_session(&self, key: &str) -> Result<Option<Session>, StoreError> {
-        let rows = sqlx::query(
+        let row = sqlx::query(
             "SELECT key, platform, chat_id, thread_id, created_at, updated_at, source_json, reset_policy, metadata, last_message, last_message_at
              FROM sessions WHERE key = ?"
         )
         .bind(key)
-        .fetch_all(&self.pool)
+        .fetch_optional(&self.pool)
         .await?;
 
-        match rows.first() {
-            Some(row) => {
-                let s = row_to_session(row)?;
+        match row {
+            Some(ref r) => {
+                let s = row_to_session(r)?;
                 Ok(Some(s.into_session()?))
             }
             None => Ok(None),

@@ -293,7 +293,7 @@ impl DiscordAdapter {
             reply_to: None,
             mentions: None,
             mentioned: None,
-            metadata: serde_json::to_value(msg).ok(),
+            metadata: serde_json::to_string(msg).ok(),
         })
     }
 
