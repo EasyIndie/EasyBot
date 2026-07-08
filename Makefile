@@ -27,13 +27,13 @@ test:  ## 运行所有测试
 	cargo test --workspace
 
 test-full:  ## 运行全部测试（含 plugin-system feature）
-	cargo test --workspace --features "full,plugin-system"
+	cargo test --workspace --features "default,plugin-system"
 
 # ── 代码质量 ──────────────────────────────────
 
 lint:  ## 代码规范检查（fmt + clippy）
 	cargo fmt --all --check
-	cargo clippy --workspace --features "full,plugin-system" --all-targets -- -D warnings
+	cargo clippy --workspace --features "default,plugin-system" --all-targets -- -D warnings
 
 fmt:  ## 自动格式化代码
 	cargo fmt --all
