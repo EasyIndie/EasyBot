@@ -43,6 +43,7 @@ impl crate::QqAdapter {
         heartbeat: easybot_core::types::adapter::Heartbeat,
         chat_types: Arc<Mutex<HashMap<String, ChatType>>>,
     ) {
+        let mut reconnect_attempts: u32 = 0;
         loop {
             // 每次重连前刷新 access token
             if token_store.needs_refresh()
@@ -57,8 +58,14 @@ impl crate::QqAdapter {
             let gw_url = match Self::fetch_gateway_url(&token_store, &base_url).await {
                 Some(url) => url,
                 None => {
-                    tracing::warn!("QQ Gateway: failed to get gateway URL, retry 30s");
-                    tokio::time::sleep(Duration::from_secs(30)).await;
+                    reconnect_attempts += 1;
+                    let delay = easybot_core::util::backoff_with_jitter(reconnect_attempts);
+                    tracing::warn!(
+                        "QQ Gateway: failed to get gateway URL (attempt {}), retry in {:?}",
+                        reconnect_attempts,
+                        delay
+                    );
+                    tokio::time::sleep(delay).await;
                     continue;
                 }
             };
@@ -71,8 +78,15 @@ impl crate::QqAdapter {
             } {
                 Ok(ws) => ws,
                 Err(e) => {
-                    tracing::error!("QQ connect failed: {}", e);
-                    tokio::time::sleep(Duration::from_secs(5)).await;
+                    reconnect_attempts += 1;
+                    let delay = easybot_core::util::backoff_with_jitter(reconnect_attempts);
+                    tracing::error!(
+                        "QQ connect failed (attempt {}): {} — retry in {:?}",
+                        reconnect_attempts,
+                        e,
+                        delay
+                    );
+                    tokio::time::sleep(delay).await;
                     continue;
                 }
             };
@@ -104,6 +118,7 @@ impl crate::QqAdapter {
 
             let hb_interval =
                 Duration::from_millis((hello.heartbeat_interval as f64 * 0.75) as u64);
+            reconnect_attempts = 0;
             tracing::info!("QQ Gateway connected");
 
             // 发送 Identify（使用 QQBot {access_token} 格式）

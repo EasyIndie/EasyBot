@@ -182,12 +182,22 @@ impl DiscordAdapter {
 
         let status = resp.status();
         if !status.is_success() {
+            // 对 429 提前提取 Retry-After 头（必须在消费 body 前读取）
+            let retry_after = if status.as_u16() == 429 {
+                resp.headers()
+                    .get("Retry-After")
+                    .and_then(|v| v.to_str().ok())
+                    .and_then(|s| s.parse::<f64>().ok())
+                    .map(|secs| (secs * 1000.0) as u64)
+            } else {
+                None
+            };
             let error_text = resp.text().await.unwrap_or_default();
             // SECURITY: Truncate error body to prevent leaking sensitive data
             let safe_error: String = error_text.chars().take(256).collect();
-            if status.as_u16() == 429 {
+            if let Some(retry_ms) = retry_after {
                 return Err(GatewayError::RateLimited {
-                    retry_after_ms: 1000,
+                    retry_after_ms: retry_ms,
                 });
             }
             return Err(GatewayError::Internal(format!(

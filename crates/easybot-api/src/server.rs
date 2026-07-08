@@ -257,43 +257,50 @@ async fn security_headers_middleware(response: Response) -> Response {
 /// 作为公共函数暴露，以便测试代码可以直接使用。
 /// 构造包含所有路由（公共 + 受保护）、中间件（认证、限流）和 Swagger UI 的路由器。
 pub fn create_router(state: AppState) -> Router {
+    // ── 共享速率限制器桶池（所有路由共用同一 DashMap 和 cleanup 任务）──
+    let shared_buckets: Arc<
+        dashmap::DashMap<
+            String,
+            Arc<tokio::sync::RwLock<crate::middleware::rate_limit::SlidingWindow>>,
+        >,
+    > = Arc::new(dashmap::DashMap::new());
+    crate::middleware::rate_limit::RateLimiter::start_shared_cleanup(&shared_buckets);
+
     // ── 公共路由（无需认证）──
 
     // 健康检查
     let mut public_routes = Router::new().route("/health", get(routes::health::health_check));
 
     // ── 公共路由速率限制器（宽松：120 req/min，突发 20）──
-    // health 端点开销极低，但大量请求仍可造成 DoS。
-    // 120 req/min（每秒 2 次）对监控探测足够宽松，同时防止滥用。
     const PUBLIC_RATE_LIMIT_RPM: u64 = 120;
     const PUBLIC_RATE_LIMIT_BURST: u32 = 20;
-    let public_rate_limiter = crate::middleware::rate_limit::RateLimiter::new(
+    let public_rate_limiter = crate::middleware::rate_limit::RateLimiter::with_shared_buckets(
+        shared_buckets.clone(),
         crate::middleware::rate_limit::RateLimitConfig {
             enabled: state.config.api.rate_limit.enabled,
             requests_per_minute: PUBLIC_RATE_LIMIT_RPM,
             burst_size: PUBLIC_RATE_LIMIT_BURST,
         },
     );
-    public_rate_limiter.start_cleanup();
     public_routes = public_routes.route_layer(middleware::from_fn_with_state(
         public_rate_limiter,
         crate::middleware::rate_limit::rate_limit_middleware,
     ));
 
-    // ── 速率限制器（受保护路由）──
+    // ── 速率限制器（受保护路由，共用桶池）──
     let rl_config = easybot_core::types::config::RateLimitConfig {
         enabled: state.config.api.rate_limit.enabled,
         requests_per_minute: state.config.api.rate_limit.requests_per_minute,
         burst_size: state.config.api.rate_limit.burst_size,
     };
-    let rate_limiter = crate::middleware::rate_limit::RateLimiter::new(
+    let rate_limiter = crate::middleware::rate_limit::RateLimiter::with_shared_buckets(
+        shared_buckets.clone(),
         crate::middleware::rate_limit::RateLimitConfig {
             enabled: rl_config.enabled,
             requests_per_minute: rl_config.requests_per_minute,
             burst_size: rl_config.burst_size,
         },
     );
-    rate_limiter.start_cleanup();
 
     // ── 受保护路由（需要 Bearer Token 认证）──
 
@@ -375,16 +382,15 @@ pub fn create_router(state: AppState) -> Router {
     // 合并公共 + 受保护路由
     let api_routes = Router::new().merge(public_routes).merge(protected_routes);
 
-    // ── WebSocket 路由（单独处理：无需 Bearer 认证——WSC 不支持自定义 HTTP 头，
-    // 连接后在 handle_ws() 内通过 JSON 帧 {"token":"..."} 二次认证）──
-    let ws_rate_limiter = crate::middleware::rate_limit::RateLimiter::new(
+    // ── WebSocket 路由（共用桶池）──
+    let ws_rate_limiter = crate::middleware::rate_limit::RateLimiter::with_shared_buckets(
+        shared_buckets.clone(),
         crate::middleware::rate_limit::RateLimitConfig {
             enabled: state.config.api.rate_limit.enabled,
             requests_per_minute: rl_config.requests_per_minute,
             burst_size: rl_config.burst_size,
         },
     );
-    ws_rate_limiter.start_cleanup();
     let ws_routes = Router::new()
         .route("/ws", get(routes::ws::ws_handler))
         .route_layer(middleware::from_fn_with_state(
@@ -427,17 +433,17 @@ pub fn create_router(state: AppState) -> Router {
             .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE])
     };
 
-    // ── Admin login rate limiter (strict: 5 attempts/min per IP) ──
+    // ── Admin login rate limiter (strict: 5 attempts/min per IP, 共用桶池) ──
     const ADMIN_LOGIN_RPM: u64 = 5;
     const ADMIN_LOGIN_BURST: u32 = 2;
-    let admin_login_rl = crate::middleware::rate_limit::RateLimiter::new(
+    let admin_login_rl = crate::middleware::rate_limit::RateLimiter::with_shared_buckets(
+        shared_buckets,
         crate::middleware::rate_limit::RateLimitConfig {
             enabled: state.config.api.rate_limit.enabled,
             requests_per_minute: ADMIN_LOGIN_RPM,
             burst_size: ADMIN_LOGIN_BURST,
         },
     );
-    admin_login_rl.start_cleanup();
 
     // ── 静态页面路由（无需认证）──
 

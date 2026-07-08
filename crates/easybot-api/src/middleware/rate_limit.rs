@@ -41,7 +41,7 @@ impl Default for RateLimitConfig {
 }
 
 /// 斜率限制器内部状态
-struct SlidingWindow {
+pub struct SlidingWindow {
     /// 时间戳窗口（毫秒时间戳）
     timestamps: VecDeque<i64>,
     /// 最近一次访问时间（毫秒时间戳），用于清理判断
@@ -49,9 +49,20 @@ struct SlidingWindow {
 }
 
 impl SlidingWindow {
+    /// 创建指定容量的滑动窗口（根据配置动态分配，避免浪费）
+    #[allow(dead_code)]
     fn new() -> Self {
         Self {
             timestamps: VecDeque::with_capacity(1024),
+            last_access: chrono::Utc::now().timestamp_millis(),
+        }
+    }
+
+    /// 创建指定容量的滑动窗口（根据配置动态分配，避免浪费）
+    fn with_config(max_requests: u64, burst: u32) -> Self {
+        let cap = (max_requests.max(burst as u64) + 10) as usize;
+        Self {
+            timestamps: VecDeque::with_capacity(cap),
             last_access: chrono::Utc::now().timestamp_millis(),
         }
     }
@@ -121,6 +132,17 @@ impl RateLimiter {
         }
     }
 
+    /// 创建速率限制器，使用共享的 IP 桶池（多路由共用同一限流器可合并 cleanup 任务）
+    pub fn with_shared_buckets(
+        buckets: Arc<DashMap<String, Arc<RwLock<SlidingWindow>>>>,
+        config: RateLimitConfig,
+    ) -> Self {
+        Self {
+            buckets,
+            config: Arc::new(RwLock::new(config)),
+        }
+    }
+
     /// 更新配置
     pub async fn update_config(&self, config: RateLimitConfig) {
         let mut c = self.config.write().await;
@@ -147,6 +169,22 @@ impl RateLimiter {
         });
     }
 
+    /// 启动一次性的共享清理任务（仅由共享桶池的创建者调用一次）
+    pub fn start_shared_cleanup(buckets: &Arc<DashMap<String, Arc<RwLock<SlidingWindow>>>>) {
+        let buckets = Arc::clone(buckets);
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(Duration::from_secs(300)).await;
+                let cutoff = chrono::Utc::now().timestamp_millis() - 300_000;
+                buckets.retain(|_, w| {
+                    w.try_read()
+                        .map(|w| w.last_access >= cutoff)
+                        .unwrap_or(true)
+                });
+            }
+        });
+    }
+
     /// Check a request, respecting the max bucket count limit.
     /// Returns false (deny) when the bucket limit is exceeded.
     pub async fn check(&self, client_ip: &str) -> bool {
@@ -161,12 +199,13 @@ impl RateLimiter {
 
         let now = chrono::Utc::now().timestamp_millis();
 
-        // SECURITY: Enforce max bucket count to prevent memory exhaustion
+        // SECURITY: Enforce max bucket count to prevent memory exhaustion.
+        // 使用抽样 LRU 替代全量遍历（O(n) → O(sample_size)）
         if self.buckets.len() >= Self::MAX_BUCKETS && !self.buckets.contains_key(client_ip) {
-            // Evict LRU entry if possible, otherwise deny
             let mut oldest_key: Option<String> = None;
             let mut oldest_time = i64::MAX;
-            for entry in self.buckets.iter() {
+            // 抽样 20 个条目找最旧的，避免遍历 100K 条目
+            for entry in self.buckets.iter().take(20) {
                 if let Ok(w) = entry.value().try_read()
                     && w.last_access < oldest_time
                 {
@@ -177,15 +216,17 @@ impl RateLimiter {
             if let Some(key) = oldest_key {
                 self.buckets.remove(&key);
             } else {
-                return false; // Cannot evict, deny the request
+                return false;
             }
         }
 
-        // 获取或创建客户端的滑动窗口
+        // 获取或创建客户端的滑动窗口（使用动态容量避免浪费）
         let entry = self
             .buckets
             .entry(client_ip.to_string())
-            .or_insert_with(|| Arc::new(RwLock::new(SlidingWindow::new())));
+            .or_insert_with(|| {
+                Arc::new(RwLock::new(SlidingWindow::with_config(max_requests, burst)))
+            });
 
         let mut window = entry.write().await;
         window.check_and_record(max_requests, burst, now)

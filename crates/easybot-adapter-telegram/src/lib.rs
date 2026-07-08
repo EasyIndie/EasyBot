@@ -411,6 +411,7 @@ impl TelegramAdapter {
 
     /// getUpdates 长轮询循环
     async fn polling_loop(
+        client: reqwest::Client,
         token: String,
         base_url: String,
         event_bus: Arc<EventBus>,
@@ -418,8 +419,8 @@ impl TelegramAdapter {
         heartbeat: Heartbeat,
         admin_cache: AdminCache,
     ) {
-        let client = reqwest::Client::new();
         let mut offset: i64 = 0;
+        let mut poll_errors: u32 = 0;
         tracing::info!("Telegram long polling started");
 
         loop {
@@ -431,6 +432,7 @@ impl TelegramAdapter {
                 result = Self::poll_once(&client, &token, &base_url, &mut offset) => {
                     match result {
                         Ok(updates) => {
+                            poll_errors = 0;
                             heartbeat.beat(); // liveness: successful poll
                             for update in updates {
                                 if update.update_id >= offset {
@@ -460,8 +462,10 @@ impl TelegramAdapter {
                             }
                         }
                         Err(e) => {
-                            tracing::warn!("Telegram polling error: {}", e);
-                            tokio::time::sleep(Duration::from_secs(5)).await;
+                            poll_errors += 1;
+                            let delay = easybot_core::util::backoff_with_jitter(poll_errors);
+                            tracing::warn!("Telegram polling error (attempt {}): {} — retrying in {:?}", poll_errors, e, delay);
+                            tokio::time::sleep(delay).await;
                         }
                     }
                 }
@@ -742,9 +746,20 @@ impl PlatformAdapter for TelegramAdapter {
                 .unwrap_or_else(|| TELEGRAM_API.to_string());
             let hb = self.heartbeat.clone();
             let ac = self.admin_cache.clone();
+            // 复用适配器的 HTTP 连接池（reqwest::Client 是 Arc 包装，clone 廉价）
+            let polling_client = self.http_client().clone();
 
             tokio::spawn(async move {
-                Self::polling_loop(token_clone, base_url, event_bus, cancel_rx, hb, ac).await;
+                Self::polling_loop(
+                    polling_client,
+                    token_clone,
+                    base_url,
+                    event_bus,
+                    cancel_rx,
+                    hb,
+                    ac,
+                )
+                .await;
             });
         }
 

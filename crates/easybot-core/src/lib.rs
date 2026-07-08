@@ -16,6 +16,7 @@ pub mod session;
 pub mod storage;
 pub mod system;
 pub mod types;
+pub mod util;
 pub mod webhook;
 
 pub use types::adapter::*;

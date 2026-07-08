@@ -256,6 +256,7 @@ pub struct WeChatAdapter {
     errors: AtomicU64,
     event_bus: Option<Arc<EventBus>>,
     http_client: std::sync::OnceLock<reqwest::Client>,
+    cdn_client: std::sync::OnceLock<reqwest::Client>,
     /// iLink Bot Token（登录后获取）
     bot_token: tokio::sync::RwLock<Option<String>>,
     /// 长轮询游标（持久化到磁盘）
@@ -312,6 +313,7 @@ impl WeChatAdapter {
             errors: AtomicU64::new(0),
             event_bus: None,
             http_client: std::sync::OnceLock::new(),
+            cdn_client: std::sync::OnceLock::new(),
             bot_token: tokio::sync::RwLock::new(None),
             sync_buf: Arc::new(tokio::sync::RwLock::new(String::new())),
             cancel_tx: None,
@@ -332,6 +334,17 @@ impl WeChatAdapter {
                 .timeout(Duration::from_secs(60)) // 长轮询需要较长超时
                 .build()
                 .expect("Failed to create HTTP client")
+        })
+    }
+
+    /// 返回 CDN 上传专用 HTTP 客户端（HTTP/1.1 + 长超时，延迟初始化并缓存复用）
+    fn cdn_http_client(&self) -> &reqwest::Client {
+        self.cdn_client.get_or_init(|| {
+            reqwest::Client::builder()
+                .http1_only()
+                .timeout(Duration::from_secs(120))
+                .build()
+                .expect("Failed to create CDN HTTP client")
         })
     }
 
@@ -477,12 +490,8 @@ impl WeChatAdapter {
             ciphertext.len(),
         );
 
-        // 7. 上传到 CDN（使用专用 HTTP/1.1 客户端，避免 HTTP/2 兼容性问题）
-        let cdn_client = reqwest::Client::builder()
-            .http1_only()
-            .timeout(Duration::from_secs(120))
-            .build()
-            .map_err(|e| GatewayError::Internal(format!("Failed to create CDN client: {}", e)))?;
+        // 7. 上传到 CDN（使用专用 HTTP/1.1 客户端，避免 HTTP/2 兼容性问题；缓存复用）
+        let cdn_client = self.cdn_http_client();
 
         tracing::debug!(
             "WeChat CDN upload: url_len={}, body_len={}",
@@ -1493,8 +1502,9 @@ async fn longpoll_loop(
                             break;
                         }
 
-                        // 等待后重试
-                        tokio::time::sleep(Duration::from_secs(5)).await;
+                        // 指数退避重试（1s→2s→...→30s cap，+jitter）
+                        let delay = easybot_core::util::backoff_with_jitter(consecutive_failures);
+                        tokio::time::sleep(delay).await;
                     }
                 }
             }
