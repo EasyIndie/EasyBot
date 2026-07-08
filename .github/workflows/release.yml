@@ -154,16 +154,9 @@ jobs:
           ref: ${{ github.ref }}
           fetch-depth: 0
 
-      - name: Apply version bump
-        env:
-          VERSION: ${{ needs.prepare-release.outputs.version }}
-        run: |
-          # Use sed directly instead of a patch file — avoids tag-vs-main mismatch
-          sed -i "s/^version = \".*\"/version = \"$VERSION\"/" Cargo.toml
-          SNAP="crates/easybot-api/tests/snapshots/routes__health_response.snap"
-          if [ -f "$SNAP" ]; then
-            sed -i 's/"version": ".*"/"version": "'"$VERSION"'"/' "$SNAP"
-          fi
+      - uses: ./.github/actions/apply-version-bump
+        with:
+          version: ${{ needs.prepare-release.outputs.version }}
 
       - uses: ./.github/actions/setup-rust
         with:
@@ -218,16 +211,9 @@ jobs:
         with:
           ref: ${{ github.ref }}
 
-      - name: Apply version bump
-        env:
-          VERSION: ${{ needs.prepare-release.outputs.version }}
-        run: |
-          # Use sed directly instead of a patch file — avoids tag-vs-main mismatch
-          sed -i "s/^version = \".*\"/version = \"$VERSION\"/" Cargo.toml
-          SNAP="crates/easybot-api/tests/snapshots/routes__health_response.snap"
-          if [ -f "$SNAP" ]; then
-            sed -i 's/"version": ".*"/"version": "'"$VERSION"'"/' "$SNAP"
-          fi
+      - uses: ./.github/actions/apply-version-bump
+        with:
+          version: ${{ needs.prepare-release.outputs.version }}
 
       - uses: ./.github/actions/setup-rust
         with:
@@ -330,16 +316,9 @@ jobs:
           ref: ${{ github.ref }}
           token: ${{ secrets.GH_RELEASE_PAT || github.token }}
 
-      - name: Apply version bump
-        env:
-          VERSION: ${{ needs.prepare-release.outputs.version }}
-        run: |
-          # Use sed directly instead of a patch file — avoids tag-vs-main mismatch
-          sed -i "s/^version = \".*\"/version = \"$VERSION\"/" Cargo.toml
-          SNAP="crates/easybot-api/tests/snapshots/routes__health_response.snap"
-          if [ -f "$SNAP" ]; then
-            sed -i 's/"version": ".*"/"version": "'"$VERSION"'"/' "$SNAP"
-          fi
+      - uses: ./.github/actions/apply-version-bump
+        with:
+          version: ${{ needs.prepare-release.outputs.version }}
 
       - name: Clean up any previous failed release for this tag
         env:
@@ -396,16 +375,9 @@ jobs:
         with:
           ref: ${{ github.ref }}
 
-      - name: Apply version bump
-        env:
-          VERSION: ${{ needs.prepare-release.outputs.version }}
-        run: |
-          # Use sed directly instead of a patch file — avoids tag-vs-main mismatch
-          sed -i "s/^version = \".*\"/version = \"$VERSION\"/" Cargo.toml
-          SNAP="crates/easybot-api/tests/snapshots/routes__health_response.snap"
-          if [ -f "$SNAP" ]; then
-            sed -i 's/"version": ".*"/"version": "'"$VERSION"'"/' "$SNAP"
-          fi
+      - uses: ./.github/actions/apply-version-bump
+        with:
+          version: ${{ needs.prepare-release.outputs.version }}
 
       - name: Download linux x86_64 binary
         uses: actions/download-artifact@v8
