@@ -7,7 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Release workflow 改用 composite action 替代 git patch 做版本升级** — 原流程中 prepare-release
+  用 `git diff HEAD` 生成 patch、下游 job 再 `git apply`，当 tag 指向的 commit 与 patch 上下文
+  不一致时全部文件报 "patch does not apply"。改为每个下游 job 通过 `needs.prepare-release.outputs.version`
+  获取版本号，使用统一 composite action（`.github/actions/apply-version-bump/`）运行 `sed` 更新
+  Cargo.toml 和 insta snapshot。prepare-release 步骤已幂等化，重跑失败的 release 安全。
+- **v0.0.13 发布失败 (#32)** — 同上原因，patch 无法应用到已包含版本升级的 tag。
+
 ## [0.0.13] - 2026-07-08
+
+### Fixed
+
+- **QQ 适配器 `fetch_gateway_url` 添加超时和错误日志** — QQ Gateway WebSocket 连接入口
+  `fetch_gateway_url()` 未设 HTTP 超时，网络故障时会导致请求永久挂起。添加 15s 超时和连接
+  失败时的详尽错误日志，便于排查 QSign 鉴权问题。
 
 ## [0.0.12] - 2026-07-08
 
@@ -48,13 +63,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **README logo 更新** — 替换为新项目图标。
 
-### Fixed
-
-- **文档与 CI 中已废弃 full feature 引用清除** — 将 `Makefile`、`verify.sh`、`.github/workflows/ci.yml`、
-  `README.md`、`CONTRIBUTING.md` 中所有 `--features "full,..."` 替换为 `--features "default,..."`，
-  因 `full` feature 已于 v0.0.7 移除（default 已包含全部 5 个适配器）。
-
-## [0.0.10] - 2026-07-08
+## [0.0.11] - 2026-07-08
 
 ### Fixed
 
@@ -62,6 +71,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `CryptoProvider` 未调用 `install_default()` 导致 TLS 握手时 panic。现已在 QQ 适配器
   `connect()` 中初始化 `aws-lc-rs` provider。
 - **`QrCodeResponse` dead_code 警告** — 移除 WeChat 模块中未使用的 `errmsg` 字段。
+- **文档与 CI 中已废弃 full feature 引用清除** — 将 `Makefile`、`verify.sh`、`.github/workflows/ci.yml`、
+  `README.md`、`CONTRIBUTING.md` 中所有 `--features "full,..."` 替换为 `--features "default,..."`，
+  因 `full` feature 已于 v0.0.7 移除（default 已包含全部 5 个适配器）。
 
 ### Changed
 
@@ -70,13 +82,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   显式启用，以保持默认构建一致性（WeChat 适配器依赖 iLink Bot API 运行环境）。
 - **移除已废弃的 `WECHAT_BOT_TOKEN` 环境变量** — WeChat 适配器仅通过扫码登录，
   `WECHAT_BOT_TOKEN` 不再支持（`ebd4a26`）。添加 `qrcode` 依赖用于 QR 码生成。
+- **文档全量更新** — 逐段检验并更新所有文档与代码实现保持一致（`6b90a62`）。
+- **CI 改进** — `setup-rust` action 默认安装 protoc；清理 CI 工作流配置（`117c78b`）；
+  Dockerfile 安装 protobuf-compiler 以支持 `larksuite-oapi-sdk-rs` 构建。
 
 ### Cleanup
 
 - **`gateway.local.yaml` 模板修正** — 更新适配器配置示例以匹配当前代码。
 - **无用代码、依赖和文件清理** — 移除 dead code、未使用依赖和遗留文件。
 
-## [0.0.9] - 2026-07-07
+## [0.0.10] - 2026-07-07
 
 ### Fixed
 
@@ -88,6 +103,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Telegram 和 Discord 适配器 HTTP 客户端添加 15s 请求超时** — 防止外部 API 超时导致
   内部请求堆积。
 - **CSP script-src 添加 `static.cloudflareinsights.com`** — 允许 Cloudflare Insights 脚本加载。
+
+## [0.0.9] - 2026-07-07
+
+### Fixed
+
 - **管理后台 log tab 页面** — 修正日志标签页渲染错误。
 - **管理后台按钮文字折行** — `white-space: nowrap` 防止窄窗口下文字换行。
 
