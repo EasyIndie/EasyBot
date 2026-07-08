@@ -281,16 +281,48 @@ impl crate::QqAdapter {
         token_store: &QqTokenStore,
         base_url: &str,
     ) -> Option<String> {
-        let token = token_store.get().ok()?;
-        let client = reqwest::Client::new();
-        let resp = client
-            .get(format!("{}/gateway/bot", base_url))
+        let token = match token_store.get() {
+            Ok(t) => t,
+            Err(e) => {
+                tracing::warn!("QQ fetch_gateway_url: token error: {}", e);
+                return None;
+            }
+        };
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs(15))
+            .build()
+            .ok()?;
+        let url = format!("{}/gateway/bot", base_url);
+        let resp = match client
+            .get(&url)
             .header("Authorization", &token)
             .send()
             .await
-            .ok()?;
-        let data: crate::types::GatewayResponse = resp.json().await.ok()?;
-        Some(data.url)
+        {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!("QQ fetch_gateway_url: request to {} failed: {}", url, e);
+                return None;
+            }
+        };
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().await.unwrap_or_default();
+            tracing::warn!(
+                "QQ fetch_gateway_url: {} returned {} — body: {}",
+                url,
+                status,
+                body
+            );
+            return None;
+        }
+        match resp.json::<crate::types::GatewayResponse>().await {
+            Ok(data) => Some(data.url),
+            Err(e) => {
+                tracing::warn!("QQ fetch_gateway_url: JSON parse failed: {}", e);
+                None
+            }
+        }
     }
 
     /// 解析 QQ 时间戳字符串（ISO 8601）为毫秒时间戳
