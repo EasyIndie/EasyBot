@@ -19,6 +19,7 @@ base64.workspace = true
 dirs.workspace = true
 aes = "0.9"
 md5 = "0.8"
+qrcode.workspace = true
 
 [dev-dependencies]
 wiremock = "0.6"

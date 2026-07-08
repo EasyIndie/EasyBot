@@ -93,6 +93,9 @@ async-trait = "0.1"
 utoipa = "5.1"
 utoipa-swagger-ui = "9"
 
+# QR 码生成
+qrcode = { version = "0.14", default-features = false }
+
 [workspace.lints.rust]
 unsafe_code = "deny"
 missing_docs = "warn"

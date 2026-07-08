@@ -230,7 +230,7 @@ FEISHU_APP_ID=cli_xxx
 FEISHU_APP_SECRET=your_secret
 QQ_APP_ID=your_app_id
 QQ_CLIENT_SECRET=your_secret
-# WECHAT_BOT_TOKEN=optional  # 个人微信可不设令牌，扫码登录
+# WECHAT_BOT_TOKEN 已废弃          # 个人微信仅支持扫码登录
 ```
 
 > 各平台所需的环境变量参见 `.env.example`。高级用户可通过 `gateway.local.yaml` 覆盖默认值或显式禁用某平台。

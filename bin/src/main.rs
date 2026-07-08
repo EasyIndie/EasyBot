@@ -877,7 +877,7 @@ async fn register_builtin_adapters(
         "wechat",
         "个人微信",
         easybot_adapter_wechat::WeChatAdapter,
-        &["WECHAT_BOT_TOKEN"]
+        &[]
     );
 
     #[cfg(not(any(

@@ -204,9 +204,6 @@ pub fn generate_env_example() -> String {
 # QQ_APP_ID=your_qq_app_id
 # QQ_CLIENT_SECRET=your_qq_client_secret
 
-# 个人微信 iLink Bot Token（可选，未设置时启动后扫码登录）
-# WECHAT_BOT_TOKEN=your_wechat_bot_token
-
 # 管理后台登录密码（用于浏览器访问 /admin 时验证身份）
 # EASYBOT_ADMIN_PASSWORD=your_password
 
@@ -275,7 +272,7 @@ pub fn generate_default_config() -> String {
 #   Discord:   DISCORD_BOT_TOKEN
 #   飞书:      FEISHU_APP_ID + FEISHU_APP_SECRET
 #   QQ:        QQ_APP_ID + QQ_CLIENT_SECRET
-#   个人微信:  无（扫码登录）或 WECHAT_BOT_TOKEN (iLink Bot API)
+#   个人微信:  扫码登录（无需环境变量）
 
 server:
   host: "127.0.0.1"
@@ -545,7 +542,6 @@ adapters:
         assert!(content.contains("FEISHU_APP_SECRET"));
         assert!(content.contains("QQ_CLIENT_SECRET"));
         assert!(content.contains("QQ_APP_ID"));
-        assert!(content.contains("WECHAT_BOT_TOKEN"));
         assert!(content.contains("DATABASE_URL"));
     }
 

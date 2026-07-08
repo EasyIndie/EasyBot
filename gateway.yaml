@@ -11,7 +11,7 @@
 #   Discord:   DISCORD_BOT_TOKEN
 #   飞书:      FEISHU_APP_ID + FEISHU_APP_SECRET
 #   QQ:        QQ_APP_ID + QQ_CLIENT_SECRET
-#   个人微信:  无（扫码登录）或 WECHAT_BOT_TOKEN (iLink Bot API)
+#   个人微信:  扫码登录（无需环境变量）
 
 server:
   host: "127.0.0.1"

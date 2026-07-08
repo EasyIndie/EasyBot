@@ -161,6 +161,9 @@ pub(crate) fn save_sync_buf(buf: &str) {
         Some(p) => p,
         None => return,
     };
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
     if let Err(e) = std::fs::write(&path, buf) {
         tracing::warn!("保存 sync_buf 失败: {}", e);
     }
