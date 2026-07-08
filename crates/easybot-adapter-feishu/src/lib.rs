@@ -332,44 +332,6 @@ impl FeishuAdapter {
         })
     }
 
-    /// 飞书 API PATCH 请求（用于编辑卡片消息）
-    #[allow(dead_code)]
-    async fn api_patch<T: serde::de::DeserializeOwned>(
-        &self,
-        path: &str,
-        body: &serde_json::Value,
-    ) -> Result<T, GatewayError> {
-        let token = self.ensure_token().await?;
-        let client = self.client();
-        let url = format!("{}{}", self.api_base_url(), path);
-
-        let resp = client
-            .patch(&url)
-            .header("Authorization", format!("Bearer {}", token))
-            .json(body)
-            .send()
-            .await
-            .map_err(|e| GatewayError::Internal(format!("Feishu PATCH failed: {}", e)))?;
-
-        let result: FeishuApiResponse<T> = resp
-            .json()
-            .await
-            .map_err(|e| GatewayError::Internal(format!("Feishu PATCH parse failed: {}", e)))?;
-
-        if result.code != 0 {
-            return Err(GatewayError::Internal(format!(
-                "Feishu API error (PATCH {}): {} (code {})",
-                path,
-                result.msg.unwrap_or_default(),
-                result.code
-            )));
-        }
-
-        result.data.ok_or_else(|| {
-            GatewayError::Internal(format!("Feishu API returned no data for PATCH {}", path))
-        })
-    }
-
     /// 飞书 API PUT 请求
     async fn api_put<T: serde::de::DeserializeOwned>(
         &self,

@@ -180,6 +180,14 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
+    // 初始化 rustls CryptoProvider
+    // rustls 0.23 在同时启用 aws-lc-rs 和 ring 两个 crypto 后端时无法自动选择，
+    // 必须显式安装默认 CryptoProvider，否则 tokio-tungstenite 的 WSS 连接会 panic。
+    // 两个后端分别由 reqwest 和 tokio-tungstenite 的依赖树拉入，属于正常现象。
+    if let Err(e) = rustls::crypto::aws_lc_rs::default_provider().install_default() {
+        tracing::warn!("rustls CryptoProvider install failed: {:?}", e);
+    }
+
     // 创建核心组件
     let event_bus = Arc::new(easybot_core::bus::EventBus::new());
 
@@ -869,7 +877,7 @@ async fn register_builtin_adapters(
         "wechat",
         "个人微信",
         easybot_adapter_wechat::WeChatAdapter,
-        &[] // 个人微信可通过扫码登录，无需强制凭据
+        &[]
     );
 
     #[cfg(not(any(

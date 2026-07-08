@@ -116,7 +116,7 @@ cargo test -p easybot-adapter-wechat
 #### 2.1 启动服务
 
 ```bash
-cargo run --features adapter-wechat -- --debug
+cargo run --features "adapter-wechat" -- --debug
 ```
 
 首次启动输出 QR 码链接，手机打开链接扫码确认。

@@ -14,10 +14,10 @@ inputs:
     default: ""
   install-protoc:
     description: >
-      Protoc installation strategy: 'auto' (detect from runner.os), 'linux', 'macos', 'windows',
-      or 'none' to skip entirely.
+      Protoc installation strategy: 'auto', 'linux', 'macos', 'windows',
+      or 'none' to skip entirely. The project does not use protobuf, so defaults to 'none'.
     required: false
-    default: auto
+    default: "none"
   cache-cargo-registry:
     description: "Whether to cache ~/.cargo/registry and ~/.cargo/git"
     required: false

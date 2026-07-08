@@ -22,6 +22,7 @@ serde_yaml.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true
 dirs.workspace = true
+rustls = { version = "0.23", features = ["aws-lc-rs"] }
 
 [features]
 default = ["adapter-telegram", "adapter-discord", "adapter-feishu", "adapter-qq", "adapter-wechat"]
@@ -30,7 +31,6 @@ adapter-discord = ["easybot-adapter-discord"]
 adapter-feishu = ["easybot-adapter-feishu"]
 adapter-qq = ["easybot-adapter-qq"]
 adapter-wechat = ["easybot-adapter-wechat"]
-full = ["adapter-telegram", "adapter-discord", "adapter-feishu", "adapter-qq", "adapter-wechat"]
 plugin-system = ["easybot-core/plugin-system"]
 
 [[bin]]

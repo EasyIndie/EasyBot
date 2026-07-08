@@ -113,7 +113,7 @@ adapters:
 
 启动命令：
 ```bash
-cargo run --features full -- --debug
+cargo run -- --debug
 ```
 
 ### 常见调试问题
@@ -210,7 +210,7 @@ cargo test -p easybot-adapter-qq
 ```bash
 export QQ_APP_ID="你的BotAppID"
 export QQ_CLIENT_SECRET="你的AppSecret"
-cargo run --features full -- --debug
+cargo run -- --debug
 ```
 
 预期日志：

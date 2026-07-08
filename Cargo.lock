@@ -919,10 +919,8 @@ dependencies = [
 name = "easybot-adapter-telegram"
 version = "0.0.10"
 dependencies = [
- "anyhow",
  "async-trait",
  "base64",
- "chrono",
  "easybot-core",
  "fixtures",
  "reqwest",
@@ -944,8 +942,8 @@ dependencies = [
  "chrono",
  "dirs",
  "easybot-core",
- "futures",
  "md5",
+ "qrcode",
  "reqwest",
  "serde",
  "serde_json",
@@ -959,10 +957,8 @@ dependencies = [
 name = "easybot-api"
 version = "0.0.10"
 dependencies = [
- "anyhow",
  "axum",
  "base64",
- "bytes",
  "chrono",
  "dashmap",
  "easybot-core",
@@ -976,9 +972,7 @@ dependencies = [
  "serde_json",
  "serde_yaml",
  "sqlx",
- "sysinfo",
  "tokio",
- "tokio-stream",
  "tokio-tungstenite 0.29.0",
  "tower",
  "tower-http 0.7.0",
@@ -986,7 +980,6 @@ dependencies = [
  "tracing-subscriber",
  "utoipa",
  "utoipa-swagger-ui",
- "uuid",
 ]
 
 [[package]]
@@ -1003,6 +996,7 @@ dependencies = [
  "easybot-adapter-wechat",
  "easybot-api",
  "easybot-core",
+ "rustls",
  "serde_json",
  "serde_yaml",
  "sqlx",
@@ -1016,7 +1010,6 @@ dependencies = [
 name = "easybot-core"
 version = "0.0.10"
 dependencies = [
- "anyhow",
  "argon2",
  "async-trait",
  "chrono",
@@ -2460,6 +2453,12 @@ name = "pulldown-cmark-escape"
 version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "007d8adb5ddab6f8e3f491ac63566a7d5002cc7ed73901f72057943fa71ae1ae"
+
+[[package]]
+name = "qrcode"
+version = "0.14.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d68782463e408eb1e668cf6152704bd856c78c5b6417adaee3203d8f4c1fc9ec"
 
 [[package]]
 name = "quinn"

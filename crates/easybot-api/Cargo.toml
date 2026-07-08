@@ -8,23 +8,18 @@ easybot-core = { path = "../easybot-core" }
 
 axum.workspace = true
 tokio.workspace = true
-tower.workspace = true
 tower-http.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_yaml.workspace = true
-uuid.workspace = true
 chrono.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 dashmap.workspace = true
 futures.workspace = true
-anyhow.workspace = true
 prometheus.workspace = true
-tokio-stream.workspace = true
 utoipa = { workspace = true, features = ["axum_extras"] }
 utoipa-swagger-ui = { workspace = true, features = ["axum"] }
-sysinfo.workspace = true
 
 [build-dependencies]
 pulldown-cmark = "0.13"
@@ -32,9 +27,9 @@ regex = "1"
 base64.workspace = true
 
 [dev-dependencies]
+tower.workspace = true
 sqlx = { workspace = true }
 http-body-util = "0.1"
-bytes = "1"
 tokio-tungstenite = { workspace = true, features = ["connect"] }
 insta = { version = "1", features = ["json"] }
 

@@ -22,7 +22,6 @@ sqlx.workspace = true
 regex.workspace = true
 dirs.workspace = true
 dotenvy.workspace = true
-anyhow.workspace = true
 argon2.workspace = true
 rand_core = { version = "0.9", features = ["os_rng"] }
 # rand_core 0.6 via password-hash: OsRng needs getrandom feature
