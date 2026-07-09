@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.14] - 2026-07-09
+
 ### Fixed
 
 - **Release workflow 改用 composite action 替代 git patch 做版本升级** — 原流程中 prepare-release
