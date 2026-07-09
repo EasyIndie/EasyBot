@@ -14,11 +14,15 @@ runs:
       run: |
         VERSION="${{ inputs.version }}"
 
+        # ⚠️ Always use sed -i.bak + rm .bak: macOS sed requires backup extension,
+        #    Linux sed accepts it without. Portable across all runners.
         # ── Cargo.toml ──
-        sed -i "s/^version = \".*\"/version = \"$VERSION\"/" Cargo.toml
+        sed -i.bak "s/^version = \".*\"/version = \"$VERSION\"/" Cargo.toml
+        rm -f Cargo.toml.bak
 
         # ── insta snapshots (only health response includes version string) ──
         SNAP="crates/easybot-api/tests/snapshots/routes__health_response.snap"
         if [ -f "$SNAP" ]; then
-          sed -i 's/"version": ".*"/"version": "'"$VERSION"'"/' "$SNAP"
+          sed -i.bak 's/"version": ".*"/"version": "'"$VERSION"'"/' "$SNAP"
+          rm -f "$SNAP.bak"
         fi
