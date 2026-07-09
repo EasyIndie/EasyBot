@@ -20,6 +20,11 @@ runs:
         sed -i.bak "s/^version = \".*\"/version = \"$VERSION\"/" Cargo.toml
         rm -f Cargo.toml.bak
 
+        # ── Regenerate Cargo.lock ──
+        # After changing Cargo.toml version, the lock file is stale.
+        # All downstream build jobs use --locked, so we must update it here.
+        cargo generate-lockfile
+
         # ── insta snapshots (only health response includes version string) ──
         SNAP="crates/easybot-api/tests/snapshots/routes__health_response.snap"
         if [ -f "$SNAP" ]; then
