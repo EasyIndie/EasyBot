@@ -77,7 +77,9 @@ fn main() {
                 let title = extract_title(&content, &file_name);
                 // 用文件名（去掉 .md）作为锚点 ID
                 let id = file_name.trim_end_matches(".md");
-                let html_content = md_to_html(&content);
+                // 去掉第一个 # 标题行（已被提取为标题），避免页面重复展示
+                let content_without_h1 = strip_first_h1(&content);
+                let html_content = md_to_html(&content_without_h1);
 
                 sidebar_items.push_str(&format!("<a href=\"#{}\">{}</a>\n", id, title));
                 doc_sections.push_str(&format!(
@@ -176,6 +178,27 @@ fn png_to_data_uri(path: &Path) -> String {
     }
     let b64 = base64::engine::general_purpose::STANDARD.encode(&data);
     format!("data:image/png;base64,{}", b64)
+}
+
+/// 去掉 markdown 中开头的 `# ` 标题行（及其后的空行），避免与包装的 `<h2>` 重复
+fn strip_first_h1(content: &str) -> String {
+    let mut lines = content.lines();
+    // 跳过第一个 # 标题行
+    if lines.next().is_some_and(|l| l.starts_with("# ")) {
+        // 跳过紧随标题的空行
+        let mut result = String::new();
+        let mut past_blank = false;
+        for line in lines {
+            if !past_blank && line.trim().is_empty() {
+                continue;
+            }
+            past_blank = true;
+            result.push_str(line);
+            result.push('\n');
+        }
+        return result;
+    }
+    content.to_string()
 }
 
 /// 提取 Markdown 文件的标题
