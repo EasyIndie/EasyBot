@@ -274,4 +274,4 @@ curl -s -X POST http://127.0.0.1:8080/api/v1/messages/send \
 - [x] ~~**QQ 频道 / C2C 端到端验证**~~ — 已完成 (2026-06-21), 群聊/私聊入站出站全部实机验证通过
 - [x] ~~**补充 list_chats 实现**~~ — 已完成, GET /users/@me/guilds 返回群聊+私聊列表
 - [x] ~~**send_interactive 交互式按钮**~~ — 已完成, InlineKeyboard → QQ MessageKeyboard 映射
-- [ ] 添加入站消息的 `chat_name` 字段填充
+- [ ] 添加入站消息的 `chat_name` 字段填充（QQ 事件不含聊天名称数据——频道仅 `channel_id`/`guild_id`，群聊仅 `group_openid`，C2C 仅 `user_openid`。需额外 API 调用获取名称）
