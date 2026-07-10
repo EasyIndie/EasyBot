@@ -407,18 +407,14 @@ impl TelegramAdapter {
             let err = GatewayError::Internal(format!("Telegram API error: {}", desc));
 
             // 429 Too Many Requests: 遵守 Telegram 的 retry_after 延迟
-            if api_resp.error_code == Some(429) {
-                if let Some(retry_after) = api_resp
-                    .parameters
-                    .as_ref()
-                    .and_then(|p| p.retry_after)
-                {
-                    tracing::warn!(
-                        "Telegram API 429 rate limited, retrying after {}s",
-                        retry_after
-                    );
-                    tokio::time::sleep(Duration::from_secs(retry_after as u64)).await;
-                }
+            if api_resp.error_code == Some(429)
+                && let Some(retry_after) = api_resp.parameters.as_ref().and_then(|p| p.retry_after)
+            {
+                tracing::warn!(
+                    "Telegram API 429 rate limited, retrying after {}s",
+                    retry_after
+                );
+                tokio::time::sleep(Duration::from_secs(retry_after as u64)).await;
             }
 
             Err(err)
@@ -426,6 +422,7 @@ impl TelegramAdapter {
     }
 
     /// getUpdates 长轮询循环
+    #[allow(clippy::too_many_arguments)]
     async fn polling_loop(
         client: reqwest::Client,
         token: String,
@@ -1725,8 +1722,14 @@ mod tests {
         });
         let inbound = TelegramAdapter::convert_message(msg, None).unwrap();
         assert_eq!(inbound.msg_type, MessageType::File);
-        assert_eq!(inbound.media.as_ref().unwrap()[0].media_type, MediaType::Document);
-        assert_eq!(inbound.media.as_ref().unwrap()[0].filename.as_deref(), Some("report.pdf"));
+        assert_eq!(
+            inbound.media.as_ref().unwrap()[0].media_type,
+            MediaType::Document
+        );
+        assert_eq!(
+            inbound.media.as_ref().unwrap()[0].filename.as_deref(),
+            Some("report.pdf")
+        );
     }
 
     #[test]
@@ -1744,7 +1747,10 @@ mod tests {
         });
         let inbound = TelegramAdapter::convert_message(msg, None).unwrap();
         assert_eq!(inbound.msg_type, MessageType::Video);
-        assert_eq!(inbound.media.as_ref().unwrap()[0].media_type, MediaType::Video);
+        assert_eq!(
+            inbound.media.as_ref().unwrap()[0].media_type,
+            MediaType::Video
+        );
     }
 
     #[test]
@@ -1761,7 +1767,10 @@ mod tests {
         });
         let inbound = TelegramAdapter::convert_message(msg, None).unwrap();
         assert_eq!(inbound.msg_type, MessageType::Audio);
-        assert_eq!(inbound.media.as_ref().unwrap()[0].media_type, MediaType::Audio);
+        assert_eq!(
+            inbound.media.as_ref().unwrap()[0].media_type,
+            MediaType::Audio
+        );
     }
 
     #[test]
@@ -1776,7 +1785,10 @@ mod tests {
         });
         let inbound = TelegramAdapter::convert_message(msg, None).unwrap();
         assert_eq!(inbound.msg_type, MessageType::Audio);
-        assert_eq!(inbound.media.as_ref().unwrap()[0].media_type, MediaType::Audio);
+        assert_eq!(
+            inbound.media.as_ref().unwrap()[0].media_type,
+            MediaType::Audio
+        );
     }
 
     #[test]
@@ -1794,7 +1806,10 @@ mod tests {
         });
         let inbound = TelegramAdapter::convert_message(msg, None).unwrap();
         assert_eq!(inbound.msg_type, MessageType::Sticker);
-        assert_eq!(inbound.media.as_ref().unwrap()[0].media_type, MediaType::Sticker);
+        assert_eq!(
+            inbound.media.as_ref().unwrap()[0].media_type,
+            MediaType::Sticker
+        );
     }
 
     #[test]
@@ -1812,7 +1827,10 @@ mod tests {
         });
         let inbound = TelegramAdapter::convert_message(msg, None).unwrap();
         assert_eq!(inbound.msg_type, MessageType::Animation);
-        assert_eq!(inbound.media.as_ref().unwrap()[0].media_type, MediaType::Animation);
+        assert_eq!(
+            inbound.media.as_ref().unwrap()[0].media_type,
+            MediaType::Animation
+        );
     }
 
     #[test]

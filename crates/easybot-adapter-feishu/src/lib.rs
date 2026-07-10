@@ -242,9 +242,10 @@ impl FeishuAdapter {
             req = req.json(b);
         }
 
-        let resp = req.send().await.map_err(|e| {
-            GatewayError::Internal(format!("Feishu {} failed: {}", method, e))
-        })?;
+        let resp = req
+            .send()
+            .await
+            .map_err(|e| GatewayError::Internal(format!("Feishu {} failed: {}", method, e)))?;
 
         let result: FeishuApiResponse<T> = resp.json().await.map_err(|e| {
             GatewayError::Internal(format!("Feishu {} parse failed: {}", method, e))
@@ -270,7 +271,8 @@ impl FeishuAdapter {
 
     /// 飞书 API GET 请求
     async fn api_get<T: serde::de::DeserializeOwned>(&self, path: &str) -> Result<T, GatewayError> {
-        self.send_api_request::<T>(reqwest::Method::GET, path, None).await
+        self.send_api_request::<T>(reqwest::Method::GET, path, None)
+            .await
     }
 
     /// 飞书 API POST 请求
@@ -279,7 +281,8 @@ impl FeishuAdapter {
         path: &str,
         body: &serde_json::Value,
     ) -> Result<T, GatewayError> {
-        self.send_api_request::<T>(reqwest::Method::POST, path, Some(body)).await
+        self.send_api_request::<T>(reqwest::Method::POST, path, Some(body))
+            .await
     }
 
     /// 飞书 API PUT 请求
@@ -288,7 +291,8 @@ impl FeishuAdapter {
         path: &str,
         body: &serde_json::Value,
     ) -> Result<T, GatewayError> {
-        self.send_api_request::<T>(reqwest::Method::PUT, path, Some(body)).await
+        self.send_api_request::<T>(reqwest::Method::PUT, path, Some(body))
+            .await
     }
 
     /// 飞书 API DELETE 请求（不要求 data 字段）
@@ -304,9 +308,10 @@ impl FeishuAdapter {
             .await
             .map_err(|e| GatewayError::Internal(format!("Feishu DELETE failed: {}", e)))?;
 
-        let result: FeishuApiResponse<serde_json::Value> = resp.json().await.map_err(|e| {
-            GatewayError::Internal(format!("Feishu DELETE parse failed: {}", e))
-        })?;
+        let result: FeishuApiResponse<serde_json::Value> = resp
+            .json()
+            .await
+            .map_err(|e| GatewayError::Internal(format!("Feishu DELETE parse failed: {}", e)))?;
 
         if result.code != 0 {
             return Err(GatewayError::Internal(format!(
@@ -319,7 +324,6 @@ impl FeishuAdapter {
 
         Ok(())
     }
-
 }
 #[async_trait]
 impl PlatformAdapter for FeishuAdapter {
@@ -443,30 +447,39 @@ impl PlatformAdapter for FeishuAdapter {
                 .unwrap_or("");
 
             let dispatcher = if verify_token.is_empty() && encrypt_key.is_empty() {
-                tracing::info!("飞书事件签名验证未配置（WebSocket 连接使用 OAuth 鉴权），跳过 per-event 验证");
-                EventDispatcher::new("", "")
-                    .skip_sign_verify()
+                tracing::info!(
+                    "飞书事件签名验证未配置（WebSocket 连接使用 OAuth 鉴权），跳过 per-event 验证"
+                );
+                EventDispatcher::new("", "").skip_sign_verify()
             } else {
                 tracing::info!(
                     "飞书事件签名验证已启用（verify_token={}, encrypt_key={}）",
-                    if verify_token.is_empty() { "未设置" } else { "已配置" },
-                    if encrypt_key.is_empty() { "未设置" } else { "已配置" },
+                    if verify_token.is_empty() {
+                        "未设置"
+                    } else {
+                        "已配置"
+                    },
+                    if encrypt_key.is_empty() {
+                        "未设置"
+                    } else {
+                        "已配置"
+                    },
                 );
                 EventDispatcher::new(verify_token, encrypt_key)
             }
-                // 处理入站消息
-                .on_event(EVENT_MESSAGE_RECEIVE_V1, {
-                    let rc = role_cache.clone();
-                    move |event_data| {
-                        let eb = eb.clone();
-                        let bot_id = app_id_owned.clone();
-                        let secret = app_secret.clone();
-                        let hc = feishu_http.clone();
-                        let bu = feishu_base_url.clone();
-                        let ts = shared_token_store.clone();
-                        let rc = rc.clone();
-                        let mi = mi.clone();
-                        async move {
+            // 处理入站消息
+            .on_event(EVENT_MESSAGE_RECEIVE_V1, {
+                let rc = role_cache.clone();
+                move |event_data| {
+                    let eb = eb.clone();
+                    let bot_id = app_id_owned.clone();
+                    let secret = app_secret.clone();
+                    let hc = feishu_http.clone();
+                    let bu = feishu_base_url.clone();
+                    let ts = shared_token_store.clone();
+                    let rc = rc.clone();
+                    let mi = mi.clone();
+                    async move {
                         let sender_role = Self::resolve_feishu_role(
                             &event_data,
                             &hc,
@@ -477,34 +490,31 @@ impl PlatformAdapter for FeishuAdapter {
                             &rc,
                         )
                         .await;
-                        event::handle_message_receive(event_data, &eb, &bot_id, sender_role)
-                            .await;
+                        event::handle_message_receive(event_data, &eb, &bot_id, sender_role).await;
                         mi.fetch_add(1, Ordering::Relaxed);
                         Ok(())
                     }
                 }
-                })
-                // 监听群配置变更事件（群主转移、管理员变更等）
-                .on_event("im.chat.updated_v1", {
-                    let rc = role_cache.clone();
-                    move |event_data| {
-                        let rc = rc.clone();
-                        async move {
-                            // 清除该群的缓存，下次消息会重新获取角色
-                            if let Some(chat_id) =
-                                event_data.pointer("/chat_id").and_then(|v| v.as_str())
-                            {
-                                if let Ok(mut cache) = rc.lock() {
-                                    cache.retain(|key, _| {
-                                        !key.starts_with(&format!("{}:", chat_id))
-                                    });
-                                }
-                                tracing::info!("飞书群配置变更，已清除群 {} 的角色缓存", chat_id);
+            })
+            // 监听群配置变更事件（群主转移、管理员变更等）
+            .on_event("im.chat.updated_v1", {
+                let rc = role_cache.clone();
+                move |event_data| {
+                    let rc = rc.clone();
+                    async move {
+                        // 清除该群的缓存，下次消息会重新获取角色
+                        if let Some(chat_id) =
+                            event_data.pointer("/chat_id").and_then(|v| v.as_str())
+                        {
+                            if let Ok(mut cache) = rc.lock() {
+                                cache.retain(|key, _| !key.starts_with(&format!("{}:", chat_id)));
                             }
-                            Ok(())
+                            tracing::info!("飞书群配置变更，已清除群 {} 的角色缓存", chat_id);
                         }
+                        Ok(())
                     }
-                });
+                }
+            });
 
             let ws_client = sdk_client.ws_client(dispatcher);
             let ws_client = ws_client.log_level(tracing::Level::WARN);
@@ -654,10 +664,10 @@ impl PlatformAdapter for FeishuAdapter {
         if let Some(bus) = &self.event_bus {
             bus.publish_send_result(
                 if send_result.success {
-                event_types::MESSAGE_SENT
-            } else {
-                event_types::MESSAGE_FAILED
-            },
+                    event_types::MESSAGE_SENT
+                } else {
+                    event_types::MESSAGE_FAILED
+                },
                 "feishu",
                 &params.chat_id,
                 &send_result,
@@ -710,10 +720,10 @@ impl PlatformAdapter for FeishuAdapter {
         if let Some(bus) = &self.event_bus {
             bus.publish_send_result(
                 if send_result.success {
-                event_types::MESSAGE_SENT
-            } else {
-                event_types::MESSAGE_FAILED
-            },
+                    event_types::MESSAGE_SENT
+                } else {
+                    event_types::MESSAGE_FAILED
+                },
                 "feishu",
                 &params.chat_id,
                 &send_result,
@@ -778,10 +788,10 @@ impl PlatformAdapter for FeishuAdapter {
         if let Some(bus) = &self.event_bus {
             bus.publish_send_result(
                 if send_result.success {
-                event_types::MESSAGE_SENT
-            } else {
-                event_types::MESSAGE_FAILED
-            },
+                    event_types::MESSAGE_SENT
+                } else {
+                    event_types::MESSAGE_FAILED
+                },
                 "feishu",
                 &params.chat_id,
                 &send_result,

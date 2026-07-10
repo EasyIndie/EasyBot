@@ -329,10 +329,8 @@ fn mime_to_file_type(mime_type: &str) -> u32 {
         1
     } else if mime_type.starts_with("video/") {
         2
-    } else if mime_type.starts_with("audio/") {
-        3
     } else {
-        3 // 非音视频默认使用文件类型（file_type=3），避免文档/PDF 被误作为图片发送
+        3 // 非图片/视频默认使用文件类型（file_type=3），避免文档/PDF/音频被误作为图片发送
     }
 }
 
@@ -955,10 +953,10 @@ impl PlatformAdapter for QqAdapter {
         if let Some(bus) = &self.event_bus {
             bus.publish_send_result(
                 if send_result.success {
-                event_types::MESSAGE_SENT
-            } else {
-                event_types::MESSAGE_FAILED
-            },
+                    event_types::MESSAGE_SENT
+                } else {
+                    event_types::MESSAGE_FAILED
+                },
                 "qq",
                 &params.chat_id,
                 &send_result,
@@ -1065,10 +1063,10 @@ impl PlatformAdapter for QqAdapter {
             if let Some(bus) = &self.event_bus {
                 bus.publish_send_result(
                     if send_result.success {
-                    event_types::MESSAGE_SENT
-                } else {
-                    event_types::MESSAGE_FAILED
-                },
+                        event_types::MESSAGE_SENT
+                    } else {
+                        event_types::MESSAGE_FAILED
+                    },
                     "qq",
                     &params.chat_id,
                     &send_result,
@@ -1138,10 +1136,10 @@ impl PlatformAdapter for QqAdapter {
         if let Some(bus) = &self.event_bus {
             bus.publish_send_result(
                 if send_result.success {
-                event_types::MESSAGE_SENT
-            } else {
-                event_types::MESSAGE_FAILED
-            },
+                    event_types::MESSAGE_SENT
+                } else {
+                    event_types::MESSAGE_FAILED
+                },
                 "qq",
                 &params.chat_id,
                 &send_result,
@@ -1229,10 +1227,10 @@ impl PlatformAdapter for QqAdapter {
         if let Some(bus) = &self.event_bus {
             bus.publish_send_result(
                 if send_result.success {
-                event_types::MESSAGE_SENT
-            } else {
-                event_types::MESSAGE_FAILED
-            },
+                    event_types::MESSAGE_SENT
+                } else {
+                    event_types::MESSAGE_FAILED
+                },
                 "qq",
                 &params.chat_id,
                 &send_result,

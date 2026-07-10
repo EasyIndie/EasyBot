@@ -25,8 +25,8 @@ use easybot_core::types::error::GatewayError;
 use easybot_core::types::event::GatewayEvent;
 use easybot_core::types::event::event_types;
 use easybot_core::types::message::*;
-use tokio::sync::broadcast;
 use tokio::sync::Semaphore;
+use tokio::sync::broadcast;
 use twilight_gateway::{CloseFrame, EventTypeFlags, Intents, Shard, ShardId, StreamExt as _};
 use twilight_model::gateway::event::Event;
 use twilight_model::gateway::payload::incoming::GuildCreate;
@@ -174,34 +174,24 @@ impl DiscordAdapter {
         let url = format!("{}{}", self.api_base_url(), endpoint);
 
         // 最多重试一次 429
-        for attempt in 0..2 {
+        for _attempt in 0..2 {
             let mut req = client
                 .request(method.clone(), &url)
                 .header("Authorization", self.auth_header());
 
             if let Some(json) = &body {
-                if attempt == 0 {
-                    req = req.json(json);
-                } else {
-                    req = req.json(json);
-                }
+                req = req.json(json);
             }
 
-            let resp = req
-                .send()
-                .await
-                .map_err(|e| {
-                    GatewayError::Internal(format!("Discord API request failed: {}", e))
-                })?;
+            let resp = req.send().await.map_err(|e| {
+                GatewayError::Internal(format!("Discord API request failed: {}", e))
+            })?;
 
             let status = resp.status();
             if status.is_success() {
-                return resp
-                    .json()
-                    .await
-                    .map_err(|e| {
-                        GatewayError::Internal(format!("Discord API JSON parse failed: {}", e))
-                    });
+                return resp.json().await.map_err(|e| {
+                    GatewayError::Internal(format!("Discord API JSON parse failed: {}", e))
+                });
             }
 
             // 429 Too Many Requests: 等待 Retry-After 后重试
@@ -235,7 +225,6 @@ impl DiscordAdapter {
             "Discord API rate limited on {} after retry",
             endpoint,
         )))
-
     }
 
     /// 将 Discord 消息转换为网关 InboundMessage
@@ -386,6 +375,7 @@ impl DiscordAdapter {
     }
 
     /// Gateway Shard 事件循环（使用 twilight-gateway SDK）
+    #[allow(clippy::too_many_arguments)]
     async fn gateway_shard_loop(
         token: String,
         event_bus: Arc<EventBus>,
@@ -398,7 +388,10 @@ impl DiscordAdapter {
     ) {
         // 限制并发 guild owner 查询数，避免大量 tokio::spawn 在启动时爆炸
         let guild_fetch_permits = Arc::new(Semaphore::new(5));
-        let intents = Intents::GUILD_MESSAGES | Intents::DIRECT_MESSAGES | Intents::MESSAGE_CONTENT | Intents::GUILDS;
+        let intents = Intents::GUILD_MESSAGES
+            | Intents::DIRECT_MESSAGES
+            | Intents::MESSAGE_CONTENT
+            | Intents::GUILDS;
         let mut shard = Shard::new(ShardId::ONE, token.clone(), intents);
         let http_client = reqwest::Client::new();
 
@@ -497,14 +490,14 @@ impl DiscordAdapter {
                             }
                         }
                         Some(Ok(Event::GuildCreate(guild))) => {
-                            if let GuildCreate::Available(g) = &*guild {
-                                if let Ok(mut cache) = guild_name_cache.try_lock() {
-                                    const GUILD_CACHE_LIMIT: usize = 5_000;
-                                    if cache.len() > GUILD_CACHE_LIMIT {
-                                        cache.clear();
-                                    }
-                                    cache.insert(g.id.to_string(), g.name.clone());
+                            if let GuildCreate::Available(g) = &*guild
+                                && let Ok(mut cache) = guild_name_cache.try_lock()
+                            {
+                                const GUILD_CACHE_LIMIT: usize = 5_000;
+                                if cache.len() > GUILD_CACHE_LIMIT {
+                                    cache.clear();
                                 }
+                                cache.insert(g.id.to_string(), g.name.clone());
                             }
                         }
                         other => {
@@ -657,7 +650,8 @@ impl PlatformAdapter for DiscordAdapter {
             let mi = self.messages_in.clone();
 
             tokio::spawn(async move {
-                Self::gateway_shard_loop(token_clone, eb, bot_id, cancel_rx, hb, goc, gnc, mi).await;
+                Self::gateway_shard_loop(token_clone, eb, bot_id, cancel_rx, hb, goc, gnc, mi)
+                    .await;
             });
         }
 
@@ -723,10 +717,10 @@ impl PlatformAdapter for DiscordAdapter {
         if let Some(bus) = &self.event_bus {
             bus.publish_send_result(
                 if result.success {
-                event_types::MESSAGE_SENT
-            } else {
-                event_types::MESSAGE_FAILED
-            },
+                    event_types::MESSAGE_SENT
+                } else {
+                    event_types::MESSAGE_FAILED
+                },
                 "discord",
                 &params.chat_id,
                 &result,
@@ -1045,10 +1039,10 @@ impl PlatformAdapter for DiscordAdapter {
         if let Some(bus) = &self.event_bus {
             bus.publish_send_result(
                 if result.success {
-                event_types::MESSAGE_SENT
-            } else {
-                event_types::MESSAGE_FAILED
-            },
+                    event_types::MESSAGE_SENT
+                } else {
+                    event_types::MESSAGE_FAILED
+                },
                 "discord",
                 &params.chat_id,
                 &result,
@@ -1655,8 +1649,7 @@ mod tests {
 
     // ── Gateway 事件处理测试 ──
 
-    use easybot_core::types::event::event_types::MESSAGE_INBOUND;
-    use twilight_model::gateway::payload::incoming::{MessageCreate, Ready};
+    use twilight_model::gateway::payload::incoming::Ready;
 
     /// 构造一个最小可用的 Ready 事件用于测试
     fn make_ready_event() -> Event {

@@ -42,9 +42,9 @@ use easybot_core::types::message::*;
 mod crypto;
 use crypto::{
     WeChatCredentials, aes_128_ecb_encrypt, aes_padded_size, base64_encode_uin,
-    build_cdn_upload_url, encode_aes_key_for_api, generate_filekey,
-    load_context_tokens, load_credentials_from_disk, load_sync_buf, md5_hex, resolve_media_data,
-    save_context_tokens, save_credentials_to_disk, save_sync_buf,
+    build_cdn_upload_url, encode_aes_key_for_api, generate_filekey, load_context_tokens,
+    load_credentials_from_disk, load_sync_buf, md5_hex, resolve_media_data, save_context_tokens,
+    save_credentials_to_disk, save_sync_buf,
 };
 
 /// iLink Bot API 基础 URL
@@ -443,13 +443,10 @@ impl WeChatAdapter {
             .await
             .map_err(|e| GatewayError::Internal(format!("getuploadurl request failed: {}", e)))?;
 
-        let resp_text = tokio::time::timeout(
-            Duration::from_secs(30),
-            raw_resp.text(),
-        )
-        .await
-        .map_err(|_| GatewayError::Internal("getuploadurl read timeout (30s)".to_string()))?
-        .map_err(|e| GatewayError::Internal(format!("getuploadurl read failed: {}", e)))?;
+        let resp_text = tokio::time::timeout(Duration::from_secs(30), raw_resp.text())
+            .await
+            .map_err(|_| GatewayError::Internal("getuploadurl read timeout (30s)".to_string()))?
+            .map_err(|e| GatewayError::Internal(format!("getuploadurl read failed: {}", e)))?;
 
         tracing::debug!(
             "WeChat getuploadurl response: {}",
@@ -535,11 +532,11 @@ impl WeChatAdapter {
         );
 
         if !cdn_status.is_success() {
-            let cdn_body = match tokio::time::timeout(Duration::from_secs(10), cdn_resp.text()).await
-            {
-                Ok(Ok(body)) => body,
-                _ => String::new(),
-            };
+            let cdn_body =
+                match tokio::time::timeout(Duration::from_secs(10), cdn_resp.text()).await {
+                    Ok(Ok(body)) => body,
+                    _ => String::new(),
+                };
             tracing::warn!(
                 "WeChat CDN upload failed: status={}, body_len={}",
                 cdn_status.as_u16(),
@@ -640,17 +637,13 @@ impl WeChatAdapter {
             .json(body)
             .send()
             .await
-            .map_err(|e| {
-                GatewayError::Internal(format!("WeChat {} HTTP failed: {}", label, e))
-            })?;
+            .map_err(|e| GatewayError::Internal(format!("WeChat {} HTTP failed: {}", label, e)))?;
 
         let status = raw_resp.status();
         let resp_text = raw_resp
             .text()
             .await
-            .map_err(|e| {
-                GatewayError::Internal(format!("WeChat {} read failed: {}", label, e))
-            })?;
+            .map_err(|e| GatewayError::Internal(format!("WeChat {} read failed: {}", label, e)))?;
 
         if !status.is_success() {
             return Err(GatewayError::Internal(format!(
@@ -948,7 +941,7 @@ impl PlatformAdapter for WeChatAdapter {
         self.state = AdapterState::Connected;
         tracing::info!("个人微信适配器已连接");
 
-            self.heartbeat.record_connection();
+        self.heartbeat.record_connection();
 
         // 启动长轮询消息接收
         if let Some(ref event_bus) = self.event_bus {

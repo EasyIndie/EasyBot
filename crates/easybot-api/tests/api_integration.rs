@@ -306,8 +306,7 @@ async fn test_batch_send_with_invalid_target() {
     assert_eq!(body["total"], 1);
     let results = body["results"].as_object().unwrap();
     assert_eq!(
-        results["invalid-target"]["status"],
-        "failed",
+        results["invalid-target"]["status"], "failed",
         "Invalid target should report failure"
     );
 }
@@ -389,7 +388,10 @@ async fn test_message_history_empty() {
     let body: Value = resp.json().await.unwrap();
     assert!(body["messages"].is_array(), "messages should be an array");
     assert_eq!(body["messages"].as_array().unwrap().len(), 0);
-    assert!(!body["has_more"].as_bool().unwrap_or(true), "has_more should be false");
+    assert!(
+        !body["has_more"].as_bool().unwrap_or(true),
+        "has_more should be false"
+    );
 }
 
 #[tokio::test]
@@ -512,7 +514,7 @@ async fn test_list_api_keys() {
     let body: Value = resp.json().await.unwrap();
     assert!(body.is_array());
     assert!(
-        body.as_array().unwrap().len() >= 1,
+        !body.as_array().unwrap().is_empty(),
         "Should have at least the test key"
     );
 }

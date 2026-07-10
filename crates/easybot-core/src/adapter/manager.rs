@@ -1582,7 +1582,7 @@ mod tests {
         manager.start("test-mock", config).await.unwrap();
         wait_connected(&manager, "test-mock").await;
 
-        manager.stop("test-mock").await;
+        let _ = manager.stop("test-mock").await;
 
         // After stop: statuses should reflect disconnected state
         let statuses = manager.list_statuses().await;

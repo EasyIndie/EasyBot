@@ -2,9 +2,9 @@
 //!
 //! 提供凭据持久化、AES-128-ECB 媒体加密、CDN URL 构建、文件下载等工具函数。
 
-use std::time::Duration;
 use easybot_core::types::error::GatewayError;
 use easybot_core::types::message::MediaAttachment;
+use std::time::Duration;
 
 /// 凭据文件路径（相对于 home 目录的 .easybot/）
 const CREDENTIALS_FILE: &str = ".easybot/.wechat-credentials.json";
