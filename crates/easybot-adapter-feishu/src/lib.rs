@@ -263,27 +263,36 @@ impl FeishuAdapter {
             .await
     }
 
-    /// 飞书 API GET 请求
-    async fn api_get<T: serde::de::DeserializeOwned>(&self, path: &str) -> Result<T, GatewayError> {
+    /// 统一的飞书 API 请求方法
+    async fn send_api_request<T: serde::de::DeserializeOwned>(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        body: Option<&serde_json::Value>,
+    ) -> Result<T, GatewayError> {
         let token = self.ensure_token().await?;
         let client = self.client();
         let url = format!("{}{}", self.api_base_url(), path);
 
-        let resp = client
-            .get(&url)
-            .header("Authorization", format!("Bearer {}", token))
-            .send()
-            .await
-            .map_err(|e| GatewayError::Internal(format!("Feishu GET failed: {}", e)))?;
+        let mut req = client
+            .request(method.clone(), &url)
+            .header("Authorization", format!("Bearer {}", token));
+        if let Some(b) = body {
+            req = req.json(b);
+        }
 
-        let result: FeishuApiResponse<T> = resp
-            .json()
-            .await
-            .map_err(|e| GatewayError::Internal(format!("Feishu GET parse failed: {}", e)))?;
+        let resp = req.send().await.map_err(|e| {
+            GatewayError::Internal(format!("Feishu {} failed: {}", method, e))
+        })?;
+
+        let result: FeishuApiResponse<T> = resp.json().await.map_err(|e| {
+            GatewayError::Internal(format!("Feishu {} parse failed: {}", method, e))
+        })?;
 
         if result.code != 0 {
             return Err(GatewayError::Internal(format!(
-                "Feishu API error (GET {}): {} (code {})",
+                "Feishu API error ({} {}): {} (code {})",
+                method,
                 path,
                 result.msg.unwrap_or_default(),
                 result.code
@@ -291,8 +300,16 @@ impl FeishuAdapter {
         }
 
         result.data.ok_or_else(|| {
-            GatewayError::Internal(format!("Feishu API returned no data for GET {}", path))
+            GatewayError::Internal(format!(
+                "Feishu API returned no data for {} {}",
+                method, path
+            ))
         })
+    }
+
+    /// 飞书 API GET 请求
+    async fn api_get<T: serde::de::DeserializeOwned>(&self, path: &str) -> Result<T, GatewayError> {
+        self.send_api_request::<T>(reqwest::Method::GET, path, None).await
     }
 
     /// 飞书 API POST 请求
@@ -301,35 +318,7 @@ impl FeishuAdapter {
         path: &str,
         body: &serde_json::Value,
     ) -> Result<T, GatewayError> {
-        let token = self.ensure_token().await?;
-        let client = self.client();
-        let url = format!("{}{}", self.api_base_url(), path);
-
-        let resp = client
-            .post(&url)
-            .header("Authorization", format!("Bearer {}", token))
-            .json(body)
-            .send()
-            .await
-            .map_err(|e| GatewayError::Internal(format!("Feishu POST failed: {}", e)))?;
-
-        let result: FeishuApiResponse<T> = resp
-            .json()
-            .await
-            .map_err(|e| GatewayError::Internal(format!("Feishu POST parse failed: {}", e)))?;
-
-        if result.code != 0 {
-            return Err(GatewayError::Internal(format!(
-                "Feishu API error (POST {}): {} (code {})",
-                path,
-                result.msg.unwrap_or_default(),
-                result.code
-            )));
-        }
-
-        result.data.ok_or_else(|| {
-            GatewayError::Internal(format!("Feishu API returned no data for POST {}", path))
-        })
+        self.send_api_request::<T>(reqwest::Method::POST, path, Some(body)).await
     }
 
     /// 飞书 API PUT 请求
@@ -338,38 +327,10 @@ impl FeishuAdapter {
         path: &str,
         body: &serde_json::Value,
     ) -> Result<T, GatewayError> {
-        let token = self.ensure_token().await?;
-        let client = self.client();
-        let url = format!("{}{}", self.api_base_url(), path);
-
-        let resp = client
-            .put(&url)
-            .header("Authorization", format!("Bearer {}", token))
-            .json(body)
-            .send()
-            .await
-            .map_err(|e| GatewayError::Internal(format!("Feishu PUT failed: {}", e)))?;
-
-        let result: FeishuApiResponse<T> = resp
-            .json()
-            .await
-            .map_err(|e| GatewayError::Internal(format!("Feishu PUT parse failed: {}", e)))?;
-
-        if result.code != 0 {
-            return Err(GatewayError::Internal(format!(
-                "Feishu API error (PUT {}): {} (code {})",
-                path,
-                result.msg.unwrap_or_default(),
-                result.code
-            )));
-        }
-
-        result.data.ok_or_else(|| {
-            GatewayError::Internal(format!("Feishu API returned no data for PUT {}", path))
-        })
+        self.send_api_request::<T>(reqwest::Method::PUT, path, Some(body)).await
     }
 
-    /// 飞书 API DELETE 请求
+    /// 飞书 API DELETE 请求（不要求 data 字段）
     async fn api_delete(&self, path: &str) -> Result<(), GatewayError> {
         let token = self.ensure_token().await?;
         let client = self.client();
@@ -382,10 +343,9 @@ impl FeishuAdapter {
             .await
             .map_err(|e| GatewayError::Internal(format!("Feishu DELETE failed: {}", e)))?;
 
-        let result: FeishuApiResponse<serde_json::Value> = resp
-            .json()
-            .await
-            .map_err(|e| GatewayError::Internal(format!("Feishu DELETE parse failed: {}", e)))?;
+        let result: FeishuApiResponse<serde_json::Value> = resp.json().await.map_err(|e| {
+            GatewayError::Internal(format!("Feishu DELETE parse failed: {}", e))
+        })?;
 
         if result.code != 0 {
             return Err(GatewayError::Internal(format!(
@@ -398,6 +358,7 @@ impl FeishuAdapter {
 
         Ok(())
     }
+
 }
 
 fn publish_send_event(
