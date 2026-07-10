@@ -540,6 +540,59 @@ impl QqAdapter {
         }
     }
 
+    /// 从 MediaAttachment 解析文件数据、文件名和 MIME 类型。
+    /// 优先 base64 解码，其次 URL 下载。含 25MB 大小限制。
+    /// 提取为共享方法消除 send_c2c_media_upload_only 和 send_group_media_upload 中的重复。
+    async fn resolve_upload_media(
+        client: &reqwest::Client,
+        media: &MediaAttachment,
+        label: &str,
+    ) -> Result<(Vec<u8>, String, String), GatewayError> {
+        if let Some(data_b64) = &media.data {
+            use base64::Engine;
+            let decoded = base64::engine::general_purpose::STANDARD
+                .decode(data_b64)
+                .map_err(|e| {
+                    GatewayError::Internal(format!("QQ {}: base64 decode failed: {}", label, e))
+                })?;
+            let fname = media.filename.clone().unwrap_or_else(|| "file".to_string());
+            Ok((decoded, fname, media.mime_type.clone()))
+        } else if let Some(file_url) = &media.url {
+            let resp = client.get(file_url).send().await.map_err(|e| {
+                GatewayError::Internal(format!("QQ {}: download failed: {}", label, e))
+            })?;
+            // SECURITY: Reject oversized downloads to prevent OOM
+            if let Some(cl) = resp.content_length()
+                && cl > 25 * 1024 * 1024
+            {
+                return Err(GatewayError::Internal(format!(
+                    "Rejected {} download: {} bytes exceeds 25MB limit",
+                    label, cl,
+                )));
+            }
+            let ct = resp
+                .headers()
+                .get("content-type")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("application/octet-stream")
+                .to_string();
+            let data = resp.bytes().await.map_err(|e| {
+                GatewayError::Internal(format!("QQ {}: download read failed: {}", label, e))
+            })?;
+            let fname = media
+                .filename
+                .clone()
+                .or_else(|| file_url.split('/').next_back().map(|s| s.to_string()))
+                .unwrap_or_else(|| "file".to_string());
+            Ok((data.to_vec(), fname, ct))
+        } else {
+            Err(GatewayError::Internal(format!(
+                "No media data or URL provided for QQ {}",
+                label,
+            )))
+        }
+    }
+
     /// 从 URL/base64 获取文件数据后上传到聊天（自动尝试 C2C 和群聊端点）
     ///
     /// 直接使用 QQ 文件上传端点（srv_send_msg=true），
@@ -551,51 +604,8 @@ impl QqAdapter {
         media: &MediaAttachment,
         text: Option<String>,
     ) -> Result<QqSendMessageResponse, GatewayError> {
-        // Resolve file data from base64 or URL
-        let client = self.client().clone();
-
-        let (file_data, filename, mime_type) = if let Some(data_b64) = &media.data {
-            use base64::Engine;
-            let decoded = base64::engine::general_purpose::STANDARD
-                .decode(data_b64)
-                .map_err(|e| {
-                    GatewayError::Internal(format!("QQ upload: base64 decode failed: {}", e))
-                })?;
-            let fname = media.filename.clone().unwrap_or_else(|| "file".to_string());
-            (decoded, fname, media.mime_type.clone())
-        } else if let Some(file_url) = &media.url {
-            let resp = client.get(file_url).send().await.map_err(|e| {
-                GatewayError::Internal(format!("QQ upload: download failed: {}", e))
-            })?;
-            // SECURITY: Reject oversized downloads to prevent OOM
-            let content_length = resp.content_length().unwrap_or(0);
-            const MAX_DOWNLOAD_BYTES: u64 = 25 * 1024 * 1024; // 25MB
-            if content_length > MAX_DOWNLOAD_BYTES {
-                return Err(GatewayError::Internal(format!(
-                    "Rejected media download: {} bytes exceeds {} limit",
-                    content_length, MAX_DOWNLOAD_BYTES
-                )));
-            }
-            let ct = resp
-                .headers()
-                .get("content-type")
-                .and_then(|v| v.to_str().ok())
-                .unwrap_or("application/octet-stream")
-                .to_string();
-            let data = resp.bytes().await.map_err(|e| {
-                GatewayError::Internal(format!("QQ upload: download read failed: {}", e))
-            })?;
-            let fname = media
-                .filename
-                .clone()
-                .or_else(|| file_url.split('/').next_back().map(|s| s.to_string()))
-                .unwrap_or_else(|| "file".to_string());
-            (data.to_vec(), fname, ct)
-        } else {
-            return Err(GatewayError::Internal(
-                "No media data or URL provided for QQ upload".to_string(),
-            ));
-        };
+        let (file_data, filename, mime_type) =
+            Self::resolve_upload_media(&self.client().clone(), media, "upload").await?;
 
         // Try C2C upload first, then group upload as fallback
         let mut last_error = None;
@@ -655,51 +665,8 @@ impl QqAdapter {
         media: &MediaAttachment,
         text: Option<String>,
     ) -> Result<SendResult, GatewayError> {
-        // Resolve file data from base64 or URL
-        let client = self.client().clone();
-
-        let (file_data, filename, mime_type) = if let Some(data_b64) = &media.data {
-            use base64::Engine;
-            let decoded = base64::engine::general_purpose::STANDARD
-                .decode(data_b64)
-                .map_err(|e| {
-                    GatewayError::Internal(format!("QQ group upload: base64 decode failed: {}", e))
-                })?;
-            let fname = media.filename.clone().unwrap_or_else(|| "file".to_string());
-            (decoded, fname, media.mime_type.clone())
-        } else if let Some(file_url) = &media.url {
-            let resp = client.get(file_url).send().await.map_err(|e| {
-                GatewayError::Internal(format!("QQ group upload: download failed: {}", e))
-            })?;
-            // SECURITY: Reject oversized downloads to prevent OOM
-            if let Some(cl) = resp.content_length()
-                && cl > 25 * 1024 * 1024
-            {
-                return Err(GatewayError::Internal(format!(
-                    "Rejected media download: {} bytes exceeds 25MB limit",
-                    cl
-                )));
-            }
-            let ct = resp
-                .headers()
-                .get("content-type")
-                .and_then(|v| v.to_str().ok())
-                .unwrap_or("application/octet-stream")
-                .to_string();
-            let data = resp.bytes().await.map_err(|e| {
-                GatewayError::Internal(format!("QQ group upload: download read failed: {}", e))
-            })?;
-            let fname = media
-                .filename
-                .clone()
-                .or_else(|| file_url.split('/').next_back().map(|s| s.to_string()))
-                .unwrap_or_else(|| "file".to_string());
-            (data.to_vec(), fname, ct)
-        } else {
-            return Err(GatewayError::Internal(
-                "No media data or URL provided for QQ group upload".to_string(),
-            ));
-        };
+        let (file_data, filename, mime_type) =
+            Self::resolve_upload_media(&self.client().clone(), media, "group_upload").await?;
 
         // Try group endpoint first, then C2C as fallback
         let mut last_error = None;

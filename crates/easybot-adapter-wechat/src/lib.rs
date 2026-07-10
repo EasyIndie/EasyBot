@@ -440,10 +440,13 @@ impl WeChatAdapter {
             .await
             .map_err(|e| GatewayError::Internal(format!("getuploadurl request failed: {}", e)))?;
 
-        let resp_text = raw_resp
-            .text()
-            .await
-            .map_err(|e| GatewayError::Internal(format!("getuploadurl read failed: {}", e)))?;
+        let resp_text = tokio::time::timeout(
+            Duration::from_secs(30),
+            raw_resp.text(),
+        )
+        .await
+        .map_err(|_| GatewayError::Internal("getuploadurl read timeout (30s)".to_string()))?
+        .map_err(|e| GatewayError::Internal(format!("getuploadurl read failed: {}", e)))?;
 
         tracing::debug!(
             "WeChat getuploadurl response: {}",
@@ -529,7 +532,11 @@ impl WeChatAdapter {
         );
 
         if !cdn_status.is_success() {
-            let cdn_body = cdn_resp.text().await.unwrap_or_default();
+            let cdn_body = match tokio::time::timeout(Duration::from_secs(10), cdn_resp.text()).await
+            {
+                Ok(Ok(body)) => body,
+                _ => String::new(),
+            };
             tracing::warn!(
                 "WeChat CDN upload failed: status={}, body_len={}",
                 cdn_status.as_u16(),

@@ -163,7 +163,7 @@ impl DiscordAdapter {
         format!("Bot {}", token)
     }
 
-    /// 统一调用 Discord REST API
+    /// 统一调用 Discord REST API，含 429 自动重试
     async fn api_call<T: serde::de::DeserializeOwned>(
         &self,
         method: reqwest::Method,
@@ -173,39 +173,56 @@ impl DiscordAdapter {
         let client = self.http_client();
         let url = format!("{}{}", self.api_base_url(), endpoint);
 
-        let mut req = client
-            .request(method, &url)
-            .header("Authorization", self.auth_header());
+        // 最多重试一次 429
+        for attempt in 0..2 {
+            let mut req = client
+                .request(method.clone(), &url)
+                .header("Authorization", self.auth_header());
 
-        if let Some(json) = body {
-            req = req.json(&json);
-        }
+            if let Some(json) = &body {
+                if attempt == 0 {
+                    req = req.json(json);
+                } else {
+                    req = req.json(json);
+                }
+            }
 
-        let resp = req
-            .send()
-            .await
-            .map_err(|e| GatewayError::Internal(format!("Discord API request failed: {}", e)))?;
+            let resp = req
+                .send()
+                .await
+                .map_err(|e| {
+                    GatewayError::Internal(format!("Discord API request failed: {}", e))
+                })?;
 
-        let status = resp.status();
-        if !status.is_success() {
-            // 对 429 提前提取 Retry-After 头（必须在消费 body 前读取）
-            let retry_after = if status.as_u16() == 429 {
-                resp.headers()
+            let status = resp.status();
+            if status.is_success() {
+                return resp
+                    .json()
+                    .await
+                    .map_err(|e| {
+                        GatewayError::Internal(format!("Discord API JSON parse failed: {}", e))
+                    });
+            }
+
+            // 429 Too Many Requests: 等待 Retry-After 后重试
+            if status.as_u16() == 429 {
+                let retry_after = resp
+                    .headers()
                     .get("Retry-After")
                     .and_then(|v| v.to_str().ok())
                     .and_then(|s| s.parse::<f64>().ok())
-                    .map(|secs| (secs * 1000.0) as u64)
-            } else {
-                None
-            };
-            let error_text = resp.text().await.unwrap_or_default();
-            // SECURITY: Truncate error body to prevent leaking sensitive data
-            let safe_error: String = error_text.chars().take(256).collect();
-            if let Some(retry_ms) = retry_after {
-                return Err(GatewayError::RateLimited {
-                    retry_after_ms: retry_ms,
-                });
+                    .unwrap_or(1.0);
+                tracing::warn!(
+                    "Discord API 429 rate limited on {}, retrying after {:.1}s",
+                    endpoint,
+                    retry_after,
+                );
+                tokio::time::sleep(Duration::from_secs_f64(retry_after)).await;
+                continue;
             }
+
+            let error_text = resp.text().await.unwrap_or_default();
+            let safe_error: String = error_text.chars().take(256).collect();
             return Err(GatewayError::Internal(format!(
                 "Discord API {} {}: {}",
                 status.as_u16(),
@@ -214,9 +231,12 @@ impl DiscordAdapter {
             )));
         }
 
-        resp.json()
-            .await
-            .map_err(|e| GatewayError::Internal(format!("Discord API JSON parse failed: {}", e)))
+        Err(GatewayError::Internal(format!(
+            "Discord API rate limited on {} after retry",
+            endpoint,
+        )))
+
+    }
     }
 
     /// 将 Discord 消息转换为网关 InboundMessage

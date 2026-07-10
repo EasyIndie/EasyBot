@@ -25,9 +25,14 @@
 | §3.1 | Discord `handle_gateway_event` MessageCreate 死代码 | ✅ 2026-07-10 已清理，测试直测 `convert_message` |
 | §5.3 | QQ `mime_to_file_type` 默认图片 | ✅ 2026-07-10 已改为默认文件类型 |
 | §6.6 | 微信 CDN `x-encrypted-param` 日志泄露 | ✅ 2026-07-10 已脱敏 |
+| §6.6 | 微信 CDN 上传子步骤缺显式超时 | ✅ 2026-07-10 添加 download_media/getuploadurl/CDN 响应超时 |
 | §1.2 | `HealthReport` 字段全为 None / uptime 未追踪 | ✅ 2026-07-10 通过 Heartbeat 添加记录方法 |
+| §4.5 | 飞书 capability 未使用宏 | ✅ 2026-07-10 切换为 `capabilities!` 宏 |
+| §2.3 | Telegram 长轮询串行处理消息 | ✅ 2026-07-10 改为 Semaphore(5) + tokio::spawn 并行 |
 | §3.2 | Discord 未缓存 guild 无限制 spawn | ✅ 2026-07-10 添加 Semaphore(5) 并发限制 |
 | §4.3 | 飞书 5 个 `api_*` 方法重复 | ✅ 2026-07-10 合并为 `send_api_request` |
+| §5.2 | QQ send_media media-resolution 逻辑重复 | ✅ 2026-07-10 提取 `resolve_upload_media` 共享方法 |
+| §3.3 | Discord api_call 缺 429 重试 | ✅ 2026-07-10 增加 Retry-After 自动重试 |
 
 > 注：微信 `save_context_tokens` 共 3 处调用，2 处（send/send_media 的 ret=-14 路径）已修复，
 > 第 3 处（`longpoll_loop` 批量持久化）在先前的修复中已使用 `spawn_blocking`。
@@ -503,7 +508,7 @@ while Instant::now() < deadline {
 
 ## 8. 优化优先级排序
 
-> 更新于 2026-07-10。已修复项标记为删除线。当前全部 17 个发现中 **16 个已修复**，剩余 1 个低优先级（WeChat 群发受 iLink API 限制，平台级，项目内无法解决）。
+> 更新于 2026-07-10。已修复项标记为删除线。**性能评审全部 22 项发现（17 优先表 + 5 正文评注）已修复。** 剩余未修复项见下方「已知未修复项汇总」。
 
 | 优先级 | 问题 | 影响范围 | 修复难度 | 当前状态 |
 |---|---|---|---|---|
@@ -542,4 +547,34 @@ while Instant::now() < deadline {
 ### 架构层面的改进方向
 1. **token 管理统一化**: 每个适配器都有自己的 token 刷新逻辑（飞书已统一为 `FeishuTokenStore`，QQ 等仍各自独立），可以抽象出公共的 `TokenManager` 结构体
 2. **缓存策略标准化**: 角色/管理员缓存的淘汰策略不一致（Telegram 无 TTL vs Feishu 30s TTL）
-3. **API 调用模式提取**: 各适配器的 api_* 方法重复度极高（飞书已合并为 `send_api_request`，微信已提取 `send_http_post`，Telegram/Discord 仍保留各自实现），可以组合 `Method` 参数提取为通用模式
+3. **API 调用模式提取**: 各适配器的 api_* 方法重复度极高（飞书已合并为 `send_api_request`，微信已提取 `send_http_post`，QQ 已提取 `resolve_upload_media`，Telegram/Discord 仍保留各自实现），可以组合 `Method` 参数提取为通用模式
+
+---
+
+## 已知未修复项汇总
+
+> 以下列表收集了全部代码审查、验证指南和架构讨论中已确认为未修复的项目。
+> 均为功能增强类待办，无 P0/P1 Bug。
+
+### 性能相关
+
+| 问题 | 说明 | 影响评估 |
+|---|---|---|
+| — | *性能评审全部 22 项发现已修复，无新增待办* | — |
+
+### 各适配器验证待办
+
+| 适配器 | 待办项 | 说明 | 难度 |
+|---|---|---|---|
+| **Telegram** | 入站消息 media convert 测试 | 增加图片/视频/文档消息的 `convert_message` 单元测试 | 低 |
+| | API 路由层集成测试 | 启动 Server → HTTP 调用 adapter start/stop/消息接口 | 中 |
+| **Discord** | wiremock mock 测试 | `dev-dependencies` 已有 wiremock 但未使用 | 低 |
+| | Intents 可配置 | 当前硬编码 `GUILD_MESSAGES\|DIRECT_MESSAGES\|MESSAGE_CONTENT\|GUILDS` | 低 |
+| | 更多 Gateway 事件处理 | 增加 `MESSAGE_UPDATE`、`MESSAGE_DELETE` 等事件 | 低 |
+| **飞书** | 事件签名验证 | 当前 `skip_sign_verify()`（WebSocket 认证机制不同，风险可控） | 中 |
+| | 更多入站消息类型 | `media`/`post`/`card` 类型落到默认 `MessageType::Text` | 中 |
+| **QQ** | chat_name 填充 | 事件不含名称数据（仅 `group_openid`/`user_openid`，需额外 API） | 中 |
+| **微信** | chat_name 填充 | iLink API 无名名字段（仅 `from_user_id`/`group_id`） | 高 |
+| | 凭据过期自动重启 | 当前 10 次连续失败 break loop 后靠外部 Health Monitor | 中 |
+| | 语音消息转录 | `MessageType::Audio` 已识别但无 STT 支持 | 高 |
+| | 引用/回复消息 | `reply_to` 从未使用，iLink API 可能不支持 | 中 |

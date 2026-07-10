@@ -2,6 +2,7 @@
 //!
 //! 提供凭据持久化、AES-128-ECB 媒体加密、CDN URL 构建、文件下载等工具函数。
 
+use std::time::Duration;
 use easybot_core::types::error::GatewayError;
 use easybot_core::types::message::MediaAttachment;
 
@@ -266,8 +267,9 @@ pub(crate) async fn download_media(
         )));
     }
 
-    resp.bytes()
+    tokio::time::timeout(Duration::from_secs(60), resp.bytes())
         .await
+        .map_err(|_| GatewayError::Internal("Media download timeout (60s)".to_string()))?
         .map(|b| b.to_vec())
         .map_err(|e| GatewayError::Internal(format!("Failed to read media bytes: {}", e)))
 }

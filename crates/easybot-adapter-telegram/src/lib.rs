@@ -16,6 +16,7 @@ use std::sync::Arc;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
+use tokio::sync::Semaphore;
 
 use async_trait::async_trait;
 use easybot_core::bus::EventBus;
@@ -450,31 +451,46 @@ impl TelegramAdapter {
                         Ok(updates) => {
                             poll_errors = 0;
                             heartbeat.beat(); // liveness: successful poll
+
+                            // 限制消息处理并发数，避免批量消息时 API 过载
+                            let permit = Arc::new(Semaphore::new(5));
+
                             for update in updates {
                                 if update.update_id >= offset {
                                     offset = update.update_id + 1;
                                 }
                                 // Handle chat_member updates → real-time admin cache update
+                                // 保持串行（共享 cache 写入）
                                 if let Some(ref member_update) = update.chat_member {
                                     Self::update_admin_cache(&admin_cache, member_update).await;
                                 }
-                                // Handle messages → resolve sender role from cache/API
+                                // Handle messages → 并行处理（Semaphore 控制并发上限）
                                 if let Some(tg_msg) = update.message {
-                                    let chat_id = tg_msg.chat.id;
-                                    let user_id = tg_msg.from.as_ref().map(|u| u.id);
-                                    let sender_role = Self::resolve_sender_role(
-                                        &admin_cache, &client, &base_url, &token,
-                                        chat_id, user_id,
-                                    ).await;
-                                    if let Some(inbound) = Self::convert_message(tg_msg, sender_role) {
-                                        messages_in.fetch_add(1, Ordering::Relaxed);
-                                        let event = GatewayEvent::new(
-                                            event_types::MESSAGE_INBOUND,
-                                            "telegram",
-                                            serde_json::to_value(&inbound).unwrap_or_default(),
-                                        );
-                                        event_bus.publish(event);
-                                    }
+                                    let permit = permit.clone();
+                                    let admin_cache = admin_cache.clone();
+                                    let client = client.clone();
+                                    let base_url = base_url.clone();
+                                    let token = token.clone();
+                                    let eb = event_bus.clone();
+                                    let mi = messages_in.clone();
+                                    tokio::spawn(async move {
+                                        let _guard = permit.acquire().await.expect("Semaphore");
+                                        let chat_id = tg_msg.chat.id;
+                                        let user_id = tg_msg.from.as_ref().map(|u| u.id);
+                                        let sender_role = Self::resolve_sender_role(
+                                            &admin_cache, &client, &base_url, &token,
+                                            chat_id, user_id,
+                                        ).await;
+                                        if let Some(inbound) = Self::convert_message(tg_msg, sender_role) {
+                                            mi.fetch_add(1, Ordering::Relaxed);
+                                            let event = GatewayEvent::new(
+                                                event_types::MESSAGE_INBOUND,
+                                                "telegram",
+                                                serde_json::to_value(&inbound).unwrap_or_default(),
+                                            );
+                                            eb.publish(event);
+                                        }
+                                    });
                                 }
                             }
                         }

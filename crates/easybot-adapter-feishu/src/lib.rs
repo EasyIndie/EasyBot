@@ -17,6 +17,7 @@ use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use easybot_core::bus::EventBus;
+use easybot_core::capabilities;
 use easybot_core::types::adapter::*;
 use easybot_core::types::error::GatewayError;
 use easybot_core::types::event::event_types;
@@ -150,57 +151,17 @@ impl FeishuAdapter {
             config: None,
             state: AdapterState::Created,
             bot_info: None,
-            capabilities: vec![
-                Capability {
-                    name: CapabilityName::Text,
-                    supported: true,
-                    limits: None,
-                },
-                Capability {
-                    name: CapabilityName::Image,
-                    supported: true,
-                    limits: None,
-                },
-                Capability {
-                    name: CapabilityName::Audio,
-                    supported: true,
-                    limits: None,
-                },
-                Capability {
-                    name: CapabilityName::Video,
-                    supported: true,
-                    limits: None,
-                },
-                Capability {
-                    name: CapabilityName::Document,
-                    supported: true,
-                    limits: None,
-                },
-                Capability {
-                    name: CapabilityName::Interactive,
-                    supported: true,
-                    limits: None,
-                },
-                Capability {
-                    name: CapabilityName::Markdown,
-                    supported: true,
-                    limits: None,
-                },
-                Capability {
-                    name: CapabilityName::Group,
-                    supported: true,
-                    limits: None,
-                },
-                Capability {
-                    name: CapabilityName::MessageEdit,
-                    supported: true,
-                    limits: None,
-                },
-                Capability {
-                    name: CapabilityName::MessageDelete,
-                    supported: true,
-                    limits: None,
-                },
+            capabilities: capabilities![
+                (Text, true),
+                (Image, true),
+                (Audio, true),
+                (Video, true),
+                (Document, true),
+                (Interactive, true),
+                (Markdown, true),
+                (Group, true),
+                (MessageEdit, true),
+                (MessageDelete, true),
             ],
             messages_in: Arc::new(AtomicU64::new(0)),
             messages_out: AtomicU64::new(0),
