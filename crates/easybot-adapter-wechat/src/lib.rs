@@ -1081,10 +1081,10 @@ impl PlatformAdapter for WeChatAdapter {
 
         // 如果 response 是 -14（会话过期）且有 context_token，剥离它重试一次
         if let Ok(ref r) = resp
-            && r.ret == Some(-14)
+            && (r.ret == Some(-14) || r.ret == Some(-2))
             && ctx_token.is_some()
         {
-            tracing::warn!("WeChat send 遇到 session 过期 (ret=-14)，剥离 context_token 重试");
+            tracing::warn!("WeChat send 遇到会话上下文过期 (ret=-14/-2)，剥离 context_token 重试");
             // 清除该聊天的过期 token
             {
                 let mut tokens = self.context_tokens.write().await;
@@ -1288,13 +1288,13 @@ impl PlatformAdapter for WeChatAdapter {
         // 第一次尝试：带 context_token 发送
         let mut resp = self.send_media_http(&url, &token, body.clone()).await;
 
-        // 如果 response 是 -14（会话过期）且有 context_token，剥离它重试一次
+        // 如果 response 是 -14 或 -2（上下文过期）且有 context_token，剥离它重试一次
         if let Ok(ref r) = resp
-            && r.ret == Some(-14)
+            && (r.ret == Some(-14) || r.ret == Some(-2))
             && ctx_token.is_some()
         {
             tracing::warn!(
-                "WeChat send_media 遇到 session 过期 (ret=-14)，剥离 context_token 重试"
+                "WeChat send_media 遇到会话上下文过期 (ret=-14/-2)，剥离 context_token 重试"
             );
             // 清除该聊天的过期 token
             {
