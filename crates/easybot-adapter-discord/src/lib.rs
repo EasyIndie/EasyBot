@@ -519,18 +519,6 @@ impl Default for DiscordAdapter {
         Self::new()
     }
 }
-
-fn publish_send_event(
-    event_bus: &Option<Arc<EventBus>>,
-    event_type: &str,
-    chat_id: &str,
-    result: &SendResult,
-) {
-    if let Some(bus) = event_bus {
-        bus.publish_send_result(event_type, "discord", chat_id, result);
-    }
-}
-
 #[async_trait]
 impl PlatformAdapter for DiscordAdapter {
     fn platform_name(&self) -> &str {
@@ -674,16 +662,18 @@ impl PlatformAdapter for DiscordAdapter {
                 SendResult::fail(e.to_string(), true)
             }
         };
-        publish_send_event(
-            &self.event_bus,
-            if result.success {
+        if let Some(bus) = &self.event_bus {
+            bus.publish_send_result(
+                if result.success {
                 event_types::MESSAGE_SENT
             } else {
                 event_types::MESSAGE_FAILED
             },
-            &params.chat_id,
-            &result,
-        );
+                "discord",
+                &params.chat_id,
+                &result,
+            );
+        }
         Ok(result)
     }
 
@@ -806,12 +796,14 @@ impl PlatformAdapter for DiscordAdapter {
             (data.to_vec(), fname, ct)
         } else {
             let fail = SendResult::fail("No media data or URL provided".to_string(), false);
-            publish_send_event(
-                &self.event_bus,
-                event_types::MESSAGE_FAILED,
-                &params.chat_id,
-                &fail,
-            );
+            if let Some(bus) = &self.event_bus {
+                bus.publish_send_result(
+                    event_types::MESSAGE_FAILED,
+                    "discord",
+                    &params.chat_id,
+                    &fail,
+                );
+            }
             return Ok(fail);
         };
 
@@ -868,12 +860,14 @@ impl PlatformAdapter for DiscordAdapter {
             let error_text = resp.text().await.unwrap_or_default();
             if status.as_u16() == 429 {
                 let fail = SendResult::fail(format!("Rate limited: {}", error_text), true);
-                publish_send_event(
-                    &self.event_bus,
-                    event_types::MESSAGE_FAILED,
-                    &params.chat_id,
-                    &fail,
-                );
+                if let Some(bus) = &self.event_bus {
+                    bus.publish_send_result(
+                        event_types::MESSAGE_FAILED,
+                        "discord",
+                        &params.chat_id,
+                        &fail,
+                    );
+                }
                 return Ok(fail);
             }
             self.errors.fetch_add(1, Ordering::Relaxed);
@@ -881,12 +875,14 @@ impl PlatformAdapter for DiscordAdapter {
                 format!("Discord API {}: {}", status.as_u16(), error_text),
                 false,
             );
-            publish_send_event(
-                &self.event_bus,
-                event_types::MESSAGE_FAILED,
-                &params.chat_id,
-                &fail,
-            );
+            if let Some(bus) = &self.event_bus {
+                bus.publish_send_result(
+                    event_types::MESSAGE_FAILED,
+                    "discord",
+                    &params.chat_id,
+                    &fail,
+                );
+            }
             return Ok(fail);
         }
 
@@ -911,12 +907,14 @@ impl PlatformAdapter for DiscordAdapter {
 
         self.messages_out.fetch_add(1, Ordering::Relaxed);
         let send_result = SendResult::ok(msg.id);
-        publish_send_event(
-            &self.event_bus,
-            event_types::MESSAGE_SENT,
-            &params.chat_id,
-            &send_result,
-        );
+        if let Some(bus) = &self.event_bus {
+            bus.publish_send_result(
+                event_types::MESSAGE_SENT,
+                "discord",
+                &params.chat_id,
+                &send_result,
+            );
+        }
         Ok(send_result)
     }
 
@@ -986,16 +984,18 @@ impl PlatformAdapter for DiscordAdapter {
                 SendResult::fail(e.to_string(), true)
             }
         };
-        publish_send_event(
-            &self.event_bus,
-            if result.success {
+        if let Some(bus) = &self.event_bus {
+            bus.publish_send_result(
+                if result.success {
                 event_types::MESSAGE_SENT
             } else {
                 event_types::MESSAGE_FAILED
             },
-            &params.chat_id,
-            &result,
-        );
+                "discord",
+                &params.chat_id,
+                &result,
+            );
+        }
         Ok(result)
     }
 

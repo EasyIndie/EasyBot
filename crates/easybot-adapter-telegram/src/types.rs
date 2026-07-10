@@ -16,6 +16,16 @@ pub(crate) struct TelegramApiResponse<T> {
     pub result: Option<T>,
     pub description: Option<String>,
     pub error_code: Option<i32>,
+    /// 429 等错误时包含 retry_after 等信息
+    #[serde(default)]
+    pub parameters: Option<ResponseParameters>,
+}
+
+/// Telegram API 响应参数（用于速率限制等）
+#[derive(Debug, Deserialize)]
+pub(crate) struct ResponseParameters {
+    /// 429 错误时需要等待的秒数
+    pub retry_after: Option<i32>,
 }
 
 /// getUpdates 返回的更新对象

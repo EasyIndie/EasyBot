@@ -360,18 +360,6 @@ impl FeishuAdapter {
     }
 
 }
-
-fn publish_send_event(
-    event_bus: &Option<Arc<EventBus>>,
-    event_type: &str,
-    chat_id: &str,
-    result: &SendResult,
-) {
-    if let Some(bus) = event_bus {
-        bus.publish_send_result(event_type, "feishu", chat_id, result);
-    }
-}
-
 #[async_trait]
 impl PlatformAdapter for FeishuAdapter {
     fn platform_name(&self) -> &str {
@@ -481,42 +469,33 @@ impl PlatformAdapter for FeishuAdapter {
                 .skip_sign_verify()
                 // 处理入站消息
                 .on_event(EVENT_MESSAGE_RECEIVE_V1, {
-                    let eb = eb.clone();
-                    let bot_id = app_id_owned.clone();
-                    let secret = app_secret.clone();
-                    let app_id_clone = app_id_owned.clone();
-                    let hc = feishu_http.clone();
-                    let bu = feishu_base_url.clone();
-                    let ts = shared_token_store.clone();
                     let rc = role_cache.clone();
-                    let mi = mi.clone();
                     move |event_data| {
                         let eb = eb.clone();
-                        let bot_id = bot_id.clone();
-                        let secret = secret.clone();
-                        let app_id = app_id_clone.clone();
-                        let hc = hc.clone();
-                        let bu = bu.clone();
-                        let ts = ts.clone();
+                        let bot_id = app_id_owned.clone();
+                        let secret = app_secret.clone();
+                        let hc = feishu_http.clone();
+                        let bu = feishu_base_url.clone();
+                        let ts = shared_token_store.clone();
                         let rc = rc.clone();
                         let mi = mi.clone();
                         async move {
-                            let sender_role = Self::resolve_feishu_role(
-                                &event_data,
-                                &hc,
-                                &bu,
-                                &ts,
-                                &app_id,
-                                &secret,
-                                &rc,
-                            )
+                        let sender_role = Self::resolve_feishu_role(
+                            &event_data,
+                            &hc,
+                            &bu,
+                            &ts,
+                            &bot_id,
+                            &secret,
+                            &rc,
+                        )
+                        .await;
+                        event::handle_message_receive(event_data, &eb, &bot_id, sender_role)
                             .await;
-                            event::handle_message_receive(event_data, &eb, &bot_id, sender_role)
-                                .await;
-                            mi.fetch_add(1, Ordering::Relaxed);
-                            Ok(())
-                        }
+                        mi.fetch_add(1, Ordering::Relaxed);
+                        Ok(())
                     }
+                }
                 })
                 // 监听群配置变更事件（群主转移、管理员变更等）
                 .on_event("im.chat.updated_v1", {
@@ -685,16 +664,18 @@ impl PlatformAdapter for FeishuAdapter {
                 SendResult::fail(e.to_string(), true)
             }
         };
-        publish_send_event(
-            &self.event_bus,
-            if send_result.success {
+        if let Some(bus) = &self.event_bus {
+            bus.publish_send_result(
+                if send_result.success {
                 event_types::MESSAGE_SENT
             } else {
                 event_types::MESSAGE_FAILED
             },
-            &params.chat_id,
-            &send_result,
-        );
+                "feishu",
+                &params.chat_id,
+                &send_result,
+            );
+        }
         Ok(send_result)
     }
 
@@ -739,16 +720,18 @@ impl PlatformAdapter for FeishuAdapter {
                 SendResult::fail(e.to_string(), true)
             }
         };
-        publish_send_event(
-            &self.event_bus,
-            if send_result.success {
+        if let Some(bus) = &self.event_bus {
+            bus.publish_send_result(
+                if send_result.success {
                 event_types::MESSAGE_SENT
             } else {
                 event_types::MESSAGE_FAILED
             },
-            &params.chat_id,
-            &send_result,
-        );
+                "feishu",
+                &params.chat_id,
+                &send_result,
+            );
+        }
         Ok(send_result)
     }
 
@@ -805,16 +788,18 @@ impl PlatformAdapter for FeishuAdapter {
                 SendResult::fail(e.to_string(), true)
             }
         };
-        publish_send_event(
-            &self.event_bus,
-            if send_result.success {
+        if let Some(bus) = &self.event_bus {
+            bus.publish_send_result(
+                if send_result.success {
                 event_types::MESSAGE_SENT
             } else {
                 event_types::MESSAGE_FAILED
             },
-            &params.chat_id,
-            &send_result,
-        );
+                "feishu",
+                &params.chat_id,
+                &send_result,
+            );
+        }
         Ok(send_result)
     }
 

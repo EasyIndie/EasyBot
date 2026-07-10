@@ -19,6 +19,7 @@
 | §6.1 | 微信每条消息同步磁盘 I/O (`save_sync_buf`) | ✅ 2026-07-10 确认已用 `spawn_blocking` |
 | §6.2 | 微信非文本消息使用 `[图片]` 占位符 | ✅ 2026-07-10 确认已改为空文本 + `MediaAttachment` |
 | §1.3/5.5 | `messages_in` 在 Telegram/Discord/飞书从未递增 | ✅ 2026-07-10 修复：传递 `Arc<AtomicU64>` 给后台任务并递增 |
+| §1.1 | `publish_send_event` 5 适配器重复代码 | ✅ 2026-07-10 迁移到 `EventBus::publish_send_result`，移除 5 定义 + 31 调用点 |
 | §6.1 (续) | 微信 `save_context_tokens` 同步写（2 处） | ✅ 2026-07-10 修复：改用 `spawn_blocking` |
 | §7.1 | EventBus `subscribe_many` 轮询延迟 | ✅ 2026-07-10 已改为 `SelectAll`（零轮询） |
 | §3.1 | Discord `handle_gateway_event` MessageCreate 死代码 | ✅ 2026-07-10 已清理，测试直测 `convert_message` |
@@ -502,7 +503,7 @@ while Instant::now() < deadline {
 
 ## 8. 优化优先级排序
 
-> 更新于 2026-07-10。已修复项标记为删除线。当前全部 17 个发现中 15 个已修复，剩余 2 个低优先级。
+> 更新于 2026-07-10。已修复项标记为删除线。当前全部 17 个发现中 **16 个已修复**，剩余 1 个低优先级（WeChat 群发受 iLink API 限制，平台级，项目内无法解决）。
 
 | 优先级 | 问题 | 影响范围 | 修复难度 | 当前状态 |
 |---|---|---|---|---|
@@ -511,7 +512,7 @@ while Instant::now() < deadline {
 | ~~🟠 P1~~ | ~~QQ `try_send` 错误级联 (#5.1)~~ | ~~QQ~~ | ~~低~~ | ✅ 已修复（已有 chat_type 快速路由和非 404 提前终止） |
 | ~~🟠 P1~~ | ~~飞书两套独立 token 管理系统 (#4.2)~~ | ~~Feishu~~ | ~~低~~ | ✅ 已修复（已统一为共享 FeishuTokenStore） |
 | ~~🟡 P2~~ | ~~Discord gateway 事件双路径 (#3.1)~~ | ~~Discord~~ | ~~低~~ | ✅ 已修复（已清理死代码分支） |
-| 🟡 **P2** | `publish_send_event` 重复代码 (#1.1) | 全部适配器 | 低 | ❌ 未修复 |
+| ~~🟡 P2~~ | ~~`publish_send_event` 重复代码 (#1.1)~~ | ~~全部适配器~~ | ~~低~~ | ✅ 已修复（迁移到 `EventBus::publish_send_result`，移除 5 个包装函数、31 处调用点） |
 | ~~🟡 P2~~ | ~~飞书 5 个 `api_*` 方法合并 (#4.3)~~ | ~~Feishu~~ | ~~低~~ | ✅ 已修复（合并为 `send_api_request`） |
 | ~~🟡 P2~~ | ~~EventBus `subscribe_many` 20ms 延迟 (#7.1)~~ | ~~Core~~ | ~~低~~ | ✅ 已修复（改用 `SelectAll` 零延迟） |
 | ~~🟢 P3~~ | ~~`HealthReport` 字段全部为 None (#1.2)~~ | ~~全部~~ | ~~中等~~ | ✅ 已修复（Heartbeat 添加记录方法） |
@@ -539,6 +540,6 @@ while Instant::now() < deadline {
 4. ~~**`messages_in` 从未递增**~~ — 已修复，Telegram/Discord/飞书三适配器均通过 `Arc<AtomicU64>` 传递并递增
 
 ### 架构层面的改进方向
-1. **token 管理统一化**: 每个适配器都有自己的 token 刷新逻辑（飞书两套、QQ 两套），可以抽象出公共的 `TokenManager` 结构体
+1. **token 管理统一化**: 每个适配器都有自己的 token 刷新逻辑（飞书已统一为 `FeishuTokenStore`，QQ 等仍各自独立），可以抽象出公共的 `TokenManager` 结构体
 2. **缓存策略标准化**: 角色/管理员缓存的淘汰策略不一致（Telegram 无 TTL vs Feishu 30s TTL）
-3. **API 调用模式提取**: 各适配器的 api_* 方法重复度极高，可以组合 `Method` 参数提取为通用模式
+3. **API 调用模式提取**: 各适配器的 api_* 方法重复度极高（飞书已合并为 `send_api_request`，微信已提取 `send_http_post`，Telegram/Discord 仍保留各自实现），可以组合 `Method` 参数提取为通用模式

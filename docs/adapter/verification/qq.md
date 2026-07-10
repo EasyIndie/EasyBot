@@ -275,4 +275,3 @@ curl -s -X POST http://127.0.0.1:8080/api/v1/messages/send \
 - [x] ~~**补充 list_chats 实现**~~ — 已完成, GET /users/@me/guilds 返回群聊+私聊列表
 - [x] ~~**send_interactive 交互式按钮**~~ — 已完成, InlineKeyboard → QQ MessageKeyboard 映射
 - [ ] 添加入站消息的 `chat_name` 字段填充
-- [ ] 考虑 Docker Alpine 环境下 `native-tls` 需要 OpenSSL 支持

@@ -788,6 +788,28 @@ impl AdapterManager {
             }
 
             if needs_reconnect {
+                // 立即更新状态缓存，避免 health check 窗口期内 API 返回过时的 Connected 状态
+                {
+                    let mut statuses = self.statuses.write().await;
+                    if let Some(status) = statuses.get_mut(platform) {
+                        status.connected = false;
+                    } else {
+                        statuses.insert(
+                            platform.clone(),
+                            AdapterStatusSummary {
+                                platform: platform.clone(),
+                                connected: false,
+                                state: AdapterState::Failed,
+                                last_error: Some("Unhealthy — reconnecting".to_string()),
+                                display_name: platform.clone(),
+                                health: Some(HealthStatus::Down),
+                                uptime: None,
+                                messages_in: 0,
+                                messages_out: 0,
+                            },
+                        );
+                    }
+                }
                 // 仅在需要重连时获取 config（避免为健康适配器克隆含 token 的 AdapterConfig）
                 let config = { self.configs.read().await.get(platform).cloned() };
                 let config = match config {

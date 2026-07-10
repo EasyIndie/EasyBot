@@ -163,4 +163,4 @@ curl -s "http://localhost:8080/api/v1/messages?platform=feishu" \
 - [ ] 添加飞书 `im.message.receive_v1` 事件签名的真实验证（当前使用 `skip_sign_verify()`）
 - [x] ~~合并飞书 5 个 `api_*` 方法为统一的 `send_api_request`~~
 - [ ] 支持更多消息类型（图片、文件等入站消息的 content 解析）
-- [ ] 合并两套独立 token 管理系统（适配器实例的 `access_token` + WebSocket 任务的 `token_cache`）
+- [x] ~~合并两套独立 token 管理系统（适配器实例的 `access_token` + WebSocket 任务的 `token_cache`）~~（已合并为共享 `FeishuTokenStore`）

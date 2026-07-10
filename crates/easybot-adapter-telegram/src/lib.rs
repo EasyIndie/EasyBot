@@ -403,10 +403,24 @@ impl TelegramAdapter {
             let desc = api_resp
                 .description
                 .unwrap_or_else(|| "Unknown error".to_string());
-            Err(GatewayError::Internal(format!(
-                "Telegram API error: {}",
-                desc
-            )))
+            let err = GatewayError::Internal(format!("Telegram API error: {}", desc));
+
+            // 429 Too Many Requests: 遵守 Telegram 的 retry_after 延迟
+            if api_resp.error_code == Some(429) {
+                if let Some(retry_after) = api_resp
+                    .parameters
+                    .as_ref()
+                    .and_then(|p| p.retry_after)
+                {
+                    tracing::warn!(
+                        "Telegram API 429 rate limited, retrying after {}s",
+                        retry_after
+                    );
+                    tokio::time::sleep(Duration::from_secs(retry_after as u64)).await;
+                }
+            }
+
+            Err(err)
         }
     }
 
@@ -634,17 +648,6 @@ impl Default for TelegramAdapter {
 }
 
 /// Publish send result via the unified EventBus method
-fn publish_send_event(
-    event_bus: &Option<Arc<EventBus>>,
-    event_type: &str,
-    chat_id: &str,
-    result: &SendResult,
-) {
-    if let Some(bus) = event_bus {
-        bus.publish_send_result(event_type, "telegram", chat_id, result);
-    }
-}
-
 #[async_trait]
 impl PlatformAdapter for TelegramAdapter {
     fn platform_name(&self) -> &str {
@@ -845,12 +848,14 @@ impl PlatformAdapter for TelegramAdapter {
             Err(e) => {
                 self.errors.fetch_add(1, Ordering::Relaxed);
                 let fail = SendResult::fail(e.to_string(), true);
-                publish_send_event(
-                    &self.event_bus,
-                    event_types::MESSAGE_FAILED,
-                    &params.chat_id,
-                    &fail,
-                );
+                if let Some(bus) = &self.event_bus {
+                    bus.publish_send_result(
+                        event_types::MESSAGE_FAILED,
+                        "telegram",
+                        &params.chat_id,
+                        &fail,
+                    );
+                }
                 return Ok(fail);
             }
         };
@@ -865,12 +870,14 @@ impl PlatformAdapter for TelegramAdapter {
             error_code: None,
             retryable: false,
         };
-        publish_send_event(
-            &self.event_bus,
-            event_types::MESSAGE_SENT,
-            &params.chat_id,
-            &send_result,
-        );
+        if let Some(bus) = &self.event_bus {
+            bus.publish_send_result(
+                event_types::MESSAGE_SENT,
+                "telegram",
+                &params.chat_id,
+                &send_result,
+            );
+        }
         Ok(send_result)
     }
 
@@ -920,12 +927,14 @@ impl PlatformAdapter for TelegramAdapter {
                 Err(e) => {
                     self.errors.fetch_add(1, Ordering::Relaxed);
                     let fail = SendResult::fail(e.to_string(), true);
-                    publish_send_event(
-                        &self.event_bus,
-                        event_types::MESSAGE_FAILED,
-                        &params.chat_id,
-                        &fail,
-                    );
+                    if let Some(bus) = &self.event_bus {
+                        bus.publish_send_result(
+                            event_types::MESSAGE_FAILED,
+                            "telegram",
+                            &params.chat_id,
+                            &fail,
+                        );
+                    }
                     return Ok(fail);
                 }
             };
@@ -940,12 +949,14 @@ impl PlatformAdapter for TelegramAdapter {
                 error_code: None,
                 retryable: false,
             };
-            publish_send_event(
-                &self.event_bus,
-                event_types::MESSAGE_SENT,
-                &params.chat_id,
-                &send_result,
-            );
+            if let Some(bus) = &self.event_bus {
+                bus.publish_send_result(
+                    event_types::MESSAGE_SENT,
+                    "telegram",
+                    &params.chat_id,
+                    &send_result,
+                );
+            }
             Ok(send_result)
         } else if let Some(data_b64) = &params.media.data {
             // Base64 数据 → multipart/form-data 上传
@@ -1005,24 +1016,28 @@ impl PlatformAdapter for TelegramAdapter {
                         error_code: None,
                         retryable: false,
                     };
-                    publish_send_event(
-                        &self.event_bus,
-                        event_types::MESSAGE_SENT,
-                        &params.chat_id,
-                        &send_result,
-                    );
+                    if let Some(bus) = &self.event_bus {
+                        bus.publish_send_result(
+                            event_types::MESSAGE_SENT,
+                            "telegram",
+                            &params.chat_id,
+                            &send_result,
+                        );
+                    }
                     Ok(send_result)
                 } else {
                     let fail = SendResult::fail(
                         "Telegram API returned ok but no result".to_string(),
                         false,
                     );
-                    publish_send_event(
-                        &self.event_bus,
-                        event_types::MESSAGE_FAILED,
-                        &params.chat_id,
-                        &fail,
-                    );
+                    if let Some(bus) = &self.event_bus {
+                        bus.publish_send_result(
+                            event_types::MESSAGE_FAILED,
+                            "telegram",
+                            &params.chat_id,
+                            &fail,
+                        );
+                    }
                     Err(GatewayError::Internal(
                         "Telegram API returned ok but no result".to_string(),
                     ))
@@ -1033,23 +1048,27 @@ impl PlatformAdapter for TelegramAdapter {
                     .unwrap_or_else(|| "Unknown error".to_string());
                 self.errors.fetch_add(1, Ordering::Relaxed);
                 let fail = SendResult::fail(format!("Telegram API upload error: {}", desc), true);
-                publish_send_event(
-                    &self.event_bus,
-                    event_types::MESSAGE_FAILED,
-                    &params.chat_id,
-                    &fail,
-                );
+                if let Some(bus) = &self.event_bus {
+                    bus.publish_send_result(
+                        event_types::MESSAGE_FAILED,
+                        "telegram",
+                        &params.chat_id,
+                        &fail,
+                    );
+                }
                 Ok(fail)
             }
         } else {
             self.errors.fetch_add(1, Ordering::Relaxed);
             let fail = SendResult::fail("No media URL or data provided".to_string(), false);
-            publish_send_event(
-                &self.event_bus,
-                event_types::MESSAGE_FAILED,
-                &params.chat_id,
-                &fail,
-            );
+            if let Some(bus) = &self.event_bus {
+                bus.publish_send_result(
+                    event_types::MESSAGE_FAILED,
+                    "telegram",
+                    &params.chat_id,
+                    &fail,
+                );
+            }
             Ok(fail)
         }
     }
@@ -1100,12 +1119,14 @@ impl PlatformAdapter for TelegramAdapter {
             Err(e) => {
                 self.errors.fetch_add(1, Ordering::Relaxed);
                 let fail = SendResult::fail(e.to_string(), true);
-                publish_send_event(
-                    &self.event_bus,
-                    event_types::MESSAGE_FAILED,
-                    &params.chat_id,
-                    &fail,
-                );
+                if let Some(bus) = &self.event_bus {
+                    bus.publish_send_result(
+                        event_types::MESSAGE_FAILED,
+                        "telegram",
+                        &params.chat_id,
+                        &fail,
+                    );
+                }
                 return Ok(fail);
             }
         };
@@ -1120,12 +1141,14 @@ impl PlatformAdapter for TelegramAdapter {
             error_code: None,
             retryable: false,
         };
-        publish_send_event(
-            &self.event_bus,
-            event_types::MESSAGE_SENT,
-            &params.chat_id,
-            &send_result,
-        );
+        if let Some(bus) = &self.event_bus {
+            bus.publish_send_result(
+                event_types::MESSAGE_SENT,
+                "telegram",
+                &params.chat_id,
+                &send_result,
+            );
+        }
         Ok(send_result)
     }
 

@@ -741,12 +741,14 @@ impl QqAdapter {
                         error_code: None,
                         retryable: false,
                     };
-                    publish_send_event(
-                        &self.event_bus,
-                        event_types::MESSAGE_SENT,
-                        chat_id,
-                        &send_result,
-                    );
+                    if let Some(bus) = &self.event_bus {
+                        bus.publish_send_result(
+                            event_types::MESSAGE_SENT,
+                            "qq",
+                            chat_id,
+                            &send_result,
+                        );
+                    }
                     return Ok(send_result);
                 }
                 Err(e) => {
@@ -765,18 +767,6 @@ impl QqAdapter {
         }))
     }
 }
-
-fn publish_send_event(
-    event_bus: &Option<Arc<EventBus>>,
-    event_type: &str,
-    chat_id: &str,
-    result: &SendResult,
-) {
-    if let Some(bus) = event_bus {
-        bus.publish_send_result(event_type, "qq", chat_id, result);
-    }
-}
-
 #[async_trait]
 impl PlatformAdapter for QqAdapter {
     fn platform_name(&self) -> &str {
@@ -995,16 +985,18 @@ impl PlatformAdapter for QqAdapter {
                 SendResult::fail(e.to_string(), true)
             }
         };
-        publish_send_event(
-            &self.event_bus,
-            if send_result.success {
+        if let Some(bus) = &self.event_bus {
+            bus.publish_send_result(
+                if send_result.success {
                 event_types::MESSAGE_SENT
             } else {
                 event_types::MESSAGE_FAILED
             },
-            &params.chat_id,
-            &send_result,
-        );
+                "qq",
+                &params.chat_id,
+                &send_result,
+            );
+        }
         Ok(send_result)
     }
 
@@ -1042,12 +1034,14 @@ impl PlatformAdapter for QqAdapter {
                         error_code: None,
                         retryable: false,
                     };
-                    publish_send_event(
-                        &self.event_bus,
-                        event_types::MESSAGE_SENT,
-                        &params.chat_id,
-                        &send_result,
-                    );
+                    if let Some(bus) = &self.event_bus {
+                        bus.publish_send_result(
+                            event_types::MESSAGE_SENT,
+                            "qq",
+                            &params.chat_id,
+                            &send_result,
+                        );
+                    }
                     return Ok(send_result);
                 }
                 Err(c2c_err) => {
@@ -1101,16 +1095,18 @@ impl PlatformAdapter for QqAdapter {
                     SendResult::fail(e.to_string(), true)
                 }
             };
-            publish_send_event(
-                &self.event_bus,
-                if send_result.success {
+            if let Some(bus) = &self.event_bus {
+                bus.publish_send_result(
+                    if send_result.success {
                     event_types::MESSAGE_SENT
                 } else {
                     event_types::MESSAGE_FAILED
                 },
-                &params.chat_id,
-                &send_result,
-            );
+                    "qq",
+                    &params.chat_id,
+                    &send_result,
+                );
+            }
             return Ok(send_result);
         }
 
@@ -1172,16 +1168,18 @@ impl PlatformAdapter for QqAdapter {
                 }
             }
         };
-        publish_send_event(
-            &self.event_bus,
-            if send_result.success {
+        if let Some(bus) = &self.event_bus {
+            bus.publish_send_result(
+                if send_result.success {
                 event_types::MESSAGE_SENT
             } else {
                 event_types::MESSAGE_FAILED
             },
-            &params.chat_id,
-            &send_result,
-        );
+                "qq",
+                &params.chat_id,
+                &send_result,
+            );
+        }
         Ok(send_result)
     }
 
@@ -1261,16 +1259,18 @@ impl PlatformAdapter for QqAdapter {
                 SendResult::fail(e.to_string(), true)
             }
         };
-        publish_send_event(
-            &self.event_bus,
-            if send_result.success {
+        if let Some(bus) = &self.event_bus {
+            bus.publish_send_result(
+                if send_result.success {
                 event_types::MESSAGE_SENT
             } else {
                 event_types::MESSAGE_FAILED
             },
-            &params.chat_id,
-            &send_result,
-        );
+                "qq",
+                &params.chat_id,
+                &send_result,
+            );
+        }
         Ok(send_result)
     }
 
