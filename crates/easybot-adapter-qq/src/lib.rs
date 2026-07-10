@@ -329,10 +329,8 @@ fn mime_to_file_type(mime_type: &str) -> u32 {
         1
     } else if mime_type.starts_with("video/") {
         2
-    } else if mime_type.starts_with("audio/") {
-        3
     } else {
-        1 // 默认为图片
+        3 // 非图片/视频默认使用文件类型（file_type=3），避免文档/PDF/音频被误作为图片发送
     }
 }
 
@@ -540,6 +538,59 @@ impl QqAdapter {
         }
     }
 
+    /// 从 MediaAttachment 解析文件数据、文件名和 MIME 类型。
+    /// 优先 base64 解码，其次 URL 下载。含 25MB 大小限制。
+    /// 提取为共享方法消除 send_c2c_media_upload_only 和 send_group_media_upload 中的重复。
+    async fn resolve_upload_media(
+        client: &reqwest::Client,
+        media: &MediaAttachment,
+        label: &str,
+    ) -> Result<(Vec<u8>, String, String), GatewayError> {
+        if let Some(data_b64) = &media.data {
+            use base64::Engine;
+            let decoded = base64::engine::general_purpose::STANDARD
+                .decode(data_b64)
+                .map_err(|e| {
+                    GatewayError::Internal(format!("QQ {}: base64 decode failed: {}", label, e))
+                })?;
+            let fname = media.filename.clone().unwrap_or_else(|| "file".to_string());
+            Ok((decoded, fname, media.mime_type.clone()))
+        } else if let Some(file_url) = &media.url {
+            let resp = client.get(file_url).send().await.map_err(|e| {
+                GatewayError::Internal(format!("QQ {}: download failed: {}", label, e))
+            })?;
+            // SECURITY: Reject oversized downloads to prevent OOM
+            if let Some(cl) = resp.content_length()
+                && cl > 25 * 1024 * 1024
+            {
+                return Err(GatewayError::Internal(format!(
+                    "Rejected {} download: {} bytes exceeds 25MB limit",
+                    label, cl,
+                )));
+            }
+            let ct = resp
+                .headers()
+                .get("content-type")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("application/octet-stream")
+                .to_string();
+            let data = resp.bytes().await.map_err(|e| {
+                GatewayError::Internal(format!("QQ {}: download read failed: {}", label, e))
+            })?;
+            let fname = media
+                .filename
+                .clone()
+                .or_else(|| file_url.split('/').next_back().map(|s| s.to_string()))
+                .unwrap_or_else(|| "file".to_string());
+            Ok((data.to_vec(), fname, ct))
+        } else {
+            Err(GatewayError::Internal(format!(
+                "No media data or URL provided for QQ {}",
+                label,
+            )))
+        }
+    }
+
     /// 从 URL/base64 获取文件数据后上传到聊天（自动尝试 C2C 和群聊端点）
     ///
     /// 直接使用 QQ 文件上传端点（srv_send_msg=true），
@@ -551,51 +602,8 @@ impl QqAdapter {
         media: &MediaAttachment,
         text: Option<String>,
     ) -> Result<QqSendMessageResponse, GatewayError> {
-        // Resolve file data from base64 or URL
-        let client = self.client().clone();
-
-        let (file_data, filename, mime_type) = if let Some(data_b64) = &media.data {
-            use base64::Engine;
-            let decoded = base64::engine::general_purpose::STANDARD
-                .decode(data_b64)
-                .map_err(|e| {
-                    GatewayError::Internal(format!("QQ upload: base64 decode failed: {}", e))
-                })?;
-            let fname = media.filename.clone().unwrap_or_else(|| "file".to_string());
-            (decoded, fname, media.mime_type.clone())
-        } else if let Some(file_url) = &media.url {
-            let resp = client.get(file_url).send().await.map_err(|e| {
-                GatewayError::Internal(format!("QQ upload: download failed: {}", e))
-            })?;
-            // SECURITY: Reject oversized downloads to prevent OOM
-            let content_length = resp.content_length().unwrap_or(0);
-            const MAX_DOWNLOAD_BYTES: u64 = 25 * 1024 * 1024; // 25MB
-            if content_length > MAX_DOWNLOAD_BYTES {
-                return Err(GatewayError::Internal(format!(
-                    "Rejected media download: {} bytes exceeds {} limit",
-                    content_length, MAX_DOWNLOAD_BYTES
-                )));
-            }
-            let ct = resp
-                .headers()
-                .get("content-type")
-                .and_then(|v| v.to_str().ok())
-                .unwrap_or("application/octet-stream")
-                .to_string();
-            let data = resp.bytes().await.map_err(|e| {
-                GatewayError::Internal(format!("QQ upload: download read failed: {}", e))
-            })?;
-            let fname = media
-                .filename
-                .clone()
-                .or_else(|| file_url.split('/').next_back().map(|s| s.to_string()))
-                .unwrap_or_else(|| "file".to_string());
-            (data.to_vec(), fname, ct)
-        } else {
-            return Err(GatewayError::Internal(
-                "No media data or URL provided for QQ upload".to_string(),
-            ));
-        };
+        let (file_data, filename, mime_type) =
+            Self::resolve_upload_media(&self.client().clone(), media, "upload").await?;
 
         // Try C2C upload first, then group upload as fallback
         let mut last_error = None;
@@ -655,51 +663,8 @@ impl QqAdapter {
         media: &MediaAttachment,
         text: Option<String>,
     ) -> Result<SendResult, GatewayError> {
-        // Resolve file data from base64 or URL
-        let client = self.client().clone();
-
-        let (file_data, filename, mime_type) = if let Some(data_b64) = &media.data {
-            use base64::Engine;
-            let decoded = base64::engine::general_purpose::STANDARD
-                .decode(data_b64)
-                .map_err(|e| {
-                    GatewayError::Internal(format!("QQ group upload: base64 decode failed: {}", e))
-                })?;
-            let fname = media.filename.clone().unwrap_or_else(|| "file".to_string());
-            (decoded, fname, media.mime_type.clone())
-        } else if let Some(file_url) = &media.url {
-            let resp = client.get(file_url).send().await.map_err(|e| {
-                GatewayError::Internal(format!("QQ group upload: download failed: {}", e))
-            })?;
-            // SECURITY: Reject oversized downloads to prevent OOM
-            if let Some(cl) = resp.content_length()
-                && cl > 25 * 1024 * 1024
-            {
-                return Err(GatewayError::Internal(format!(
-                    "Rejected media download: {} bytes exceeds 25MB limit",
-                    cl
-                )));
-            }
-            let ct = resp
-                .headers()
-                .get("content-type")
-                .and_then(|v| v.to_str().ok())
-                .unwrap_or("application/octet-stream")
-                .to_string();
-            let data = resp.bytes().await.map_err(|e| {
-                GatewayError::Internal(format!("QQ group upload: download read failed: {}", e))
-            })?;
-            let fname = media
-                .filename
-                .clone()
-                .or_else(|| file_url.split('/').next_back().map(|s| s.to_string()))
-                .unwrap_or_else(|| "file".to_string());
-            (data.to_vec(), fname, ct)
-        } else {
-            return Err(GatewayError::Internal(
-                "No media data or URL provided for QQ group upload".to_string(),
-            ));
-        };
+        let (file_data, filename, mime_type) =
+            Self::resolve_upload_media(&self.client().clone(), media, "group_upload").await?;
 
         // Try group endpoint first, then C2C as fallback
         let mut last_error = None;
@@ -741,12 +706,14 @@ impl QqAdapter {
                         error_code: None,
                         retryable: false,
                     };
-                    publish_send_event(
-                        &self.event_bus,
-                        event_types::MESSAGE_SENT,
-                        chat_id,
-                        &send_result,
-                    );
+                    if let Some(bus) = &self.event_bus {
+                        bus.publish_send_result(
+                            event_types::MESSAGE_SENT,
+                            "qq",
+                            chat_id,
+                            &send_result,
+                        );
+                    }
                     return Ok(send_result);
                 }
                 Err(e) => {
@@ -765,18 +732,6 @@ impl QqAdapter {
         }))
     }
 }
-
-fn publish_send_event(
-    event_bus: &Option<Arc<EventBus>>,
-    event_type: &str,
-    chat_id: &str,
-    result: &SendResult,
-) {
-    if let Some(bus) = event_bus {
-        bus.publish_send_result(event_type, "qq", chat_id, result);
-    }
-}
-
 #[async_trait]
 impl PlatformAdapter for QqAdapter {
     fn platform_name(&self) -> &str {
@@ -873,6 +828,7 @@ impl PlatformAdapter for QqAdapter {
             bot_info.name,
             bot_info.id
         );
+        self.heartbeat.record_connection();
 
         if let Some(ref event_bus) = self.event_bus {
             let (cancel_tx, cancel_rx) = broadcast::channel(1);
@@ -929,7 +885,7 @@ impl PlatformAdapter for QqAdapter {
             messages_in: self.messages_in.load(Ordering::Relaxed),
             messages_out: self.messages_out.load(Ordering::Relaxed),
             errors: self.errors.load(Ordering::Relaxed),
-            uptime: None,
+            uptime: self.heartbeat.uptime_secs().into(),
         }
     }
 
@@ -961,7 +917,7 @@ impl PlatformAdapter for QqAdapter {
             connected: self.state == AdapterState::Connected,
             health: None,
             last_error: None,
-            uptime: None,
+            uptime: self.heartbeat.uptime_secs().into(),
             messages_in: self.messages_in.load(Ordering::Relaxed),
             messages_out: self.messages_out.load(Ordering::Relaxed),
         }
@@ -994,16 +950,18 @@ impl PlatformAdapter for QqAdapter {
                 SendResult::fail(e.to_string(), true)
             }
         };
-        publish_send_event(
-            &self.event_bus,
-            if send_result.success {
-                event_types::MESSAGE_SENT
-            } else {
-                event_types::MESSAGE_FAILED
-            },
-            &params.chat_id,
-            &send_result,
-        );
+        if let Some(bus) = &self.event_bus {
+            bus.publish_send_result(
+                if send_result.success {
+                    event_types::MESSAGE_SENT
+                } else {
+                    event_types::MESSAGE_FAILED
+                },
+                "qq",
+                &params.chat_id,
+                &send_result,
+            );
+        }
         Ok(send_result)
     }
 
@@ -1041,12 +999,14 @@ impl PlatformAdapter for QqAdapter {
                         error_code: None,
                         retryable: false,
                     };
-                    publish_send_event(
-                        &self.event_bus,
-                        event_types::MESSAGE_SENT,
-                        &params.chat_id,
-                        &send_result,
-                    );
+                    if let Some(bus) = &self.event_bus {
+                        bus.publish_send_result(
+                            event_types::MESSAGE_SENT,
+                            "qq",
+                            &params.chat_id,
+                            &send_result,
+                        );
+                    }
                     return Ok(send_result);
                 }
                 Err(c2c_err) => {
@@ -1100,16 +1060,18 @@ impl PlatformAdapter for QqAdapter {
                     SendResult::fail(e.to_string(), true)
                 }
             };
-            publish_send_event(
-                &self.event_bus,
-                if send_result.success {
-                    event_types::MESSAGE_SENT
-                } else {
-                    event_types::MESSAGE_FAILED
-                },
-                &params.chat_id,
-                &send_result,
-            );
+            if let Some(bus) = &self.event_bus {
+                bus.publish_send_result(
+                    if send_result.success {
+                        event_types::MESSAGE_SENT
+                    } else {
+                        event_types::MESSAGE_FAILED
+                    },
+                    "qq",
+                    &params.chat_id,
+                    &send_result,
+                );
+            }
             return Ok(send_result);
         }
 
@@ -1171,16 +1133,18 @@ impl PlatformAdapter for QqAdapter {
                 }
             }
         };
-        publish_send_event(
-            &self.event_bus,
-            if send_result.success {
-                event_types::MESSAGE_SENT
-            } else {
-                event_types::MESSAGE_FAILED
-            },
-            &params.chat_id,
-            &send_result,
-        );
+        if let Some(bus) = &self.event_bus {
+            bus.publish_send_result(
+                if send_result.success {
+                    event_types::MESSAGE_SENT
+                } else {
+                    event_types::MESSAGE_FAILED
+                },
+                "qq",
+                &params.chat_id,
+                &send_result,
+            );
+        }
         Ok(send_result)
     }
 
@@ -1260,16 +1224,18 @@ impl PlatformAdapter for QqAdapter {
                 SendResult::fail(e.to_string(), true)
             }
         };
-        publish_send_event(
-            &self.event_bus,
-            if send_result.success {
-                event_types::MESSAGE_SENT
-            } else {
-                event_types::MESSAGE_FAILED
-            },
-            &params.chat_id,
-            &send_result,
-        );
+        if let Some(bus) = &self.event_bus {
+            bus.publish_send_result(
+                if send_result.success {
+                    event_types::MESSAGE_SENT
+                } else {
+                    event_types::MESSAGE_FAILED
+                },
+                "qq",
+                &params.chat_id,
+                &send_result,
+            );
+        }
         Ok(send_result)
     }
 

@@ -16,6 +16,7 @@ use std::sync::Arc;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
+use tokio::sync::Semaphore;
 
 use async_trait::async_trait;
 use easybot_core::bus::EventBus;
@@ -46,7 +47,7 @@ pub struct TelegramAdapter {
     state: AdapterState,
     bot_info: Option<BotInfo>,
     capabilities: Vec<Capability>,
-    messages_in: AtomicU64,
+    messages_in: Arc<AtomicU64>,
     messages_out: AtomicU64,
     errors: AtomicU64,
     event_bus: Option<Arc<EventBus>>,
@@ -84,7 +85,7 @@ impl TelegramAdapter {
                 (Streaming, true),
                 (ChatList, false),
             ],
-            messages_in: AtomicU64::new(0),
+            messages_in: Arc::new(AtomicU64::new(0)),
             messages_out: AtomicU64::new(0),
             errors: AtomicU64::new(0),
             event_bus: None,
@@ -403,14 +404,25 @@ impl TelegramAdapter {
             let desc = api_resp
                 .description
                 .unwrap_or_else(|| "Unknown error".to_string());
-            Err(GatewayError::Internal(format!(
-                "Telegram API error: {}",
-                desc
-            )))
+            let err = GatewayError::Internal(format!("Telegram API error: {}", desc));
+
+            // 429 Too Many Requests: 遵守 Telegram 的 retry_after 延迟
+            if api_resp.error_code == Some(429)
+                && let Some(retry_after) = api_resp.parameters.as_ref().and_then(|p| p.retry_after)
+            {
+                tracing::warn!(
+                    "Telegram API 429 rate limited, retrying after {}s",
+                    retry_after
+                );
+                tokio::time::sleep(Duration::from_secs(retry_after as u64)).await;
+            }
+
+            Err(err)
         }
     }
 
     /// getUpdates 长轮询循环
+    #[allow(clippy::too_many_arguments)]
     async fn polling_loop(
         client: reqwest::Client,
         token: String,
@@ -419,6 +431,7 @@ impl TelegramAdapter {
         mut cancel_rx: broadcast::Receiver<()>,
         heartbeat: Heartbeat,
         admin_cache: AdminCache,
+        messages_in: Arc<AtomicU64>,
     ) {
         let mut offset: i64 = 0;
         let mut poll_errors: u32 = 0;
@@ -435,30 +448,46 @@ impl TelegramAdapter {
                         Ok(updates) => {
                             poll_errors = 0;
                             heartbeat.beat(); // liveness: successful poll
+
+                            // 限制消息处理并发数，避免批量消息时 API 过载
+                            let permit = Arc::new(Semaphore::new(5));
+
                             for update in updates {
                                 if update.update_id >= offset {
                                     offset = update.update_id + 1;
                                 }
                                 // Handle chat_member updates → real-time admin cache update
+                                // 保持串行（共享 cache 写入）
                                 if let Some(ref member_update) = update.chat_member {
                                     Self::update_admin_cache(&admin_cache, member_update).await;
                                 }
-                                // Handle messages → resolve sender role from cache/API
+                                // Handle messages → 并行处理（Semaphore 控制并发上限）
                                 if let Some(tg_msg) = update.message {
-                                    let chat_id = tg_msg.chat.id;
-                                    let user_id = tg_msg.from.as_ref().map(|u| u.id);
-                                    let sender_role = Self::resolve_sender_role(
-                                        &admin_cache, &client, &base_url, &token,
-                                        chat_id, user_id,
-                                    ).await;
-                                    if let Some(inbound) = Self::convert_message(tg_msg, sender_role) {
-                                        let event = GatewayEvent::new(
-                                            event_types::MESSAGE_INBOUND,
-                                            "telegram",
-                                            serde_json::to_value(&inbound).unwrap_or_default(),
-                                        );
-                                        event_bus.publish(event);
-                                    }
+                                    let permit = permit.clone();
+                                    let admin_cache = admin_cache.clone();
+                                    let client = client.clone();
+                                    let base_url = base_url.clone();
+                                    let token = token.clone();
+                                    let eb = event_bus.clone();
+                                    let mi = messages_in.clone();
+                                    tokio::spawn(async move {
+                                        let _guard = permit.acquire().await.expect("Semaphore");
+                                        let chat_id = tg_msg.chat.id;
+                                        let user_id = tg_msg.from.as_ref().map(|u| u.id);
+                                        let sender_role = Self::resolve_sender_role(
+                                            &admin_cache, &client, &base_url, &token,
+                                            chat_id, user_id,
+                                        ).await;
+                                        if let Some(inbound) = Self::convert_message(tg_msg, sender_role) {
+                                            mi.fetch_add(1, Ordering::Relaxed);
+                                            let event = GatewayEvent::new(
+                                                event_types::MESSAGE_INBOUND,
+                                                "telegram",
+                                                serde_json::to_value(&inbound).unwrap_or_default(),
+                                            );
+                                            eb.publish(event);
+                                        }
+                                    });
                                 }
                             }
                         }
@@ -632,17 +661,6 @@ impl Default for TelegramAdapter {
 }
 
 /// Publish send result via the unified EventBus method
-fn publish_send_event(
-    event_bus: &Option<Arc<EventBus>>,
-    event_type: &str,
-    chat_id: &str,
-    result: &SendResult,
-) {
-    if let Some(bus) = event_bus {
-        bus.publish_send_result(event_type, "telegram", chat_id, result);
-    }
-}
-
 #[async_trait]
 impl PlatformAdapter for TelegramAdapter {
     fn platform_name(&self) -> &str {
@@ -734,6 +752,7 @@ impl PlatformAdapter for TelegramAdapter {
             bot.first_name,
             bot.username.as_deref().unwrap_or("unknown")
         );
+        self.heartbeat.record_connection();
 
         // 启动长轮询（如果配置了 EventBus）
         if let Some(event_bus) = self.event_bus.clone() {
@@ -747,6 +766,7 @@ impl PlatformAdapter for TelegramAdapter {
                 .unwrap_or_else(|| TELEGRAM_API.to_string());
             let hb = self.heartbeat.clone();
             let ac = self.admin_cache.clone();
+            let mi = self.messages_in.clone();
             // 复用适配器的 HTTP 连接池（reqwest::Client 是 Arc 包装，clone 廉价）
             let polling_client = self.http_client().clone();
 
@@ -759,6 +779,7 @@ impl PlatformAdapter for TelegramAdapter {
                     cancel_rx,
                     hb,
                     ac,
+                    mi,
                 )
                 .await;
             });
@@ -794,13 +815,13 @@ impl PlatformAdapter for TelegramAdapter {
         HealthReport {
             status: self.health_status(),
             connected: self.state == AdapterState::Connected,
-            last_connected_at: None,
-            last_error_at: None,
+            last_connected_at: self.heartbeat.last_connected_at(),
+            last_error_at: self.heartbeat.last_error_at(),
             last_error: None,
             messages_in: self.messages_in.load(Ordering::Relaxed),
             messages_out: self.messages_out.load(Ordering::Relaxed),
             errors: self.errors.load(Ordering::Relaxed),
-            uptime: None,
+            uptime: self.heartbeat.uptime_secs().into(),
         }
     }
 
@@ -840,12 +861,14 @@ impl PlatformAdapter for TelegramAdapter {
             Err(e) => {
                 self.errors.fetch_add(1, Ordering::Relaxed);
                 let fail = SendResult::fail(e.to_string(), true);
-                publish_send_event(
-                    &self.event_bus,
-                    event_types::MESSAGE_FAILED,
-                    &params.chat_id,
-                    &fail,
-                );
+                if let Some(bus) = &self.event_bus {
+                    bus.publish_send_result(
+                        event_types::MESSAGE_FAILED,
+                        "telegram",
+                        &params.chat_id,
+                        &fail,
+                    );
+                }
                 return Ok(fail);
             }
         };
@@ -860,12 +883,14 @@ impl PlatformAdapter for TelegramAdapter {
             error_code: None,
             retryable: false,
         };
-        publish_send_event(
-            &self.event_bus,
-            event_types::MESSAGE_SENT,
-            &params.chat_id,
-            &send_result,
-        );
+        if let Some(bus) = &self.event_bus {
+            bus.publish_send_result(
+                event_types::MESSAGE_SENT,
+                "telegram",
+                &params.chat_id,
+                &send_result,
+            );
+        }
         Ok(send_result)
     }
 
@@ -915,12 +940,14 @@ impl PlatformAdapter for TelegramAdapter {
                 Err(e) => {
                     self.errors.fetch_add(1, Ordering::Relaxed);
                     let fail = SendResult::fail(e.to_string(), true);
-                    publish_send_event(
-                        &self.event_bus,
-                        event_types::MESSAGE_FAILED,
-                        &params.chat_id,
-                        &fail,
-                    );
+                    if let Some(bus) = &self.event_bus {
+                        bus.publish_send_result(
+                            event_types::MESSAGE_FAILED,
+                            "telegram",
+                            &params.chat_id,
+                            &fail,
+                        );
+                    }
                     return Ok(fail);
                 }
             };
@@ -935,12 +962,14 @@ impl PlatformAdapter for TelegramAdapter {
                 error_code: None,
                 retryable: false,
             };
-            publish_send_event(
-                &self.event_bus,
-                event_types::MESSAGE_SENT,
-                &params.chat_id,
-                &send_result,
-            );
+            if let Some(bus) = &self.event_bus {
+                bus.publish_send_result(
+                    event_types::MESSAGE_SENT,
+                    "telegram",
+                    &params.chat_id,
+                    &send_result,
+                );
+            }
             Ok(send_result)
         } else if let Some(data_b64) = &params.media.data {
             // Base64 数据 → multipart/form-data 上传
@@ -1000,24 +1029,28 @@ impl PlatformAdapter for TelegramAdapter {
                         error_code: None,
                         retryable: false,
                     };
-                    publish_send_event(
-                        &self.event_bus,
-                        event_types::MESSAGE_SENT,
-                        &params.chat_id,
-                        &send_result,
-                    );
+                    if let Some(bus) = &self.event_bus {
+                        bus.publish_send_result(
+                            event_types::MESSAGE_SENT,
+                            "telegram",
+                            &params.chat_id,
+                            &send_result,
+                        );
+                    }
                     Ok(send_result)
                 } else {
                     let fail = SendResult::fail(
                         "Telegram API returned ok but no result".to_string(),
                         false,
                     );
-                    publish_send_event(
-                        &self.event_bus,
-                        event_types::MESSAGE_FAILED,
-                        &params.chat_id,
-                        &fail,
-                    );
+                    if let Some(bus) = &self.event_bus {
+                        bus.publish_send_result(
+                            event_types::MESSAGE_FAILED,
+                            "telegram",
+                            &params.chat_id,
+                            &fail,
+                        );
+                    }
                     Err(GatewayError::Internal(
                         "Telegram API returned ok but no result".to_string(),
                     ))
@@ -1028,23 +1061,27 @@ impl PlatformAdapter for TelegramAdapter {
                     .unwrap_or_else(|| "Unknown error".to_string());
                 self.errors.fetch_add(1, Ordering::Relaxed);
                 let fail = SendResult::fail(format!("Telegram API upload error: {}", desc), true);
-                publish_send_event(
-                    &self.event_bus,
-                    event_types::MESSAGE_FAILED,
-                    &params.chat_id,
-                    &fail,
-                );
+                if let Some(bus) = &self.event_bus {
+                    bus.publish_send_result(
+                        event_types::MESSAGE_FAILED,
+                        "telegram",
+                        &params.chat_id,
+                        &fail,
+                    );
+                }
                 Ok(fail)
             }
         } else {
             self.errors.fetch_add(1, Ordering::Relaxed);
             let fail = SendResult::fail("No media URL or data provided".to_string(), false);
-            publish_send_event(
-                &self.event_bus,
-                event_types::MESSAGE_FAILED,
-                &params.chat_id,
-                &fail,
-            );
+            if let Some(bus) = &self.event_bus {
+                bus.publish_send_result(
+                    event_types::MESSAGE_FAILED,
+                    "telegram",
+                    &params.chat_id,
+                    &fail,
+                );
+            }
             Ok(fail)
         }
     }
@@ -1095,12 +1132,14 @@ impl PlatformAdapter for TelegramAdapter {
             Err(e) => {
                 self.errors.fetch_add(1, Ordering::Relaxed);
                 let fail = SendResult::fail(e.to_string(), true);
-                publish_send_event(
-                    &self.event_bus,
-                    event_types::MESSAGE_FAILED,
-                    &params.chat_id,
-                    &fail,
-                );
+                if let Some(bus) = &self.event_bus {
+                    bus.publish_send_result(
+                        event_types::MESSAGE_FAILED,
+                        "telegram",
+                        &params.chat_id,
+                        &fail,
+                    );
+                }
                 return Ok(fail);
             }
         };
@@ -1115,12 +1154,14 @@ impl PlatformAdapter for TelegramAdapter {
             error_code: None,
             retryable: false,
         };
-        publish_send_event(
-            &self.event_bus,
-            event_types::MESSAGE_SENT,
-            &params.chat_id,
-            &send_result,
-        );
+        if let Some(bus) = &self.event_bus {
+            bus.publish_send_result(
+                event_types::MESSAGE_SENT,
+                "telegram",
+                &params.chat_id,
+                &send_result,
+            );
+        }
         Ok(send_result)
     }
 
@@ -1306,7 +1347,7 @@ impl PlatformAdapter for TelegramAdapter {
             connected: self.state == AdapterState::Connected,
             health: None,
             last_error: None,
-            uptime: None,
+            uptime: self.heartbeat.uptime_secs().into(),
             messages_in: self.messages_in.load(Ordering::Relaxed),
             messages_out: self.messages_out.load(Ordering::Relaxed),
         }
@@ -1609,5 +1650,202 @@ mod tests {
             "chat_type mapping for '{}'",
             tg_type
         );
+    }
+
+    // ── 媒体消息类型 convert 测试 ──
+
+    fn make_base_msg() -> TelegramMessage {
+        TelegramMessage {
+            message_id: 100,
+            from: Some(TelegramUser {
+                id: 12345,
+                is_bot: false,
+                first_name: "TestUser".to_string(),
+                last_name: None,
+                username: None,
+                language_code: None,
+            }),
+            chat: TelegramChat {
+                id: -100123456,
+                chat_type: "private".to_string(),
+                title: None,
+                username: None,
+                first_name: Some("TestUser".to_string()),
+                last_name: None,
+            },
+            date: 1700000000,
+            text: None,
+            entities: None,
+            reply_to_message: None,
+            caption: None,
+            photo: None,
+            document: None,
+            video: None,
+            audio: None,
+            voice: None,
+            sticker: None,
+            animation: None,
+            video_note: None,
+        }
+    }
+
+    #[test]
+    fn test_convert_photo_message() {
+        let mut msg = make_base_msg();
+        msg.photo = Some(vec![TelegramPhotoSize {
+            file_id: "photo_file_id".to_string(),
+            file_unique_id: "unique_photo".to_string(),
+            width: 800,
+            height: 600,
+            file_size: Some(102400),
+        }]);
+        let inbound = TelegramAdapter::convert_message(msg, None).unwrap();
+        assert_eq!(inbound.msg_type, MessageType::Image);
+        assert!(inbound.media.is_some());
+        let media = inbound.media.unwrap();
+        assert_eq!(media.len(), 1);
+        assert_eq!(media[0].media_type, MediaType::Image);
+        assert_eq!(media[0].url.as_deref(), Some("photo_file_id"));
+        assert_eq!(media[0].mime_type, "image/jpeg");
+    }
+
+    #[test]
+    fn test_convert_document_message() {
+        let mut msg = make_base_msg();
+        msg.document = Some(TelegramDocument {
+            file_id: "doc_file_id".to_string(),
+            file_unique_id: "unique_doc".to_string(),
+            thumbnail: None,
+            file_name: Some("report.pdf".to_string()),
+            mime_type: Some("application/pdf".to_string()),
+            file_size: Some(204800),
+        });
+        let inbound = TelegramAdapter::convert_message(msg, None).unwrap();
+        assert_eq!(inbound.msg_type, MessageType::File);
+        assert_eq!(
+            inbound.media.as_ref().unwrap()[0].media_type,
+            MediaType::Document
+        );
+        assert_eq!(
+            inbound.media.as_ref().unwrap()[0].filename.as_deref(),
+            Some("report.pdf")
+        );
+    }
+
+    #[test]
+    fn test_convert_video_message() {
+        let mut msg = make_base_msg();
+        msg.video = Some(TelegramVideo {
+            file_id: "video_file_id".to_string(),
+            file_unique_id: "unique_video".to_string(),
+            width: 1920,
+            height: 1080,
+            duration: 30,
+            thumbnail: None,
+            mime_type: Some("video/mp4".to_string()),
+            file_size: Some(10485760),
+        });
+        let inbound = TelegramAdapter::convert_message(msg, None).unwrap();
+        assert_eq!(inbound.msg_type, MessageType::Video);
+        assert_eq!(
+            inbound.media.as_ref().unwrap()[0].media_type,
+            MediaType::Video
+        );
+    }
+
+    #[test]
+    fn test_convert_audio_message() {
+        let mut msg = make_base_msg();
+        msg.audio = Some(TelegramAudio {
+            file_id: "audio_file_id".to_string(),
+            file_unique_id: "unique_audio".to_string(),
+            duration: 180,
+            performer: Some("Artist".to_string()),
+            title: Some("Song".to_string()),
+            mime_type: Some("audio/mpeg".to_string()),
+            file_size: Some(5120000),
+        });
+        let inbound = TelegramAdapter::convert_message(msg, None).unwrap();
+        assert_eq!(inbound.msg_type, MessageType::Audio);
+        assert_eq!(
+            inbound.media.as_ref().unwrap()[0].media_type,
+            MediaType::Audio
+        );
+    }
+
+    #[test]
+    fn test_convert_voice_message() {
+        let mut msg = make_base_msg();
+        msg.voice = Some(TelegramVoice {
+            file_id: "voice_file_id".to_string(),
+            file_unique_id: "unique_voice".to_string(),
+            duration: 15,
+            mime_type: Some("audio/ogg".to_string()),
+            file_size: Some(256000),
+        });
+        let inbound = TelegramAdapter::convert_message(msg, None).unwrap();
+        assert_eq!(inbound.msg_type, MessageType::Audio);
+        assert_eq!(
+            inbound.media.as_ref().unwrap()[0].media_type,
+            MediaType::Audio
+        );
+    }
+
+    #[test]
+    fn test_convert_sticker_message() {
+        let mut msg = make_base_msg();
+        msg.sticker = Some(TelegramSticker {
+            file_id: "sticker_file_id".to_string(),
+            file_unique_id: "unique_sticker".to_string(),
+            width: 512,
+            height: 512,
+            is_animated: false,
+            is_video: false,
+            thumbnail: None,
+            file_size: Some(128000),
+        });
+        let inbound = TelegramAdapter::convert_message(msg, None).unwrap();
+        assert_eq!(inbound.msg_type, MessageType::Sticker);
+        assert_eq!(
+            inbound.media.as_ref().unwrap()[0].media_type,
+            MediaType::Sticker
+        );
+    }
+
+    #[test]
+    fn test_convert_animation_message() {
+        let mut msg = make_base_msg();
+        msg.animation = Some(TelegramAnimation {
+            file_id: "anim_file_id".to_string(),
+            file_unique_id: "unique_anim".to_string(),
+            width: 320,
+            height: 240,
+            duration: 5,
+            thumbnail: None,
+            mime_type: Some("image/gif".to_string()),
+            file_size: Some(500000),
+        });
+        let inbound = TelegramAdapter::convert_message(msg, None).unwrap();
+        assert_eq!(inbound.msg_type, MessageType::Animation);
+        assert_eq!(
+            inbound.media.as_ref().unwrap()[0].media_type,
+            MediaType::Animation
+        );
+    }
+
+    #[test]
+    fn test_convert_caption_fallback() {
+        let mut msg = make_base_msg();
+        msg.photo = Some(vec![TelegramPhotoSize {
+            file_id: "photo_with_caption".to_string(),
+            file_unique_id: "unique_cap".to_string(),
+            width: 400,
+            height: 300,
+            file_size: None,
+        }]);
+        msg.caption = Some("A beautiful photo".to_string());
+        let inbound = TelegramAdapter::convert_message(msg, None).unwrap();
+        assert_eq!(inbound.msg_type, MessageType::Image);
+        assert_eq!(inbound.text.as_deref(), Some("A beautiful photo"));
     }
 }

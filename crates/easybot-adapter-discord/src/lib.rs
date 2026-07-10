@@ -25,9 +25,11 @@ use easybot_core::types::error::GatewayError;
 use easybot_core::types::event::GatewayEvent;
 use easybot_core::types::event::event_types;
 use easybot_core::types::message::*;
+use tokio::sync::Semaphore;
 use tokio::sync::broadcast;
 use twilight_gateway::{CloseFrame, EventTypeFlags, Intents, Shard, ShardId, StreamExt as _};
 use twilight_model::gateway::event::Event;
+use twilight_model::gateway::payload::incoming::GuildCreate;
 use twilight_model::guild::Permissions;
 use types::*;
 
@@ -42,7 +44,7 @@ pub struct DiscordAdapter {
     state: AdapterState,
     bot_info: Option<BotInfo>,
     capabilities: Vec<Capability>,
-    messages_in: AtomicU64,
+    messages_in: Arc<AtomicU64>,
     messages_out: AtomicU64,
     errors: AtomicU64,
     event_bus: Option<Arc<EventBus>>,
@@ -55,6 +57,8 @@ pub struct DiscordAdapter {
     bot_user_id: Option<String>,
     /// 服务器 Owner 缓存（guild_id → owner_user_id），事件驱动更新
     guild_owner_cache: Arc<Mutex<HashMap<String, String>>>,
+    /// Guild 名称缓存（从 Ready 事件中填充），用于入站消息的 chat_name
+    guild_name_cache: Arc<Mutex<HashMap<String, String>>>,
 }
 
 impl DiscordAdapter {
@@ -113,7 +117,7 @@ impl DiscordAdapter {
                 });
                 caps
             },
-            messages_in: AtomicU64::new(0),
+            messages_in: Arc::new(AtomicU64::new(0)),
             messages_out: AtomicU64::new(0),
             errors: AtomicU64::new(0),
             event_bus: None,
@@ -122,6 +126,7 @@ impl DiscordAdapter {
             http_client: OnceLock::new(),
             bot_user_id: None,
             guild_owner_cache: Arc::new(Mutex::new(HashMap::new())),
+            guild_name_cache: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -158,7 +163,7 @@ impl DiscordAdapter {
         format!("Bot {}", token)
     }
 
-    /// 统一调用 Discord REST API
+    /// 统一调用 Discord REST API，含 429 自动重试
     async fn api_call<T: serde::de::DeserializeOwned>(
         &self,
         method: reqwest::Method,
@@ -168,39 +173,46 @@ impl DiscordAdapter {
         let client = self.http_client();
         let url = format!("{}{}", self.api_base_url(), endpoint);
 
-        let mut req = client
-            .request(method, &url)
-            .header("Authorization", self.auth_header());
+        // 最多重试一次 429
+        for _attempt in 0..2 {
+            let mut req = client
+                .request(method.clone(), &url)
+                .header("Authorization", self.auth_header());
 
-        if let Some(json) = body {
-            req = req.json(&json);
-        }
+            if let Some(json) = &body {
+                req = req.json(json);
+            }
 
-        let resp = req
-            .send()
-            .await
-            .map_err(|e| GatewayError::Internal(format!("Discord API request failed: {}", e)))?;
+            let resp = req.send().await.map_err(|e| {
+                GatewayError::Internal(format!("Discord API request failed: {}", e))
+            })?;
 
-        let status = resp.status();
-        if !status.is_success() {
-            // 对 429 提前提取 Retry-After 头（必须在消费 body 前读取）
-            let retry_after = if status.as_u16() == 429 {
-                resp.headers()
+            let status = resp.status();
+            if status.is_success() {
+                return resp.json().await.map_err(|e| {
+                    GatewayError::Internal(format!("Discord API JSON parse failed: {}", e))
+                });
+            }
+
+            // 429 Too Many Requests: 等待 Retry-After 后重试
+            if status.as_u16() == 429 {
+                let retry_after = resp
+                    .headers()
                     .get("Retry-After")
                     .and_then(|v| v.to_str().ok())
                     .and_then(|s| s.parse::<f64>().ok())
-                    .map(|secs| (secs * 1000.0) as u64)
-            } else {
-                None
-            };
-            let error_text = resp.text().await.unwrap_or_default();
-            // SECURITY: Truncate error body to prevent leaking sensitive data
-            let safe_error: String = error_text.chars().take(256).collect();
-            if let Some(retry_ms) = retry_after {
-                return Err(GatewayError::RateLimited {
-                    retry_after_ms: retry_ms,
-                });
+                    .unwrap_or(1.0);
+                tracing::warn!(
+                    "Discord API 429 rate limited on {}, retrying after {:.1}s",
+                    endpoint,
+                    retry_after,
+                );
+                tokio::time::sleep(Duration::from_secs_f64(retry_after)).await;
+                continue;
             }
+
+            let error_text = resp.text().await.unwrap_or_default();
+            let safe_error: String = error_text.chars().take(256).collect();
             return Err(GatewayError::Internal(format!(
                 "Discord API {} {}: {}",
                 status.as_u16(),
@@ -209,9 +221,10 @@ impl DiscordAdapter {
             )));
         }
 
-        resp.json()
-            .await
-            .map_err(|e| GatewayError::Internal(format!("Discord API JSON parse failed: {}", e)))
+        Err(GatewayError::Internal(format!(
+            "Discord API rate limited on {} after retry",
+            endpoint,
+        )))
     }
 
     /// 将 Discord 消息转换为网关 InboundMessage
@@ -220,6 +233,7 @@ impl DiscordAdapter {
         msg: &twilight_model::channel::Message,
         bot_user_id: &str,
         guild_owner_id: Option<&str>,
+        guild_name: Option<&str>,
     ) -> Option<InboundMessage> {
         // 过滤自身消息，避免回环
         if msg.author.id.to_string() == bot_user_id {
@@ -292,7 +306,14 @@ impl DiscordAdapter {
             sender,
             recipient: Some(bot_user_id.to_string()),
             chat_id: msg.channel_id.to_string(),
-            chat_name: None,
+            // For guild channels: use cached guild name; for DMs: use author's display name
+            chat_name: guild_name.map(|n| n.to_string()).or_else(|| {
+                if msg.guild_id.is_none() {
+                    Some(msg.author.name.clone())
+                } else {
+                    None
+                }
+            }),
             chat_type,
             guild_id: msg.guild_id.map(|g| g.to_string()),
             thread_id: None,
@@ -354,6 +375,7 @@ impl DiscordAdapter {
     }
 
     /// Gateway Shard 事件循环（使用 twilight-gateway SDK）
+    #[allow(clippy::too_many_arguments)]
     async fn gateway_shard_loop(
         token: String,
         event_bus: Arc<EventBus>,
@@ -361,8 +383,15 @@ impl DiscordAdapter {
         mut cancel_rx: broadcast::Receiver<()>,
         heartbeat: Heartbeat,
         guild_owner_cache: Arc<Mutex<HashMap<String, String>>>,
+        guild_name_cache: Arc<Mutex<HashMap<String, String>>>,
+        messages_in: Arc<AtomicU64>,
     ) {
-        let intents = Intents::GUILD_MESSAGES | Intents::DIRECT_MESSAGES | Intents::MESSAGE_CONTENT;
+        // 限制并发 guild owner 查询数，避免大量 tokio::spawn 在启动时爆炸
+        let guild_fetch_permits = Arc::new(Semaphore::new(5));
+        let intents = Intents::GUILD_MESSAGES
+            | Intents::DIRECT_MESSAGES
+            | Intents::MESSAGE_CONTENT
+            | Intents::GUILDS;
         let mut shard = Shard::new(ShardId::ONE, token.clone(), intents);
         let http_client = reqwest::Client::new();
 
@@ -387,14 +416,17 @@ impl DiscordAdapter {
                                     .and_then(|cache| cache.get(gid).cloned())
                             });
 
-                            // Background fetch guild owner info if not cached
+                            // 有限并发的 guild owner 查询（Semaphore 控制，最多 5 个并发）
                             if owner_id.is_none()
                                 && let Some(ref gid) = guild_id_str {
                                     let cache = guild_owner_cache.clone();
                                     let client = http_client.clone();
                                     let t = token.clone();
                                     let g = gid.clone();
+                                    let permits = guild_fetch_permits.clone();
                                     tokio::spawn(async move {
+                                        // 获取并发许可，失败则跳过（避免 Semaphore 关闭时 panic）
+                                        let _permit = permits.acquire().await.ok();
                                         let url =
                                             format!("https://discord.com/api/v10/guilds/{}", g);
                                         if let Ok(resp) = client
@@ -417,11 +449,18 @@ impl DiscordAdapter {
                                     });
                                 }
 
+                            // Look up guild name from cache for chat_name
+                            let guild_name = guild_id_str.as_ref().and_then(|gid| {
+                                guild_name_cache.try_lock().ok()
+                                    .and_then(|cache| cache.get(gid).cloned())
+                            });
                             if let Some(inbound) = DiscordAdapter::convert_message(
                                 &msg.0,
                                 &bot_user_id,
                                 owner_id.as_deref(),
+                                guild_name.as_deref(),
                             ) {
+                                messages_in.fetch_add(1, Ordering::Relaxed);
                                 let event = GatewayEvent::new(
                                     event_types::MESSAGE_INBOUND,
                                     "discord",
@@ -440,6 +479,25 @@ impl DiscordAdapter {
                                     guild.id.to_string(),
                                     guild.owner_id.to_string(),
                                 );
+                            }
+                            // Also update guild name cache
+                            if let Ok(mut cache) = guild_name_cache.try_lock() {
+                                const GUILD_CACHE_LIMIT: usize = 5_000;
+                                if cache.len() > GUILD_CACHE_LIMIT {
+                                    cache.clear();
+                                }
+                                cache.insert(guild.id.to_string(), guild.name.clone());
+                            }
+                        }
+                        Some(Ok(Event::GuildCreate(guild))) => {
+                            if let GuildCreate::Available(g) = &*guild
+                                && let Ok(mut cache) = guild_name_cache.try_lock()
+                            {
+                                const GUILD_CACHE_LIMIT: usize = 5_000;
+                                if cache.len() > GUILD_CACHE_LIMIT {
+                                    cache.clear();
+                                }
+                                cache.insert(g.id.to_string(), g.name.clone());
                             }
                         }
                         other => {
@@ -476,31 +534,19 @@ enum EventAction {
 /// 而生产代码使用 `twilight_gateway::error::ReceiveMessageError`。
 ///
 /// # 注意
-/// 生产环境中 `Event::MessageCreate` 在 `gateway_shard_loop` 中被直接处理
-/// （含 guild owner 缓存查查），不会进入此函数。此处的 MessageCreate 分支
-/// 仅用于单元测试覆盖。
+/// 此函数处理非 MessageCreate 的 Gateway 事件（Ready, errors, stream end, 及其他忽略事件）。
+/// `Event::MessageCreate` 和 `Event::GuildUpdate` 在 `gateway_shard_loop` 中被直接处理。
+/// `convert_message` 的单元测试直接调用 `DiscordAdapter::convert_message()`。
 fn handle_gateway_event<E: std::fmt::Display>(
     event: Option<Result<Event, E>>,
-    event_bus: &EventBus,
-    bot_user_id: &str,
+    _event_bus: &EventBus,
+    _bot_user_id: &str,
     heartbeat: &Heartbeat,
 ) -> EventAction {
     match event {
         Some(Ok(Event::Ready(_))) => {
             heartbeat.beat();
             tracing::info!("Discord Gateway connected");
-            EventAction::Continue
-        }
-        Some(Ok(Event::MessageCreate(msg))) => {
-            heartbeat.beat();
-            if let Some(inbound) = DiscordAdapter::convert_message(&msg.0, bot_user_id, None) {
-                let event = GatewayEvent::new(
-                    event_types::MESSAGE_INBOUND,
-                    "discord",
-                    serde_json::to_value(&inbound).unwrap_or_default(),
-                );
-                event_bus.publish(event);
-            }
             EventAction::Continue
         }
         Some(Err(e)) => {
@@ -523,18 +569,6 @@ impl Default for DiscordAdapter {
         Self::new()
     }
 }
-
-fn publish_send_event(
-    event_bus: &Option<Arc<EventBus>>,
-    event_type: &str,
-    chat_id: &str,
-    result: &SendResult,
-) {
-    if let Some(bus) = event_bus {
-        bus.publish_send_result(event_type, "discord", chat_id, result);
-    }
-}
-
 #[async_trait]
 impl PlatformAdapter for DiscordAdapter {
     fn platform_name(&self) -> &str {
@@ -612,9 +646,12 @@ impl PlatformAdapter for DiscordAdapter {
             let eb = event_bus.clone();
             let hb = self.heartbeat.clone();
             let goc = self.guild_owner_cache.clone();
+            let gnc = self.guild_name_cache.clone();
+            let mi = self.messages_in.clone();
 
             tokio::spawn(async move {
-                Self::gateway_shard_loop(token_clone, eb, bot_id, cancel_rx, hb, goc).await;
+                Self::gateway_shard_loop(token_clone, eb, bot_id, cancel_rx, hb, goc, gnc, mi)
+                    .await;
             });
         }
 
@@ -653,7 +690,7 @@ impl PlatformAdapter for DiscordAdapter {
             messages_in: self.messages_in.load(Ordering::Relaxed),
             messages_out: self.messages_out.load(Ordering::Relaxed),
             errors: self.errors.load(Ordering::Relaxed),
-            uptime: None,
+            uptime: self.heartbeat.uptime_secs().into(),
         }
     }
 
@@ -677,16 +714,18 @@ impl PlatformAdapter for DiscordAdapter {
                 SendResult::fail(e.to_string(), true)
             }
         };
-        publish_send_event(
-            &self.event_bus,
-            if result.success {
-                event_types::MESSAGE_SENT
-            } else {
-                event_types::MESSAGE_FAILED
-            },
-            &params.chat_id,
-            &result,
-        );
+        if let Some(bus) = &self.event_bus {
+            bus.publish_send_result(
+                if result.success {
+                    event_types::MESSAGE_SENT
+                } else {
+                    event_types::MESSAGE_FAILED
+                },
+                "discord",
+                &params.chat_id,
+                &result,
+            );
+        }
         Ok(result)
     }
 
@@ -809,12 +848,14 @@ impl PlatformAdapter for DiscordAdapter {
             (data.to_vec(), fname, ct)
         } else {
             let fail = SendResult::fail("No media data or URL provided".to_string(), false);
-            publish_send_event(
-                &self.event_bus,
-                event_types::MESSAGE_FAILED,
-                &params.chat_id,
-                &fail,
-            );
+            if let Some(bus) = &self.event_bus {
+                bus.publish_send_result(
+                    event_types::MESSAGE_FAILED,
+                    "discord",
+                    &params.chat_id,
+                    &fail,
+                );
+            }
             return Ok(fail);
         };
 
@@ -871,12 +912,14 @@ impl PlatformAdapter for DiscordAdapter {
             let error_text = resp.text().await.unwrap_or_default();
             if status.as_u16() == 429 {
                 let fail = SendResult::fail(format!("Rate limited: {}", error_text), true);
-                publish_send_event(
-                    &self.event_bus,
-                    event_types::MESSAGE_FAILED,
-                    &params.chat_id,
-                    &fail,
-                );
+                if let Some(bus) = &self.event_bus {
+                    bus.publish_send_result(
+                        event_types::MESSAGE_FAILED,
+                        "discord",
+                        &params.chat_id,
+                        &fail,
+                    );
+                }
                 return Ok(fail);
             }
             self.errors.fetch_add(1, Ordering::Relaxed);
@@ -884,12 +927,14 @@ impl PlatformAdapter for DiscordAdapter {
                 format!("Discord API {}: {}", status.as_u16(), error_text),
                 false,
             );
-            publish_send_event(
-                &self.event_bus,
-                event_types::MESSAGE_FAILED,
-                &params.chat_id,
-                &fail,
-            );
+            if let Some(bus) = &self.event_bus {
+                bus.publish_send_result(
+                    event_types::MESSAGE_FAILED,
+                    "discord",
+                    &params.chat_id,
+                    &fail,
+                );
+            }
             return Ok(fail);
         }
 
@@ -914,12 +959,14 @@ impl PlatformAdapter for DiscordAdapter {
 
         self.messages_out.fetch_add(1, Ordering::Relaxed);
         let send_result = SendResult::ok(msg.id);
-        publish_send_event(
-            &self.event_bus,
-            event_types::MESSAGE_SENT,
-            &params.chat_id,
-            &send_result,
-        );
+        if let Some(bus) = &self.event_bus {
+            bus.publish_send_result(
+                event_types::MESSAGE_SENT,
+                "discord",
+                &params.chat_id,
+                &send_result,
+            );
+        }
         Ok(send_result)
     }
 
@@ -989,16 +1036,18 @@ impl PlatformAdapter for DiscordAdapter {
                 SendResult::fail(e.to_string(), true)
             }
         };
-        publish_send_event(
-            &self.event_bus,
-            if result.success {
-                event_types::MESSAGE_SENT
-            } else {
-                event_types::MESSAGE_FAILED
-            },
-            &params.chat_id,
-            &result,
-        );
+        if let Some(bus) = &self.event_bus {
+            bus.publish_send_result(
+                if result.success {
+                    event_types::MESSAGE_SENT
+                } else {
+                    event_types::MESSAGE_FAILED
+                },
+                "discord",
+                &params.chat_id,
+                &result,
+            );
+        }
         Ok(result)
     }
 
@@ -1165,7 +1214,7 @@ impl PlatformAdapter for DiscordAdapter {
             connected: self.state == AdapterState::Connected,
             health: None,
             last_error: None,
-            uptime: None,
+            uptime: self.heartbeat.uptime_secs().into(),
             messages_in: self.messages_in.load(Ordering::Relaxed),
             messages_out: self.messages_out.load(Ordering::Relaxed),
         }
@@ -1408,7 +1457,7 @@ mod tests {
             None,
         );
 
-        let inbound = DiscordAdapter::convert_message(&msg, "999999999", None).unwrap();
+        let inbound = DiscordAdapter::convert_message(&msg, "999999999", None, None).unwrap();
         assert_eq!(inbound.id, "111111111");
         assert_eq!(inbound.platform, "discord");
         assert_eq!(inbound.chat_id, "222222222");
@@ -1431,7 +1480,7 @@ mod tests {
             Some("444444444"),
         );
 
-        let inbound = DiscordAdapter::convert_message(&msg, "999999999", None).unwrap();
+        let inbound = DiscordAdapter::convert_message(&msg, "999999999", None, None).unwrap();
         assert_eq!(inbound.chat_type, ChatType::Group);
         assert_eq!(inbound.chat_type, ChatType::Group);
         assert_eq!(inbound.sender.name.as_deref(), Some("guilduser"));
@@ -1449,7 +1498,7 @@ mod tests {
             None,
         );
 
-        let result = DiscordAdapter::convert_message(&msg, "888888888", None);
+        let result = DiscordAdapter::convert_message(&msg, "888888888", None, None);
         assert!(result.is_none(), "Should filter bot's own messages");
     }
 
@@ -1567,7 +1616,7 @@ mod tests {
     #[test]
     fn test_convert_message_empty_content() {
         let msg = make_msg("222222222", "333333333", "emptyuser", None, false, "", None);
-        let inbound = DiscordAdapter::convert_message(&msg, "999999999", None).unwrap();
+        let inbound = DiscordAdapter::convert_message(&msg, "999999999", None, None).unwrap();
         assert!(inbound.text.is_none(), "Empty content should yield None");
     }
 
@@ -1583,7 +1632,7 @@ mod tests {
             "I am another bot",
             None,
         );
-        let inbound = DiscordAdapter::convert_message(&msg, "999999999", None).unwrap();
+        let inbound = DiscordAdapter::convert_message(&msg, "999999999", None, None).unwrap();
         assert_eq!(inbound.sender.id, "222222222");
         assert!(inbound.sender.is_bot);
         assert_eq!(inbound.text.as_deref(), Some("I am another bot"));
@@ -1594,14 +1643,13 @@ mod tests {
         let msg = make_msg("111", "222", "user", None, false, "hi", None);
         // timestamp 字段在 JSON 中为 "2024-06-01T12:00:00.000000+00:00"
         // as_micros() / 1000 应得到合理的毫秒时间戳
-        let inbound = DiscordAdapter::convert_message(&msg, "999999999", None).unwrap();
+        let inbound = DiscordAdapter::convert_message(&msg, "999999999", None, None).unwrap();
         assert!(inbound.timestamp > 0, "Timestamp should be positive");
     }
 
     // ── Gateway 事件处理测试 ──
 
-    use easybot_core::types::event::event_types::MESSAGE_INBOUND;
-    use twilight_model::gateway::payload::incoming::{MessageCreate, Ready};
+    use twilight_model::gateway::payload::incoming::Ready;
 
     /// 构造一个最小可用的 Ready 事件用于测试
     fn make_ready_event() -> Event {
@@ -1646,73 +1694,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_handle_event_message_create_publishes() {
-        let event_bus = EventBus::new();
-        let mut rx = event_bus.subscribe(MESSAGE_INBOUND);
-        let heartbeat = Heartbeat::new();
-
-        let msg = make_msg(
-            "111111111",
-            "222222222",
-            "TestUser",
-            Some("Test User"),
-            false,
-            "Hello, world!",
-            None,
-        );
-        let event = Event::MessageCreate(Box::new(MessageCreate(msg)));
-
-        let action =
-            handle_gateway_event::<&str>(Some(Ok(event)), &event_bus, "bot_self", &heartbeat);
-
-        assert_eq!(action, EventAction::Continue);
-
-        // 验证事件已发布到总线
-        let published = rx
-            .try_recv()
-            .expect("Expected MESSAGE_INBOUND event to be published");
-        assert_eq!(published.event_type, MESSAGE_INBOUND);
-        assert_eq!(published.source, "discord");
-
-        let inbound: InboundMessage =
-            serde_json::from_value(published.data).expect("Failed to deserialize inbound message");
-        assert_eq!(inbound.text.as_deref(), Some("Hello, world!"));
-        assert_eq!(inbound.sender.id, "222222222");
-    }
-
-    #[test]
-    fn test_handle_event_message_create_self_ignored() {
-        let event_bus = EventBus::new();
-        let mut rx = event_bus.subscribe(MESSAGE_INBOUND);
-        let heartbeat = Heartbeat::new();
-
-        let msg = make_msg(
-            "111111111",
-            "888888888",
-            "MyBot",
-            Some("My Bot"),
-            true,
-            "I said this",
-            None,
-        );
-        let event = Event::MessageCreate(Box::new(MessageCreate(msg)));
-
-        let action = handle_gateway_event::<&str>(
-            Some(Ok(event)),
-            &event_bus,
-            "888888888", // same as author → 应被过滤
-            &heartbeat,
-        );
-
-        assert_eq!(action, EventAction::Continue);
-
-        // 自消息不应发布到总线
-        assert!(
-            rx.try_recv().is_err(),
-            "Self messages should NOT be published"
-        );
-    }
+    // Event::MessageCreate 的单元测试由 test_convert_* 系列函数直接测试 convert_message，
+    // 不再通过 handle_gateway_event 间接测试（该分支已清理，MessageCreate 在 gateway_shard_loop 处理）。
 
     #[test]
     fn test_handle_event_error_continues() {

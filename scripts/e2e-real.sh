@@ -196,8 +196,11 @@ phase1_build_and_start() {
     # stderr → 日志文件（tracing），stdout → 文件（println! 如 QR 码 / API Key）
     cargo run -- --debug >"$STDOUT_FILE" 2>"$LOG_FILE" &
     E2E_PID=$!
-    # 后台 tail stdout 到终端，让用户可以看到 QR 码等输出
-    tail -f "$STDOUT_FILE" &
+    # 后台过滤 stdout：只显示关键行（QR 码、API Key、初始化消息），其余写入文件供按需查看。
+    # 这样避免 WeChat QR 码渲染、服务端调试输出等大量内容刷屏终端。
+    tail -f "$STDOUT_FILE" | grep -E --line-buffered \
+        '扫[码碼]|qrcode|QR|E2E_API_KEY|EasyBot|个人微信|已连|已启|初始|错误|Error|error|http' \
+        &
     TAIL_PID=$!
 
     # 等待服务就绪

@@ -4,6 +4,7 @@
 
 use easybot_core::types::error::GatewayError;
 use easybot_core::types::message::MediaAttachment;
+use std::time::Duration;
 
 /// 凭据文件路径（相对于 home 目录的 .easybot/）
 const CREDENTIALS_FILE: &str = ".easybot/.wechat-credentials.json";
@@ -59,6 +60,24 @@ pub(crate) fn save_credentials_to_disk(creds: &WeChatCredentials) {
             Err(e) => tracing::warn!("保存凭据失败: {}", e),
         },
         Err(e) => tracing::warn!("序列化凭据失败: {}", e),
+    }
+}
+
+/// 清除磁盘上的凭据文件（当 bot_token 过期/失效时调用）
+/// 使下次 init() 无法从磁盘恢复凭据，从而触发重新扫码登录
+pub(crate) fn clear_credentials_from_disk() {
+    let path = match credential_path() {
+        Some(p) => p,
+        None => {
+            tracing::warn!("无法确定凭据文件路径");
+            return;
+        }
+    };
+    if path.exists() {
+        match std::fs::remove_file(&path) {
+            Ok(_) => tracing::info!("个人微信过期凭据已清除: {:?}", path),
+            Err(e) => tracing::warn!("清除凭据文件失败: {} ({:?})", e, path),
+        }
     }
 }
 
@@ -266,8 +285,9 @@ pub(crate) async fn download_media(
         )));
     }
 
-    resp.bytes()
+    tokio::time::timeout(Duration::from_secs(60), resp.bytes())
         .await
+        .map_err(|_| GatewayError::Internal("Media download timeout (60s)".to_string()))?
         .map(|b| b.to_vec())
         .map_err(|e| GatewayError::Internal(format!("Failed to read media bytes: {}", e)))
 }

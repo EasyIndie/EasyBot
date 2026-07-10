@@ -237,7 +237,12 @@ impl SessionManager {
                 session.source.chat_name = enriched.chat_name.clone();
             }
             let cloned = session.clone();
-            if let Some(ref store) = self.store
+            // 仅在确有字段变更时才持久化，避免高频场景下每次富化都写 DB
+            if (enriched.user_username.is_some()
+                || enriched.user_role.is_some()
+                || enriched.user_name.is_some()
+                || enriched.chat_name.is_some())
+                && let Some(ref store) = self.store
                 && let Err(e) = store.upsert_session(&cloned).await
             {
                 tracing::error!(error = %e, session_key = %cloned.key, "持久化富化会话失败");

@@ -360,14 +360,12 @@ wscat -c "ws://localhost:8080/api/v1/ws" \
 
 ## 后续改进建议
 
-- [ ] 引入 `wiremock` 或 `mockito` 为 Telegram API 编写 mock 测试，消除网络依赖
-  ```bash
-  cargo add --dev wiremock -p easybot-adapter-telegram
-  ```
+- [x] ~~引入 `wiremock` 为 Telegram API 编写 mock 测试~~（已有 22 个 mock 测试用例在 `tests/send_mock.rs`，覆盖 send/connect/send_media/interactive 等场景）
 - [x] 将 `TELEGRAM_API` 常量改为可配置项（通过 `AdapterConfig.base_url`），方便测试时指向 mock server
-- [ ] 增加更多消息类型的 convert 测试（图片、视频、文档）
-- [ ] 为 AdapterManager 补充更多测试（start_all、stop_all、list_statuses 等）
-  - 已添加：`test_stop_updates_status_cache`、`test_start_passes_config_to_adapter`
-- [ ] API 路由层集成测试（启动 Server → HTTP 调用 adapter start/stop/消息接口）
+- [x] ~~修复 `AdminCache` 使用 `std::sync::Mutex::try_lock` 的问题~~（已改为 `AsyncMutex`）
+- [x] ~~修复 polling 路径中 `messages_in` 从未递增的问题~~（已传递 `Arc<AtomicU64>` 到 polling 任务）
+- [x] ~~增加更多消息类型的 convert 测试（图片、视频、文档）~~（已新增 8 个测试：photo/document/video/audio/voice/sticker/animation + caption fallback）
+- [x] ~~为 AdapterManager 补充更多测试（start_all、stop_all、list_statuses 等）~~（已覆盖 17 个测试，含新增 `test_list_statuses_after_start`、`test_list_statuses_after_stop`）
+- [x] ~~API 路由层集成测试（启动 Server → HTTP 调用 adapter start/stop/消息接口）~~（已在 `tests/api_integration.rs` 实现 24 个真实 HTTP 测试，覆盖 health、auth、适配器管理、消息发送/编辑/删除、batch-send、配置、系统信息、日志、API Key 等端点）
   - 已修复：`test_cli_short_flags` 端口冲突问题，`test_openapi_has_security_scheme` 随机端口
-- [ ] WebSocket 推送的集成测试（需要 Node.js `ws` 或 Python `websockets` 支持）
+- [x] ~~WebSocket 推送的集成测试~~（已在 `crates/easybot-api/tests/ws.rs` 实现 371 行 Rust 集成测试，使用真实 `tokio_tungstenite` 连接覆盖 auth、事件流、多客户端、断开重连等场景）

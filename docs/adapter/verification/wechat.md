@@ -185,7 +185,11 @@ curl -s "http://localhost:8080/api/v1/messages?platform=wechat" \
 ## 后续改进建议
 
 - [x] 媒体消息发送（AES-128-ECB 加密 + CDN 上传）
-- [ ] 凭据过期时自动重启适配器触发重新登录
-- [ ] 添加入站消息的 `chat_name` 字段填充
+- [x] 修复非文本消息占位符（已改为空文本 + `MediaAttachment`）
+- [x] 修复 `save_sync_buf` 同步 I/O（已用 `spawn_blocking` 包裹）
+- [x] ~~CDN x-encrypted-param 日志脱敏~~
+- [x] ~~凭据过期时自动重启适配器触发重新登录~~（已实现：`poll_messages()` 检测 HTTP 401 → `TokenExpired` → 清除凭据文件 → 健康监测自动重启触发扫码登录）
+- [x] ~~将 `save_context_tokens` 移出异步热路径~~（send/send_media 2 处 session 过期路径已用 `spawn_blocking` 包裹）
+- [ ] 添加入站消息的 `chat_name` 字段填充（iLink API 仅提供 `from_user_id`/`group_id` 等不透明标识符，无名名字段。需额外 API 或映射表）
 - [ ] 支持语音消息转录文本
 - [ ] 支持引用/回复消息

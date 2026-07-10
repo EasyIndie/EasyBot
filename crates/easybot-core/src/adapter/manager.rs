@@ -788,6 +788,28 @@ impl AdapterManager {
             }
 
             if needs_reconnect {
+                // 立即更新状态缓存，避免 health check 窗口期内 API 返回过时的 Connected 状态
+                {
+                    let mut statuses = self.statuses.write().await;
+                    if let Some(status) = statuses.get_mut(platform) {
+                        status.connected = false;
+                    } else {
+                        statuses.insert(
+                            platform.clone(),
+                            AdapterStatusSummary {
+                                platform: platform.clone(),
+                                connected: false,
+                                state: AdapterState::Failed,
+                                last_error: Some("Unhealthy — reconnecting".to_string()),
+                                display_name: platform.clone(),
+                                health: Some(HealthStatus::Down),
+                                uptime: None,
+                                messages_in: 0,
+                                messages_out: 0,
+                            },
+                        );
+                    }
+                }
                 // 仅在需要重连时获取 config（避免为健康适配器克隆含 token 的 AdapterConfig）
                 let config = { self.configs.read().await.get(platform).cloned() };
                 let config = match config {
@@ -1516,6 +1538,57 @@ mod tests {
 
         // stop_all now clears configs as well
         assert!(manager.configs.read().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_list_statuses_after_start() {
+        let manager = new_manager().await;
+        register_mock_adapter(&manager).await;
+
+        // Before start: statuses should be empty
+        let statuses = manager.list_statuses().await;
+        assert!(statuses.is_empty());
+
+        let config = AdapterConfig {
+            enabled: Some(true),
+            token: Some("t".into()),
+            api_key: None,
+            base_url: None,
+            extra: serde_json::json!({}),
+        };
+        manager.start("test-mock", config).await.unwrap();
+        wait_connected(&manager, "test-mock").await;
+
+        // After start: statuses should include the adapter
+        let statuses = manager.list_statuses().await;
+        assert!(!statuses.is_empty());
+        let status = statuses.iter().find(|s| s.platform == "test-mock");
+        assert!(status.is_some());
+        assert!(status.unwrap().connected);
+    }
+
+    #[tokio::test]
+    async fn test_list_statuses_after_stop() {
+        let manager = new_manager().await;
+        register_mock_adapter(&manager).await;
+
+        let config = AdapterConfig {
+            enabled: Some(true),
+            token: Some("t".into()),
+            api_key: None,
+            base_url: None,
+            extra: serde_json::json!({}),
+        };
+        manager.start("test-mock", config).await.unwrap();
+        wait_connected(&manager, "test-mock").await;
+
+        let _ = manager.stop("test-mock").await;
+
+        // After stop: statuses should reflect disconnected state
+        let statuses = manager.list_statuses().await;
+        let status = statuses.iter().find(|s| s.platform == "test-mock");
+        assert!(status.is_some());
+        assert!(!status.unwrap().connected);
     }
 }
 
