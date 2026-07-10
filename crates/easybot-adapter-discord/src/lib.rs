@@ -29,6 +29,7 @@ use tokio::sync::broadcast;
 use tokio::sync::Semaphore;
 use twilight_gateway::{CloseFrame, EventTypeFlags, Intents, Shard, ShardId, StreamExt as _};
 use twilight_model::gateway::event::Event;
+use twilight_model::gateway::payload::incoming::GuildCreate;
 use twilight_model::guild::Permissions;
 use types::*;
 
@@ -56,6 +57,8 @@ pub struct DiscordAdapter {
     bot_user_id: Option<String>,
     /// 服务器 Owner 缓存（guild_id → owner_user_id），事件驱动更新
     guild_owner_cache: Arc<Mutex<HashMap<String, String>>>,
+    /// Guild 名称缓存（从 Ready 事件中填充），用于入站消息的 chat_name
+    guild_name_cache: Arc<Mutex<HashMap<String, String>>>,
 }
 
 impl DiscordAdapter {
@@ -123,6 +126,7 @@ impl DiscordAdapter {
             http_client: OnceLock::new(),
             bot_user_id: None,
             guild_owner_cache: Arc::new(Mutex::new(HashMap::new())),
+            guild_name_cache: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -221,6 +225,7 @@ impl DiscordAdapter {
         msg: &twilight_model::channel::Message,
         bot_user_id: &str,
         guild_owner_id: Option<&str>,
+        guild_name: Option<&str>,
     ) -> Option<InboundMessage> {
         // 过滤自身消息，避免回环
         if msg.author.id.to_string() == bot_user_id {
@@ -293,7 +298,14 @@ impl DiscordAdapter {
             sender,
             recipient: Some(bot_user_id.to_string()),
             chat_id: msg.channel_id.to_string(),
-            chat_name: None,
+            // For guild channels: use cached guild name; for DMs: use author's display name
+            chat_name: guild_name.map(|n| n.to_string()).or_else(|| {
+                if msg.guild_id.is_none() {
+                    Some(msg.author.name.clone())
+                } else {
+                    None
+                }
+            }),
             chat_type,
             guild_id: msg.guild_id.map(|g| g.to_string()),
             thread_id: None,
@@ -362,11 +374,12 @@ impl DiscordAdapter {
         mut cancel_rx: broadcast::Receiver<()>,
         heartbeat: Heartbeat,
         guild_owner_cache: Arc<Mutex<HashMap<String, String>>>,
+        guild_name_cache: Arc<Mutex<HashMap<String, String>>>,
         messages_in: Arc<AtomicU64>,
     ) {
         // 限制并发 guild owner 查询数，避免大量 tokio::spawn 在启动时爆炸
         let guild_fetch_permits = Arc::new(Semaphore::new(5));
-        let intents = Intents::GUILD_MESSAGES | Intents::DIRECT_MESSAGES | Intents::MESSAGE_CONTENT;
+        let intents = Intents::GUILD_MESSAGES | Intents::DIRECT_MESSAGES | Intents::MESSAGE_CONTENT | Intents::GUILDS;
         let mut shard = Shard::new(ShardId::ONE, token.clone(), intents);
         let http_client = reqwest::Client::new();
 
@@ -424,10 +437,16 @@ impl DiscordAdapter {
                                     });
                                 }
 
+                            // Look up guild name from cache for chat_name
+                            let guild_name = guild_id_str.as_ref().and_then(|gid| {
+                                guild_name_cache.try_lock().ok()
+                                    .and_then(|cache| cache.get(gid).cloned())
+                            });
                             if let Some(inbound) = DiscordAdapter::convert_message(
                                 &msg.0,
                                 &bot_user_id,
                                 owner_id.as_deref(),
+                                guild_name.as_deref(),
                             ) {
                                 messages_in.fetch_add(1, Ordering::Relaxed);
                                 let event = GatewayEvent::new(
@@ -448,6 +467,25 @@ impl DiscordAdapter {
                                     guild.id.to_string(),
                                     guild.owner_id.to_string(),
                                 );
+                            }
+                            // Also update guild name cache
+                            if let Ok(mut cache) = guild_name_cache.try_lock() {
+                                const GUILD_CACHE_LIMIT: usize = 5_000;
+                                if cache.len() > GUILD_CACHE_LIMIT {
+                                    cache.clear();
+                                }
+                                cache.insert(guild.id.to_string(), guild.name.clone());
+                            }
+                        }
+                        Some(Ok(Event::GuildCreate(guild))) => {
+                            if let GuildCreate::Available(g) = &*guild {
+                                if let Ok(mut cache) = guild_name_cache.try_lock() {
+                                    const GUILD_CACHE_LIMIT: usize = 5_000;
+                                    if cache.len() > GUILD_CACHE_LIMIT {
+                                        cache.clear();
+                                    }
+                                    cache.insert(g.id.to_string(), g.name.clone());
+                                }
                             }
                         }
                         other => {
@@ -596,10 +634,11 @@ impl PlatformAdapter for DiscordAdapter {
             let eb = event_bus.clone();
             let hb = self.heartbeat.clone();
             let goc = self.guild_owner_cache.clone();
+            let gnc = self.guild_name_cache.clone();
             let mi = self.messages_in.clone();
 
             tokio::spawn(async move {
-                Self::gateway_shard_loop(token_clone, eb, bot_id, cancel_rx, hb, goc, mi).await;
+                Self::gateway_shard_loop(token_clone, eb, bot_id, cancel_rx, hb, goc, gnc, mi).await;
             });
         }
 
@@ -1405,7 +1444,7 @@ mod tests {
             None,
         );
 
-        let inbound = DiscordAdapter::convert_message(&msg, "999999999", None).unwrap();
+        let inbound = DiscordAdapter::convert_message(&msg, "999999999", None, None).unwrap();
         assert_eq!(inbound.id, "111111111");
         assert_eq!(inbound.platform, "discord");
         assert_eq!(inbound.chat_id, "222222222");
@@ -1428,7 +1467,7 @@ mod tests {
             Some("444444444"),
         );
 
-        let inbound = DiscordAdapter::convert_message(&msg, "999999999", None).unwrap();
+        let inbound = DiscordAdapter::convert_message(&msg, "999999999", None, None).unwrap();
         assert_eq!(inbound.chat_type, ChatType::Group);
         assert_eq!(inbound.chat_type, ChatType::Group);
         assert_eq!(inbound.sender.name.as_deref(), Some("guilduser"));
@@ -1446,7 +1485,7 @@ mod tests {
             None,
         );
 
-        let result = DiscordAdapter::convert_message(&msg, "888888888", None);
+        let result = DiscordAdapter::convert_message(&msg, "888888888", None, None);
         assert!(result.is_none(), "Should filter bot's own messages");
     }
 
@@ -1564,7 +1603,7 @@ mod tests {
     #[test]
     fn test_convert_message_empty_content() {
         let msg = make_msg("222222222", "333333333", "emptyuser", None, false, "", None);
-        let inbound = DiscordAdapter::convert_message(&msg, "999999999", None).unwrap();
+        let inbound = DiscordAdapter::convert_message(&msg, "999999999", None, None).unwrap();
         assert!(inbound.text.is_none(), "Empty content should yield None");
     }
 
@@ -1580,7 +1619,7 @@ mod tests {
             "I am another bot",
             None,
         );
-        let inbound = DiscordAdapter::convert_message(&msg, "999999999", None).unwrap();
+        let inbound = DiscordAdapter::convert_message(&msg, "999999999", None, None).unwrap();
         assert_eq!(inbound.sender.id, "222222222");
         assert!(inbound.sender.is_bot);
         assert_eq!(inbound.text.as_deref(), Some("I am another bot"));
@@ -1591,7 +1630,7 @@ mod tests {
         let msg = make_msg("111", "222", "user", None, false, "hi", None);
         // timestamp 字段在 JSON 中为 "2024-06-01T12:00:00.000000+00:00"
         // as_micros() / 1000 应得到合理的毫秒时间戳
-        let inbound = DiscordAdapter::convert_message(&msg, "999999999", None).unwrap();
+        let inbound = DiscordAdapter::convert_message(&msg, "999999999", None, None).unwrap();
         assert!(inbound.timestamp > 0, "Timestamp should be positive");
     }
 

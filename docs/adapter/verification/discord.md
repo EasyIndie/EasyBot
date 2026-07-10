@@ -331,5 +331,5 @@ wscat -c "ws://localhost:8080/api/v1/ws" \
 - [x] ~~实现 `reply_to` 字段到 Discord `message_reference` API 参数的映射~~ — 已完成
 - [x] ~~重构 `gateway_shard_loop` 与 `handle_gateway_event` 的双路径问题（`MessageCreate` 在生产路径中被拦截，`handle_gateway_event` 中的分支为死代码——已清理死代码分支，`MessageCreate` 仅在外层 `gateway_shard_loop` 处理）~~
 - [ ] 支持更多 Intents 从配置读取（当前硬编码）
-- [ ] 补充 `chat_name` 的获取（从 Gateway Ready 的 guild 信息或独立查询）
+- [x] ~~补充 `chat_name` 的获取（从 GuildCreate/GuildUpdate 事件缓存 guild 名称；DM 使用 author.name）~~
 - [ ] 增加更多 Gateway 事件类型的处理（MESSAGE_UPDATE、MESSAGE_DELETE 等）
