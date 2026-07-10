@@ -186,6 +186,9 @@ pub const DEFAULT_LIVENESS_THRESHOLD_MS: i64 = 120_000;
 pub struct Heartbeat {
     last_beat_ms: Arc<AtomicI64>,
     started_at_ms: Arc<AtomicI64>,
+    last_connected_at: Arc<AtomicI64>,
+    last_error_at: Arc<AtomicI64>,
+    last_error: Arc<std::sync::Mutex<Option<String>>>,
 }
 
 impl Heartbeat {
@@ -195,6 +198,9 @@ impl Heartbeat {
         Self {
             last_beat_ms: Arc::new(AtomicI64::new(now)),
             started_at_ms: Arc::new(AtomicI64::new(now)),
+            last_connected_at: Arc::new(AtomicI64::new(0)),
+            last_error_at: Arc::new(AtomicI64::new(0)),
+            last_error: Arc::new(std::sync::Mutex::new(None)),
         }
     }
 
@@ -221,6 +227,38 @@ impl Heartbeat {
         let now = chrono::Utc::now().timestamp_millis();
         let elapsed = now.saturating_sub(self.started_at_ms.load(Ordering::Relaxed));
         (elapsed as u64) / 1000
+    }
+
+    /// Record a successful connection (sets last_connected_at to now).
+    pub fn record_connection(&self) {
+        self.last_connected_at
+            .store(chrono::Utc::now().timestamp_millis(), Ordering::Relaxed);
+    }
+
+    /// Record an error (sets last_error_at and last_error).
+    pub fn record_error(&self, error: impl Into<String>) {
+        self.last_error_at
+            .store(chrono::Utc::now().timestamp_millis(), Ordering::Relaxed);
+        if let Ok(mut guard) = self.last_error.lock() {
+            *guard = Some(error.into());
+        }
+    }
+
+    /// Get last successful connection timestamp (millis since epoch), if any.
+    pub fn last_connected_at(&self) -> Option<i64> {
+        let val = self.last_connected_at.load(Ordering::Relaxed);
+        if val > 0 { Some(val) } else { None }
+    }
+
+    /// Get last error timestamp (millis since epoch), if any.
+    pub fn last_error_at(&self) -> Option<i64> {
+        let val = self.last_error_at.load(Ordering::Relaxed);
+        if val > 0 { Some(val) } else { None }
+    }
+
+    /// Get last error message, if any.
+    pub fn last_error_str(&self) -> Option<String> {
+        self.last_error.lock().ok().and_then(|g| g.clone())
     }
 }
 

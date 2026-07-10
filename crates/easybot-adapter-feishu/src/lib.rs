@@ -476,6 +476,7 @@ impl PlatformAdapter for FeishuAdapter {
         });
 
         tracing::info!("飞书适配器已连接");
+        self.heartbeat.record_connection();
 
         // 3. 如果配置了 EventBus，启动 WebSocket 事件订阅
         if let Some(ref event_bus) = self.event_bus {
@@ -673,7 +674,7 @@ impl PlatformAdapter for FeishuAdapter {
             messages_in: self.messages_in.load(Ordering::Relaxed),
             messages_out: self.messages_out.load(Ordering::Relaxed),
             errors: self.errors.load(Ordering::Relaxed),
-            uptime: None,
+            uptime: self.heartbeat.uptime_secs().into(),
         }
     }
 
@@ -685,7 +686,7 @@ impl PlatformAdapter for FeishuAdapter {
             connected: self.state == AdapterState::Connected,
             health: None,
             last_error: None,
-            uptime: None,
+            uptime: self.heartbeat.uptime_secs().into(),
             messages_in: self.messages_in.load(Ordering::Relaxed),
             messages_out: self.messages_out.load(Ordering::Relaxed),
         }

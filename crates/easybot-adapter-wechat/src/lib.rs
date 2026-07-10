@@ -510,11 +510,17 @@ impl WeChatAdapter {
 
         let cdn_status = cdn_resp.status();
 
-        // Log all response headers for debugging
+        // Log all response headers for debugging（脱敏 x-encrypted-param 下载密钥）
         let resp_headers: Vec<String> = cdn_resp
             .headers()
             .iter()
-            .map(|(k, v)| format!("{}: {:?}", k, v))
+            .map(|(k, v)| {
+                if k.as_str().eq_ignore_ascii_case("x-encrypted-param") {
+                    format!("{}: [REDACTED]", k)
+                } else {
+                    format!("{}: {:?}", k, v)
+                }
+            })
             .collect();
         tracing::debug!(
             "WeChat CDN response: status={}, headers=[{}]",
@@ -955,6 +961,8 @@ impl PlatformAdapter for WeChatAdapter {
         self.state = AdapterState::Connected;
         tracing::info!("个人微信适配器已连接");
 
+            self.heartbeat.record_connection();
+
         // 启动长轮询消息接收
         if let Some(ref event_bus) = self.event_bus {
             let (cancel_tx, cancel_rx) = tokio::sync::broadcast::channel(1);
@@ -1016,7 +1024,7 @@ impl PlatformAdapter for WeChatAdapter {
             messages_in: self.messages_in.load(Ordering::Relaxed),
             messages_out: self.messages_out.load(Ordering::Relaxed),
             errors: self.errors.load(Ordering::Relaxed),
-            uptime: None,
+            uptime: self.heartbeat.uptime_secs().into(),
         }
     }
 
@@ -1048,7 +1056,7 @@ impl PlatformAdapter for WeChatAdapter {
             connected: self.state == AdapterState::Connected,
             health: None,
             last_error: None,
-            uptime: None,
+            uptime: self.heartbeat.uptime_secs().into(),
             messages_in: self.messages_in.load(Ordering::Relaxed),
             messages_out: self.messages_out.load(Ordering::Relaxed),
         }

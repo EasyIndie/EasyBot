@@ -736,6 +736,7 @@ impl PlatformAdapter for TelegramAdapter {
             bot.first_name,
             bot.username.as_deref().unwrap_or("unknown")
         );
+        self.heartbeat.record_connection();
 
         // 启动长轮询（如果配置了 EventBus）
         if let Some(event_bus) = self.event_bus.clone() {
@@ -798,13 +799,13 @@ impl PlatformAdapter for TelegramAdapter {
         HealthReport {
             status: self.health_status(),
             connected: self.state == AdapterState::Connected,
-            last_connected_at: None,
-            last_error_at: None,
+            last_connected_at: self.heartbeat.last_connected_at(),
+            last_error_at: self.heartbeat.last_error_at(),
             last_error: None,
             messages_in: self.messages_in.load(Ordering::Relaxed),
             messages_out: self.messages_out.load(Ordering::Relaxed),
             errors: self.errors.load(Ordering::Relaxed),
-            uptime: None,
+            uptime: self.heartbeat.uptime_secs().into(),
         }
     }
 
@@ -1310,7 +1311,7 @@ impl PlatformAdapter for TelegramAdapter {
             connected: self.state == AdapterState::Connected,
             health: None,
             last_error: None,
-            uptime: None,
+            uptime: self.heartbeat.uptime_secs().into(),
             messages_in: self.messages_in.load(Ordering::Relaxed),
             messages_out: self.messages_out.load(Ordering::Relaxed),
         }

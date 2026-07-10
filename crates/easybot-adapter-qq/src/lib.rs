@@ -332,7 +332,7 @@ fn mime_to_file_type(mime_type: &str) -> u32 {
     } else if mime_type.starts_with("audio/") {
         3
     } else {
-        1 // 默认为图片
+        3 // 非音视频默认使用文件类型（file_type=3），避免文档/PDF 被误作为图片发送
     }
 }
 
@@ -873,6 +873,7 @@ impl PlatformAdapter for QqAdapter {
             bot_info.name,
             bot_info.id
         );
+        self.heartbeat.record_connection();
 
         if let Some(ref event_bus) = self.event_bus {
             let (cancel_tx, cancel_rx) = broadcast::channel(1);
@@ -929,7 +930,7 @@ impl PlatformAdapter for QqAdapter {
             messages_in: self.messages_in.load(Ordering::Relaxed),
             messages_out: self.messages_out.load(Ordering::Relaxed),
             errors: self.errors.load(Ordering::Relaxed),
-            uptime: None,
+            uptime: self.heartbeat.uptime_secs().into(),
         }
     }
 
@@ -961,7 +962,7 @@ impl PlatformAdapter for QqAdapter {
             connected: self.state == AdapterState::Connected,
             health: None,
             last_error: None,
-            uptime: None,
+            uptime: self.heartbeat.uptime_secs().into(),
             messages_in: self.messages_in.load(Ordering::Relaxed),
             messages_out: self.messages_out.load(Ordering::Relaxed),
         }

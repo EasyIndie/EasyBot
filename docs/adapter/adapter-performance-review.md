@@ -416,7 +416,7 @@ let uin = uuid::Uuid::new_v4().as_u64_pair().0 as u32;
 
 ## 7. 核心层性能评估
 
-### 7.1 EventBus: `subscribe_many` 使用轮询引入延迟
+### 7.1 ~~EventBus: `subscribe_many` 使用轮询引入延迟~~ 已重构（使用 SelectAll）
 
 ```rust
 pub fn subscribe_many(&self, event_types: &[&str]) -> broadcast::Receiver<GatewayEvent> {
@@ -441,11 +441,9 @@ pub fn subscribe_many(&self, event_types: &[&str]) -> broadcast::Receiver<Gatewa
 }
 ```
 
-**问题**: 当事件频率低时，每条事件的延迟增加约 20ms（从 publish 到 merge channel 可读的时间）。虽然对 IM 场景（通常延迟容忍度 > 500ms）不明显，但在高吞吐场景下可能成为瓶颈。
+**问题**: ~~当事件频率低时，每条事件的延迟增加约 20ms（从 publish 到 merge channel 可读的时间）。虽然对 IM 场景（通常延迟容忍度 > 500ms）不明显，但在高吞吐场景下可能成为瓶颈。~~
 
-**已实施**:
-- `MERGE_POLL_INTERVAL_MS` 已设为 20ms，无需进一步降低
-- 如果延迟敏感度提高，可考虑直接不合并，让调用方分别订阅各事件类型
+**已实施**: 当前使用 `futures::stream::SelectAll` 合并多路广播流，无需轮询，零额外延迟。
 
 ### 7.2 AdapterManager 的 `statuses` 缓存与适配器实时状态不一致
 

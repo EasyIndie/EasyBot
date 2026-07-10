@@ -26,6 +26,7 @@ use easybot_core::types::event::GatewayEvent;
 use easybot_core::types::event::event_types;
 use easybot_core::types::message::*;
 use tokio::sync::broadcast;
+use tokio::sync::Semaphore;
 use twilight_gateway::{CloseFrame, EventTypeFlags, Intents, Shard, ShardId, StreamExt as _};
 use twilight_model::gateway::event::Event;
 use twilight_model::guild::Permissions;
@@ -363,6 +364,8 @@ impl DiscordAdapter {
         guild_owner_cache: Arc<Mutex<HashMap<String, String>>>,
         messages_in: Arc<AtomicU64>,
     ) {
+        // 限制并发 guild owner 查询数，避免大量 tokio::spawn 在启动时爆炸
+        let guild_fetch_permits = Arc::new(Semaphore::new(5));
         let intents = Intents::GUILD_MESSAGES | Intents::DIRECT_MESSAGES | Intents::MESSAGE_CONTENT;
         let mut shard = Shard::new(ShardId::ONE, token.clone(), intents);
         let http_client = reqwest::Client::new();
@@ -388,14 +391,17 @@ impl DiscordAdapter {
                                     .and_then(|cache| cache.get(gid).cloned())
                             });
 
-                            // Background fetch guild owner info if not cached
+                            // 有限并发的 guild owner 查询（Semaphore 控制，最多 5 个并发）
                             if owner_id.is_none()
                                 && let Some(ref gid) = guild_id_str {
                                     let cache = guild_owner_cache.clone();
                                     let client = http_client.clone();
                                     let t = token.clone();
                                     let g = gid.clone();
+                                    let permits = guild_fetch_permits.clone();
                                     tokio::spawn(async move {
+                                        // 获取并发许可，失败则跳过（避免 Semaphore 关闭时 panic）
+                                        let _permit = permits.acquire().await.ok();
                                         let url =
                                             format!("https://discord.com/api/v10/guilds/{}", g);
                                         if let Ok(resp) = client
@@ -478,31 +484,19 @@ enum EventAction {
 /// 而生产代码使用 `twilight_gateway::error::ReceiveMessageError`。
 ///
 /// # 注意
-/// 生产环境中 `Event::MessageCreate` 在 `gateway_shard_loop` 中被直接处理
-/// （含 guild owner 缓存查查），不会进入此函数。此处的 MessageCreate 分支
-/// 仅用于单元测试覆盖。
+/// 此函数处理非 MessageCreate 的 Gateway 事件（Ready, errors, stream end, 及其他忽略事件）。
+/// `Event::MessageCreate` 和 `Event::GuildUpdate` 在 `gateway_shard_loop` 中被直接处理。
+/// `convert_message` 的单元测试直接调用 `DiscordAdapter::convert_message()`。
 fn handle_gateway_event<E: std::fmt::Display>(
     event: Option<Result<Event, E>>,
-    event_bus: &EventBus,
-    bot_user_id: &str,
+    _event_bus: &EventBus,
+    _bot_user_id: &str,
     heartbeat: &Heartbeat,
 ) -> EventAction {
     match event {
         Some(Ok(Event::Ready(_))) => {
             heartbeat.beat();
             tracing::info!("Discord Gateway connected");
-            EventAction::Continue
-        }
-        Some(Ok(Event::MessageCreate(msg))) => {
-            heartbeat.beat();
-            if let Some(inbound) = DiscordAdapter::convert_message(&msg.0, bot_user_id, None) {
-                let event = GatewayEvent::new(
-                    event_types::MESSAGE_INBOUND,
-                    "discord",
-                    serde_json::to_value(&inbound).unwrap_or_default(),
-                );
-                event_bus.publish(event);
-            }
             EventAction::Continue
         }
         Some(Err(e)) => {
@@ -656,7 +650,7 @@ impl PlatformAdapter for DiscordAdapter {
             messages_in: self.messages_in.load(Ordering::Relaxed),
             messages_out: self.messages_out.load(Ordering::Relaxed),
             errors: self.errors.load(Ordering::Relaxed),
-            uptime: None,
+            uptime: self.heartbeat.uptime_secs().into(),
         }
     }
 
@@ -1168,7 +1162,7 @@ impl PlatformAdapter for DiscordAdapter {
             connected: self.state == AdapterState::Connected,
             health: None,
             last_error: None,
-            uptime: None,
+            uptime: self.heartbeat.uptime_secs().into(),
             messages_in: self.messages_in.load(Ordering::Relaxed),
             messages_out: self.messages_out.load(Ordering::Relaxed),
         }
@@ -1649,73 +1643,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_handle_event_message_create_publishes() {
-        let event_bus = EventBus::new();
-        let mut rx = event_bus.subscribe(MESSAGE_INBOUND);
-        let heartbeat = Heartbeat::new();
-
-        let msg = make_msg(
-            "111111111",
-            "222222222",
-            "TestUser",
-            Some("Test User"),
-            false,
-            "Hello, world!",
-            None,
-        );
-        let event = Event::MessageCreate(Box::new(MessageCreate(msg)));
-
-        let action =
-            handle_gateway_event::<&str>(Some(Ok(event)), &event_bus, "bot_self", &heartbeat);
-
-        assert_eq!(action, EventAction::Continue);
-
-        // 验证事件已发布到总线
-        let published = rx
-            .try_recv()
-            .expect("Expected MESSAGE_INBOUND event to be published");
-        assert_eq!(published.event_type, MESSAGE_INBOUND);
-        assert_eq!(published.source, "discord");
-
-        let inbound: InboundMessage =
-            serde_json::from_value(published.data).expect("Failed to deserialize inbound message");
-        assert_eq!(inbound.text.as_deref(), Some("Hello, world!"));
-        assert_eq!(inbound.sender.id, "222222222");
-    }
-
-    #[test]
-    fn test_handle_event_message_create_self_ignored() {
-        let event_bus = EventBus::new();
-        let mut rx = event_bus.subscribe(MESSAGE_INBOUND);
-        let heartbeat = Heartbeat::new();
-
-        let msg = make_msg(
-            "111111111",
-            "888888888",
-            "MyBot",
-            Some("My Bot"),
-            true,
-            "I said this",
-            None,
-        );
-        let event = Event::MessageCreate(Box::new(MessageCreate(msg)));
-
-        let action = handle_gateway_event::<&str>(
-            Some(Ok(event)),
-            &event_bus,
-            "888888888", // same as author → 应被过滤
-            &heartbeat,
-        );
-
-        assert_eq!(action, EventAction::Continue);
-
-        // 自消息不应发布到总线
-        assert!(
-            rx.try_recv().is_err(),
-            "Self messages should NOT be published"
-        );
-    }
+    // Event::MessageCreate 的单元测试由 test_convert_* 系列函数直接测试 convert_message，
+    // 不再通过 handle_gateway_event 间接测试（该分支已清理，MessageCreate 在 gateway_shard_loop 处理）。
 
     #[test]
     fn test_handle_event_error_continues() {
