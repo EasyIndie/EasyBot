@@ -7,6 +7,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **API 路由层集成测试** — 新增 `tests/api_integration.rs`（24 个真实 HTTP 测试覆盖
+  health、auth、适配器管理、消息收发/编辑/删除、batch-send、配置、系统信息、日志、
+  API Key 管理端点）
+- **微信凭据过期自动重启** — `poll_messages()` 检测 HTTP 401 凭据过期信号 →
+  `PollOutcome::TokenExpired` → 清除磁盘凭据文件 → 健康监测自动重启 → `init()` 无法
+  恢复凭据 → `connect()` 触发新 QR 扫码登录
+- **飞书事件签名验证** — 支持从 `config.extra.verification_token`/`encrypt_key` 或
+  `FEISHU_VERIFICATION_TOKEN`/`FEISHU_ENCRYPT_KEY` 环境变量读取验证配置；配置时启用
+  真实 HMAC 验证，未配置时保持 WebSocket OAuth 鉴权兼容
+- **Discord guild name cache** — 从 `GuildCreate`/`GuildUpdate` 事件缓存 guild 名称，
+  填充入站消息 `chat_name` 字段（DM 使用 `author.name`）
+- **Discord API 429 Retry-After 自动重试** — `api_call` 方法最多重试一次 429，读取
+  真实 `Retry-After` 头等待
+- **Telegram media convert 测试** — 新增 8 个测试覆盖 photo/document/video/audio/
+  voice/sticker/animation 及 caption fallback
+- **AdapterManager health check 状态缓存** — 不可达适配器立即更新为 `Failed` 状态，
+  不再显示陈旧的 `Connected`
+- **WeChat HTTP 响应超时保护** — 为 `getuploadurl` 响应读取、CDN 错误响应读取和
+  `download_media` 添加显式 `tokio::time::timeout` 保护
+
+### Fixed
+
+- **WeChat send API `ret=-2` 处理** — 补充为与 `ret=-14` 相同的 context_token 过期
+  重试逻辑（剥离 token 重试一次），避免误判为真限流
+- **Telegram 长轮询串行处理消息** — 改为 `Semaphore(5)` + `tokio::spawn` 并行处理
+  入站消息，chat member update 保持串行（共享缓存）
+- **QQ `send_media` 媒体解析逻辑去重** — 提取 `resolve_upload_media` 共享异步关联函数，
+  消除 `send_c2c_media_upload_only`/`send_group_media_upload` 中约 40 行重复代码
+- **飞书能力声明切换为 `capabilities!` 宏** — 消除 11 个冗余 `Capability` 结构体字面量
+- **`SessionManager::update_source_fields` 写库优化** — 仅在至少一个富化字段变更时才
+  持久化到 DB，避免高频场景下每次富化都写数据库
+- **`messages_in` 计数器修复** — Telegram/Discord/Feishu 三个适配器的后台任务中正确
+  递增 `messages_in`（`Arc<AtomicU64>` 传递）
+- **WeChat 同步 I/O 修复** — `save_context_tokens` 和 `save_sync_buf` 改为
+  `spawn_blocking` 异步写入
+- **全量 Clippy warnings 清除** — 修复 collapsible_if、identical if blocks、unused
+  imports、unused Result、too_many_arguments 等 lint 警告，`verify.sh` 8 步全通过
+
+### Performance
+
+- **EventBus 订阅零轮询化** — `subscribe_many` 从 100ms 固定间隔轮询改为
+  `BroadcastStream` + `SelectAll`，零空闲 CPU 占用
+- **飞书 `api_*` 方法合并** — 5 个独立 HTTP 请求方法合并为统一 `send_api_request`
+- **Feishu token 管理合并** — 适配器实例和 WebSocket 后台任务的两套 token 缓存合并为
+  共享 `FeishuTokenStore`
+
+### Docs
+
+- **各适配器验证文档全量标记更新** — Telegram/Discord/Feishu/QQ/WeChat 五份文档的测试
+  状态和已验证功能清单更新至最新
+- **性能评审报告已修复列表更新** — 记录 25+ 项已修复问题的验证日期
+- **e2e-real.sh stdout 过滤** — `tail -f` 改为 `grep` 过滤，只显示 QR 码/API Key/
+  连接状态/错误等关键行，减少终端刷屏
+
 ## [0.0.14] - 2026-07-09
 
 ### Fixed
