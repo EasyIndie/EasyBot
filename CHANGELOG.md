@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.15] - 2026-07-10
+
 ### Added
 
 - **API 路由层集成测试** — 新增 `tests/api_integration.rs`（24 个真实 HTTP 测试覆盖

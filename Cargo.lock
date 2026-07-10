@@ -30,9 +30,9 @@ dependencies = [
 
 [[package]]
 name = "aioduct"
-version = "0.2.2"
+version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7dccb6900a78139c3fbbc9621f8c06c195f281fd1896c8d03f74ad765868d02d"
+checksum = "58fa9d6ed662d937fe4bfc52608fd9f8cdec3faeb245aaacd7a95f09d2e0da42"
 dependencies = [
  "base64",
  "bytes",
@@ -838,7 +838,7 @@ checksum = "92773504d58c093f6de2459af4af33faa518c13451eb8f2b5698ed3d36e7c813"
 
 [[package]]
 name = "e2e-tests"
-version = "0.0.14"
+version = "0.0.15"
 dependencies = [
  "axum",
  "easybot-adapter-discord",
@@ -861,7 +861,7 @@ dependencies = [
 
 [[package]]
 name = "easybot-adapter-discord"
-version = "0.0.14"
+version = "0.0.15"
 dependencies = [
  "async-trait",
  "base64",
@@ -880,7 +880,7 @@ dependencies = [
 
 [[package]]
 name = "easybot-adapter-feishu"
-version = "0.0.14"
+version = "0.0.15"
 dependencies = [
  "async-trait",
  "base64",
@@ -897,7 +897,7 @@ dependencies = [
 
 [[package]]
 name = "easybot-adapter-qq"
-version = "0.0.14"
+version = "0.0.15"
 dependencies = [
  "async-trait",
  "base64",
@@ -917,7 +917,7 @@ dependencies = [
 
 [[package]]
 name = "easybot-adapter-telegram"
-version = "0.0.14"
+version = "0.0.15"
 dependencies = [
  "async-trait",
  "base64",
@@ -934,7 +934,7 @@ dependencies = [
 
 [[package]]
 name = "easybot-adapter-wechat"
-version = "0.0.14"
+version = "0.0.15"
 dependencies = [
  "aes",
  "async-trait",
@@ -955,7 +955,7 @@ dependencies = [
 
 [[package]]
 name = "easybot-api"
-version = "0.0.14"
+version = "0.0.15"
 dependencies = [
  "axum",
  "base64",
@@ -985,7 +985,7 @@ dependencies = [
 
 [[package]]
 name = "easybot-bin"
-version = "0.0.14"
+version = "0.0.15"
 dependencies = [
  "anyhow",
  "clap",
@@ -1010,7 +1010,7 @@ dependencies = [
 
 [[package]]
 name = "easybot-core"
-version = "0.0.14"
+version = "0.0.15"
 dependencies = [
  "argon2",
  "async-trait",
@@ -1042,7 +1042,7 @@ dependencies = [
 
 [[package]]
 name = "easybot-plugin-sdk"
-version = "0.0.14"
+version = "0.0.15"
 dependencies = [
  "async-trait",
  "easybot-core",
@@ -1122,7 +1122,7 @@ checksum = "1d674e81391d1e1ab681a28d99df07927c6d4aa5b027d7da16ba32d1d21ecd99"
 
 [[package]]
 name = "fixtures"
-version = "0.0.14"
+version = "0.0.15"
 dependencies = [
  "base64",
  "easybot-core",
@@ -1712,7 +1712,7 @@ dependencies = [
 
 [[package]]
 name = "integration-tests"
-version = "0.0.14"
+version = "0.0.15"
 dependencies = [
  "easybot-core",
  "easybot-plugin-sdk",
@@ -1823,13 +1823,14 @@ dependencies = [
 
 [[package]]
 name = "larksuite-oapi-sdk-rs"
-version = "0.2.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "286b0c425cf1188a2b4a7abaafd34e7f46562f439b14ba3289c2a870ccfaeb24"
+checksum = "6fcf6b12d634f1f9db3f18649672c9d83657d2982c3f8326efe77b93eeac9470"
 dependencies = [
  "aes",
  "aioduct",
  "base64",
+ "bytes",
  "cbc",
  "flate2",
  "futures-util",
@@ -1979,9 +1980,9 @@ dependencies = [
 
 [[package]]
 name = "md5"
-version = "0.8.0"
+version = "0.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ae960838283323069879657ca3de837e9f7bbb4c7bf6ea7f1b290d5e9476d2e0"
+checksum = "7ebb8d8732c6a6df3d8f032a82911cfc747e00efb95cc46e8d0acd5b5b88570c"
 
 [[package]]
 name = "memchr"
@@ -2043,7 +2044,7 @@ dependencies = [
 
 [[package]]
 name = "mock-adapter"
-version = "0.0.14"
+version = "0.0.15"
 dependencies = [
  "easybot-plugin-sdk",
  "serde_json",
@@ -2646,9 +2647,9 @@ dependencies = [
 
 [[package]]
 name = "regex"
-version = "1.12.4"
+version = "1.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f1292b7759ae1cb9ec195452d1390a074f0cd8541ab7a5a8c31cd6db45d4a6ba"
+checksum = "2a0e75113e14dc5acb068cd0786884f214f1312650a3d36d269f5c4f3cdee8a2"
 dependencies = [
  "aho-corasick",
  "memchr",
@@ -2658,9 +2659,9 @@ dependencies = [
 
 [[package]]
 name = "regex-automata"
-version = "0.4.14"
+version = "0.4.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6e1dd4122fc1595e8162618945476892eefca7b88c52820e74af6262213cae8f"
+checksum = "1f388202e4b80542a0921078cc23b6333bcf1409c1e3f86404cae4766a6131db"
 dependencies = [
  "aho-corasick",
  "memchr",
@@ -3481,9 +3482,9 @@ dependencies = [
 
 [[package]]
 name = "sysinfo"
-version = "0.39.5"
+version = "0.39.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2c8bd2130a9b60bee2581bf82cfe89ee836424d1f37dcfa4ce21509611684673"
+checksum = "d2071df9448915b71c4fe6d25deaf1c22f12bd234f01540b77312bb8e41361e6"
 dependencies = [
  "libc",
  "memchr",
@@ -4798,9 +4799,9 @@ dependencies = [
 
 [[package]]
 name = "zlib-rs"
-version = "0.6.5"
+version = "0.6.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5431d5661c32445236631278f27946e444ddafe4684cac70b185272d4f9c52d5"
+checksum = "b142a20ec14a91d5bc708c1dc21b080c550113d8aa77afa29635673a65dd02c5"
 
 [[package]]
 name = "zmij"
