@@ -1654,4 +1654,180 @@ mod tests {
             tg_type
         );
     }
+
+    // ── 媒体消息类型 convert 测试 ──
+
+    fn make_base_msg() -> TelegramMessage {
+        TelegramMessage {
+            message_id: 100,
+            from: Some(TelegramUser {
+                id: 12345,
+                is_bot: false,
+                first_name: "TestUser".to_string(),
+                last_name: None,
+                username: None,
+                language_code: None,
+            }),
+            chat: TelegramChat {
+                id: -100123456,
+                chat_type: "private".to_string(),
+                title: None,
+                username: None,
+                first_name: Some("TestUser".to_string()),
+                last_name: None,
+            },
+            date: 1700000000,
+            text: None,
+            entities: None,
+            reply_to_message: None,
+            caption: None,
+            photo: None,
+            document: None,
+            video: None,
+            audio: None,
+            voice: None,
+            sticker: None,
+            animation: None,
+            video_note: None,
+        }
+    }
+
+    #[test]
+    fn test_convert_photo_message() {
+        let mut msg = make_base_msg();
+        msg.photo = Some(vec![TelegramPhotoSize {
+            file_id: "photo_file_id".to_string(),
+            file_unique_id: "unique_photo".to_string(),
+            width: 800,
+            height: 600,
+            file_size: Some(102400),
+        }]);
+        let inbound = TelegramAdapter::convert_message(msg, None).unwrap();
+        assert_eq!(inbound.msg_type, MessageType::Image);
+        assert!(inbound.media.is_some());
+        let media = inbound.media.unwrap();
+        assert_eq!(media.len(), 1);
+        assert_eq!(media[0].media_type, MediaType::Image);
+        assert_eq!(media[0].url.as_deref(), Some("photo_file_id"));
+        assert_eq!(media[0].mime_type, "image/jpeg");
+    }
+
+    #[test]
+    fn test_convert_document_message() {
+        let mut msg = make_base_msg();
+        msg.document = Some(TelegramDocument {
+            file_id: "doc_file_id".to_string(),
+            file_unique_id: "unique_doc".to_string(),
+            thumbnail: None,
+            file_name: Some("report.pdf".to_string()),
+            mime_type: Some("application/pdf".to_string()),
+            file_size: Some(204800),
+        });
+        let inbound = TelegramAdapter::convert_message(msg, None).unwrap();
+        assert_eq!(inbound.msg_type, MessageType::File);
+        assert_eq!(inbound.media.as_ref().unwrap()[0].media_type, MediaType::Document);
+        assert_eq!(inbound.media.as_ref().unwrap()[0].filename.as_deref(), Some("report.pdf"));
+    }
+
+    #[test]
+    fn test_convert_video_message() {
+        let mut msg = make_base_msg();
+        msg.video = Some(TelegramVideo {
+            file_id: "video_file_id".to_string(),
+            file_unique_id: "unique_video".to_string(),
+            width: 1920,
+            height: 1080,
+            duration: 30,
+            thumbnail: None,
+            mime_type: Some("video/mp4".to_string()),
+            file_size: Some(10485760),
+        });
+        let inbound = TelegramAdapter::convert_message(msg, None).unwrap();
+        assert_eq!(inbound.msg_type, MessageType::Video);
+        assert_eq!(inbound.media.as_ref().unwrap()[0].media_type, MediaType::Video);
+    }
+
+    #[test]
+    fn test_convert_audio_message() {
+        let mut msg = make_base_msg();
+        msg.audio = Some(TelegramAudio {
+            file_id: "audio_file_id".to_string(),
+            file_unique_id: "unique_audio".to_string(),
+            duration: 180,
+            performer: Some("Artist".to_string()),
+            title: Some("Song".to_string()),
+            mime_type: Some("audio/mpeg".to_string()),
+            file_size: Some(5120000),
+        });
+        let inbound = TelegramAdapter::convert_message(msg, None).unwrap();
+        assert_eq!(inbound.msg_type, MessageType::Audio);
+        assert_eq!(inbound.media.as_ref().unwrap()[0].media_type, MediaType::Audio);
+    }
+
+    #[test]
+    fn test_convert_voice_message() {
+        let mut msg = make_base_msg();
+        msg.voice = Some(TelegramVoice {
+            file_id: "voice_file_id".to_string(),
+            file_unique_id: "unique_voice".to_string(),
+            duration: 15,
+            mime_type: Some("audio/ogg".to_string()),
+            file_size: Some(256000),
+        });
+        let inbound = TelegramAdapter::convert_message(msg, None).unwrap();
+        assert_eq!(inbound.msg_type, MessageType::Audio);
+        assert_eq!(inbound.media.as_ref().unwrap()[0].media_type, MediaType::Audio);
+    }
+
+    #[test]
+    fn test_convert_sticker_message() {
+        let mut msg = make_base_msg();
+        msg.sticker = Some(TelegramSticker {
+            file_id: "sticker_file_id".to_string(),
+            file_unique_id: "unique_sticker".to_string(),
+            width: 512,
+            height: 512,
+            is_animated: false,
+            is_video: false,
+            thumbnail: None,
+            file_size: Some(128000),
+        });
+        let inbound = TelegramAdapter::convert_message(msg, None).unwrap();
+        assert_eq!(inbound.msg_type, MessageType::Sticker);
+        assert_eq!(inbound.media.as_ref().unwrap()[0].media_type, MediaType::Sticker);
+    }
+
+    #[test]
+    fn test_convert_animation_message() {
+        let mut msg = make_base_msg();
+        msg.animation = Some(TelegramAnimation {
+            file_id: "anim_file_id".to_string(),
+            file_unique_id: "unique_anim".to_string(),
+            width: 320,
+            height: 240,
+            duration: 5,
+            thumbnail: None,
+            mime_type: Some("image/gif".to_string()),
+            file_size: Some(500000),
+        });
+        let inbound = TelegramAdapter::convert_message(msg, None).unwrap();
+        assert_eq!(inbound.msg_type, MessageType::Animation);
+        assert_eq!(inbound.media.as_ref().unwrap()[0].media_type, MediaType::Animation);
+    }
+
+    #[test]
+    fn test_convert_caption_fallback() {
+        let mut msg = make_base_msg();
+        msg.photo = Some(vec![TelegramPhotoSize {
+            file_id: "photo_with_caption".to_string(),
+            file_unique_id: "unique_cap".to_string(),
+            width: 400,
+            height: 300,
+            file_size: None,
+        }]);
+        msg.caption = Some("A beautiful photo".to_string());
+        let inbound = TelegramAdapter::convert_message(msg, None).unwrap();
+        assert_eq!(inbound.msg_type, MessageType::Image);
+        assert_eq!(inbound.text.as_deref(), Some("A beautiful photo"));
+    }
 }

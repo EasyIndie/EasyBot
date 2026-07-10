@@ -237,7 +237,6 @@ impl DiscordAdapter {
         )))
 
     }
-    }
 
     /// 将 Discord 消息转换为网关 InboundMessage
     /// 将 twilight_model::channel::Message 转换为 EasyBot InboundMessage

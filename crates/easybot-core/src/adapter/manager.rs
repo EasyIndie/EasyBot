@@ -1539,6 +1539,57 @@ mod tests {
         // stop_all now clears configs as well
         assert!(manager.configs.read().await.is_empty());
     }
+
+    #[tokio::test]
+    async fn test_list_statuses_after_start() {
+        let manager = new_manager().await;
+        register_mock_adapter(&manager).await;
+
+        // Before start: statuses should be empty
+        let statuses = manager.list_statuses().await;
+        assert!(statuses.is_empty());
+
+        let config = AdapterConfig {
+            enabled: Some(true),
+            token: Some("t".into()),
+            api_key: None,
+            base_url: None,
+            extra: serde_json::json!({}),
+        };
+        manager.start("test-mock", config).await.unwrap();
+        wait_connected(&manager, "test-mock").await;
+
+        // After start: statuses should include the adapter
+        let statuses = manager.list_statuses().await;
+        assert!(!statuses.is_empty());
+        let status = statuses.iter().find(|s| s.platform == "test-mock");
+        assert!(status.is_some());
+        assert!(status.unwrap().connected);
+    }
+
+    #[tokio::test]
+    async fn test_list_statuses_after_stop() {
+        let manager = new_manager().await;
+        register_mock_adapter(&manager).await;
+
+        let config = AdapterConfig {
+            enabled: Some(true),
+            token: Some("t".into()),
+            api_key: None,
+            base_url: None,
+            extra: serde_json::json!({}),
+        };
+        manager.start("test-mock", config).await.unwrap();
+        wait_connected(&manager, "test-mock").await;
+
+        manager.stop("test-mock").await;
+
+        // After stop: statuses should reflect disconnected state
+        let statuses = manager.list_statuses().await;
+        let status = statuses.iter().find(|s| s.platform == "test-mock");
+        assert!(status.is_some());
+        assert!(!status.unwrap().connected);
+    }
 }
 
 /// 启动适配器结果

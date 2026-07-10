@@ -327,7 +327,7 @@ wscat -c "ws://localhost:8080/api/v1/ws" \
 
 ## 后续改进建议
 
-- [ ] 引入 `wiremock` 或 `mockito` 为 Discord REST API 编写 mock 测试
+- [x] ~~引入 `wiremock` 为 Discord REST API 编写 mock 测试~~（已有 20 个 mock 测试在 `tests/send_mock.rs`，覆盖 send/connect/edit/delete/send_media 等场景）
 - [x] ~~实现 `reply_to` 字段到 Discord `message_reference` API 参数的映射~~ — 已完成
 - [x] ~~重构 `gateway_shard_loop` 与 `handle_gateway_event` 的双路径问题（`MessageCreate` 在生产路径中被拦截，`handle_gateway_event` 中的分支为死代码——已清理死代码分支，`MessageCreate` 仅在外层 `gateway_shard_loop` 处理）~~
 - [ ] 支持更多 Intents 从配置读取（当前硬编码）
