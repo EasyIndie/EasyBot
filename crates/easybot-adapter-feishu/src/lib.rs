@@ -421,13 +421,39 @@ impl PlatformAdapter for FeishuAdapter {
             let feishu_base_url = self.api_base_url().to_string();
             let mi = self.messages_in.clone();
 
-            // SECURITY: Signature verification is skipped because the Feishu
-            // WebSocket event stream uses a different authentication mechanism
-            // (long-lived WS connection authenticated during handshake) vs the
-            // Event Subscription webhook path (HMAC signature per-request).
-            // The verify_token can be configured via FEISHU_VERIFICATION_TOKEN env var.
-            let dispatcher = EventDispatcher::new("", "")
-                .skip_sign_verify()
+            // 读取事件验证配置（优先从 config.extra 读取，再从环境变量回退）
+            // verification_token: 飞书开放平台「事件订阅」→「配置」→「Verification Token」
+            // encrypt_key: 飞书开放平台「事件订阅」→「配置」→「Encrypt Key」（用于 AES 解密）
+            // 从 config.extra 或环境变量读取事件验证配置
+            let env_verify_token = std::env::var("FEISHU_VERIFICATION_TOKEN").ok();
+            let env_encrypt_key = std::env::var("FEISHU_ENCRYPT_KEY").ok();
+            let verify_token = config
+                .extra
+                .get("verification_token")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .or_else(|| env_verify_token.as_deref().filter(|s| !s.is_empty()))
+                .unwrap_or("");
+            let encrypt_key = config
+                .extra
+                .get("encrypt_key")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty())
+                .or_else(|| env_encrypt_key.as_deref().filter(|s| !s.is_empty()))
+                .unwrap_or("");
+
+            let dispatcher = if verify_token.is_empty() && encrypt_key.is_empty() {
+                tracing::info!("飞书事件签名验证未配置（WebSocket 连接使用 OAuth 鉴权），跳过 per-event 验证");
+                EventDispatcher::new("", "")
+                    .skip_sign_verify()
+            } else {
+                tracing::info!(
+                    "飞书事件签名验证已启用（verify_token={}, encrypt_key={}）",
+                    if verify_token.is_empty() { "未设置" } else { "已配置" },
+                    if encrypt_key.is_empty() { "未设置" } else { "已配置" },
+                );
+                EventDispatcher::new(verify_token, encrypt_key)
+            }
                 // 处理入站消息
                 .on_event(EVENT_MESSAGE_RECEIVE_V1, {
                     let rc = role_cache.clone();

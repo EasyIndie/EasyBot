@@ -366,6 +366,6 @@ wscat -c "ws://localhost:8080/api/v1/ws" \
 - [x] ~~修复 polling 路径中 `messages_in` 从未递增的问题~~（已传递 `Arc<AtomicU64>` 到 polling 任务）
 - [x] ~~增加更多消息类型的 convert 测试（图片、视频、文档）~~（已新增 8 个测试：photo/document/video/audio/voice/sticker/animation + caption fallback）
 - [x] ~~为 AdapterManager 补充更多测试（start_all、stop_all、list_statuses 等）~~（已覆盖 17 个测试，含新增 `test_list_statuses_after_start`、`test_list_statuses_after_stop`）
-- [ ] API 路由层集成测试（启动 Server → HTTP 调用 adapter start/stop/消息接口）
+- [x] ~~API 路由层集成测试（启动 Server → HTTP 调用 adapter start/stop/消息接口）~~（已在 `tests/api_integration.rs` 实现 24 个真实 HTTP 测试，覆盖 health、auth、适配器管理、消息发送/编辑/删除、batch-send、配置、系统信息、日志、API Key 等端点）
   - 已修复：`test_cli_short_flags` 端口冲突问题，`test_openapi_has_security_scheme` 随机端口
 - [x] ~~WebSocket 推送的集成测试~~（已在 `crates/easybot-api/tests/ws.rs` 实现 371 行 Rust 集成测试，使用真实 `tokio_tungstenite` 连接覆盖 auth、事件流、多客户端、断开重连等场景）

@@ -42,9 +42,9 @@ use easybot_core::types::message::*;
 mod crypto;
 use crypto::{
     WeChatCredentials, aes_128_ecb_encrypt, aes_padded_size, base64_encode_uin,
-    build_cdn_upload_url, encode_aes_key_for_api, generate_filekey, load_context_tokens,
-    load_credentials_from_disk, load_sync_buf, md5_hex, resolve_media_data, save_context_tokens,
-    save_credentials_to_disk, save_sync_buf,
+    build_cdn_upload_url, encode_aes_key_for_api, generate_filekey,
+    load_context_tokens, load_credentials_from_disk, load_sync_buf, md5_hex, resolve_media_data,
+    save_context_tokens, save_credentials_to_disk, save_sync_buf,
 };
 
 /// iLink Bot API 基础 URL
@@ -242,6 +242,9 @@ enum PollOutcome {
     Messages(String, Vec<WeixinMessage>),
     /// API 返回 errcode=-14，会话过期（暂停后重试，凭据依然有效）
     SessionExpired(String),
+    /// bot_token 已过期/无效（HTTP 401 或 API 返回 ret 表示凭据失效）
+    /// 需要清除凭据并触发重新扫码登录
+    TokenExpired(String),
 }
 
 /// 个人微信适配器
@@ -1501,6 +1504,16 @@ async fn longpoll_loop(
                         }
                         consecutive_failures = 0;
                     }
+                    Ok(PollOutcome::TokenExpired(msg)) => {
+                        tracing::error!(
+                            "个人微信 bot_token 已过期: {} — 清除凭据，下次启动需要重新扫码登录",
+                            msg
+                        );
+                        // 清除磁盘上的过期凭据，防止健康监测自动重连时重复使用
+                        // 清除后健康监测会触发 restart → init() 找不到凭据 → connect() 触发新 QR 登录
+                        crypto::clear_credentials_from_disk();
+                        break;
+                    }
                     Err(e) => {
                         consecutive_failures += 1;
                         tracing::warn!("个人微信长轮询错误 (第{}次): {}", consecutive_failures, e);
@@ -1549,6 +1562,13 @@ async fn poll_messages(
         .send()
         .await
         .map_err(|e| GatewayError::Internal(format!("Longpoll request failed: {}", e)))?;
+
+    // 检测 bot_token 过期 — iLink API 返回 401 Unauthorized
+    if raw_resp.status() == reqwest::StatusCode::UNAUTHORIZED {
+        return Ok(PollOutcome::TokenExpired(
+            "bot_token 已过期/失效（HTTP 401），需要重新扫码登录".to_string(),
+        ));
+    }
 
     let resp_text = raw_resp
         .text()

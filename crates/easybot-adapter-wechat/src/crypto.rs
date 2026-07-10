@@ -63,6 +63,24 @@ pub(crate) fn save_credentials_to_disk(creds: &WeChatCredentials) {
     }
 }
 
+/// 清除磁盘上的凭据文件（当 bot_token 过期/失效时调用）
+/// 使下次 init() 无法从磁盘恢复凭据，从而触发重新扫码登录
+pub(crate) fn clear_credentials_from_disk() {
+    let path = match credential_path() {
+        Some(p) => p,
+        None => {
+            tracing::warn!("无法确定凭据文件路径");
+            return;
+        }
+    };
+    if path.exists() {
+        match std::fs::remove_file(&path) {
+            Ok(_) => tracing::info!("个人微信过期凭据已清除: {:?}", path),
+            Err(e) => tracing::warn!("清除凭据文件失败: {} ({:?})", e, path),
+        }
+    }
+}
+
 /// 原子写入 JSON 到磁盘（临时文件 + rename，防止写一半崩溃导致文件损坏）
 pub(crate) fn atomic_write_json<T: serde::Serialize>(
     path: &std::path::Path,

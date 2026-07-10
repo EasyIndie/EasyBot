@@ -29,6 +29,7 @@ base64.workspace = true
 [dev-dependencies]
 tower.workspace = true
 sqlx = { workspace = true }
+reqwest = { workspace = true }
 http-body-util = "0.1"
 tokio-tungstenite = { workspace = true, features = ["connect"] }
 insta = { version = "1", features = ["json"] }

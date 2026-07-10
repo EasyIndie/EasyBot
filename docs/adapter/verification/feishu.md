@@ -160,7 +160,7 @@ curl -s "http://localhost:8080/api/v1/messages?platform=feishu" \
 
 - [x] ~~修复 `upload_media` 中 base64 未解码的 bug（已改为 `STANDARD.decode()`）~~
 - [x] ~~在入站消息处理时递增适配器内部 `messages_in` 计数器~~（已通过 `Arc<AtomicU64>` 传递并递增）
-- [ ] 添加飞书 `im.message.receive_v1` 事件签名的真实验证（当前使用 `skip_sign_verify()`）
+- [x] ~~添加飞书 `im.message.receive_v1` 事件签名的真实验证（当前使用 `skip_sign_verify()`）~~（已实现：从 config.extra 或 `FEISHU_VERIFICATION_TOKEN`/`FEISHU_ENCRYPT_KEY` 环境变量读取验证配置；配置时启用真实验证，未配置时保持跳过兼容）
 - [x] ~~合并飞书 5 个 `api_*` 方法为统一的 `send_api_request`~~
 - [ ] 支持更多消息类型（图片、文件等入站消息的 content 解析）
 - [x] ~~合并两套独立 token 管理系统（适配器实例的 `access_token` + WebSocket 任务的 `token_cache`）~~（已合并为共享 `FeishuTokenStore`）

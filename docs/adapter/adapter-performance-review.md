@@ -33,6 +33,9 @@
 | §4.3 | 飞书 5 个 `api_*` 方法重复 | ✅ 2026-07-10 合并为 `send_api_request` |
 | §5.2 | QQ send_media media-resolution 逻辑重复 | ✅ 2026-07-10 提取 `resolve_upload_media` 共享方法 |
 | §3.3 | Discord api_call 缺 429 重试 | ✅ 2026-07-10 增加 Retry-After 自动重试 |
+| — | Telegram API 路由层集成测试 | ✅ 2026-07-10 新增 `tests/api_integration.rs` 24 个真实 HTTP 测试 |
+| §6.x | 微信凭据过期自动重启 | ✅ 2026-07-10 `poll_messages` 检测 HTTP 401 → `TokenExpired` → 清除凭据文件，健康监测自动重启触发扫码 |
+| §4.x | 飞书事件签名验证配置 | ✅ 2026-07-10 支持从 `config.extra` 或 `FEISHU_VERIFICATION_TOKEN`/`FEISHU_ENCRYPT_KEY` 环境变量读取，配置时启用真实验证 |
 
 > 注：微信 `save_context_tokens` 共 3 处调用，2 处（send/send_media 的 ret=-14 路径）已修复，
 > 第 3 处（`longpoll_loop` 批量持久化）在先前的修复中已使用 `spawn_blocking`。
