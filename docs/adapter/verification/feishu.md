@@ -69,7 +69,7 @@ adapters:
 | Adapter init / connect | ✅ 通过 | 自动获取 tenant_access_token |
 | 适配器生命期管理 (start/stop/status) | ✅ 通过 | REST API 正常控制 |
 | 文本消息发送 | ✅ 通过 | 使用 `im/v1/messages` API |
-| 媒体消息发送 | ✅ 通过 | 上传文件 + 获取 file_key |
+| 媒体消息发送 | ✅ 通过 | 上传文件 + 获取 file_key (base64 解码 bug 已修复) |
 | 交互式消息（按钮） | ✅ 通过 | 支持单按钮行 / 多按钮 action 组 |
 | 消息编辑 | ✅ 通过 | 使用 `PUT /im/v1/messages/{id}` |
 | 消息删除 | ✅ 通过 | `DELETE /im/v1/messages/{id}` (24h 内可撤回) |
@@ -158,6 +158,8 @@ curl -s "http://localhost:8080/api/v1/messages?platform=feishu" \
 
 ## 后续改进建议
 
-- [ ] 在入站消息处理时递增适配器内部 `messages_in` 计数器
+- [x] ~~修复 `upload_media` 中 base64 未解码的 bug（已改为 `STANDARD.decode()`）~~
+- [x] ~~在入站消息处理时递增适配器内部 `messages_in` 计数器~~（已通过 `Arc<AtomicU64>` 传递并递增）
 - [ ] 添加飞书 `im.message.receive_v1` 事件签名的真实验证（当前使用 `skip_sign_verify()`）
 - [ ] 支持更多消息类型（图片、文件等入站消息的 content 解析）
+- [ ] 合并两套独立 token 管理系统（适配器实例的 `access_token` + WebSocket 任务的 `token_cache`）

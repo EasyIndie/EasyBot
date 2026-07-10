@@ -182,6 +182,7 @@ curl -s -H "Authorization: Bearer $API_KEY" \
 | TLS 修正 | 使用 `native-tls` 替代 `rustls + webpki-roots`（GlobalSign 新 CA 不在 webpki-roots 中） | `Cargo.toml`, `lib.rs` |
 | Gateway WebSocket 连接 | 手动建立 DNS→TCP→TLS→WebSocket 连接，支持 `native-tls` | `lib.rs` |
 | 配置更新 | `token` 字段现在存储 `clientSecret`（AppSecret），env var 改为 `QQ_CLIENT_SECRET` | `gateway.local.yaml` |
+| 移除 3500s 定时 token 刷新 | 仅依赖 401 自动重试，移除冗余的定时刷新 | `lib.rs` |
 
 ### 验证中发现并修复的问题
 
@@ -257,7 +258,7 @@ curl -s -X POST http://127.0.0.1:8080/api/v1/messages/send \
 | 鉴权地址 | `https://bots.qq.com/app/getAppAccessToken` |
 | REST API 鉴权 | `Authorization: QQBot {access_token}` |
 | Gateway Identiy | `"token": "QQBot {access_token}"` |
-| Token 有效期 | 7200 秒，提前 60 秒触发刷新 |
+| Token 有效期 | 7200 秒，依赖 401 自动重试（已移除 3500s 定时刷新） |
 | 连接方式 | Gateway WebSocket (`wss://api.sgroup.qq.com/websocket`) |
 | TLS 方案 | `native-tls`（系统 CA 证书） |
 | 支持的消息类型 | Text (0), Image (2), Markdown |
@@ -266,7 +267,7 @@ curl -s -X POST http://127.0.0.1:8080/api/v1/messages/send \
 | 入站事件类型 | `AT_MESSAGE_CREATE` / `GROUP_AT_MESSAGE_CREATE` / `GROUP_MESSAGE_CREATE` (2026 新版) / `C2C_MESSAGE_CREATE` |
 | 新字段 `mentioned` | 频道/旧版群@ → `Some(true)`, 新版全量群 → `Some(bool)`, C2C → `None` |
 | 自动重连 | ✅ 外层循环自动重连（同时刷新 token） |
-| Token 定时刷新 | ✅ Gateway 事件循环中每 3500s 刷新一次 |
+| Token 刷新 | ✅ 每 3500s 定时刷新已移除，仅依赖 401 自动重试 |
 
 ## 后续改进建议
 

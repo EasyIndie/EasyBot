@@ -1,9 +1,28 @@
 # 适配器架构全面评审报告
 
-> 生成日期: 2026-07-06
+> 生成日期: 2026-07-06 | 最后复核: 2026-07-10
 > 范围: 全部五个适配器 + 核心层 (EventBus, AdapterManager, SessionManager)
+> 
+> ⚠️ **本文档是代码审查快照。已修复的问题保留原文供参考，在每节头部标记当前状态。**
 
 ---
+
+### 此后已修复问题一览
+
+以下问题是审查报告发现但**已在此后修复**的：
+
+| 报告引用 | 问题 | 修复验证日期 |
+|---|---|---|
+| §4.1 | 飞书 `upload_media` base64 未解码 | ✅ 2026-07-10 确认已修复 |
+| §2.1 | Telegram AdminCache 使用 `std::sync::Mutex::try_lock` | ✅ 2026-07-10 确认已改用 `AsyncMutex` |
+| §5.4 | QQ Gateway 3500s 定时 token 刷新 (已移除) | ✅ 2026-07-10 确认已移除 |
+| §6.1 | 微信每条消息同步磁盘 I/O (`save_sync_buf`) | ✅ 2026-07-10 确认已用 `spawn_blocking` |
+| §6.2 | 微信非文本消息使用 `[图片]` 占位符 | ✅ 2026-07-10 确认已改为空文本 + `MediaAttachment` |
+| §1.3/5.5 | `messages_in` 在 Telegram/Discord/飞书从未递增 | ✅ 2026-07-10 修复：传递 `Arc<AtomicU64>` 给后台任务并递增 |
+| §6.1 (续) | 微信 `save_context_tokens` 同步写（2 处） | ✅ 2026-07-10 修复：改用 `spawn_blocking` |
+
+> 注：微信 `save_context_tokens` 共 3 处调用，2 处（send/send_media 的 ret=-14 路径）已修复，
+> 第 3 处（`longpoll_loop` 批量持久化）在先前的修复中已使用 `spawn_blocking`。
 
 ## 目录
 
@@ -78,9 +97,11 @@ HealthReport {
 
 **文件**: `crates/easybot-adapter-telegram/src/lib.rs` (1420 行)
 
-### 2.1 AdminCache 使用 `std::sync::Mutex` 和 `try_lock()`
+### 2.1 ~~AdminCache 使用 `std::sync::Mutex` 和 `try_lock()`~~ 已修复
 
-```rust
+> ✅ **已于 2026-07-10 前修复。** 现在使用 `AsyncMutex`（tokio::sync::Mutex），不再有 `try_lock()` 静默跳过问题。
+
+~~```rust
 type AdminCache = Arc<Mutex<HashMap<i64, Vec<(i64, SenderRole)>>>>;
 // ...
 if let Ok(cache) = admin_cache.try_lock() {  // 争用时会静默跳过
@@ -88,7 +109,7 @@ if let Ok(cache) = admin_cache.try_lock() {  // 争用时会静默跳过
 
 **问题**: 在异步上下文中使用 `std::sync::Mutex` 配合 `try_lock()`，当锁被持有时不会等待而是静默跳过，导致缓存更新丢失或角色无法解析。如果 `resolve_sender_role` 和 `update_admin_cache` 同时在多个 polling 迭代中执行，try_lock 失败将导致角色回退到 `None`。
 
-**建议**: 改用 `tokio::sync::Mutex` 或使用 DashMap 避免全局锁。
+**建议**: 改用 `tokio::sync::Mutex` 或使用 DashMap 避免全局锁。~~
 
 ### 2.2 长轮询实现缺少 HTTP 429 处理
 
@@ -160,9 +181,11 @@ Discord 的 `payload_json` + `files[0]` multipart 上传模式需要手工构建
 
 **文件**: `crates/easybot-adapter-feishu/src/lib.rs` (1388 行)
 
-### 4.1 **BUG: `upload_media` 中 base64 数据未解码**
+### 4.1 ~~BUG: `upload_media` 中 base64 数据未解码~~ 已修复
 
-```rust
+> ✅ **已于 2026-07-10 前修复。** 现在正确调用 `base64::engine::general_purpose::STANDARD.decode(base64_data)`，不再使用 `base64_data.as_bytes().to_vec()`。
+
+~~```rust
 // FeishuAdapter::upload_media 第 988-996 行：
 let file_data = if let Some(ref url) = media.url {
     // URL 下载 → OK
@@ -175,7 +198,7 @@ let file_data = if let Some(ref url) = media.url {
 
 **影响**: 当通过 `send_media` 使用 base64 data 发送媒体时，传送到飞书的是 base64 ASCII 文本字节，而不是原始二进制文件。飞书收到了一个文本文件而不是图片/视频，上传"成功"但展示异常或损坏。
 
-**建议**: 使用 `base64::engine::general_purpose::STANDARD.decode(base64_data)` 解码。
+**建议**: 使用 `base64::engine::general_purpose::STANDARD.decode(base64_data)` 解码。~~
 
 ### 4.2 两套独立的 token 管理系统
 
@@ -296,13 +319,15 @@ fn mime_to_file_type(mime_type: &str) -> u32 {
 
 **影响**: 文本文件、PDF 等发送时会被 QQ API 视为图片，可能导致上传失败或类型错误。虽然 `send_media` 中 `media.media_type` 字段可以用来做更精确的判断（不必依赖 MIME），但这个工具函数有潜在的误判。
 
-### 5.4 Gateway 循环中 token 刷新频率无效
+### 5.4 ~~Gateway 循环中 token 刷新频率无效~~ 已修复
 
-gateway_loop 中有一个 `token_refresh_timer` 每 3500 秒刷新一次 token，但 `send_api_request` 已经实现了 401 自动重试。两者同时存在导致：
+> ✅ **已于 2026-07-10 前修复。** 3500s 定时刷新已移除，现在完全依赖 401 自动重试机制。
+
+~~gateway_loop 中有一个 `token_refresh_timer` 每 3500 秒刷新一次 token，但 `send_api_request` 已经实现了 401 自动重试。两者同时存在导致：
 - 定时刷新可能发生在没有 API 请求的空闲期，浪费一次 HTTP 调用
 - 定时刷新和按需刷新没有协调，可能在短时间内连续刷新两次
 
-**建议**: 移除周期性定时刷新，仅依赖 401 重试机制。或者将 token 过期检查改为"后台自动刷新+按需使用"（如飞书的 `ensure_token` 模式）。
+**建议**: 移除周期性定时刷新，仅依赖 401 重试机制。或者将 token 过期检查改为"后台自动刷新+按需使用"（如飞书的 `ensure_token` 模式）。~~
 
 ### 5.5 `messages_in: Arc<AtomicU64>` 在各适配器间不一致
 
@@ -320,9 +345,11 @@ messages_in: AtomicU64,       // Telegram, Discord, Feishu
 
 **文件**: `crates/easybot-adapter-wechat/src/lib.rs` (2257 行)，`crypto.rs` (298 行)
 
-### 6.1 **性能瓶颈: 每次收到消息都同步写磁盘**
+### 6.1 ~~性能瓶颈: 每次收到消息都同步写磁盘~~ 部分修复
 
-`longpoll_loop` 在每条入站消息处理路径上执行同步文件 I/O：
+> ⚠️ **部分修复：** `save_sync_buf` 已用 `spawn_blocking` 包裹（行 1437-1438），但 `save_context_tokens` 在 session 过期重试路径（行 1097）仍未使用 `spawn_blocking`，仍然在异步上下文中执行同步文件 I/O。
+
+~~`longpoll_loop` 在每条入站消息处理路径上执行同步文件 I/O：
 
 ```rust
 // longpoll_loop 第 1378-1387 行：
@@ -342,11 +369,13 @@ if let Some(ref ct) = msg.context_token {
 **建议**:
 - 使用 `tokio::task::spawn_blocking` 将磁盘 I/O 移出异步热路径。
 - 或使用内存 buffer + 节流写入（每 10 秒或每 50 条消息写一次磁盘，减少写入频率）。
-- sync_buf 可用 `Arc<RwLock<...>>` + 后台定时持久化替代每次同步写入。
+- sync_buf 可用 `Arc<RwLock<...>>` + 后台定时持久化替代每次同步写入。~~
 
-### 6.2 `convert_message` 对非文本消息的降级处理
+### 6.2 ~~`convert_message` 对非文本消息的降级处理~~ 已修复
 
-```rust
+> ✅ **已于 2026-07-10 前修复。** 非文本消息（图片/语音/文件/视频）不再使用 `[图片]` 占位文本，改为返回空字符串 (`String::new()`) 并填充 `MediaAttachment` 字段（行 1607-1640）。下游通过 `media` 字段和 `msg_type` 判断消息类型。
+
+~~```rust
 match item.item_type {
     1 => Some(t.text.clone()),
     2 => Some("[图片]".to_string()),
@@ -357,7 +386,7 @@ match item.item_type {
 
 **影响**: 收到图片/语音/视频消息时，`InboundMessage.text` 被设置为 `"[图片]"` 等占位字符串。这些占位字符串会被下游处理链（如 LLM 调用）当作真实文本处理，可能导致 AI 回复 "我收到了一张[图片]"。
 
-**建议**: 使用 `Option::None`（或专门的 `media_only` 标记）替代占位文本，让下游逻辑能正确区分"纯媒体消息"和"文本消息"。
+**建议**: 使用 `Option::None`（或专门的 `media_only` 标记）替代占位文本，让下游逻辑能正确区分"纯媒体消息"和"文本消息"。~~
 
 ### 6.3 声明的能力与实际支持不匹配（已修复）
 
@@ -468,25 +497,25 @@ while Instant::now() < deadline {
 
 ## 8. 优化优先级排序
 
-| 优先级 | 问题 | 影响范围 | 修复难度 |
-|---|---|---|---|
-| 🔴 **P0** | 飞书 `upload_media` base64 未解码 (#4.1) | Feishu adapter | 1 行 |
-| 🔴 **P0** | 微信每条消息同步磁盘 I/O (#6.1) | WeChat adapter | 中等 |
-| 🟠 **P1** | Telegram AdminCache 使用 `std::sync::Mutex::try_lock` (#2.1) | Telegram | 低 |
-| 🟠 **P1** | QQ `try_send` 错误级联 (#5.1) | QQ | 低 |
-| 🟠 **P1** | 飞书两套独立 token 管理系统 (#4.2) | Feishu | 低 |
-| 🟡 **P2** | Discord gateway 事件双路径 (#3.1) | Discord | 低 |
-| 🟡 **P2** | 微信非文本消息使用 `[图片]` 占位符 (#6.2) | WeChat | 低 |
-| 🟡 **P2** | `publish_send_event` 重复代码 (#1.1) | 全部适配器 | 低 |
-| 🟡 **P2** | 飞书 5 个 `api_*` 方法合并 (#4.3) | Feishu | 低 |
-| 🟡 **P2** | EventBus `subscribe_many` 100ms 延迟 (#7.1) | Core | 低 |
-| 🟢 **P3** | 微信声明能力与实际不匹配 (#6.3) | WeChat | 低 |
-| 🟢 **P3** | `HealthReport` 字段全部为 None (#1.2) | 全部 | 中等 |
-| 🟢 **P3** | `messages_in` 跨适配器不一致 (#1.3) | 全部 | 低 |
-| 🟢 **P3** | Adapter uptime 未追踪 (#1.3) | 全部 | 低 |
-| ⚪ **P4** | Discord 每次未缓存 guild 都 spawn tokio 任务 (#3.2) | Discord | 低 |
-| ⚪ **P4** | QQ `mime_to_file_type` 默认图片 (#5.3) | QQ | 低 |
-| ⚪ **P4** | CDN 密钥写 debug 日志 (#6.6) | WeChat | 低 |
+> 更新于 2026-07-10。已修复项标记为删除线，当前最高优先级无 P0/🔴 项。
+
+| 优先级 | 问题 | 影响范围 | 修复难度 | 当前状态 |
+|---|---|---|---|---|
+| ~~🔴 P0~~ | ~~飞书 `upload_media` base64 未解码 (#4.1)~~ | ~~Feishu~~ | ~~1 行~~ | ✅ 已修复 |
+| ~~🔴 P0~~ | ~~微信每条消息同步磁盘 I/O (#6.1)~~ | ~~WeChat~~ | ~~中等~~ | ✅ 已修复 (含 save_context_tokens) |
+| 🟠 **P1** | QQ `try_send` 错误级联 (#5.1) | QQ | 低 | ❌ 未修复 |
+| 🟠 **P1** | 飞书两套独立 token 管理系统 (#4.2) | Feishu | 低 | ❌ 未修复 |
+| 🟡 **P2** | Discord gateway 事件双路径 (#3.1) | Discord | 低 | ❌ 未修复 |
+| 🟡 **P2** | `publish_send_event` 重复代码 (#1.1) | 全部适配器 | 低 | ❌ 未修复 |
+| 🟡 **P2** | 飞书 5 个 `api_*` 方法合并 (#4.3) | Feishu | 低 | ❌ 未修复 |
+| 🟡 **P2** | EventBus `subscribe_many` 20ms 延迟 (#7.1) | Core | 低 | ❌ 未修复 |
+| 🟢 **P3** | `HealthReport` 字段全部为 None (#1.2) | 全部 | 中等 | ❌ 未修复 |
+| ~~🟢 P3~~ | ~~`messages_in` 从未递增 (Telegram/Discord/Feishu) (#1.3/5.5)~~ | ~~全部~~ | ~~低~~ | ✅ 已修复 |
+| 🟢 **P3** | Adapter uptime 未追踪 | 全部 | 低 | ❌ 未修复 |
+| 🟢 **P3** | 微信声明能力与实际不匹配 (#6.3) | WeChat | 低 | ❌ 未修复 |
+| ⚪ **P4** | Discord 每次未缓存 guild 都 spawn tokio 任务 (#3.2) | Discord | 低 | ❌ 未修复 |
+| ⚪ **P4** | QQ `mime_to_file_type` 默认图片 (#5.3) | QQ | 低 | ❌ 未修复 |
+| ⚪ **P4** | 微信 CDN 密钥写 debug 日志 (#6.6) | WeChat | 低 | ❌ 未修复 |
 
 ---
 
@@ -498,9 +527,11 @@ while Instant::now() < deadline {
 - **无锁数据结构使用得当**: DashMap 在 SessionManager 和 EventBus 中的使用减少了锁争用
 - **异步分离良好**: connect() 在背景执行，不阻塞 Manager 启动流程
 
-### 需立即修复的缺陷
-1. **飞书 base64 上传 bug** — 1 行修复，但会导致媒体上传彻底损坏
-2. **微信同步磁盘 I/O** — 在 tokio 异步热路径上执行 `std::fs::write` 会阻塞 worker 线程
+### 曾需立即修复的缺陷 (现已修复)
+1. ~~**飞书 base64 上传 bug**~~ — 已修复，现正确使用 `STANDARD.decode()`
+2. ~~**微信同步磁盘 I/O**~~ — 已全部修复，`save_sync_buf` 和 `save_context_tokens` 均已使用 `spawn_blocking`
+3. ~~**Telegram AdminCache try_lock**~~ — 已修复，改为 `AsyncMutex`
+4. ~~**`messages_in` 从未递增**~~ — 已修复，Telegram/Discord/飞书三适配器均通过 `Arc<AtomicU64>` 传递并递增
 
 ### 架构层面的改进方向
 1. **token 管理统一化**: 每个适配器都有自己的 token 刷新逻辑（飞书两套、QQ 两套），可以抽象出公共的 `TokenManager` 结构体

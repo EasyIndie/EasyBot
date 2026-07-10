@@ -129,7 +129,7 @@ pub struct FeishuAdapter {
     state: AdapterState,
     bot_info: Option<BotInfo>,
     capabilities: Vec<Capability>,
-    messages_in: AtomicU64,
+    messages_in: Arc<AtomicU64>,
     messages_out: AtomicU64,
     errors: AtomicU64,
     event_bus: Option<Arc<EventBus>>,
@@ -202,7 +202,7 @@ impl FeishuAdapter {
                     limits: None,
                 },
             ],
-            messages_in: AtomicU64::new(0),
+            messages_in: Arc::new(AtomicU64::new(0)),
             messages_out: AtomicU64::new(0),
             errors: AtomicU64::new(0),
             event_bus: None,
@@ -508,6 +508,7 @@ impl PlatformAdapter for FeishuAdapter {
             let shared_token_store = self.token_store.clone();
             let feishu_http = reqwest::Client::new();
             let feishu_base_url = self.api_base_url().to_string();
+            let mi = self.messages_in.clone();
 
             // SECURITY: Signature verification is skipped because the Feishu
             // WebSocket event stream uses a different authentication mechanism
@@ -526,6 +527,7 @@ impl PlatformAdapter for FeishuAdapter {
                     let bu = feishu_base_url.clone();
                     let ts = shared_token_store.clone();
                     let rc = role_cache.clone();
+                    let mi = mi.clone();
                     move |event_data| {
                         let eb = eb.clone();
                         let bot_id = bot_id.clone();
@@ -535,6 +537,7 @@ impl PlatformAdapter for FeishuAdapter {
                         let bu = bu.clone();
                         let ts = ts.clone();
                         let rc = rc.clone();
+                        let mi = mi.clone();
                         async move {
                             let sender_role = Self::resolve_feishu_role(
                                 &event_data,
@@ -548,6 +551,7 @@ impl PlatformAdapter for FeishuAdapter {
                             .await;
                             event::handle_message_receive(event_data, &eb, &bot_id, sender_role)
                                 .await;
+                            mi.fetch_add(1, Ordering::Relaxed);
                             Ok(())
                         }
                     }

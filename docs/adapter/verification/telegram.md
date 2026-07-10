@@ -365,6 +365,8 @@ wscat -c "ws://localhost:8080/api/v1/ws" \
   cargo add --dev wiremock -p easybot-adapter-telegram
   ```
 - [x] 将 `TELEGRAM_API` 常量改为可配置项（通过 `AdapterConfig.base_url`），方便测试时指向 mock server
+- [x] ~~修复 `AdminCache` 使用 `std::sync::Mutex::try_lock` 的问题~~（已改为 `AsyncMutex`）
+- [x] ~~修复 polling 路径中 `messages_in` 从未递增的问题~~（已传递 `Arc<AtomicU64>` 到 polling 任务）
 - [ ] 增加更多消息类型的 convert 测试（图片、视频、文档）
 - [ ] 为 AdapterManager 补充更多测试（start_all、stop_all、list_statuses 等）
   - 已添加：`test_stop_updates_status_cache`、`test_start_passes_config_to_adapter`

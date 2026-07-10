@@ -46,7 +46,7 @@ pub struct TelegramAdapter {
     state: AdapterState,
     bot_info: Option<BotInfo>,
     capabilities: Vec<Capability>,
-    messages_in: AtomicU64,
+    messages_in: Arc<AtomicU64>,
     messages_out: AtomicU64,
     errors: AtomicU64,
     event_bus: Option<Arc<EventBus>>,
@@ -84,7 +84,7 @@ impl TelegramAdapter {
                 (Streaming, true),
                 (ChatList, false),
             ],
-            messages_in: AtomicU64::new(0),
+            messages_in: Arc::new(AtomicU64::new(0)),
             messages_out: AtomicU64::new(0),
             errors: AtomicU64::new(0),
             event_bus: None,
@@ -419,6 +419,7 @@ impl TelegramAdapter {
         mut cancel_rx: broadcast::Receiver<()>,
         heartbeat: Heartbeat,
         admin_cache: AdminCache,
+        messages_in: Arc<AtomicU64>,
     ) {
         let mut offset: i64 = 0;
         let mut poll_errors: u32 = 0;
@@ -452,6 +453,7 @@ impl TelegramAdapter {
                                         chat_id, user_id,
                                     ).await;
                                     if let Some(inbound) = Self::convert_message(tg_msg, sender_role) {
+                                        messages_in.fetch_add(1, Ordering::Relaxed);
                                         let event = GatewayEvent::new(
                                             event_types::MESSAGE_INBOUND,
                                             "telegram",
@@ -747,6 +749,7 @@ impl PlatformAdapter for TelegramAdapter {
                 .unwrap_or_else(|| TELEGRAM_API.to_string());
             let hb = self.heartbeat.clone();
             let ac = self.admin_cache.clone();
+            let mi = self.messages_in.clone();
             // 复用适配器的 HTTP 连接池（reqwest::Client 是 Arc 包装，clone 廉价）
             let polling_client = self.http_client().clone();
 
@@ -759,6 +762,7 @@ impl PlatformAdapter for TelegramAdapter {
                     cancel_rx,
                     hb,
                     ac,
+                    mi,
                 )
                 .await;
             });

@@ -42,7 +42,7 @@ pub struct DiscordAdapter {
     state: AdapterState,
     bot_info: Option<BotInfo>,
     capabilities: Vec<Capability>,
-    messages_in: AtomicU64,
+    messages_in: Arc<AtomicU64>,
     messages_out: AtomicU64,
     errors: AtomicU64,
     event_bus: Option<Arc<EventBus>>,
@@ -113,7 +113,7 @@ impl DiscordAdapter {
                 });
                 caps
             },
-            messages_in: AtomicU64::new(0),
+            messages_in: Arc::new(AtomicU64::new(0)),
             messages_out: AtomicU64::new(0),
             errors: AtomicU64::new(0),
             event_bus: None,
@@ -361,6 +361,7 @@ impl DiscordAdapter {
         mut cancel_rx: broadcast::Receiver<()>,
         heartbeat: Heartbeat,
         guild_owner_cache: Arc<Mutex<HashMap<String, String>>>,
+        messages_in: Arc<AtomicU64>,
     ) {
         let intents = Intents::GUILD_MESSAGES | Intents::DIRECT_MESSAGES | Intents::MESSAGE_CONTENT;
         let mut shard = Shard::new(ShardId::ONE, token.clone(), intents);
@@ -422,6 +423,7 @@ impl DiscordAdapter {
                                 &bot_user_id,
                                 owner_id.as_deref(),
                             ) {
+                                messages_in.fetch_add(1, Ordering::Relaxed);
                                 let event = GatewayEvent::new(
                                     event_types::MESSAGE_INBOUND,
                                     "discord",
@@ -612,9 +614,10 @@ impl PlatformAdapter for DiscordAdapter {
             let eb = event_bus.clone();
             let hb = self.heartbeat.clone();
             let goc = self.guild_owner_cache.clone();
+            let mi = self.messages_in.clone();
 
             tokio::spawn(async move {
-                Self::gateway_shard_loop(token_clone, eb, bot_id, cancel_rx, hb, goc).await;
+                Self::gateway_shard_loop(token_clone, eb, bot_id, cancel_rx, hb, goc, mi).await;
             });
         }
 

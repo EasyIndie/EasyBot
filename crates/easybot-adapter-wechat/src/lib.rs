@@ -1094,7 +1094,11 @@ impl PlatformAdapter for WeChatAdapter {
             {
                 let mut tokens = self.context_tokens.write().await;
                 tokens.remove(&params.chat_id);
-                save_context_tokens(&tokens);
+                let tokens_clone = tokens.clone();
+                drop(tokens);
+                tokio::task::spawn_blocking(move || {
+                    save_context_tokens(&tokens_clone);
+                });
             }
             drop(resp); // 释放 borrow，允许重新赋值
             // 无 token 重试一次（降级模式，iLink 接受无 token 发送）
@@ -1295,7 +1299,11 @@ impl PlatformAdapter for WeChatAdapter {
             {
                 let mut tokens = self.context_tokens.write().await;
                 tokens.remove(&params.chat_id);
-                save_context_tokens(&tokens);
+                let tokens_clone = tokens.clone();
+                drop(tokens);
+                tokio::task::spawn_blocking(move || {
+                    save_context_tokens(&tokens_clone);
+                });
             }
             // 删除 body 中的 context_token，无 token 重试
             if let Some(obj) = body["msg"].as_object_mut() {

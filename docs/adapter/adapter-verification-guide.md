@@ -12,6 +12,8 @@
 | [feishu.md](feishu.md) | 飞书 | ✅ 已验证（REST API + WebSocket 事件订阅双向） |
 | [wechat.md](wechat.md) | 个人微信 | ✅ 已验证（iLink Bot API 长轮询双向） |
 
+> 另见：本目录下的 [适配器架构全面评审报告](adapter-performance-review.md)，包含所有适配器的代码审查结果和优化建议。
+
 ## 验证方法速览
 
 所有适配器通用的验证层次：
