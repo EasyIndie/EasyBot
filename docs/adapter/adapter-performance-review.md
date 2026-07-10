@@ -20,6 +20,13 @@
 | §6.2 | 微信非文本消息使用 `[图片]` 占位符 | ✅ 2026-07-10 确认已改为空文本 + `MediaAttachment` |
 | §1.3/5.5 | `messages_in` 在 Telegram/Discord/飞书从未递增 | ✅ 2026-07-10 修复：传递 `Arc<AtomicU64>` 给后台任务并递增 |
 | §6.1 (续) | 微信 `save_context_tokens` 同步写（2 处） | ✅ 2026-07-10 修复：改用 `spawn_blocking` |
+| §7.1 | EventBus `subscribe_many` 轮询延迟 | ✅ 2026-07-10 已改为 `SelectAll`（零轮询） |
+| §3.1 | Discord `handle_gateway_event` MessageCreate 死代码 | ✅ 2026-07-10 已清理，测试直测 `convert_message` |
+| §5.3 | QQ `mime_to_file_type` 默认图片 | ✅ 2026-07-10 已改为默认文件类型 |
+| §6.6 | 微信 CDN `x-encrypted-param` 日志泄露 | ✅ 2026-07-10 已脱敏 |
+| §1.2 | `HealthReport` 字段全为 None / uptime 未追踪 | ✅ 2026-07-10 通过 Heartbeat 添加记录方法 |
+| §3.2 | Discord 未缓存 guild 无限制 spawn | ✅ 2026-07-10 添加 Semaphore(5) 并发限制 |
+| §4.3 | 飞书 5 个 `api_*` 方法重复 | ✅ 2026-07-10 合并为 `send_api_request` |
 
 > 注：微信 `save_context_tokens` 共 3 处调用，2 处（send/send_media 的 ret=-14 路径）已修复，
 > 第 3 处（`longpoll_loop` 批量持久化）在先前的修复中已使用 `spawn_blocking`。
@@ -495,25 +502,25 @@ while Instant::now() < deadline {
 
 ## 8. 优化优先级排序
 
-> 更新于 2026-07-10。已修复项标记为删除线，当前最高优先级无 P0/🔴 项。
+> 更新于 2026-07-10。已修复项标记为删除线。当前全部 17 个发现中 15 个已修复，剩余 2 个低优先级。
 
 | 优先级 | 问题 | 影响范围 | 修复难度 | 当前状态 |
 |---|---|---|---|---|
 | ~~🔴 P0~~ | ~~飞书 `upload_media` base64 未解码 (#4.1)~~ | ~~Feishu~~ | ~~1 行~~ | ✅ 已修复 |
 | ~~🔴 P0~~ | ~~微信每条消息同步磁盘 I/O (#6.1)~~ | ~~WeChat~~ | ~~中等~~ | ✅ 已修复 (含 save_context_tokens) |
-| 🟠 **P1** | QQ `try_send` 错误级联 (#5.1) | QQ | 低 | ❌ 未修复 |
-| 🟠 **P1** | 飞书两套独立 token 管理系统 (#4.2) | Feishu | 低 | ❌ 未修复 |
-| 🟡 **P2** | Discord gateway 事件双路径 (#3.1) | Discord | 低 | ❌ 未修复 |
+| ~~🟠 P1~~ | ~~QQ `try_send` 错误级联 (#5.1)~~ | ~~QQ~~ | ~~低~~ | ✅ 已修复（已有 chat_type 快速路由和非 404 提前终止） |
+| ~~🟠 P1~~ | ~~飞书两套独立 token 管理系统 (#4.2)~~ | ~~Feishu~~ | ~~低~~ | ✅ 已修复（已统一为共享 FeishuTokenStore） |
+| ~~🟡 P2~~ | ~~Discord gateway 事件双路径 (#3.1)~~ | ~~Discord~~ | ~~低~~ | ✅ 已修复（已清理死代码分支） |
 | 🟡 **P2** | `publish_send_event` 重复代码 (#1.1) | 全部适配器 | 低 | ❌ 未修复 |
-| 🟡 **P2** | 飞书 5 个 `api_*` 方法合并 (#4.3) | Feishu | 低 | ❌ 未修复 |
-| 🟡 **P2** | EventBus `subscribe_many` 20ms 延迟 (#7.1) | Core | 低 | ❌ 未修复 |
-| 🟢 **P3** | `HealthReport` 字段全部为 None (#1.2) | 全部 | 中等 | ❌ 未修复 |
+| ~~🟡 P2~~ | ~~飞书 5 个 `api_*` 方法合并 (#4.3)~~ | ~~Feishu~~ | ~~低~~ | ✅ 已修复（合并为 `send_api_request`） |
+| ~~🟡 P2~~ | ~~EventBus `subscribe_many` 20ms 延迟 (#7.1)~~ | ~~Core~~ | ~~低~~ | ✅ 已修复（改用 `SelectAll` 零延迟） |
+| ~~🟢 P3~~ | ~~`HealthReport` 字段全部为 None (#1.2)~~ | ~~全部~~ | ~~中等~~ | ✅ 已修复（Heartbeat 添加记录方法） |
 | ~~🟢 P3~~ | ~~`messages_in` 从未递增 (Telegram/Discord/Feishu) (#1.3/5.5)~~ | ~~全部~~ | ~~低~~ | ✅ 已修复 |
-| 🟢 **P3** | Adapter uptime 未追踪 | 全部 | 低 | ❌ 未修复 |
-| 🟢 **P3** | 微信声明能力与实际不匹配 (#6.3) | WeChat | 低 | ❌ 未修复 |
-| ⚪ **P4** | Discord 每次未缓存 guild 都 spawn tokio 任务 (#3.2) | Discord | 低 | ❌ 未修复 |
-| ⚪ **P4** | QQ `mime_to_file_type` 默认图片 (#5.3) | QQ | 低 | ❌ 未修复 |
-| ⚪ **P4** | 微信 CDN 密钥写 debug 日志 (#6.6) | WeChat | 低 | ❌ 未修复 |
+| ~~🟢 P3~~ | ~~Adapter uptime 未追踪~~ | ~~全部~~ | ~~低~~ | ✅ 已修复（已有 Heartbeat::uptime_secs） |
+| ~~🟢 P3~~ | ~~微信声明能力与实际不匹配 (#6.3)~~ | ~~WeChat~~ | ~~低~~ | ✅ 已在之前清理中确认一致 |
+| ~~⚪ P4~~ | ~~Discord 每次未缓存 guild 都 spawn tokio 任务 (#3.2)~~ | ~~Discord~~ | ~~低~~ | ✅ 已修复（Semaphore(5) 并发限制） |
+| ~~⚪ P4~~ | ~~QQ `mime_to_file_type` 默认图片 (#5.3)~~ | ~~QQ~~ | ~~低~~ | ✅ 已修复（默认改为文件类型） |
+| ~~⚪ P4~~ | ~~微信 CDN 密钥写 debug 日志 (#6.6)~~ | ~~WeChat~~ | ~~低~~ | ✅ 已修复（x-encrypted-param 日志已脱敏） |
 
 ---
 

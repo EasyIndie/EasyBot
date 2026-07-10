@@ -187,6 +187,7 @@ curl -s "http://localhost:8080/api/v1/messages?platform=wechat" \
 - [x] 媒体消息发送（AES-128-ECB 加密 + CDN 上传）
 - [x] 修复非文本消息占位符（已改为空文本 + `MediaAttachment`）
 - [x] 修复 `save_sync_buf` 同步 I/O（已用 `spawn_blocking` 包裹）
+- [x] ~~CDN x-encrypted-param 日志脱敏~~
 - [ ] 凭据过期时自动重启适配器触发重新登录
 - [x] ~~将 `save_context_tokens` 移出异步热路径~~（send/send_media 2 处 session 过期路径已用 `spawn_blocking` 包裹）
 - [ ] 添加入站消息的 `chat_name` 字段填充
