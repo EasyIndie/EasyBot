@@ -1,6 +1,6 @@
 # EasyBot 用户手册
 
-> **统一多平台即时消息网关** — 一套 API 连接所有 IM 平台。
+**统一多平台即时消息网关** — 一套 API 连接所有 IM 平台。
 
 ---
 
@@ -11,16 +11,20 @@
 **EasyBot** 是一个轻量、高性能的即时消息网关服务。它将多个 IM 平台的 API 差异封装在统一的接口背后，只需学习**一套 API**，即可向 Telegram、Discord、飞书、QQ 和微信收发消息。
 
 ```
-┌─────────────────────────────────────────┐
-│           你的应用 / 服务                 │
-│      (REST API / WebSocket 客户端)        │
-└──────────────────┬──────────────────────┘
-                   ↕
-┌────────── EasyBot Gateway ─────────────┐
-│  统一 API 层 → 核心引擎 → 平台适配器     │
-└──┬──────┬──────┬──────┬──────┬─────────┘
-   ↕      ↕      ↕      ↕      ↕
- Telegram Discord 飞书   QQ    微信
+                    ┌──────────────────────────────────┐
+                    │        Your App / Service        │
+                    │        (REST / WS Client)        │
+                    └───────────────┬──────────────────┘
+                                    │                   
+                                    ↕                   
+                                    │                   
+                    ┌──────────────────────────────────┐
+                    │         EasyBot Gateway          │
+                    │  Unified API → Core → Adapters   │
+                    └─────┬─────┬─────┬─────┬─────┬────┘
+                          │     │     │     │     │     
+                          ↕     ↕     ↕     ↕     ↕     
+                     Telegram Discord  Lark  QQ  WeChat 
 ```
 
 ### 1.2 核心能力
@@ -232,8 +236,8 @@ vim ~/.easybot/.env
 ### 4.2 配置流程
 
 ```
-easybot --init  ──→  编辑 .env          ──→  easybot --debug
-                      （填入令牌）
+easybot --init  ──→  编辑 .env  ──→  easybot --debug
+                    （填入令牌）
 ```
 
 系统自动检测已设置令牌的平台，自动启用对应适配器。
@@ -962,7 +966,7 @@ curl http://localhost:8080/api/v1/adapters   # 查看适配器状态
 ```bash
 # 启动
 easybot --init                      # 首次初始化
-vim ~/.easybot/.env                # 填入令牌
+vim ~/.easybot/.env                 # 填入令牌
 easybot --debug                     # 开发模式
 docker compose up -d                # Docker 部署
 
