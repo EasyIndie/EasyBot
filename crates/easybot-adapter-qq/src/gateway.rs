@@ -275,7 +275,7 @@ impl crate::QqAdapter {
 
                                 match payload.op {
                                     0 => {
-                                        heartbeat.beat(); // liveness: Gateway event received
+                                        heartbeat.beat_success(); // stream-health: Gateway event received
                                         if !identified && !resumed
                                             && payload.t.as_deref() == Some("READY") {
                                                 identified = true;

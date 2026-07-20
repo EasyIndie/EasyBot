@@ -1018,6 +1018,10 @@ impl PlatformAdapter for WeChatAdapter {
         Some(self.heartbeat.age_ms())
     }
 
+    fn heartbeat_success_age_ms(&self) -> Option<i64> {
+        Some(self.heartbeat.last_success_age_ms())
+    }
+
     async fn health(&self) -> HealthReport {
         HealthReport {
             status: self.health_status(),
@@ -1448,7 +1452,7 @@ async fn longpoll_loop(
             result = poll_messages(&client, &url, &token, &buf) => {
                 match result {
                     Ok(PollOutcome::Messages(new_buf, msgs)) => {
-                        heartbeat.beat();
+                        heartbeat.beat_success();
                         consecutive_failures = 0;
 
                         // 批量收集 context_tokens，循环结束后统一持久化
@@ -1492,7 +1496,7 @@ async fn longpoll_loop(
                         }
                     }
                     Ok(PollOutcome::Timeout) => {
-                        heartbeat.beat();
+                        heartbeat.beat_success();
                         consecutive_failures = 0;
                     }
                     Ok(PollOutcome::SessionExpired(msg)) => {

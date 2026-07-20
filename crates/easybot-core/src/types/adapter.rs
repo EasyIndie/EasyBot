@@ -170,21 +170,27 @@ impl AdapterConfig {
 /// heartbeat in 120 seconds, the adapter is considered Degraded.
 pub const DEFAULT_LIVENESS_THRESHOLD_MS: i64 = 120_000;
 
-/// Utility for tracking background task liveness via periodic heartbeats.
+/// Utility for tracking background task liveness and message-stream health.
 ///
-/// Adapters that spawn long-running background tasks (polling loops, WebSocket
-/// event loops) should store one of these, clone it into the task, and call
-/// [`beat`](Self::beat) on every successful iteration.  The manager reads
-/// [`age_ms`](Self::age_ms) through the adapter's `heartbeat_age_ms()` method
-/// to decide whether the background task is still alive.
+/// Maintains two independent signals:
 ///
-/// Also tracks `started_at` for uptime calculation and `started_at` for
-/// uptime calculation (set when the Heartbeat is first created).
+/// | Signal | Method | Updated on | Consumer | Purpose |
+/// |---|---|---|---|---|
+/// | **Liveness** | [`beat`](Self::beat) | Every iteration (success, error, retry) | Health monitor | "Is the task alive?" |
+/// | **Stream health** | [`beat_success`](Self::beat_success) | Only on successful message receipt | `health_status()` → frontend | "Is the message stream flowing?" |
+///
+/// This separation prevents the health monitor from killing a recovering
+/// adapter (liveness stays fresh during retries) while still letting the
+/// admin panel show `Degraded` when no messages are actually flowing
+/// (stream-health goes stale during network outages).
 ///
 /// Thread-safe and cheap to clone (wraps `Arc<AtomicI64>` internally).
 #[derive(Clone, Debug)]
 pub struct Heartbeat {
     last_beat_ms: Arc<AtomicI64>,
+    /// Timestamp of the last *successful* message receipt / poll.  Used by
+    /// `health_status()` to report transport-level health to the frontend.
+    last_success_at_ms: Arc<AtomicI64>,
     started_at_ms: Arc<AtomicI64>,
     last_connected_at: Arc<AtomicI64>,
     last_error_at: Arc<AtomicI64>,
@@ -197,6 +203,7 @@ impl Heartbeat {
         let now = chrono::Utc::now().timestamp_millis();
         Self {
             last_beat_ms: Arc::new(AtomicI64::new(now)),
+            last_success_at_ms: Arc::new(AtomicI64::new(now)),
             started_at_ms: Arc::new(AtomicI64::new(now)),
             last_connected_at: Arc::new(AtomicI64::new(0)),
             last_error_at: Arc::new(AtomicI64::new(0)),
@@ -204,20 +211,44 @@ impl Heartbeat {
         }
     }
 
-    /// Record a liveness beat.  Call this from the background task on every
-    /// successful poll iteration / WebSocket message / ping-pong cycle.
+    /// Record a **liveness** beat.  Call this from the background task on
+    /// every iteration — success, error, or retry.  Keeps the health
+    /// monitor from killing a recovering adapter.
+    ///
+    /// For stream-health tracking use [`beat_success`](Self::beat_success).
     pub fn beat(&self) {
         self.last_beat_ms
             .store(chrono::Utc::now().timestamp_millis(), Ordering::Relaxed);
     }
 
-    /// How many milliseconds have elapsed since the last beat.
+    /// Record a **message-stream** beat.  Call this ONLY when the adapter
+    /// successfully receives a message / completes a poll iteration without
+    /// errors.  This is what `health_status()` uses to decide `Healthy` vs
+    /// `Degraded` for the frontend.
+    pub fn beat_success(&self) {
+        let now = chrono::Utc::now().timestamp_millis();
+        self.last_success_at_ms.store(now, Ordering::Relaxed);
+        // A successful receive also implies liveness — update liveness beat
+        // so callers don't need to call both methods.
+        self.last_beat_ms.store(now, Ordering::Relaxed);
+    }
+
+    /// How many milliseconds have elapsed since the last liveness beat.
+    /// Used by the health monitor to detect dead background tasks.
     pub fn age_ms(&self) -> i64 {
         let now = chrono::Utc::now().timestamp_millis();
         now.saturating_sub(self.last_beat_ms.load(Ordering::Relaxed))
     }
 
-    /// Convenience: is the heartbeat within a given threshold?
+    /// How many milliseconds have elapsed since the last *successful*
+    /// message receipt.  Used by `health_status()` to report transport
+    /// health to the frontend.
+    pub fn last_success_age_ms(&self) -> i64 {
+        let now = chrono::Utc::now().timestamp_millis();
+        now.saturating_sub(self.last_success_at_ms.load(Ordering::Relaxed))
+    }
+
+    /// Convenience: is the liveness heartbeat within a given threshold?
     pub fn is_fresh(&self, threshold_ms: i64) -> bool {
         self.age_ms() <= threshold_ms
     }
@@ -351,22 +382,50 @@ pub trait PlatformAdapter: Send + Sync {
     /// Returns `None` when the adapter does not support heartbeat tracking
     /// (the default).  Adapters that return `Some` should store a
     /// [`Heartbeat`] and forward to [`Heartbeat::age_ms`].
+    ///
+    /// This is used by the **health monitor** to decide whether the
+    /// background task is still alive.  Adapters should call
+    /// [`Heartbeat::beat`] on every iteration (including error/retry paths)
+    /// to prevent false-positive kills.
     fn heartbeat_age_ms(&self) -> Option<i64> {
         None
     }
 
+    /// Returns the age of the last *successful* message receipt in
+    /// milliseconds.  Unlike [`heartbeat_age_ms`](Self::heartbeat_age_ms),
+    /// this is only updated when the adapter actually receives a message
+    /// (or completes a successful poll iteration).
+    ///
+    /// Used by [`health_status`](Self::health_status) to differentiate
+    /// "task is alive but message stream is blocked" (e.g. WiFi down)
+    /// from "everything is fine".  Falls back to `heartbeat_age_ms()` by
+    /// default so existing adapters keep the old behaviour.
+    fn heartbeat_success_age_ms(&self) -> Option<i64> {
+        self.heartbeat_age_ms()
+    }
+
     /// Compute the canonical health status from adapter state and an optional
-    /// liveness heartbeat.
+    /// message-stream heartbeat.
     ///
     /// The default implementation checks:
-    /// - `Connected` + fresh heartbeat (or no heartbeat mechanism) => `Healthy`
-    /// - `Connected` + stale heartbeat => `Degraded`
+    /// - `Connected` + recent successful message receipt => `Healthy`
+    /// - `Connected` + stale message stream => `Degraded`
     /// - Anything else => `Down`
     ///
     /// Override this if your adapter needs custom health logic.
     fn health_status(&self) -> HealthStatus {
         if self.state() == AdapterState::Connected {
+            // Check task liveness first: if the background task hasn't
+            // sent a liveness heartbeat, the adapter is Down regardless
+            // of stream health (e.g., WebSocket disconnected, polling loop
+            // exited after exhausting internal retries).
             if let Some(age_ms) = self.heartbeat_age_ms()
+                && age_ms > DEFAULT_LIVENESS_THRESHOLD_MS
+            {
+                return HealthStatus::Down;
+            }
+            // Task is alive — check message-stream health.
+            if let Some(age_ms) = self.heartbeat_success_age_ms()
                 && age_ms > DEFAULT_LIVENESS_THRESHOLD_MS
             {
                 return HealthStatus::Degraded;

@@ -407,7 +407,7 @@ impl DiscordAdapter {
                 event = shard.next_event(EventTypeFlags::all()) => {
                     match event {
                         Some(Ok(Event::MessageCreate(msg))) => {
-                            heartbeat.beat();
+                            heartbeat.beat_success(); // stream-health: message received
 
                             // Resolve guild owner from cache
                             let guild_id_str = msg.0.guild_id.map(|g| g.to_string());
@@ -717,6 +717,10 @@ impl PlatformAdapter for DiscordAdapter {
 
     fn heartbeat_age_ms(&self) -> Option<i64> {
         Some(self.heartbeat.age_ms())
+    }
+
+    fn heartbeat_success_age_ms(&self) -> Option<i64> {
+        Some(self.heartbeat.last_success_age_ms())
     }
 
     async fn health(&self) -> HealthReport {

@@ -1856,7 +1856,7 @@ function handleGatewayEvent(msg) {
       };
       const mapped = statusMap[t];
       if (platform && mapped) {
-        updateAdapterCard(platform, mapped.status, mapped.connected, false);
+        updateAdapterCard(platform, mapped.status, mapped.connected, false, null);
       } else {
         tabRegistry.adapters.refresh();
       }

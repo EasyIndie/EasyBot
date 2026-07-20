@@ -875,6 +875,10 @@ impl PlatformAdapter for QqAdapter {
         Some(self.heartbeat.age_ms())
     }
 
+    fn heartbeat_success_age_ms(&self) -> Option<i64> {
+        Some(self.heartbeat.last_success_age_ms())
+    }
+
     async fn health(&self) -> HealthReport {
         HealthReport {
             status: self.health_status(),

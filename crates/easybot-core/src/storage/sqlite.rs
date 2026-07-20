@@ -97,6 +97,13 @@ pub async fn create_pool(db_path: &std::path::Path) -> Result<SqlitePool, StoreE
         .map_err(|e| StoreError::Database(format!("Failed to connect to SQLite: {}", e)))?;
 
     // 优化 SQLite 性能
+    // 注意：auto_vacuum 必须在 journal_mode=WAL 之前设置，否则
+    // 在已存在的数据库上（WAL 模式创建了数据库文件后）设置
+    // auto_vacuum 会被静默忽略，导致 incremental_vacuum 成为空操作。
+    sqlx::query("PRAGMA auto_vacuum=INCREMENTAL")
+        .execute(&pool)
+        .await
+        .ok();
     sqlx::query("PRAGMA journal_mode=WAL")
         .execute(&pool)
         .await
@@ -110,12 +117,6 @@ pub async fn create_pool(db_path: &std::path::Path) -> Result<SqlitePool, StoreE
         .await
         .ok();
     sqlx::query("PRAGMA foreign_keys=ON")
-        .execute(&pool)
-        .await
-        .ok();
-    // 启用增量 vacuum：删除数据后自动标记空闲页，配合 periodic  incremental_vacuum
-    // 将空闲页归还给文件系统，防止数据库文件长期膨胀
-    sqlx::query("PRAGMA auto_vacuum=INCREMENTAL")
         .execute(&pool)
         .await
         .ok();

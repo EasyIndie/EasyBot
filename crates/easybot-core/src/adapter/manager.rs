@@ -90,7 +90,9 @@ fn classify_error(error: &GatewayError) -> ReconnectFailure {
         || msg.contains("forbidden")
         || msg.contains("auth failed")
         || msg.contains("invalid token")
-        || msg.contains("access token")
+        || msg.contains("access token expired")
+        || msg.contains("access token invalid")
+        || msg.contains("invalid access token")
     {
         return ReconnectFailure::Permanent(error.to_string());
     }
@@ -301,6 +303,7 @@ impl AdapterManager {
             match connect_result {
                 Ok(cr) if cr.ok => {
                     // 存入 adapters map
+                    let health_status = adapter.health_status();
                     self_arc
                         .adapters
                         .write()
@@ -328,6 +331,7 @@ impl AdapterManager {
                         serde_json::json!({
                             "platform": &pname,
                             "connected": true,
+                            "health": health_status,
                         }),
                     );
                     info!("Adapter '{}' connected", pname);
@@ -815,13 +819,18 @@ impl AdapterManager {
                 continue;
             }
 
-            // Check current adapter health
+            // Check current adapter health.
+            // Only trigger reconnect on Down (task appears dead).
+            // Degraded means the task is alive but the message stream is
+            // idle (e.g., no events during quiet periods). The frontend
+            // displays Degraded, but no recovery is needed — the state
+            // resolves naturally when messages start flowing again.
             let needs_reconnect = {
                 let adapters = self.adapters.read().await;
                 match adapters.get(platform) {
                     Some(adapter) => {
                         let health = adapter.health().await;
-                        health.status != HealthStatus::Healthy
+                        health.status == HealthStatus::Down
                     }
                     None => {
                         // Adapter was removed but config still exists — treat as unhealthy
@@ -830,10 +839,28 @@ impl AdapterManager {
                 }
             };
 
-            // Permanent failure guard: once credentials are confirmed invalid,
-            // don't waste resources retrying.
+            // Permanent failure guard: if the flag is set, check whether the
+            // adapter has been manually restarted and is now healthy again.
+            // This handles the case where a user stops and restarts an adapter
+            // after a permanent failure — the flag lives in this task-local
+            // HashMap and is not reset by stop()/start().
             if state.permanent_failure {
-                continue;
+                let is_healthy_now = {
+                    let adapters = self.adapters.read().await;
+                    match adapters.get(platform) {
+                        Some(a) => {
+                            let h = a.health().await;
+                            h.status == HealthStatus::Healthy
+                        }
+                        None => false,
+                    }
+                };
+                if is_healthy_now {
+                    state.permanent_failure = false;
+                    // Fall through to run the normal health check.
+                } else {
+                    continue;
+                }
             }
 
             // Slow retry guard for transient failures that exhausted the normal budget.
@@ -902,6 +929,16 @@ impl AdapterManager {
                                         platform, msg
                                     );
                                     state.permanent_failure = true;
+                                    // Remove the adapter from the running map and
+                                    // disconnect it — preventing background tasks
+                                    // from continuing to run after a permanent failure
+                                    // (unlike Tier 2 full reconnect which calls stop()
+                                    // → disconnect() through reconnect_adapter).
+                                    if let Some(mut adapter) =
+                                        self.adapters.write().await.remove(platform.as_str())
+                                    {
+                                        let _ = adapter.disconnect().await;
+                                    }
                                     self.set_status_failed(platform, &msg).await;
                                     continue;
                                 }
@@ -1044,7 +1081,11 @@ impl AdapterManager {
                         if status.state == AdapterState::Connected {
                             self.publish_event(
                                 event_types::ADAPTER_RECONNECTED,
-                                serde_json::json!({"platform": platform}),
+                                serde_json::json!({
+                                    "platform": platform,
+                                    "connected": true,
+                                    "health": status.health,
+                                }),
                             );
                             info!("Reconnect succeeded for '{}'", platform);
                             return Ok(());
@@ -1115,27 +1156,36 @@ impl AdapterManager {
     }
 
     /// Mark an adapter as permanently failed in the status cache.
+    ///
+    /// Uses in-place mutation to preserve accumulated message counters
+    /// and uptime from the existing cache entry.  If no entry exists, a
+    /// new one is created with default (zero) counters.
     async fn set_status_failed(&self, platform: &str, error_msg: &str) {
         let mut statuses = self.statuses.write().await;
-        // Preserve display_name from existing cache entry if available
-        let display_name = statuses
-            .get(platform)
-            .map(|s| s.display_name.clone())
-            .unwrap_or_else(|| platform.to_string());
-        statuses.insert(
-            platform.to_string(),
-            AdapterStatusSummary {
-                platform: platform.to_string(),
-                display_name,
-                state: AdapterState::Failed,
-                connected: false,
-                health: Some(HealthStatus::Down),
-                last_error: Some(error_msg.to_string()),
-                uptime: None,
-                messages_in: 0,
-                messages_out: 0,
-            },
-        );
+        if let Some(status) = statuses.get_mut(platform) {
+            // In-place mutation preserves messages_in, messages_out,
+            // uptime, and display_name from the existing cache entry.
+            status.state = AdapterState::Failed;
+            status.connected = false;
+            status.health = Some(HealthStatus::Down);
+            status.last_error = Some(error_msg.to_string());
+        } else {
+            // No existing entry — create one with defaults.
+            statuses.insert(
+                platform.to_string(),
+                AdapterStatusSummary {
+                    platform: platform.to_string(),
+                    display_name: platform.to_string(),
+                    state: AdapterState::Failed,
+                    connected: false,
+                    health: Some(HealthStatus::Down),
+                    last_error: Some(error_msg.to_string()),
+                    uptime: None,
+                    messages_in: 0,
+                    messages_out: 0,
+                },
+            );
+        }
         self.publish_adapter_error(platform, error_msg);
     }
 

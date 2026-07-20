@@ -437,6 +437,10 @@ impl PlatformAdapter for FeishuAdapter {
         Some(self.heartbeat.age_ms())
     }
 
+    fn heartbeat_success_age_ms(&self) -> Option<i64> {
+        Some(self.heartbeat.last_success_age_ms())
+    }
+
     fn runtime_config(&self) -> AdapterRuntimeConfig {
         AdapterRuntimeConfig {
             enabled: self
@@ -896,7 +900,7 @@ impl FeishuAdapter {
                         .await;
                         event::handle_message_receive(event_data, &eb, &bot_id, sender_role).await;
                         mi.fetch_add(1, Ordering::Relaxed);
-                        hb.beat();
+                        hb.beat_success();
                         Ok(())
                     }
                 }
@@ -930,14 +934,31 @@ impl FeishuAdapter {
         let hb = self.heartbeat.clone();
         hb.beat();
         tokio::spawn(async move {
-            tokio::select! {
-                _ = cancel_rx.recv() => {
-                    tracing::info!("飞书 WebSocket 事件订阅已停止");
-                }
-                result = ws_client.start() => {
-                    match result {
-                        Ok(()) => tracing::info!("飞书 WebSocket 连接正常关闭"),
-                        Err(e) => tracing::error!("飞书 WebSocket 连接异常: {}", e),
+            // Liveness heartbeat: fires every 60s while the WebSocket
+            // connection is alive.  This is NOT an unconditional ticker
+            // — it runs in the same task as the WS client via tokio::pin!
+            // and stops when the connection drops or cancel fires.
+            let mut liveness = tokio::time::interval(Duration::from_secs(60));
+            liveness.tick().await; // skip the immediate first tick
+
+            let ws_fut = ws_client.start();
+            tokio::pin!(ws_fut);
+
+            loop {
+                tokio::select! {
+                    _ = cancel_rx.recv() => {
+                        tracing::info!("飞书 WebSocket 事件订阅已停止");
+                        break;
+                    }
+                    _ = liveness.tick() => {
+                        hb.beat(); // WS alive — keep liveness fresh
+                    }
+                    result = &mut ws_fut => {
+                        match result {
+                            Ok(()) => tracing::info!("飞书 WebSocket 连接正常关闭"),
+                            Err(e) => tracing::error!("飞书 WebSocket 连接异常: {}", e),
+                        }
+                        break;
                     }
                 }
             }

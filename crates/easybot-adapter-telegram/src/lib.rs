@@ -447,7 +447,7 @@ impl TelegramAdapter {
                     match result {
                         Ok(updates) => {
                             poll_errors = 0;
-                            heartbeat.beat(); // liveness: successful poll
+                            heartbeat.beat_success(); // stream-health: successful poll
 
                             // 限制消息处理并发数，避免批量消息时 API 过载
                             let permit = Arc::new(Semaphore::new(5));
@@ -839,6 +839,10 @@ impl PlatformAdapter for TelegramAdapter {
 
     fn heartbeat_age_ms(&self) -> Option<i64> {
         Some(self.heartbeat.age_ms())
+    }
+
+    fn heartbeat_success_age_ms(&self) -> Option<i64> {
+        Some(self.heartbeat.last_success_age_ms())
     }
 
     async fn health(&self) -> HealthReport {
