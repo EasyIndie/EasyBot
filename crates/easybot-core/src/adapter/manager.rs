@@ -311,8 +311,9 @@ impl AdapterManager {
                         status.last_error = Some(error_msg.clone());
                     }
 
-                    // 连接失败 — 从 configs 中移除以免 health monitor 反复重试
-                    self_arc.configs.write().await.remove(&pname);
+                    // Keep config in place so the health monitor can retry
+                    // reconnection. The 20-attempt cap in run_health_check
+                    // prevents infinite retries; explicit stop() still removes it.
 
                     self_arc.publish_adapter_error(&pname, &error_msg);
                     error!("Adapter '{}' failed to connect: {}", pname, error_msg);
@@ -777,15 +778,18 @@ impl AdapterManager {
                 }
             };
 
-            // SECURITY: Check total failure limit before attempting reconnect
-            if state.total_failures >= MAX_TOTAL_RECONNECT_ATTEMPTS {
-                warn!(
-                    "Reconnect permanently failed for '{}' after {} total attempts. \
-                     Manual intervention required (API restart).",
-                    platform, state.total_failures
-                );
-                continue;
+            // After exhausting the normal retry budget, enter slow retry
+            // mode (30-minute intervals) instead of giving up permanently.
+            // This provides eventual recovery from extended network outages
+            // while avoiding tight retry loops against failing auth endpoints.
+            if state.total_failures >= MAX_TOTAL_RECONNECT_ATTEMPTS
+                && let Some(until) = state.backoff_until
+                && Instant::now() < until
+            {
+                continue; // still cooling down
             }
+            // Backoff expired — allow one attempt; a fresh long backoff
+            // will be set if it fails again.
 
             if needs_reconnect {
                 // 立即更新状态缓存，避免 health check 窗口期内 API 返回过时的 Connected 状态
@@ -826,11 +830,31 @@ impl AdapterManager {
                     Err(e) => {
                         state.consecutive_failures += 1;
                         state.total_failures += 1;
-                        let delay = compute_backoff(state.consecutive_failures);
+
+                        // After exhausting the normal retry budget, switch to
+                        // slow retry mode (30 min) to eventually recover from
+                        // extended outages without hammering the auth endpoint.
+                        let delay = if state.total_failures > MAX_TOTAL_RECONNECT_ATTEMPTS {
+                            Duration::from_secs(1800)
+                        } else {
+                            compute_backoff(state.consecutive_failures)
+                        };
                         state.backoff_until = Some(Instant::now() + delay);
+
+                        let attempt_label = if state.total_failures > MAX_TOTAL_RECONNECT_ATTEMPTS {
+                            format!(
+                                "slow retry #{} (every 30min)",
+                                state.total_failures - MAX_TOTAL_RECONNECT_ATTEMPTS
+                            )
+                        } else {
+                            format!(
+                                "attempt {}/{}",
+                                state.total_failures, MAX_TOTAL_RECONNECT_ATTEMPTS
+                            )
+                        };
                         warn!(
-                            "Reconnect failed for '{}' (attempt {}/{}): {} — next retry in {:?}",
-                            platform, state.total_failures, MAX_TOTAL_RECONNECT_ATTEMPTS, e, delay,
+                            "Reconnect failed for '{}' ({}): {} — next retry in {:?}",
+                            platform, attempt_label, e, delay,
                         );
                     }
                 }
