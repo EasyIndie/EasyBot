@@ -9,7 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **CI: composite action `${{ }}` 表达式解析失败** — `.github/actions/setup-rust/action.yml`
+- **管理后台适配器状态变化未能实时更新** — 健康监测器 Tier 1（transport-only retry）路径存在四个
+  断点导致状态变更无法通过 WebSocket 事件送达前端：(1) 进入 retry 前不发布 `adapter.reconnecting`；
+  (2) 重试成功后状态缓存设为 `Reconnecting` 而非 `Connected`，且不发布 `adapter.reconnected`；
+  (3) 永久失败后不发布 `adapter.reconnect_failed`；(4) 前端 `handleGatewayEvent` 忽略事件数据中的
+  `health` 字段，`updateAdapterCard` 也不更新健康副标题 DOM。修复：`run_health_check()` 三处补发
+  事件、状态缓存正确回连、前端传递 health 并更新副标题。
   `cache-save-if` 输入描述的例子里包含 `${{ github.ref }}` 表达式，GitHub Actions 在解析
   复合 action 元数据时对所有 `${{ }}` 语法求值，但 `github` 上下文在此层面不可用。
   修复：description 中使用纯文本示例，去除表达式符号。
