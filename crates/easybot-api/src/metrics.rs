@@ -3,8 +3,13 @@
 //! 提供 HTTP 请求指标、业务指标和 `/metrics` 端点。
 //! 通过 Tower 中间件自动记录请求数量、持续时间和状态码。
 
-use axum::{extract::State, response::IntoResponse};
+use axum::{
+    extract::{Extension, State},
+    response::IntoResponse,
+};
 use prometheus::{CounterVec, Encoder, GaugeVec, HistogramVec, Opts, Registry, TextEncoder};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicI64, Ordering};
 use tracing::warn;
 
 use crate::AppState;
@@ -27,6 +32,19 @@ pub struct MetricsRegistry {
     pub messages_outbound_total: CounterVec,
     /// 适配器状态（标签: platform，值: 1=connected, 0=disconnected）
     pub adapter_status: GaugeVec,
+    /// 已认证 API 请求总数（标签: key_id, status_class）
+    pub api_key_requests_total: CounterVec,
+    /// API Key 认证失败总数
+    pub api_auth_failures_total: CounterVec,
+    /// Audit hash-chain integrity (1 valid, 0 invalid)
+    pub audit_chain_integrity: GaugeVec,
+    /// Durable ledger integrity by bounded ledger name (1 valid, 0 invalid).
+    pub ledger_integrity: GaugeVec,
+    /// Crash-left API key rotation transitions requiring operator action.
+    pub pending_key_rotation_transitions: GaugeVec,
+    /// Persistent outbound delivery backlog by bounded state.
+    pub outbound_delivery_backlog: GaugeVec,
+    last_integrity_check_ms: Arc<AtomicI64>,
 }
 
 impl Default for MetricsRegistry {
@@ -88,6 +106,56 @@ impl MetricsRegistry {
         )
         .unwrap();
 
+        let api_key_requests_total = CounterVec::new(
+            Opts::new(
+                "api_key_requests_total",
+                "Authenticated API requests by API key and HTTP status class",
+            ),
+            &["key_id", "status_class"],
+        )
+        .unwrap();
+
+        let api_auth_failures_total = CounterVec::new(
+            Opts::new(
+                "api_auth_failures_total",
+                "Failed API authentication attempts by reason",
+            ),
+            &["reason"],
+        )
+        .unwrap();
+        let audit_chain_integrity = GaugeVec::new(
+            Opts::new(
+                "audit_chain_integrity",
+                "Audit hash-chain integrity (1=valid)",
+            ),
+            &[],
+        )
+        .unwrap();
+        let ledger_integrity = GaugeVec::new(
+            Opts::new(
+                "ledger_integrity",
+                "Durable commercial ledger integrity (1=valid)",
+            ),
+            &["ledger"],
+        )
+        .unwrap();
+        let pending_key_rotation_transitions = GaugeVec::new(
+            Opts::new(
+                "pending_key_rotation_transitions",
+                "Durable API key rotation transitions requiring reconciliation",
+            ),
+            &[],
+        )
+        .unwrap();
+        let outbound_delivery_backlog = GaugeVec::new(
+            Opts::new(
+                "outbound_delivery_backlog",
+                "Persistent outbound deliveries requiring processing or reconciliation",
+            ),
+            &["state"],
+        )
+        .unwrap();
+
         registry
             .register(Box::new(http_requests_total.clone()))
             .unwrap();
@@ -104,6 +172,24 @@ impl MetricsRegistry {
             .register(Box::new(messages_outbound_total.clone()))
             .unwrap();
         registry.register(Box::new(adapter_status.clone())).unwrap();
+        registry
+            .register(Box::new(api_key_requests_total.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(api_auth_failures_total.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(audit_chain_integrity.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(ledger_integrity.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(pending_key_rotation_transitions.clone()))
+            .unwrap();
+        registry
+            .register(Box::new(outbound_delivery_backlog.clone()))
+            .unwrap();
 
         Self {
             registry,
@@ -113,6 +199,71 @@ impl MetricsRegistry {
             messages_inbound_total,
             messages_outbound_total,
             adapter_status,
+            api_key_requests_total,
+            api_auth_failures_total,
+            audit_chain_integrity,
+            ledger_integrity,
+            pending_key_rotation_transitions,
+            outbound_delivery_backlog,
+            last_integrity_check_ms: Arc::new(AtomicI64::new(0)),
+        }
+    }
+
+    /// Record one authenticated request using only the server-generated key ID.
+    pub fn record_api_key_request(&self, key_id: &str, status: u16) {
+        let status_class = format!("{}xx", status / 100);
+        self.api_key_requests_total
+            .with_label_values(&[key_id, &status_class])
+            .inc();
+    }
+
+    /// Record authentication failures with a bounded reason vocabulary.
+    pub fn record_auth_failure(&self, reason: &'static str) {
+        self.api_auth_failures_total
+            .with_label_values(&[reason])
+            .inc();
+    }
+
+    pub fn set_audit_integrity(&self, valid: bool) {
+        self.audit_chain_integrity
+            .with_label_values::<&str>(&[])
+            .set(if valid { 1.0 } else { 0.0 });
+    }
+
+    pub fn set_ledger_integrity(&self, ledger: &'static str, valid: bool) {
+        self.ledger_integrity
+            .with_label_values(&[ledger])
+            .set(if valid { 1.0 } else { 0.0 });
+    }
+
+    pub fn set_pending_key_rotations(&self, count: i64) {
+        self.pending_key_rotation_transitions
+            .with_label_values::<&str>(&[])
+            .set(count as f64);
+    }
+
+    fn should_refresh_integrity(&self, now_ms: i64) -> bool {
+        const REFRESH_MS: i64 = 5 * 60 * 1_000;
+        let previous = self.last_integrity_check_ms.load(Ordering::Acquire);
+        now_ms.saturating_sub(previous) >= REFRESH_MS
+            && self
+                .last_integrity_check_ms
+                .compare_exchange(previous, now_ms, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
+    }
+
+    pub fn set_outbound_delivery_backlog(
+        &self,
+        stats: easybot_core::storage::OutboundDeliveryStats,
+    ) {
+        for (state, value) in [
+            ("pending", stats.pending),
+            ("stale_pending", stats.stale_pending),
+            ("unpublished_event", stats.unpublished_events),
+        ] {
+            self.outbound_delivery_backlog
+                .with_label_values(&[state])
+                .set(value as f64);
         }
     }
 
@@ -260,10 +411,61 @@ fn is_uuid(s: &str) -> bool {
 /// `/metrics` 端点处理器
 ///
 /// 从 AppState 中提取 MetricsRegistry 并渲染 Prometheus 格式。
-pub async fn metrics_handler(State(state): State<AppState>) -> impl IntoResponse {
+pub async fn metrics_handler(
+    State(state): State<AppState>,
+    Extension(auth): Extension<easybot_core::auth::AuthInfo>,
+) -> axum::response::Response {
+    if let Err(error) = easybot_core::auth::permissions::require_permission(
+        &auth,
+        easybot_core::auth::permissions::Permission::MetricsRead,
+    ) {
+        return crate::response::ApiError(error).into_response();
+    }
     match state.metrics {
-        Some(ref registry) => registry.render(),
-        None => "Metrics disabled".to_string(),
+        Some(ref registry) => {
+            let now_ms = chrono::Utc::now().timestamp_millis();
+            if registry.should_refresh_integrity(now_ms) {
+                registry.set_audit_integrity(state.auth_manager.verify_audit_chain().await);
+                let usage_valid = state
+                    .auth_manager
+                    .verify_usage_ledger_integrity()
+                    .await
+                    .unwrap_or_else(|error| {
+                        tracing::error!(%error, "failed to verify usage ledger integrity");
+                        false
+                    });
+                registry.set_ledger_integrity("usage", usage_valid);
+                let billing_valid = state
+                    .auth_manager
+                    .verify_billing_ledger_integrity()
+                    .await
+                    .unwrap_or_else(|error| {
+                        tracing::error!(%error, "failed to verify billing ledger integrity");
+                        false
+                    });
+                registry.set_ledger_integrity("billing_events", billing_valid);
+            }
+            match state.auth_manager.rotation_transition_count().await {
+                Ok(count) => registry.set_pending_key_rotations(count),
+                Err(error) => {
+                    tracing::error!(%error, "failed to collect pending key rotation transitions");
+                    registry.set_pending_key_rotations(-1);
+                }
+            }
+            let stale_before = chrono::Utc::now().timestamp_millis() - 5 * 60 * 1000;
+            match state
+                .message_store
+                .outbound_delivery_stats(stale_before)
+                .await
+            {
+                Ok(stats) => registry.set_outbound_delivery_backlog(stats),
+                Err(error) => {
+                    tracing::error!(%error, "failed to collect outbound delivery backlog metrics");
+                }
+            }
+            registry.render().into_response()
+        }
+        None => "Metrics disabled".into_response(),
     }
 }
 
@@ -275,8 +477,8 @@ pub async fn metrics_handler(State(state): State<AppState>) -> impl IntoResponse
 ///
 /// 返回 JoinHandle，可在优雅关闭时等待。
 pub fn start_metrics_event_listener(
-    metrics: std::sync::Arc<MetricsRegistry>,
-    event_bus: std::sync::Arc<easybot_core::bus::EventBus>,
+    metrics: Arc<MetricsRegistry>,
+    event_bus: Arc<easybot_core::bus::EventBus>,
 ) -> tokio::task::JoinHandle<()> {
     use easybot_core::types::event::event_types;
     use futures::StreamExt;
@@ -310,4 +512,68 @@ pub fn start_metrics_event_listener(
             }
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn api_key_usage_metrics_are_bounded_and_do_not_expose_secrets() {
+        let metrics = MetricsRegistry::new();
+        metrics.record_api_key_request("key-id-123", 200);
+        metrics.record_api_key_request("key-id-123", 429);
+        metrics.record_auth_failure("invalid_key");
+        let rendered = metrics.render();
+
+        assert!(
+            rendered
+                .contains("api_key_requests_total{key_id=\"key-id-123\",status_class=\"2xx\"} 1")
+        );
+        assert!(
+            rendered
+                .contains("api_key_requests_total{key_id=\"key-id-123\",status_class=\"4xx\"} 1")
+        );
+        assert!(rendered.contains("api_auth_failures_total{reason=\"invalid_key\"} 1"));
+        assert!(!rendered.contains("eb_"));
+    }
+
+    #[test]
+    fn outbound_delivery_backlog_has_bounded_labels() {
+        let metrics = MetricsRegistry::new();
+        metrics.set_outbound_delivery_backlog(easybot_core::storage::OutboundDeliveryStats {
+            pending: 3,
+            stale_pending: 2,
+            unpublished_events: 1,
+        });
+        let rendered = metrics.render();
+        assert!(rendered.contains("outbound_delivery_backlog{state=\"pending\"} 3"));
+        assert!(rendered.contains("outbound_delivery_backlog{state=\"stale_pending\"} 2"));
+        assert!(rendered.contains("outbound_delivery_backlog{state=\"unpublished_event\"} 1"));
+    }
+
+    #[test]
+    fn commercial_ledger_integrity_metrics_are_bounded_and_refresh_is_throttled() {
+        let metrics = MetricsRegistry::new();
+        metrics.set_ledger_integrity("usage", true);
+        metrics.set_ledger_integrity("billing_events", false);
+        let rendered = metrics.render();
+        assert!(rendered.contains("ledger_integrity{ledger=\"usage\"} 1"));
+        assert!(rendered.contains("ledger_integrity{ledger=\"billing_events\"} 0"));
+
+        assert!(metrics.should_refresh_integrity(300_000));
+        assert!(!metrics.should_refresh_integrity(300_001));
+        assert!(metrics.should_refresh_integrity(600_000));
+    }
+
+    #[test]
+    fn pending_key_rotation_metric_has_no_dynamic_labels() {
+        let metrics = MetricsRegistry::new();
+        metrics.set_pending_key_rotations(2);
+        assert!(
+            metrics
+                .render()
+                .contains("pending_key_rotation_transitions 2")
+        );
+    }
 }

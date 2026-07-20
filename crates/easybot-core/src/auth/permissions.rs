@@ -30,6 +30,18 @@ pub enum Permission {
     WebSocketConnect,
     /// 管理 API Key（创建/列出/吊销）
     ApiKeysManage,
+    /// 读取 Prometheus 指标
+    MetricsRead,
+    /// Read the management audit ledger
+    AuditRead,
+    /// Read the durable usage ledger for billing reconciliation
+    BillingRead,
+    /// Write normalized, idempotent events from a trusted payment bridge
+    BillingWrite,
+    /// Read application logs, which may contain customer metadata
+    LogsRead,
+    /// Read host resource and runtime information
+    SystemRead,
 }
 
 /// 检查 AuthInfo 是否持有所需权限

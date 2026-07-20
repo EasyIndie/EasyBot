@@ -6,7 +6,8 @@
 //! - MessagePersister：持久化消息内容
 //!
 //! 消息先进入内存缓冲区，每隔 1 秒或缓冲区满（50 条）时批量写入存储层。
-//! 写入失败时自动重试（最多 3 次，指数退避），重试耗尽后记录错误并丢弃该批次。
+//! 写入失败时自动重试（每轮最多 3 次，指数退避）；重试耗尽后把批次放回
+//! 队列头部，等待下一轮刷新，避免数据库短暂故障导致消息静默丢失。
 
 use futures::StreamExt;
 use std::sync::Arc;
@@ -94,7 +95,8 @@ impl MessagePersister {
 ///
 /// 采用原子取出策略：先 `take` 缓冲区，再尝试写入。
 /// 写入失败时最多重试 MAX_RETRIES 次（指数退避）。
-/// 重试耗尽后，消息将丢失并记录错误。
+/// 重试耗尽后，批次会重新放回缓冲区头部。刷新调用串行执行，因此重新入队
+/// 时只需把失败批次放在刷新期间到达的新消息之前，即可保持接收顺序。
 async fn flush_batch(buffer: &Arc<Mutex<Vec<StoredMessage>>>, store: &Arc<dyn MessageStore>) {
     let batch: Vec<StoredMessage> = {
         let mut buf = buffer.lock().await;
@@ -128,9 +130,15 @@ async fn flush_batch(buffer: &Arc<Mutex<Vec<StoredMessage>>>, store: &Arc<dyn Me
             }
             Err(e) => {
                 error!(
-                    "Failed to persist {} messages after {} attempts: {} — batch discarded",
+                    "Failed to persist {} messages after {} attempts: {} — retaining batch for retry",
                     count, MAX_RETRIES, e,
                 );
+                let mut buf = buffer.lock().await;
+                let mut queued_during_flush = std::mem::take(&mut *buf);
+                let mut retained = batch;
+                retained.append(&mut queued_during_flush);
+                *buf = retained;
+                return;
             }
         }
     }
@@ -138,8 +146,10 @@ async fn flush_batch(buffer: &Arc<Mutex<Vec<StoredMessage>>>, store: &Arc<dyn Me
 
 #[cfg(test)]
 mod tests {
+    use async_trait::async_trait;
     use serde_json::json;
-    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex as StdMutex};
     use std::time::Duration;
 
     use crate::bus::EventBus;
@@ -147,7 +157,7 @@ mod tests {
     use crate::session::bridge::SessionBridge;
     use crate::session::message_persister::MessagePersister;
     use crate::storage::sqlite::{SqliteMessageStore, run_migrations};
-    use crate::storage::{MessageFilter, MessageStore};
+    use crate::storage::{MessageFilter, MessageStore, StoreError, StoredMessage};
     use crate::types::event::event_types::MESSAGE_INBOUND;
     use crate::types::message::{ChatType, InboundMessage, MessageSender, MessageType};
 
@@ -195,6 +205,83 @@ mod tests {
             metadata: None,
         };
         event_bus.publish(event);
+    }
+
+    struct RecoveringMessageStore {
+        failures_left: AtomicUsize,
+        stored: StdMutex<Vec<StoredMessage>>,
+    }
+
+    #[async_trait]
+    impl MessageStore for RecoveringMessageStore {
+        async fn store_message(&self, msg: &StoredMessage) -> Result<(), StoreError> {
+            self.store_messages(std::slice::from_ref(msg)).await
+        }
+
+        async fn store_messages(&self, msgs: &[StoredMessage]) -> Result<(), StoreError> {
+            if self
+                .failures_left
+                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
+                    left.checked_sub(1)
+                })
+                .is_ok()
+            {
+                return Err(StoreError::Database("injected outage".into()));
+            }
+            self.stored.lock().unwrap().extend_from_slice(msgs);
+            Ok(())
+        }
+
+        async fn list_messages(
+            &self,
+            _filter: &MessageFilter,
+        ) -> Result<Vec<StoredMessage>, StoreError> {
+            Ok(self.stored.lock().unwrap().clone())
+        }
+
+        async fn delete_message(&self, _id: &str) -> Result<bool, StoreError> {
+            Ok(false)
+        }
+
+        async fn delete_messages_by_session(&self, _session_key: &str) -> Result<u64, StoreError> {
+            Ok(0)
+        }
+    }
+
+    #[tokio::test]
+    async fn failed_batch_is_retained_and_persisted_after_recovery() {
+        let store: Arc<dyn MessageStore> = Arc::new(RecoveringMessageStore {
+            failures_left: AtomicUsize::new(super::MAX_RETRIES as usize),
+            stored: StdMutex::new(Vec::new()),
+        });
+        let first = StoredMessage::from_inbound(&test_inbound_message());
+        let first_id = first.id.clone();
+        let buffer = Arc::new(tokio::sync::Mutex::new(vec![first]));
+
+        super::flush_batch(&buffer, &store).await;
+        assert_eq!(
+            buffer.lock().await.len(),
+            1,
+            "failed batch must be retained"
+        );
+
+        let mut second_message = test_inbound_message();
+        second_message.text = Some("arrived during outage".into());
+        let second = StoredMessage::from_inbound(&second_message);
+        let second_id = second.id.clone();
+        buffer.lock().await.push(second);
+
+        super::flush_batch(&buffer, &store).await;
+        assert!(buffer.lock().await.is_empty());
+        let stored = store
+            .list_messages(&MessageFilter::default())
+            .await
+            .unwrap();
+        assert_eq!(
+            stored.iter().map(|message| &message.id).collect::<Vec<_>>(),
+            vec![&first_id, &second_id],
+            "retained messages must remain ahead of newer arrivals"
+        );
     }
 
     #[tokio::test]

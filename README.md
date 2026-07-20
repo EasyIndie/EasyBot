@@ -34,8 +34,13 @@
 - ⚡ **高性能异步** — tokio + axum 栈，全异步非阻塞
 - 🐳 **Docker 就绪** — 多阶段构建，一行命令部署
 - 📊 **可观测性** — Prometheus 指标、结构化日志、健康检查
+- 📈 **调用方计量** — 按 API Key ID 统计请求与错误，提供最小权限监控凭据和默认告警
+- 🎚️ **套餐配额** — 每个 API Key 可配置独立滑动窗口配额，返回标准限流响应头
+- 🧾 **审计账本** — 关键管理操作持久化为可查询的哈希链，支持完整性验证
+- 🔏 **可验证发布** — 平台签名、SPDX SBOM、SHA-256 清单及 Sigstore/SLSA 来源证明
 - ⚙️ **热重载配置** — 运行时更新配置无需重启
 - 🛡️ **资源管理** — 自动 TTL 清理、WAL checkpoint、有界通道、适配器缓存上限，长期运行不泄漏
+- 💾 **灾难恢复** — SQLite/PostgreSQL 备份、校验与恢复工具，SQLite 在线一致性快照
 
 ---
 
@@ -120,6 +125,9 @@ cargo build --features "default,plugin-system"
 
 # 启动服务
 cargo run -- --debug
+
+# 商用部署必须启用生产配置门禁
+cargo run --release -- --production
 ```
 
 ### 初始化配置
@@ -136,6 +144,18 @@ cargo run -- --debug
 ```
 
 > 💡 **无需手动编辑 gateway.yaml** — 在 `.env` 中设置令牌即可自动启用对应平台适配器。
+
+生产模式会拒绝弱管理密码、未确认的反向代理部署、伪应用 TLS、开发 CORS、关闭限流、原始 payload 透传和非 HTTPS Webhook。EasyBot 当前监听器仅支持 HTTP，必须置于可信 TLS 反向代理后的私网。完整上线要求见[商用上线门禁](docs/05%20commercial-readiness.md)。
+
+涉及个人数据的部署还应执行[隐私与数据主体请求操作手册](docs/06%20privacy-and-data-rights.md)，并由法律顾问审核对外法律文本。
+
+正式版本必须遵循[商用发布与供应链验证](docs/07%20commercial-release.md)，发布二进制、SBOM、校验和及可验证来源证明。
+
+真实域名开放前必须完成[商用上线证据验收](docs/08%20commercial-launch-acceptance.md)，不能用代码测试替代法务批准、告警送达、备份恢复、容量、回滚和在线 TLS 证据。
+
+支付渠道通过[财务事件与支付集成](docs/09%20billing-integration.md)中的受信桥接器接入，使用幂等财务事件账本处理重复通知、退款和拒付。
+
+需要安全重试的单条发送必须遵循[消息发送幂等与重试](docs/10%20message-idempotency.md)，复用同一 `Idempotency-Key`，禁止超时后自动生成新键。
 
 ### Docker 部署
 
@@ -419,7 +439,7 @@ init(config) → connect() → send()/send_media()/... → disconnect()
 | **P4 生产就绪** | API 密钥认证（Argon2）、速率限制、热重载、优雅关闭、PostgreSQL、Prometheus、Docker、TTL 保留、健康监控 + 自动重连、send_draft 流式传输、健康运行时间 | ✅ 95% |
 | **P5 插件系统** | 插件 SDK、动态库加载、插件注册、加载器测试、开发者文档 | ✅ 完成 |
 
-> **P4 未完成项**: 权限模型 RBAC（暂缓）、TLS 仅配置层未在应用层处理（暂缓）。
+> **P4 说明**: API Key 已支持细粒度权限；TLS 推荐由反向代理终止。`--production` 会强制检查生产安全配置。当前尚未提供进程内多租户隔离，多客户部署需使用独立实例和数据库。
 
 ---
 

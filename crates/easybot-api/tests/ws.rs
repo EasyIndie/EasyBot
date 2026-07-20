@@ -140,7 +140,8 @@ async fn auth_ws(client: &mut WsClient, api_key: &str) {
 
 #[tokio::test]
 async fn test_ws_auth_ok_with_valid_token() {
-    let (_state, key, addr) = ws_server().await;
+    let (state, key, addr) = ws_server().await;
+    let key_id = state.auth_manager.list_keys().await[0].id.clone();
     let mut client = connect_ws(addr, &key).await;
 
     // 发送有效 token → 应收到 auth_ok
@@ -149,6 +150,25 @@ async fn test_ws_auth_ok_with_valid_token() {
     assert!(resp.is_some(), "Expected auth_ok, got timeout");
     let resp = resp.unwrap();
     assert_eq!(resp["type"], "auth_ok");
+
+    let now = chrono::Utc::now().timestamp_millis();
+    let usage = state
+        .auth_manager
+        .usage_records(
+            now - 3_600_000,
+            now + 3_600_000,
+            Some(&key_id),
+            None,
+            100,
+            0,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        usage.iter().map(|record| record.request_count).sum::<i64>(),
+        1
+    );
+    assert_eq!(usage[0].status_class, 1);
 
     client.close().await;
 }

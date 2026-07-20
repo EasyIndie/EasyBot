@@ -290,7 +290,7 @@ GET /api/v1/config → 当前运行时配置
 
 PUT /api/v1/config
 Body: { /* patch 配置 */ }
-Response 200: { "ok": true }
+Response 409: 运行组件使用一致启动快照；配置变更需审阅并重启
 ```
 
 ### 2.3 WebSocket 实时推送
@@ -557,10 +557,10 @@ interface AdapterConfig {
 │  └───────────────┘  └──────┬───────┘  └──────────────────┘ │
 │                            │                               │
 │  ┌───────────────┐  ┌──────┴───────┐  ┌──────────────────┐ │
-│  │  Auth/ACL     │  │  Adapter     │  │  Config Manager  │ │
+│  │  Auth/ACL     │  │  Adapter     │  │  Config Snapshot │ │
 │  │  API Key      │  │  Manager     │  │  load/save/watch │ │
-│  │  (Argon2)     │  │  lifecycle   │  │  hot-reload      │ │
-│  │  Rate Limit   │  │  health poll │  │  (60s polling)   │ │
+│  │  (Argon2)     │  │  lifecycle   │  │  reviewed restart│ │
+│  │  Rate Limit   │  │  health poll │  │  consistent state│ │
 │  │               │  │  reconnect   │  │                  │ │
 │  └───────────────┘  └──────────────┘  └──────────────────┘ │
 └────────────────────────────────────────────────────────────┘

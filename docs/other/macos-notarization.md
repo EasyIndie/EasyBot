@@ -62,12 +62,12 @@ EasyBot 发布工作流支持可选 macOS 代码签名 + Apple 公证。启用�
 2. 在 `build-binaries` job 中，`*-apple-darwin` 目标会依次执行：
    - **签名**：`codesign` 使用 Developer ID 证书签名，启用 Hardened Runtime
    - **公证**：`notarytool` 将二进制提交给 Apple 扫描
-   - **贴票**：`stapler` 将公证票据嵌入二进制
-3. 签名/公证步骤仅在 **所有 5 个 Secret 都存在** 时执行，缺少任意一个则跳过
+   - **验证**：`notarytool` 返回 Accepted；原始 Mach-O 可执行文件不支持 stapling，Gatekeeper 在线查询公证票据
+3. 签名步骤在证书 Secret 存在时执行；配置公证密钥后再提交 Apple 公证。若需要可离线验证的 stapled 票据，应改为发布 `.pkg` 或 `.app`，而不是裸可执行文件。
 
 ## 不设置凭据时
 
-二进制正常构建但**不签名、不公证**。用户可在 macOS 上通过**右键 → 打开**跳过 Gatekeeper 运行。
+商业 Release 会失败并停止发布，不会产生未签名的 macOS 资产。开发构建不受此门禁影响。
 
 ## 常见问题
 

@@ -39,6 +39,10 @@ struct Cli {
     /// 调试模式（启用 DEBUG 日志）
     #[arg(short, long)]
     debug: bool,
+
+    /// 强制执行生产环境安全门禁（也可设置 EASYBOT_ENV=production）
+    #[arg(long)]
+    production: bool,
 }
 
 /// EasyBot 子命令
@@ -270,6 +274,35 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
+    let production_mode = cli.production
+        || std::env::var("EASYBOT_ENV").is_ok_and(|value| value.eq_ignore_ascii_case("production"));
+    if production_mode {
+        let admin_password = std::env::var("EASYBOT_ADMIN_PASSWORD")
+            .unwrap_or_else(|_| config.server.admin_password.clone());
+        let allow_plaintext = std::env::var("EASYBOT_ALLOW_PLAINTEXT")
+            .is_ok_and(|value| value.eq_ignore_ascii_case("true"));
+        let debug_cors = std::env::var_os("EASYBOT_DEBUG_CORS").is_some();
+        if let Err(errors) = easybot_core::config::validate_production_config(
+            &config,
+            &admin_password,
+            allow_plaintext,
+            debug_cors,
+            cli.debug,
+        ) {
+            anyhow::bail!(
+                "production readiness check failed:\n- {}",
+                errors.join("\n- ")
+            );
+        }
+        if std::fs::read_dir(&paths.plugins_dir).is_ok_and(|mut entries| entries.next().is_some()) {
+            anyhow::bail!(
+                "production mode refuses dynamic plugins because plugin signatures and publisher trust are not implemented; empty {} or isolate the plugin in a separate service",
+                paths.plugins_dir.display()
+            );
+        }
+        tracing::info!("Production readiness configuration check passed");
+    }
+
     // 初始化 rustls CryptoProvider
     // rustls 0.23 在同时启用 aws-lc-rs 和 ring 两个 crypto 后端时无法自动选择，
     // 必须显式安装默认 CryptoProvider，否则 tokio-tungstenite 的 WSS 连接会 panic。
@@ -447,6 +480,21 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
+    // API keys require durable storage even when messages/sessions use PostgreSQL.
+    // Keep the credential database separate so its Argon2 hashes and plan quotas
+    // are never silently lost on restart.
+    if auth_pool.is_none() {
+        let auth_db_path = paths.data_dir.join("auth.db");
+        let pool = easybot_core::storage::sqlite::create_pool(&auth_db_path)
+            .await
+            .map_err(|error| anyhow::anyhow!("Authentication database failed: {error}"))?;
+        easybot_core::storage::sqlite::run_migrations(&pool)
+            .await
+            .map_err(|error| anyhow::anyhow!("Authentication migration failed: {error}"))?;
+        tracing::info!(path = %auth_db_path.display(), "Dedicated authentication database initialized");
+        auth_pool = Some(pool);
+    }
+
     let adapter_manager =
         Arc::new(easybot_core::adapter::AdapterManager::new().with_event_bus(event_bus.clone()));
     // 初始化自引用，使后台任务能安全持有 Arc<AdapterManager>
@@ -463,9 +511,10 @@ async fn main() -> anyhow::Result<()> {
     // 创建默认 API Key
     let mut dev_api_key: Option<String> = None;
 
-    // 尝试复用已有的 dev key，避免每次重启生成新 key 导致浏览器登录失效
+    // Development convenience key. Production login issues short-lived,
+    // in-memory session keys and must never expose a wildcard key on disk.
     let key_file_path = paths.home.join("data").join(".dev_api_key");
-    if let Ok(stored_key) = std::fs::read_to_string(&key_file_path) {
+    if !production_mode && let Ok(stored_key) = std::fs::read_to_string(&key_file_path) {
         let trimmed = stored_key.trim().to_string();
         if !trimmed.is_empty() {
             match auth_manager.authenticate(&trimmed).await {
@@ -480,7 +529,7 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    if dev_api_key.is_none() {
+    if !production_mode && dev_api_key.is_none() {
         match auth_manager
             .create_key("dev", vec!["*".to_string()], None, vec![])
             .await
@@ -514,6 +563,11 @@ async fn main() -> anyhow::Result<()> {
             }
             Err(e) => tracing::warn!("Failed to create dev API key: {}", e),
         }
+    } else if production_mode && key_file_path.exists() {
+        tracing::warn!(
+            path = %key_file_path.display(),
+            "Ignoring legacy plaintext dev API key in production; remove it after confirming no development process uses it"
+        );
     }
 
     // 解析管理后台密码（优先级：EASYBOT_ADMIN_PASSWORD > gateway.yaml > 默认值）
@@ -566,24 +620,9 @@ async fn main() -> anyhow::Result<()> {
     // 提前暂存 session_manager 引用（稍后被移动进 AppState，但 DashMap 清理需要它）
     let sm_for_prune = session_manager.clone();
 
-    // 创建配置管理器（用于热重载）
-    // 优先使用 --config 指定的路径，否则使用默认配置路径
-    let config_file_for_watch = cli
-        .config
-        .as_ref()
-        .map(std::path::PathBuf::from)
-        .or_else(|| {
-            if paths.config_file.exists() {
-                Some(paths.config_file.clone())
-            } else {
-                None
-            }
-        });
-    let config_manager = if let Some(path) = config_file_for_watch {
-        easybot_api::config_manager::ConfigManager::with_path(config.clone(), path)
-    } else {
-        easybot_api::config_manager::ConfigManager::new(config.clone())
-    };
+    // Runtime components use a coherent startup snapshot. Configuration
+    // changes are applied through a reviewed restart, not partial hot reload.
+    let config_manager = easybot_api::config_manager::ConfigManager::new(config.clone());
 
     // 构建应用状态
     let server_config = config.server.clone();
@@ -607,16 +646,21 @@ async fn main() -> anyhow::Result<()> {
         tracing::info!("Metrics event listener started");
     }
 
-    // ── 生产环境安全检查：非 debug 模式下如未启用 TLS 则拒绝启动 ──
-    if !server_config.tls.enabled && !cfg!(debug_assertions) {
+    // ── 生产环境安全检查：release 构建必须显式确认前置 TLS 代理 ──
+    // The application listener is HTTP-only; server.tls does not terminate TLS.
+    if !cfg!(debug_assertions) {
         tracing::warn!(
-            "TLS 未启用！生产环境请启用 TLS 或使用反向代理。\n\
-             设置 tls.enabled = true 或设置环境变量 EASYBOT_ALLOW_PLAINTEXT=true 确认风险"
+            "EasyBot 应用监听器仅支持 HTTP。必须由可信反向代理终止 TLS，\n\
+             并设置 EASYBOT_ALLOW_PLAINTEXT=true 确认仅私网代理到应用的 HTTP 跳转"
         );
-        if std::env::var("EASYBOT_ALLOW_PLAINTEXT").is_err() {
-            anyhow::bail!("生产环境必须启用 TLS，或设置 EASYBOT_ALLOW_PLAINTEXT=true 跳过此检查");
+        if !std::env::var("EASYBOT_ALLOW_PLAINTEXT")
+            .is_ok_and(|value| value.eq_ignore_ascii_case("true"))
+        {
+            anyhow::bail!(
+                "release 构建必须部署在可信 TLS 反向代理后，并设置 EASYBOT_ALLOW_PLAINTEXT=true"
+            );
         }
-        tracing::warn!("EASYBOT_ALLOW_PLAINTEXT 已设置，跳过 TLS 检查（不推荐）");
+        tracing::info!("已确认 TLS 由可信反向代理终止；应用 HTTP 监听器不得暴露公网");
     }
 
     // 打印管理后台链接
@@ -636,14 +680,6 @@ async fn main() -> anyhow::Result<()> {
             sig.notified().await;
         })
         .await?;
-
-    // 启动配置文件轮询监听器（每 60 秒检查一次变更）
-    easybot_api::config_manager::start_config_watcher(
-        app_state.config_manager.clone(),
-        event_bus.clone(),
-        60,
-    );
-    tracing::info!("Config file watcher started (polling every 60s)");
 
     // 后台启动适配器和健康监控（不阻塞 HTTP 服务）
     let am = adapter_manager.clone();
@@ -743,8 +779,8 @@ async fn main() -> anyhow::Result<()> {
     ));
 
     // 等待关闭信号
-    tracing::info!("EasyBot started. Press Ctrl+C to stop.");
-    tokio::signal::ctrl_c().await?;
+    tracing::info!("EasyBot started. Waiting for shutdown signal.");
+    shutdown_signal().await?;
     tracing::info!("Shutting down...");
 
     // 发布网关关闭事件
@@ -763,6 +799,23 @@ async fn main() -> anyhow::Result<()> {
     tracing::info!("EasyBot stopped.");
 
     Ok(())
+}
+
+/// Wait for the platform's normal service-stop signal. Containers and systemd
+/// use SIGTERM, while interactive shells use SIGINT/Ctrl+C.
+#[cfg(unix)]
+async fn shutdown_signal() -> std::io::Result<()> {
+    use tokio::signal::unix::{SignalKind, signal};
+    let mut terminate = signal(SignalKind::terminate())?;
+    tokio::select! {
+        result = tokio::signal::ctrl_c() => result,
+        _ = terminate.recv() => Ok(()),
+    }
+}
+
+#[cfg(not(unix))]
+async fn shutdown_signal() -> std::io::Result<()> {
+    tokio::signal::ctrl_c().await
 }
 
 /// 处理 init 命令：创建默认配置目录
@@ -840,9 +893,8 @@ async fn handle_init(cli: Cli) -> anyhow::Result<()> {
             println!("     sudo ./easybot.sh logs");
             println!("     sudo ./easybot.sh uninstall");
             println!();
-            println!("  TLS: Release mode requires TLS or EASYBOT_ALLOW_PLAINTEXT.");
-            println!("       .env already configured with EASYBOT_ALLOW_PLAINTEXT=true.");
-            println!("       Edit gateway.yaml tls section to enable real certificates.");
+            println!("  Production: run with --production after configuring TLS/CORS/password.");
+            println!("  Set EASYBOT_ALLOW_PLAINTEXT=true only behind a trusted TLS proxy.");
         } else if cfg!(target_os = "macos") {
             println!();
             println!("  3. Install as launchd service (recommended for production):");
@@ -851,9 +903,8 @@ async fn handle_init(cli: Cli) -> anyhow::Result<()> {
             println!("     ./easybot.sh logs");
             println!("     ./easybot.sh uninstall");
             println!();
-            println!("  TLS: Release mode requires TLS or EASYBOT_ALLOW_PLAINTEXT.");
-            println!("       .env already configured with EASYBOT_ALLOW_PLAINTEXT=true.");
-            println!("       Edit gateway.yaml tls section to enable real certificates.");
+            println!("  Production: run with --production after configuring TLS/CORS/password.");
+            println!("  Set EASYBOT_ALLOW_PLAINTEXT=true only behind a trusted TLS proxy.");
         } else if cfg!(target_os = "windows") {
             println!();
             println!(
@@ -865,9 +916,8 @@ async fn handle_init(cli: Cli) -> anyhow::Result<()> {
             println!("     PowerShell -ExecutionPolicy Bypass -File manage-service.ps1 logs");
             println!("     PowerShell -ExecutionPolicy Bypass -File manage-service.ps1 uninstall");
             println!();
-            println!("  TLS: Release mode requires TLS or EASYBOT_ALLOW_PLAINTEXT.");
-            println!("       .env already configured with EASYBOT_ALLOW_PLAINTEXT=true.");
-            println!("       Edit gateway.yaml tls section to enable real certificates.");
+            println!("  Production: run with --production after configuring TLS/CORS/password.");
+            println!("  Set EASYBOT_ALLOW_PLAINTEXT=true only behind a trusted TLS proxy.");
         }
 
         println!();

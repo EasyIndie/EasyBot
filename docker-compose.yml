@@ -5,7 +5,7 @@ version: "3.9"
 # Quick start:
 #   cp .env.example .env     # Edit tokens — adapters auto-enable when tokens are set
 #   docker compose up -d
-#   curl localhost:8080/health
+#   curl localhost:8080/api/v1/live
 #
 # 启用适配器: 只需在下方 environment 或 .env 中设置令牌即可自动启用。
 # 无需编辑 gateway.yaml — 系统自动检测已配置凭据的平台。
@@ -15,25 +15,68 @@ version: "3.9"
 #   open http://localhost:9091  # Prometheus
 
 services:
+  # Production TLS entrypoint. Set EASYBOT_DOMAIN to a public DNS name whose
+  # A/AAAA records point to this host, then enable the production-tls profile.
+  caddy:
+    image: caddy:2-alpine@sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648
+    profiles:
+      - production-tls
+    environment:
+      - EASYBOT_DOMAIN=${EASYBOT_DOMAIN:-gateway.invalid}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    restart: unless-stopped
+    depends_on:
+      easybot:
+        condition: service_healthy
+    networks:
+      - frontend
+
   easybot:
     build: .
     ports:
-      - "8080:8080"
+      # Loopback by default: a host-level TLS proxy may forward to this port.
+      # A proxy container on `frontend` should use http://easybot:8080 and can
+      # remove this mapping entirely. Never bind 0.0.0.0 without a firewall.
+      - "${EASYBOT_BIND_ADDRESS:-127.0.0.1}:8080:8080"
     volumes:
       - ./gateway.yaml:/etc/easybot/gateway.yaml:ro
       - easybot_data:/var/lib/easybot/data
     environment:
       - EASYBOT_HOME=/var/lib/easybot
+      - EASYBOT_ENV=${EASYBOT_ENV:-}
+      - EASYBOT_ALLOW_PLAINTEXT=${EASYBOT_ALLOW_PLAINTEXT:-}
+      - EASYBOT_ADMIN_PASSWORD_FILE=${EASYBOT_ADMIN_PASSWORD_FILE:-}
+      - EASYBOT_ADMIN_PASSWORD=${EASYBOT_ADMIN_PASSWORD:-}
+      - DATABASE_URL_FILE=${DATABASE_URL_FILE:-}
+      - DATABASE_URL=${DATABASE_URL:-}
       # SECURITY: Use file-based secrets (Docker secrets / bind mounts) instead
       # of env vars in production. Env vars are visible via docker inspect.
       - TELEGRAM_BOT_TOKEN_FILE=${TELEGRAM_BOT_TOKEN_FILE:-}
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      - DISCORD_BOT_TOKEN_FILE=${DISCORD_BOT_TOKEN_FILE:-}
       - DISCORD_BOT_TOKEN=${DISCORD_BOT_TOKEN:-}
+      - FEISHU_APP_ID_FILE=${FEISHU_APP_ID_FILE:-}
       - FEISHU_APP_ID=${FEISHU_APP_ID:-}
+      - FEISHU_APP_SECRET_FILE=${FEISHU_APP_SECRET_FILE:-}
       - FEISHU_APP_SECRET=${FEISHU_APP_SECRET:-}
+      - QQ_CLIENT_SECRET_FILE=${QQ_CLIENT_SECRET_FILE:-}
       - QQ_CLIENT_SECRET=${QQ_CLIENT_SECRET:-}
+      - QQ_APP_ID_FILE=${QQ_APP_ID_FILE:-}
       - QQ_APP_ID=${QQ_APP_ID:-}
-      - WECHAT_BOT_TOKEN=${WECHAT_BOT_TOKEN:-}
     # SECURITY: Drop all capabilities, prevent privilege escalation
     cap_drop:
       - ALL
@@ -54,7 +97,9 @@ services:
           cpus: "0.5"
           memory: 128M
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      # Liveness must not restart the process merely because an external IM
+      # platform is unavailable. Load balancers should use /api/v1/ready.
+      test: ["CMD", "curl", "-f", "http://localhost:8080/api/v1/live"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -84,11 +129,14 @@ services:
 
   # Optional: Prometheus monitoring
   prometheus:
-    image: prom/prometheus:v2.55.0
+    image: prom/prometheus:v2.55.0@sha256:378f4e03703557d1c6419e6caccf922f96e6d88a530f7431d66a4c4f4b1000fe
     ports:
-      - "9091:9090"
+      - "${EASYBOT_BIND_ADDRESS:-127.0.0.1}:9091:9090"
     volumes:
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./easybot-alerts.yml:/etc/prometheus/easybot-alerts.yml:ro
+      # Create a metricsread-only API key and put the raw token in this file.
+      - ${EASYBOT_METRICS_TOKEN_FILE:-./secrets/easybot-metrics-token}:/run/secrets/easybot_metrics_token:ro
     profiles:
       - monitoring
     restart: unless-stopped
@@ -104,3 +152,5 @@ networks:
 volumes:
   easybot_data:
   pg_data:
+  caddy_data:
+  caddy_config:

@@ -12,11 +12,13 @@ use easybot_core::bus::EventBus;
 use easybot_core::session::SessionManager;
 use easybot_core::storage::MessageStore;
 use easybot_core::types::config::GatewayConfig;
+use easybot_core::types::event::GatewayEvent;
 use easybot_core::types::event::event_types;
 use std::sync::Arc;
 use tokio::sync::{Semaphore, broadcast};
 
 pub mod config_manager;
+pub mod deprecation;
 pub mod log_collector;
 pub mod metrics;
 pub mod middleware;
@@ -24,6 +26,43 @@ pub mod openapi;
 pub mod response;
 pub mod routes;
 pub mod server;
+
+async fn publish_outbound_events_once(
+    store: &Arc<dyn MessageStore>,
+    event_bus: &Arc<EventBus>,
+) -> Result<usize, easybot_core::storage::StoreError> {
+    let events = store.unpublished_outbound_events(100).await?;
+    let count = events.len();
+    for event in events {
+        let mut data = event.result_json;
+        if !data.is_object() {
+            data = serde_json::json!({ "result": data });
+        }
+        if let Some(object) = data.as_object_mut() {
+            object.insert(
+                "delivery_id".into(),
+                serde_json::Value::String(event.delivery_id.clone()),
+            );
+            object.insert("platform".into(), serde_json::Value::String(event.platform));
+            object.insert("chat_id".into(), serde_json::Value::String(event.chat_id));
+            object.insert(
+                "delivery_state".into(),
+                serde_json::to_value(event.state).unwrap_or_default(),
+            );
+        }
+        let receivers = event_bus.publish(GatewayEvent::new(
+            event_types::MESSAGE_SENT,
+            "delivery.outbox",
+            data,
+        ));
+        if receivers > 0 {
+            store
+                .mark_outbound_event_published(&event.delivery_id)
+                .await?;
+        }
+    }
+    Ok(count)
+}
 
 /// 预序列化的 WebSocket 事件（一次序列化，广播给所有 WS 客户端）
 #[derive(Clone)]
@@ -85,10 +124,10 @@ impl AppState {
         // 启动 WS 预序列化广播器：所有 WS 客户端共享同一序列化结果
         let (ws_event_tx, _) = broadcast::channel(256);
         let ws_tx = ws_event_tx.clone();
-        let ws_eb = event_bus.clone();
+        // Establish subscriptions synchronously before the outbox can publish recovered events.
+        let mut stream = event_bus.subscribe_many(event_types::all());
         tokio::spawn(async move {
             use futures::StreamExt;
-            let mut stream = ws_eb.subscribe_many(event_types::all());
             while let Some(event) = stream.next().await {
                 // metadata 处理（与 ws.rs 保持一致）
                 let mut event_data = event.data;
@@ -113,6 +152,20 @@ impl AppState {
             }
         });
 
+        // Transactional outbox publisher. A crash after delivery finalization but before
+        // publication leaves event_published=false, so the next process resumes it.
+        let outbox_store = message_store.clone();
+        let outbox_bus = event_bus.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_millis(250));
+            loop {
+                interval.tick().await;
+                if let Err(error) = publish_outbound_events_once(&outbox_store, &outbox_bus).await {
+                    tracing::error!(%error, "failed to publish or acknowledge outbound event outbox");
+                }
+            }
+        });
+
         Self {
             event_bus,
             adapter_manager,
@@ -129,5 +182,85 @@ impl AppState {
             dev_api_key,
             admin_password,
         }
+    }
+}
+
+#[cfg(test)]
+mod outbox_tests {
+    use super::*;
+    use easybot_core::storage::sqlite::{SqliteMessageStore, run_migrations};
+    use easybot_core::storage::{OutboundDelivery, OutboundDeliveryState, OutboundEvent};
+    use futures::StreamExt;
+
+    #[tokio::test]
+    async fn committed_event_is_republished_and_acknowledged_after_restart() {
+        let pool = sqlx::SqlitePool::connect(":memory:").await.unwrap();
+        run_migrations(&pool).await.unwrap();
+        let concrete = SqliteMessageStore::new(pool);
+        let delivery = OutboundDelivery {
+            id: "recover-delivery-1".into(),
+            actor_id: "customer-1".into(),
+            idempotency_key: Some("request-123".into()),
+            platform: "telegram".into(),
+            chat_id: "chat-1".into(),
+            request_json: serde_json::json!({"text": "hello"}),
+            created_at: 1,
+        };
+        concrete.prepare_outbound_delivery(&delivery).await.unwrap();
+        concrete
+            .finalize_outbound_delivery(
+                &delivery.id,
+                OutboundDeliveryState::Succeeded,
+                &serde_json::json!({"success": true}),
+                None,
+            )
+            .await
+            .unwrap();
+        let store: Arc<dyn MessageStore> = Arc::new(concrete);
+        let bus = Arc::new(EventBus::new());
+        let mut events = bus.subscribe_many(&[event_types::MESSAGE_SENT]);
+
+        assert_eq!(publish_outbound_events_once(&store, &bus).await.unwrap(), 1);
+        let event = tokio::time::timeout(std::time::Duration::from_secs(1), events.next())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(event.source, "delivery.outbox");
+        assert_eq!(event.data["delivery_id"], delivery.id);
+        assert_eq!(event.data["delivery_state"], "succeeded");
+        assert_eq!(publish_outbound_events_once(&store, &bus).await.unwrap(), 0);
+
+        let none: Vec<OutboundEvent> = store.unpublished_outbound_events(10).await.unwrap();
+        assert!(none.is_empty());
+
+        drop(events);
+        let no_subscriber = OutboundDelivery {
+            id: "recover-delivery-no-subscriber".into(),
+            actor_id: "customer-1".into(),
+            idempotency_key: None,
+            platform: "telegram".into(),
+            chat_id: "chat-1".into(),
+            request_json: serde_json::json!({"text": "retain me"}),
+            created_at: 2,
+        };
+        store
+            .prepare_outbound_delivery(&no_subscriber)
+            .await
+            .unwrap();
+        store
+            .finalize_outbound_delivery(
+                &no_subscriber.id,
+                OutboundDeliveryState::Succeeded,
+                &serde_json::json!({"success": true}),
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(publish_outbound_events_once(&store, &bus).await.unwrap(), 1);
+        assert_eq!(
+            store.unpublished_outbound_events(10).await.unwrap().len(),
+            1,
+            "an event must remain pending when no subscriber accepted it"
+        );
     }
 }

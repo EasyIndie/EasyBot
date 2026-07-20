@@ -95,6 +95,32 @@ impl tracing::field::Visit for MessageVisitor<'_> {
     }
 }
 
+pub(crate) fn redact_sensitive_text(message: &str) -> String {
+    use regex::Regex;
+    use std::sync::OnceLock;
+    static BEARER: OnceLock<Regex> = OnceLock::new();
+    static EASYBOT_KEY: OnceLock<Regex> = OnceLock::new();
+    static ASSIGNMENT: OnceLock<Regex> = OnceLock::new();
+    static URL_CREDENTIALS: OnceLock<Regex> = OnceLock::new();
+
+    let message = BEARER
+        .get_or_init(|| Regex::new(r"(?i)\bbearer\s+[^\s,;]+").unwrap())
+        .replace_all(message, "Bearer ***REDACTED***");
+    let message = EASYBOT_KEY
+        .get_or_init(|| Regex::new(r"\beb_[A-Za-z0-9_-]+").unwrap())
+        .replace_all(&message, "***REDACTED***");
+    let message = ASSIGNMENT
+        .get_or_init(|| {
+            Regex::new(r"(?i)\b(token|secret|password|api[_-]?key|authorization)=([^\s&,;]+)")
+                .unwrap()
+        })
+        .replace_all(&message, "$1=***REDACTED***");
+    URL_CREDENTIALS
+        .get_or_init(|| Regex::new(r"(https?://)[^/@\s]+@").unwrap())
+        .replace_all(&message, "$1***REDACTED***@")
+        .into_owned()
+}
+
 impl<S: tracing::Subscriber + for<'a> LookupSpan<'a>> Layer<S> for LogCollector {
     fn on_event(
         &self,
@@ -114,7 +140,7 @@ impl<S: tracing::Subscriber + for<'a> LookupSpan<'a>> Layer<S> for LogCollector 
             timestamp,
             level,
             target,
-            message,
+            message: redact_sensitive_text(&message),
         };
 
         let mut buf = self.buffer.write().unwrap_or_else(|e| e.into_inner());
@@ -122,5 +148,27 @@ impl<S: tracing::Subscriber + for<'a> LookupSpan<'a>> Layer<S> for LogCollector 
             buf.pop_front();
         }
         buf.push_back(entry);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn redacts_common_credentials_from_log_messages() {
+        let redacted = redact_sensitive_text(
+            "Bearer abc.def eb_deadbeef token=telegram-secret password=hunter2 https://user:pass@example.com/a?api_key=leak",
+        );
+        for secret in [
+            "abc.def",
+            "eb_deadbeef",
+            "telegram-secret",
+            "hunter2",
+            "user:pass",
+            "leak",
+        ] {
+            assert!(!redacted.contains(secret), "leaked {secret}: {redacted}");
+        }
     }
 }

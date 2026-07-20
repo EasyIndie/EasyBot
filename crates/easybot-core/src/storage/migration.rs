@@ -30,7 +30,7 @@ use sqlx::{PgPool, SqlitePool};
 /// 当前二进制所期望的数据库 schema 版本。
 ///
 /// 每次新增/修改表结构时 +1，并追加 `MIGRATIONS` 条目。
-pub const SCHEMA_VERSION: i64 = 1;
+pub const SCHEMA_VERSION: i64 = 2;
 
 /// 版本追踪表（两种后端通用）
 const VERSION_TABLE_SQL: &str = "
@@ -71,6 +71,14 @@ pub static MIGRATIONS: &[Migration] = &[
         sql_postgres: V1_POSTGRES,
         rollback_sqlite: Some(V1_ROLLBACK_SQLITE),
         rollback_postgres: Some(V1_ROLLBACK_POSTGRES),
+    },
+    Migration {
+        version: 2,
+        description: "Commercial readiness: delivery, audit, usage, billing and idempotency ledgers",
+        sql_sqlite: V2_SQLITE,
+        sql_postgres: V2_POSTGRES,
+        rollback_sqlite: None,
+        rollback_postgres: None,
     },
     // ── 后续版本在此追加 ──
     // Migration { version: 2, description: "Add webhook_url to sessions", ... }
@@ -190,6 +198,296 @@ const V1_ROLLBACK_SQLITE: &str = "
 DROP TABLE IF EXISTS api_keys;
 DROP TABLE IF EXISTS messages;
 DROP TABLE IF EXISTS sessions;
+";
+
+const V2_SQLITE: &str = "
+ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS subject_id TEXT;
+ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS requests_per_minute INTEGER;
+UPDATE api_keys SET subject_id = id WHERE subject_id IS NULL OR subject_id = '';
+
+CREATE TABLE IF NOT EXISTS api_key_rotation_transitions (
+    source_id      TEXT PRIMARY KEY REFERENCES api_keys(id),
+    replacement_id TEXT NOT NULL UNIQUE REFERENCES api_keys(id),
+    state          TEXT NOT NULL CHECK (state IN ('created','prepared')),
+    created_at     INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS outbound_deliveries (
+    id              TEXT PRIMARY KEY,
+    actor_id        TEXT NOT NULL,
+    idempotency_key TEXT,
+    platform        TEXT NOT NULL,
+    chat_id         TEXT NOT NULL,
+    request_json    TEXT NOT NULL,
+    state           TEXT NOT NULL CHECK (state IN ('pending','succeeded','failed')),
+    result_json     TEXT,
+    created_at      INTEGER NOT NULL,
+    completed_at    INTEGER,
+    event_published INTEGER NOT NULL DEFAULT 0,
+    reconciliation_evidence TEXT,
+    reconciled_by   TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_outbound_deliveries_state
+    ON outbound_deliveries(state, created_at);
+
+CREATE TABLE IF NOT EXISTS api_quota_events (
+    id          TEXT PRIMARY KEY,
+    subject_id  TEXT NOT NULL,
+    occurred_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_api_quota_events_subject_time
+    ON api_quota_events(subject_id, occurred_at);
+CREATE INDEX IF NOT EXISTS idx_api_quota_events_time
+    ON api_quota_events(occurred_at);
+
+CREATE TABLE IF NOT EXISTS audit_events (
+    id            TEXT PRIMARY KEY,
+    timestamp     INTEGER NOT NULL,
+    actor_id      TEXT NOT NULL,
+    action        TEXT NOT NULL,
+    resource      TEXT NOT NULL,
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    previous_hash TEXT NOT NULL,
+    event_hash    TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_events_timestamp ON audit_events(timestamp DESC);
+
+CREATE TABLE IF NOT EXISTS audit_chain_state (
+    singleton   INTEGER PRIMARY KEY CHECK (singleton = 1),
+    head_hash   TEXT NOT NULL,
+    event_count INTEGER NOT NULL CHECK (event_count >= 0)
+);
+
+INSERT OR IGNORE INTO audit_chain_state(singleton, head_hash, event_count)
+SELECT 1,
+       COALESCE((SELECT event_hash FROM audit_events ORDER BY timestamp DESC, rowid DESC LIMIT 1), 'GENESIS'),
+       COUNT(*)
+FROM audit_events;
+
+CREATE TABLE IF NOT EXISTS api_usage_hourly (
+    key_id        TEXT NOT NULL,
+    subject_id    TEXT NOT NULL,
+    bucket_start  INTEGER NOT NULL,
+    status_class  INTEGER NOT NULL,
+    request_count INTEGER NOT NULL CHECK (request_count >= 0),
+    PRIMARY KEY (key_id, bucket_start, status_class)
+);
+
+CREATE INDEX IF NOT EXISTS idx_api_usage_hourly_bucket
+    ON api_usage_hourly(bucket_start, key_id);
+
+CREATE TABLE IF NOT EXISTS api_usage_integrity (
+    key_id        TEXT NOT NULL,
+    subject_id    TEXT NOT NULL,
+    bucket_start  INTEGER NOT NULL,
+    status_class  INTEGER NOT NULL,
+    request_count INTEGER NOT NULL CHECK (request_count >= 0),
+    PRIMARY KEY (key_id, bucket_start, status_class)
+);
+
+INSERT OR IGNORE INTO api_usage_integrity
+    (key_id, subject_id, bucket_start, status_class, request_count)
+SELECT key_id, subject_id, bucket_start, status_class, request_count
+FROM api_usage_hourly;
+
+CREATE TABLE IF NOT EXISTS api_usage_ledger_state (
+    singleton       INTEGER PRIMARY KEY CHECK (singleton = 1),
+    total_requests  INTEGER NOT NULL CHECK (total_requests >= 0)
+);
+
+INSERT OR IGNORE INTO api_usage_ledger_state(singleton, total_requests)
+SELECT 1, COALESCE(SUM(request_count), 0) FROM api_usage_hourly;
+
+CREATE TABLE IF NOT EXISTS billing_events (
+    provider       TEXT NOT NULL,
+    event_id       TEXT NOT NULL,
+    event_type     TEXT NOT NULL,
+    object_id      TEXT NOT NULL,
+    customer_ref   TEXT NOT NULL,
+    amount_minor   INTEGER NOT NULL CHECK (amount_minor >= 0),
+    currency       TEXT NOT NULL,
+    occurred_at    INTEGER NOT NULL,
+    received_at    INTEGER NOT NULL,
+    event_hash     TEXT NOT NULL,
+    PRIMARY KEY (provider, event_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_billing_events_occurred
+    ON billing_events(occurred_at DESC, provider, event_id);
+CREATE INDEX IF NOT EXISTS idx_billing_events_customer
+    ON billing_events(customer_ref, occurred_at DESC);
+
+CREATE TABLE IF NOT EXISTS billing_ledger_state (
+    singleton   INTEGER PRIMARY KEY CHECK (singleton = 1),
+    event_count INTEGER NOT NULL CHECK (event_count >= 0)
+);
+
+INSERT OR IGNORE INTO billing_ledger_state(singleton, event_count)
+SELECT 1, COUNT(*) FROM billing_events;
+
+CREATE TABLE IF NOT EXISTS api_idempotency (
+    key_id          TEXT NOT NULL,
+    idempotency_key TEXT NOT NULL,
+    request_hash    TEXT NOT NULL,
+    state           TEXT NOT NULL CHECK (state IN ('pending','completed')),
+    http_status     INTEGER,
+    response_json   TEXT,
+    created_at      INTEGER NOT NULL,
+    expires_at      INTEGER NOT NULL,
+    PRIMARY KEY (key_id, idempotency_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_api_idempotency_expiry ON api_idempotency(expires_at);
+";
+
+const V2_POSTGRES: &str = "
+ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS subject_id VARCHAR(255);
+ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS requests_per_minute INTEGER;
+UPDATE api_keys SET subject_id = id WHERE subject_id IS NULL OR subject_id = '';
+
+CREATE TABLE IF NOT EXISTS api_key_rotation_transitions (
+    source_id      VARCHAR(255) PRIMARY KEY REFERENCES api_keys(id),
+    replacement_id VARCHAR(255) NOT NULL UNIQUE REFERENCES api_keys(id),
+    state          VARCHAR(16) NOT NULL CHECK (state IN ('created','prepared')),
+    created_at     BIGINT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS outbound_deliveries (
+    id              VARCHAR(255) PRIMARY KEY,
+    actor_id        VARCHAR(255) NOT NULL,
+    idempotency_key VARCHAR(128),
+    platform        VARCHAR(64) NOT NULL,
+    chat_id         VARCHAR(255) NOT NULL,
+    request_json    JSONB NOT NULL,
+    state           VARCHAR(16) NOT NULL CHECK (state IN ('pending','succeeded','failed')),
+    result_json     JSONB,
+    created_at      BIGINT NOT NULL,
+    completed_at    BIGINT,
+    event_published BOOLEAN NOT NULL DEFAULT FALSE,
+    reconciliation_evidence TEXT,
+    reconciled_by   VARCHAR(255)
+);
+
+CREATE INDEX IF NOT EXISTS idx_outbound_deliveries_state
+    ON outbound_deliveries(state, created_at);
+
+CREATE TABLE IF NOT EXISTS api_quota_events (
+    id          VARCHAR(255) PRIMARY KEY,
+    subject_id  VARCHAR(255) NOT NULL,
+    occurred_at BIGINT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_api_quota_events_subject_time
+    ON api_quota_events(subject_id, occurred_at);
+CREATE INDEX IF NOT EXISTS idx_api_quota_events_time
+    ON api_quota_events(occurred_at);
+
+CREATE TABLE IF NOT EXISTS audit_events (
+    id            VARCHAR(255) PRIMARY KEY,
+    timestamp     BIGINT NOT NULL,
+    actor_id      VARCHAR(255) NOT NULL,
+    action        TEXT NOT NULL,
+    resource      TEXT NOT NULL,
+    metadata_json JSONB NOT NULL DEFAULT '{}',
+    previous_hash TEXT NOT NULL,
+    event_hash    TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_audit_events_timestamp ON audit_events(timestamp DESC);
+
+CREATE TABLE IF NOT EXISTS audit_chain_state (
+    singleton   INTEGER PRIMARY KEY CHECK (singleton = 1),
+    head_hash   TEXT NOT NULL,
+    event_count BIGINT NOT NULL CHECK (event_count >= 0)
+);
+
+INSERT INTO audit_chain_state(singleton, head_hash, event_count)
+SELECT 1,
+       COALESCE((SELECT event_hash FROM audit_events ORDER BY timestamp DESC LIMIT 1), 'GENESIS'),
+       COUNT(*)
+FROM audit_events
+ON CONFLICT (singleton) DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS api_usage_hourly (
+    key_id        VARCHAR(255) NOT NULL,
+    subject_id    VARCHAR(255) NOT NULL,
+    bucket_start  BIGINT NOT NULL,
+    status_class  INTEGER NOT NULL,
+    request_count BIGINT NOT NULL CHECK (request_count >= 0),
+    PRIMARY KEY (key_id, bucket_start, status_class)
+);
+
+CREATE INDEX IF NOT EXISTS idx_api_usage_hourly_bucket
+    ON api_usage_hourly(bucket_start, key_id);
+
+CREATE TABLE IF NOT EXISTS api_usage_integrity (
+    key_id        VARCHAR(255) NOT NULL,
+    subject_id    VARCHAR(255) NOT NULL,
+    bucket_start  BIGINT NOT NULL,
+    status_class  INTEGER NOT NULL,
+    request_count BIGINT NOT NULL CHECK (request_count >= 0),
+    PRIMARY KEY (key_id, bucket_start, status_class)
+);
+
+INSERT INTO api_usage_integrity
+    (key_id, subject_id, bucket_start, status_class, request_count)
+SELECT key_id, subject_id, bucket_start, status_class, request_count
+FROM api_usage_hourly
+ON CONFLICT DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS api_usage_ledger_state (
+    singleton       INTEGER PRIMARY KEY CHECK (singleton = 1),
+    total_requests  BIGINT NOT NULL CHECK (total_requests >= 0)
+);
+
+INSERT INTO api_usage_ledger_state(singleton, total_requests)
+SELECT 1, COALESCE(SUM(request_count), 0) FROM api_usage_hourly
+ON CONFLICT (singleton) DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS billing_events (
+    provider       VARCHAR(64) NOT NULL,
+    event_id       VARCHAR(255) NOT NULL,
+    event_type     TEXT NOT NULL,
+    object_id      TEXT NOT NULL,
+    customer_ref   TEXT NOT NULL,
+    amount_minor   BIGINT NOT NULL CHECK (amount_minor >= 0),
+    currency       VARCHAR(16) NOT NULL,
+    occurred_at    BIGINT NOT NULL,
+    received_at    BIGINT NOT NULL,
+    event_hash     TEXT NOT NULL,
+    PRIMARY KEY (provider, event_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_billing_events_occurred
+    ON billing_events(occurred_at DESC, provider, event_id);
+CREATE INDEX IF NOT EXISTS idx_billing_events_customer
+    ON billing_events(customer_ref, occurred_at DESC);
+
+CREATE TABLE IF NOT EXISTS billing_ledger_state (
+    singleton   INTEGER PRIMARY KEY CHECK (singleton = 1),
+    event_count BIGINT NOT NULL CHECK (event_count >= 0)
+);
+
+INSERT INTO billing_ledger_state(singleton, event_count)
+SELECT 1, COUNT(*) FROM billing_events
+ON CONFLICT (singleton) DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS api_idempotency (
+    key_id          VARCHAR(255) NOT NULL,
+    idempotency_key VARCHAR(255) NOT NULL,
+    request_hash    TEXT NOT NULL,
+    state           VARCHAR(16) NOT NULL CHECK (state IN ('pending','completed')),
+    http_status     INTEGER,
+    response_json   JSONB,
+    created_at      BIGINT NOT NULL,
+    expires_at      BIGINT NOT NULL,
+    PRIMARY KEY (key_id, idempotency_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_api_idempotency_expiry ON api_idempotency(expires_at);
 ";
 
 // ══════════════════════════════════════════════════════════════════

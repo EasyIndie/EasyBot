@@ -37,10 +37,10 @@ pub async fn test_app_state() -> (AppState, String) {
     let pool = SqlitePool::connect(":memory:").await.unwrap();
     run_migrations(&pool).await.unwrap();
     let message_store: Arc<dyn easybot_core::storage::MessageStore> =
-        Arc::new(SqliteMessageStore::new(pool));
+        Arc::new(SqliteMessageStore::new(pool.clone()));
 
     // API Key 管理
-    let auth_manager = Arc::new(ApiKeyManager::new(None));
+    let auth_manager = Arc::new(ApiKeyManager::new(Some(pool)));
     let (_, raw_key) = auth_manager
         .create_key("test-key", vec!["*".to_string()], None, vec![])
         .await
@@ -58,7 +58,7 @@ pub async fn test_app_state() -> (AppState, String) {
             base_path: "/api/v1".to_string(),
             websocket: WebSocketConfig::default(),
             rate_limit: RateLimitConfig {
-                enabled: false,
+                enabled: true,
                 requests_per_minute: 60,
                 burst_size: 10,
             },

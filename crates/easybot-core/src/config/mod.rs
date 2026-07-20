@@ -14,6 +14,98 @@ use regex::Regex;
 use std::path::Path;
 use tracing::info;
 
+/// Validate security-sensitive settings before exposing EasyBot as a service.
+///
+/// This deliberately returns every problem in one pass so deployment pipelines
+/// can report an actionable checklist instead of failing one setting at a time.
+pub fn validate_production_config(
+    config: &GatewayConfig,
+    admin_password: &str,
+    allow_plaintext: bool,
+    debug_cors: bool,
+    debug_logging: bool,
+) -> Result<(), Vec<String>> {
+    let mut errors = Vec::new();
+
+    // The Axum listener is HTTP-only today. `server.tls` documents certificate
+    // locations but does not terminate TLS, so it must never satisfy the
+    // production transport-security gate.
+    if !allow_plaintext {
+        errors.push(
+            "the application listener is HTTP-only; terminate TLS at a trusted reverse proxy \
+             and set EASYBOT_ALLOW_PLAINTEXT=true to acknowledge the private HTTP hop"
+                .to_string(),
+        );
+    }
+    if config.server.tls.enabled {
+        errors.push(
+            "server.tls.enabled is not supported by the HTTP listener; configure TLS on a trusted reverse proxy"
+                .to_string(),
+        );
+    }
+    if debug_cors {
+        errors.push("EASYBOT_DEBUG_CORS is forbidden in production".to_string());
+    }
+    if debug_logging {
+        errors.push(
+            "--debug is forbidden in production because logs may expose customer metadata"
+                .to_string(),
+        );
+    }
+    if admin_password.chars().count() < 12 {
+        errors.push("admin password must contain at least 12 characters".to_string());
+    }
+    if !config.api.rate_limit.enabled {
+        errors.push("API rate limiting must be enabled".to_string());
+    }
+    if config.api.rate_limit.requests_per_minute == 0 {
+        errors.push("API rate limit must be greater than zero".to_string());
+    }
+    if config.api.raw_payload_enabled {
+        errors.push("raw platform payload forwarding must be disabled".to_string());
+    }
+    if !config.api.metrics.enabled {
+        errors.push("Prometheus metrics must be enabled".to_string());
+    }
+    if !(1..=10_000).contains(&config.api.websocket.max_clients) {
+        errors.push("WebSocket max_clients must be between 1 and 10000".to_string());
+    }
+    if !(5..=300).contains(&config.api.websocket.heartbeat_interval_secs) {
+        errors.push("WebSocket heartbeat interval must be between 5 and 300 seconds".to_string());
+    }
+    if config.server.cors_allowed_origins.is_empty() {
+        errors.push("at least one explicit CORS origin is required".to_string());
+    }
+    for origin in &config.server.cors_allowed_origins {
+        let origin = origin.trim().to_ascii_lowercase();
+        if origin == "*" || origin == "null" {
+            errors.push("wildcard/null CORS origins are forbidden".to_string());
+        }
+        if origin.starts_with("http://")
+            && !origin.starts_with("http://localhost")
+            && !origin.starts_with("http://127.0.0.1")
+        {
+            errors.push(format!("CORS origin must use HTTPS: {origin}"));
+        }
+    }
+    for webhook in &config.webhooks {
+        if !webhook.url.to_ascii_lowercase().starts_with("https://") {
+            errors.push(format!(
+                "production webhook must use HTTPS: {}",
+                webhook.url
+            ));
+        }
+    }
+
+    errors.sort();
+    errors.dedup();
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors)
+    }
+}
+
 /// 加载配置文件
 ///
 /// 从指定路径加载 YAML 配置，解析环境变量引用。
@@ -143,9 +235,15 @@ pub fn load_env(paths: &EasyBotPaths) -> Result<(), crate::types::error::Gateway
     let env_path = &paths.env_path;
     if !env_path.exists() {
         tracing::info!(".env file not found at {}, skipping", env_path.display());
-        return Ok(());
+    } else {
+        load_dotenv_file(env_path)?;
     }
 
+    load_secret_files()?;
+    Ok(())
+}
+
+fn load_dotenv_file(env_path: &Path) -> Result<(), crate::types::error::GatewayError> {
     // SECURITY: Check file permissions on Unix (should be 0600)
     #[cfg(unix)]
     {
@@ -175,6 +273,81 @@ pub fn load_env(paths: &EasyBotPaths) -> Result<(), crate::types::error::Gateway
     })?;
 
     tracing::info!("Loaded environment variables from {}", env_path.display());
+    Ok(())
+}
+
+/// Load deployment secrets from files without exposing their values through
+/// the container environment. Only the documented allowlist is accepted.
+fn load_secret_files() -> Result<(), crate::types::error::GatewayError> {
+    const SECRET_VARS: &[&str] = &[
+        "EASYBOT_ADMIN_PASSWORD",
+        "DATABASE_URL",
+        "TELEGRAM_BOT_TOKEN",
+        "DISCORD_BOT_TOKEN",
+        "FEISHU_APP_ID",
+        "FEISHU_APP_SECRET",
+        "QQ_APP_ID",
+        "QQ_CLIENT_SECRET",
+    ];
+
+    for variable in SECRET_VARS {
+        let file_variable = format!("{variable}_FILE");
+        let Ok(path) = std::env::var(&file_variable) else {
+            continue;
+        };
+        if path.trim().is_empty() {
+            continue;
+        }
+        if std::env::var_os(variable).is_some() {
+            return Err(crate::types::error::GatewayError::ConfigError(format!(
+                "{variable} and {file_variable} are mutually exclusive"
+            )));
+        }
+        let metadata = std::fs::symlink_metadata(&path).map_err(|e| {
+            crate::types::error::GatewayError::ConfigError(format!(
+                "failed to inspect {file_variable} path {path}: {e}"
+            ))
+        })?;
+        if metadata.file_type().is_symlink() || !metadata.is_file() {
+            return Err(crate::types::error::GatewayError::ConfigError(format!(
+                "{file_variable} must reference a regular file, not a symlink"
+            )));
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if metadata.permissions().mode() & 0o077 != 0 {
+                return Err(crate::types::error::GatewayError::ConfigError(format!(
+                    "{file_variable} path must not grant group or other permissions"
+                )));
+            }
+        }
+        if metadata.len() > 64 * 1024 {
+            return Err(crate::types::error::GatewayError::ConfigError(format!(
+                "{file_variable} exceeds the 64 KiB secret size limit"
+            )));
+        }
+        let value = std::fs::read_to_string(&path).map_err(|e| {
+            crate::types::error::GatewayError::ConfigError(format!(
+                "failed to read {file_variable} path {path}: {e}"
+            ))
+        })?;
+        let value = value.trim_end_matches(['\r', '\n']);
+        if value.is_empty() || value.contains(['\0', '\r', '\n']) {
+            return Err(crate::types::error::GatewayError::ConfigError(format!(
+                "{file_variable} must contain a non-empty single-line text secret"
+            )));
+        }
+        let escaped = value
+            .replace('\\', "\\\\")
+            .replace('$', "\\$")
+            .replace('"', "\\\"");
+        dotenvy::from_read(format!("{variable}=\"{escaped}\"\n").as_bytes()).map_err(|e| {
+            crate::types::error::GatewayError::ConfigError(format!(
+                "failed to load {file_variable}: {e}"
+            ))
+        })?;
+    }
     Ok(())
 }
 
@@ -213,10 +386,12 @@ pub fn generate_env_example() -> String {
 # 透传各平台原始 payload 到 WebSocket 事件（开发调试用）
 # EASYBOT_RAW_PAYLOAD_ENABLED=true
 
-# 生产环境安全：release 版本默认要求启用 TLS 或设置以下变量跳过检查
-# 如果已配置反向代理（Nginx/Caddy/Traefik）终止 TLS，可保留此设置
-# 如果直接暴露到公网，请设置 tls.enabled = true 并配置证书
-EASYBOT_ALLOW_PLAINTEXT=true
+# 生产环境安全：使用 --production（或 EASYBOT_ENV=production）启用完整门禁
+# 仅当可信反向代理已终止 TLS 时才取消下一行注释
+# EasyBot 当前监听器不直接终止 TLS，禁止将其直接暴露到公网
+# EASYBOT_ALLOW_PLAINTEXT=true
+
+# EASYBOT_ENV=production
 "#
     .to_string()
 }
@@ -534,6 +709,39 @@ adapters:
     }
 
     #[test]
+    fn test_load_env_reads_secret_file() {
+        use std::fs;
+        let dir =
+            std::env::temp_dir().join(format!("easybot_secret_file_test_{}", std::process::id()));
+        let _ = fs::create_dir_all(&dir);
+        let secret = dir.join("telegram_token");
+        fs::write(&secret, "token-from-file\n").unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&secret, fs::Permissions::from_mode(0o600)).unwrap();
+        }
+        // SAFETY: this test owns these variables for the duration of the call.
+        unsafe {
+            std::env::remove_var("TELEGRAM_BOT_TOKEN");
+            std::env::set_var("TELEGRAM_BOT_TOKEN_FILE", &secret);
+        }
+
+        let paths = EasyBotPaths::new(dir.clone()).unwrap();
+        assert!(load_env(&paths).is_ok());
+        assert_eq!(
+            std::env::var("TELEGRAM_BOT_TOKEN").unwrap(),
+            "token-from-file"
+        );
+
+        unsafe {
+            std::env::remove_var("TELEGRAM_BOT_TOKEN");
+            std::env::remove_var("TELEGRAM_BOT_TOKEN_FILE");
+        }
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn test_generate_env_example_contains_expected_vars() {
         let content = generate_env_example();
         assert!(content.contains("TELEGRAM_BOT_TOKEN"));
@@ -558,6 +766,16 @@ adapters:
     }
 
     #[test]
+    fn test_generate_env_example_does_not_enable_plaintext_by_default() {
+        let content = generate_env_example();
+        assert!(
+            !content
+                .lines()
+                .any(|line| line == "EASYBOT_ALLOW_PLAINTEXT=true")
+        );
+    }
+
+    #[test]
     fn test_generate_local_config_example_contains_override_examples() {
         let content = generate_local_config_example();
         // 必须包含 adapters: 父级键（之前模板误将适配器放在顶层导致 serde 静默忽略）
@@ -569,5 +787,46 @@ adapters:
         assert!(content.contains("本地配置覆盖"));
         assert!(content.contains("enabled: false"));
         assert!(content.contains("server:"));
+    }
+
+    #[test]
+    fn production_config_accepts_hardened_reverse_proxy_deployment() {
+        let mut config = GatewayConfig::default();
+        config.server.cors_allowed_origins = vec!["https://console.example.com".into()];
+
+        assert!(
+            validate_production_config(&config, "a-strong-admin-password", true, false, false)
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn production_config_reports_all_unsafe_settings() {
+        let mut config = GatewayConfig::default();
+        config.server.cors_allowed_origins = vec!["*".into(), "http://console.example.com".into()];
+        config.api.rate_limit.enabled = false;
+        config.api.raw_payload_enabled = true;
+
+        let errors = validate_production_config(&config, "short", false, true, true).unwrap_err();
+        assert!(errors.iter().any(|e| e.contains("HTTP-only")));
+        assert!(errors.iter().any(|e| e.contains("12 characters")));
+        assert!(errors.iter().any(|e| e.contains("rate limiting")));
+        assert!(errors.iter().any(|e| e.contains("raw platform payload")));
+        assert!(errors.iter().any(|e| e.contains("wildcard/null")));
+        assert!(errors.iter().any(|e| e.contains("must use HTTPS")));
+        assert!(errors.iter().any(|e| e.contains("DEBUG_CORS")));
+        assert!(errors.iter().any(|e| e.contains("--debug")));
+    }
+
+    #[test]
+    fn production_config_rejects_unsupported_application_tls() {
+        let mut config = GatewayConfig::default();
+        config.server.tls.enabled = true;
+        config.server.cors_allowed_origins = vec!["https://console.example.com".into()];
+
+        let errors =
+            validate_production_config(&config, "a-strong-admin-password", true, false, false)
+                .unwrap_err();
+        assert!(errors.iter().any(|e| e.contains("not supported")));
     }
 }

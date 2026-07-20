@@ -108,6 +108,55 @@ async fn test_update_check_returns_structure() {
     assert!(json["requires_db_migration"].is_boolean());
 }
 
+#[tokio::test]
+async fn test_admin_login_rejects_oversized_body_before_json_allocation() {
+    let (state, _) = common::test_app_state().await;
+    let body = format!(r#"{{"password":"{}"}}"#, "x".repeat(8 * 1024));
+    let (status, _) = send_request(state, "POST", "/admin/login", None, Some(&body)).await;
+    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+}
+
+#[tokio::test]
+async fn test_api_key_creation_rejects_oversized_body_before_json_allocation() {
+    let (state, key) = common::test_app_state().await;
+    let body = format!(
+        r#"{{"name":"customer","permissions":["{}"]}}"#,
+        "x".repeat(64 * 1024)
+    );
+    let (status, _) =
+        send_request(state, "POST", "/api/v1/api-keys", Some(&key), Some(&body)).await;
+    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+}
+
+#[tokio::test]
+async fn test_audit_query_rejects_limits_outside_documented_contract() {
+    let (state, key) = common::test_app_state().await;
+    for limit in ["0", "1001"] {
+        let (status, json) = get(
+            state.clone(),
+            &format!("/api/v1/audit-events?limit={limit}"),
+            Some(&key),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{json}");
+        assert_eq!(json["error"]["code"], "INVALID_REQUEST");
+    }
+}
+
+#[tokio::test]
+async fn test_api_key_history_query_rejects_unbounded_pagination() {
+    let (state, key) = common::test_app_state().await;
+    for query in ["limit=0", "limit=1001", "offset=10000001"] {
+        let (status, json) = get(
+            state.clone(),
+            &format!("/api/v1/api-keys?{query}"),
+            Some(&key),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{json}");
+    }
+}
+
 // ── 认证测试 ──
 
 #[tokio::test]
@@ -196,6 +245,18 @@ async fn test_message_history_empty() {
     assert!(json["messages"].is_array() || json.is_array());
 }
 
+#[tokio::test]
+async fn test_message_history_rejects_unbounded_limit() {
+    let (state, key) = common::test_app_state().await;
+    let (status, _) = get(
+        state,
+        "/api/v1/messages?limit=18446744073709551615",
+        Some(&key),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
 // ── 聊天路由 ──
 
 #[tokio::test]
@@ -213,6 +274,42 @@ async fn test_get_config() {
     let (status, json) = get(state, "/api/v1/config", Some(&key)).await;
     assert_eq!(status, StatusCode::OK);
     assert!(json["server"].is_object() || json["api"].is_object() || json.as_object().is_some());
+}
+
+#[tokio::test]
+async fn test_config_update_rejects_non_object_body() {
+    let (state, key) = common::test_app_state().await;
+    let (status, _) = send_request(state, "PUT", "/api/v1/config", Some(&key), Some("[]")).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn test_valid_config_update_requires_reviewed_restart() {
+    let (state, key) = common::test_app_state().await;
+    let (status, body) = send_request(
+        state,
+        "PUT",
+        "/api/v1/config",
+        Some(&key),
+        Some(r#"{"logging":{"level":"warn"}}"#),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+}
+
+#[tokio::test]
+async fn test_config_update_rejects_body_before_large_json_allocation() {
+    let (state, key) = common::test_app_state().await;
+    let body = format!(r#"{{"logging":{{"level":"{}"}}}}"#, "x".repeat(300 * 1024));
+    let (status, _) = send_request(state, "PUT", "/api/v1/config", Some(&key), Some(&body)).await;
+    assert_eq!(status, StatusCode::PAYLOAD_TOO_LARGE);
+}
+
+#[tokio::test]
+async fn test_log_query_rejects_unbounded_inputs() {
+    let (state, key) = common::test_app_state().await;
+    let (status, _) = get(state, "/api/v1/logs?limit=501", Some(&key)).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 
 // ── 404 测试 ──

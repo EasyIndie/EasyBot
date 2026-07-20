@@ -12,6 +12,10 @@
 #   Step 6 (Test default)        → ci.yml test-default
 #   Step 7 (build mock-adapter)  → ci.yml test-all
 #   Step 8 (Test all)            → ci.yml test-all
+#   Step 9 (Backup/restore)      → local disaster-recovery gate
+#   Step 10 (Release integrity)  → checksum/tamper-detection gate
+#   Step 11 (Launch gate)        → commercial evidence gate self-test
+#   Step 12 (Admin XSS)          → stored-XSS and credential-storage invariants
 #
 # 用法：
 #   bash scripts/verify.sh              # 跑全部检查
@@ -111,9 +115,9 @@ for arg in "$@"; do
     --fast) FAST=true ;;
     --locked) LOCKED="--locked" ;;
     --help)
-      echo "EasyBot 一键验收脚本（与 CI workflow 一致）"
+      echo "EasyBot 一键验收脚本（CI 检查 + 数据恢复门禁）"
       echo ""
-      echo "  bash scripts/verify.sh             完整检查（8 步：fmt + clippy + check + matrix + build + test）"
+      echo "  bash scripts/verify.sh             完整检查（10 步：代码、测试、灾备、发布完整性）"
       echo "  bash scripts/verify.sh --fast      快速检查，跳过 clippy 和 fmt"
       echo "  bash scripts/verify.sh --locked    追加 --locked 到 cargo 命令"
       echo "  bash scripts/verify.sh --fast --locked  快速 + 锁定依赖版本"
@@ -127,6 +131,8 @@ for arg in "$@"; do
       echo "    6. 测试 (default features) — 自动选择 nextest 或 cargo test"
       echo "    7. cargo build -p mock-adapter"
       echo "    8. 测试 (default + plugin-system)"
+      echo "    9. SQLite 备份、校验与恢复演练"
+      echo "   10. 发布资产校验与篡改检测演练"
       echo ""
       echo "  安装 cargo-nextest 可加速测试: cargo install cargo-nextest"
       exit 0
@@ -215,6 +221,19 @@ run_step "cargo build -p mock-adapter" \
 # ── 8. 全特性测试（验证所有适配器 + 插件系统 + E2E）─────────────
 run_step "$TEST_LABEL (all features + plugin-system)" \
   $TEST_RUNNER --workspace --features "default,plugin-system" $LOCKED
+
+# ── 9. 数据恢复演练 ──────────────────────────────────────────────
+run_step "SQLite backup/restore drill" \
+  bash scripts/test-backup.sh
+
+run_step "Release asset integrity drill" \
+  bash scripts/test-release-assets.sh
+
+run_step "Commercial launch gate self-test" \
+  bash scripts/test-commercial-launch-gate.sh
+
+run_step "Admin stored-XSS invariant test" \
+  bash scripts/test-admin-xss.sh
 
 # ── 汇总报告 ─────────────────────────────────────────────────────
 echo ""

@@ -340,16 +340,9 @@ CLI 参数 (--dir) → 环境变量 (EASYBOT_HOME) → gateway.local.yaml → ga
 → ${VAR_NAME} 替换 → .env 文件 → 代码内建默认值
 ```
 
-### 4.7 热重载
+### 4.7 配置变更
 
-修改配置文件后，EasyBot **每 60 秒**自动检测并热加载。也可手动触发：
-
-```bash
-curl -X PUT http://localhost:8080/api/v1/config \
-  -H "Authorization: Bearer $API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"logging": {"level": "debug"}}'
-```
+运行组件使用启动时的一致配置快照。修改配置文件后，通过受审阅的滚动重启应用；`PUT /api/v1/config` 会返回 409 并留下审计记录，防止部分组件更新、部分组件仍使用旧值。生产环境先在预生产运行 readiness、消息和回滚检查，再逐实例替换。
 
 ---
 
@@ -917,7 +910,7 @@ deploy:
 | 收不到消息 | 确认适配器状态为 `Connected`；确认 WebSocket 已认证；检查平台权限配置 |
 | WebSocket 不稳定 | 缩短心跳间隔（`api.websocket.heartbeatInterval: 15`） |
 | 切换 SQLite→PostgreSQL | 配置 `storage.storageType: "postgres"`，数据需手动迁移 |
-| 更新配置不重启 | 修改文件后等待 60 秒自动生效，或调用 PUT `/api/v1/config` |
+| 更新配置 | 修改受版本控制的配置并执行滚动重启；运行时 PUT 会返回 409 |
 
 ---
 
