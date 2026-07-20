@@ -131,6 +131,8 @@ init(config) → connect() → send()/... → disconnect()
 
 **必须同时支持 Docker 部署和独立运行。** 功能迭代不得引入仅 Docker/仅裸机可用的能力。测试默认在独立运行模式下执行。
 
+**`assets/` 目录中的图片即使未被代码引用也不算死文件。** 它们是品牌素材（Banner、Logo、测试用图等），可能用于文档、README、Release 发布等场景，不被代码直接引用是正常的。
+
 ### Key Patterns
 
 | Pattern | Detail |

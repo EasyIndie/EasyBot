@@ -3,7 +3,7 @@
 //!
 //! 管理所有平台适配器的生命周期、健康轮询和状态查询。
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::Weak;
 use std::time::Instant;
@@ -28,7 +28,7 @@ pub struct AdapterManager {
     /// 运行中的适配器实例（已连接）
     adapters: RwLock<HashMap<String, Box<dyn PlatformAdapter>>>,
     /// 正在后台连接的适配器
-    pending_connections: RwLock<HashMap<String, PendingConnection>>,
+    pending_connections: RwLock<HashSet<String>>,
     /// 适配器状态缓存
     statuses: RwLock<HashMap<String, AdapterStatusSummary>>,
     /// 事件总线（用于发布适配器生命周期事件）
@@ -114,14 +114,6 @@ fn classify_error(error: &GatewayError) -> ReconnectFailure {
     ReconnectFailure::Transient(error.to_string())
 }
 
-/// A connection that is being established asynchronously in a background task.
-#[derive(Debug)]
-#[allow(dead_code)]
-struct PendingConnection {
-    platform: String,
-    display_name: String,
-}
-
 /// Exponential backoff: 5s → 10s → 30s → 60s → 120s, capped at 300s.
 fn compute_backoff(consecutive_failures: u32) -> Duration {
     let secs = match consecutive_failures {
@@ -141,7 +133,7 @@ impl AdapterManager {
         Self {
             registry: AdapterRegistry::new(),
             adapters: RwLock::new(HashMap::new()),
-            pending_connections: RwLock::new(HashMap::new()),
+            pending_connections: RwLock::new(HashSet::new()),
             statuses: RwLock::new(HashMap::new()),
             event_bus: None,
             configs: RwLock::new(HashMap::new()),
@@ -256,7 +248,7 @@ impl AdapterManager {
             .pending_connections
             .read()
             .await
-            .contains_key(&platform_name)
+            .contains(&platform_name)
         {
             return Err(GatewayError::Internal(format!(
                 "Adapter '{}' is already connecting",
@@ -286,13 +278,7 @@ impl AdapterManager {
         // 记录 pending connection + 保存 config（health monitor 据此跳过 / 重连）
         {
             let mut pending = self.pending_connections.write().await;
-            pending.insert(
-                platform_name.clone(),
-                PendingConnection {
-                    platform: platform_name.clone(),
-                    display_name: display_name.clone(),
-                },
-            );
+            pending.insert(platform_name.clone());
         }
         {
             let mut configs = self.configs.write().await;
@@ -306,12 +292,7 @@ impl AdapterManager {
             let connect_result = adapter.connect().await;
 
             // 原子检查：是否已被 stop() 取消
-            let was_pending = self_arc
-                .pending_connections
-                .write()
-                .await
-                .remove(&pname)
-                .is_some();
+            let was_pending = self_arc.pending_connections.write().await.remove(&pname);
             if !was_pending {
                 // 已被 stop() 移除 → 丢弃适配器实例
                 return;
@@ -395,7 +376,7 @@ impl AdapterManager {
         // 先检查 pending connection
         let was_pending = {
             let mut pending = self.pending_connections.write().await;
-            pending.remove(platform).is_some()
+            pending.remove(platform)
         };
 
         if was_pending {
@@ -526,7 +507,7 @@ impl AdapterManager {
     /// 获取单个适配器状态（优先实时查询，已停止适配器回退缓存）
     pub async fn get_status(&self, platform: &str) -> Option<AdapterStatusSummary> {
         // 检查 pending connection（状态已在 start() 中写入 statuses）
-        if self.pending_connections.read().await.contains_key(platform) {
+        if self.pending_connections.read().await.contains(platform) {
             return self.statuses.read().await.get(platform).cloned();
         }
         // 检查已连接适配器（实时状态）
@@ -815,7 +796,7 @@ impl AdapterManager {
             }
 
             // Skip pending connections — they are already being handled
-            if self.pending_connections.read().await.contains_key(platform) {
+            if self.pending_connections.read().await.contains(platform) {
                 continue;
             }
 
@@ -1032,7 +1013,7 @@ impl AdapterManager {
                 let mut poll_delay = Duration::from_millis(100);
                 while Instant::now() < deadline {
                     // Check if no longer pending (completed or failed)
-                    if !self.pending_connections.read().await.contains_key(platform)
+                    if !self.pending_connections.read().await.contains(platform)
                         && let Some(status) = self.get_status(platform).await
                     {
                         if status.state == AdapterState::Connected {
