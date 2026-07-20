@@ -22,104 +22,91 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # ── Check: fmt, clippy, cargo check ─────────────────────────────────
-  check:
+  # ── Lint: fmt only, no compilation (~20s) ──────────────────────────
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          components: rustfmt
+      - name: Format
+        run: cargo fmt --all --check
+
+  # ── Test: clippy → build → test (merged check + test-default + test-all) ──
+  test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-rust
         with:
           components: clippy, rustfmt
-
-      - name: Format
-        run: cargo fmt --all --check
+          install-protoc: auto
+          cache-shared-key: "test-ubuntu"
+          cache-save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Clippy
         run: cargo clippy --workspace --features "default,plugin-system" --all-targets --locked -- -D warnings
 
-      - name: Check (all features)
-        run: cargo check --workspace --features "default,plugin-system" --locked
-
-  # ── Test: default features ──────────────────────────────────────────
-  test-default:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: ./.github/actions/setup-rust
-
-      - name: Install cargo-nextest
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-nextest
-
       - name: Build
-        run: cargo build --workspace --locked
-
-      - name: Test (default features)
-        run: cargo nextest run --workspace --locked
-
-  # ── Test: all features + plugin system ──────────────────────────────
-  test-all:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: ./.github/actions/setup-rust
-
-      - name: Install cargo-nextest
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-nextest
-
-      - name: Build (all features)
         run: cargo build --workspace --features "default,plugin-system" --locked
 
       - name: Build mock-adapter
         run: cargo build -p mock-adapter --locked
 
-      - name: Test (all features + plugin-system)
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+
+      - name: Test
         run: cargo nextest run --workspace --features "default,plugin-system" --locked
 
   # ── Feature matrix: validate edge feature combinations ─────────────
-  test-feature-matrix:
+  feature-check:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        features:
-          - "--no-default-features"
-          - "--no-default-features --features adapter-telegram"
-          - "--no-default-features --features adapter-discord"
-          - "--no-default-features --features adapter-telegram,adapter-discord"
-          - "--no-default-features --features adapter-feishu"
-          - "--no-default-features --features adapter-qq"
-          - "--no-default-features --features adapter-wechat"
+        include:
+          - features: "--no-default-features"
+            protoc: "none"
+          - features: "--no-default-features --features adapter-telegram,adapter-discord"
+            protoc: "none"
+          - features: "--no-default-features --features adapter-feishu,adapter-qq,adapter-wechat"
+            protoc: "auto"
       fail-fast: false
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-rust
         with:
-          cache-cargo-registry: "true"
+          install-protoc: ${{ matrix.protoc }}
+          cache-shared-key: "feature-check"
+          cache-save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Check (${{ matrix.features }})
         run: cargo check --workspace ${{ matrix.features }} --locked
 
-  # ── Cross-platform build (Windows / macOS) ──────────────────────────
-  build-cross-platform:
+  # ── Cross-platform check (Linux arm64, macOS arm64, Windows x64/arm64) ──
+  cross-check:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: [windows-latest, macos-latest, windows-11-arm]
+        include:
+          - os: ubuntu-24.04-arm
+          - os: macos-latest
+          - os: windows-latest
+          - os: windows-11-arm
       fail-fast: false
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-rust
         with:
-          cache-cargo-registry: "true"
+          install-protoc: auto
+          cache-shared-key: cross-check-${{ runner.os }}-${{ runner.arch }}
+          cache-save-if: ${{ github.ref == 'refs/heads/main' }}
 
-      - name: Check (all features)
-        run: cargo check --workspace --locked
-
-      - name: Build (all features)
-        run: cargo build --workspace --locked
+      - name: Check
+        run: cargo check --workspace --features "default,plugin-system" --locked
 
   # ── Code coverage ───────────────────────────────────────────────────
   coverage:
@@ -128,6 +115,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-rust
+        with:
+          install-protoc: auto
 
       - name: Install cargo-llvm-cov
         uses: taiki-e/install-action@v2
@@ -149,4 +138,3 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: lcov.info
           fail_ci_if_error: false
-

@@ -1,6 +1,6 @@
 name: Setup Rust toolchain
 description: >
-  Checkout, Rust toolchain, platform-detecting protoc, sccache, and Cargo registry caching.
+  Checkout, Rust toolchain, platform-detecting protoc, and smart Rust cache.
   Use as the first step in any job that compiles Rust code.
 
 inputs:
@@ -19,16 +19,26 @@ inputs:
       (Feishu adapter) requires protoc at build time.
     required: false
     default: "auto"
-  cache-cargo-registry:
-    description: "Whether to cache ~/.cargo/registry and ~/.cargo/git"
-    required: false
-    default: "true"
-  sccache:
-    description: "Whether to set up sccache"
-    required: false
-    default: "true"
   install-zigbuild:
     description: "Whether to install cargo-zigbuild for musl cross-compilation (requires Python/pip)"
+    required: false
+    default: "false"
+  # ── Cache control ──
+  cache-shared-key:
+    description: >
+      Stable cache key shared across jobs that compile the same feature set.
+      When set, all jobs using the same key share compiled target/ artifacts.
+      Leave empty to auto-derive a per-job key (default).
+    required: false
+    default: ""
+  cache-save-if:
+    description: >
+      Condition string for saving the cache (e.g. "${{ github.ref == 'refs/heads/main' }}").
+      Useful to avoid PR branches polluting the shared cache. Default: always save.
+    required: false
+    default: "true"
+  cache-all-crates:
+    description: "Cache all crates (not just dependencies). Useful for shared-key scenarios."
     required: false
     default: "false"
 
@@ -59,22 +69,16 @@ runs:
       with:
         repo-token: ${{ github.token }}
 
+    # ----- cargo-zigbuild (release cross-compilation only) -----
     - name: Install cargo-zigbuild
       if: ${{ inputs.install-zigbuild == 'true' }}
       shell: bash
       run: pip3 install cargo-zigbuild
 
-    - name: Setup sccache
-      if: ${{ inputs.sccache == 'true' }}
-      uses: mozilla-actions/sccache-action@v0.0.10
-
-    - name: Cache Cargo registry
-      if: ${{ inputs.cache-cargo-registry == 'true' }}
-      uses: actions/cache@v5
+    # ----- Smart Rust cache (replaces actions/cache + sccache) -----
+    - name: Setup Rust cache
+      uses: Swatinem/rust-cache@v2
       with:
-        path: |
-          ~/.cargo/registry
-          ~/.cargo/git
-        key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
-        restore-keys: |
-          ${{ runner.os }}-cargo-registry-
+        shared-key: ${{ inputs.cache-shared-key }}
+        save-if: ${{ inputs.cache-save-if }}
+        cache-all-crates: ${{ inputs.cache-all-crates }}
