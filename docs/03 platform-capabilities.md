@@ -96,9 +96,11 @@ Discord Components 格式（ActionRow + Button）：
 - **Self-message 过滤**: 频道按 `author.id` 过滤自身；群聊无法过滤（平台无 bot 字段）
 - **Outbound**: Text / Image / Markdown / Inline Keyboard (Interactive) / Edit / Delete（仅频道）/ Chat List（仅频道服务器）
 
-### 个人微信（iLink Bot API）
+### 个人微信（iLink Bot API v2）
 
-- **消息接收**: HTTP 长轮询（`/ilink/bot/getupdates`），35s 超时，首次需扫码登录
+- **协议版本**: v2（`channel_version: "2.2.0"`，与官方 [openclaw-weixin SDK](https://github.com/Tencent/openclaw-weixin) 一致）
+- **消息接收**: HTTP 长轮询（`/ilink/bot/getupdates`），35s 超时，首次需扫码登录。请求需携带 `base_info.channel_version`
+- **消息发送**: `/ilink/bot/sendmessage`，`message_type: 2, message_state: 2`。`message_id` 兼容整数和字符串格式
 - **群聊支持**: **不支持**
 - **Outbound**: Text / Image / Audio / Video / Document（AES-128-ECB 加密 + CDN 上传）
 - **不支持**: Edit / Delete / Interactive / Chat List
@@ -155,24 +157,30 @@ Discord Components 格式（ActionRow + Button）：
 
 ## 断线自动重连
 
-所有适配器均具备断线自动重连能力。除各适配器内置重连循环外，`AdapterManager` 提供通用健康监控（每 30s 检查所有适配器心跳，检测到后台任务死亡后触发指数退避重连：5s → 10s → 30s → 60s → 120s → 300s 封顶）。
+所有适配器均具备断线自动重连能力。`AdapterManager` 提供通用健康监控（每 30s 检查心跳存活），采用**分级响应**机制：
+
+1. **传输重试**（`retry_transport()`）— 心跳过期但适配器实例存活时，仅重启后台传输任务，**不重新鉴权**（最多 5 次，间隔 30s）
+2. **完整重连**（`reconnect_adapter()`）— 传输重试耗尽或适配器实例已消失时，完整 stop + start（含鉴权），指数退避 5s→300s
+3. **慢重试** — 完整重连失败 20 次后，30 分钟间隔慢重试
+
+错误分类：永久错误（鉴权失败 401/403）→ 立即 Failed，不浪费重试机会；瞬态错误（网络超时/DNS）→ 分级重试。
 
 | 平台 | 自动重连 | 重连延迟 | 实现方式 |
 |------|---------|---------|---------|
-| **Telegram** | ✅ | 5s | 长轮询 `loop` 内捕获错误后 `sleep(5s)` 重试 + Heartbeat liveness 追踪 |
+| **Telegram** | ✅ | 5s | 长轮询 `loop` 捕获错误后 backoff 重试 + Heartbeat liveness（错误路径也 beat） |
 | **Discord** | ✅ | 5s | 外层 `loop` 包裹全流程（连接→Hello→Identify→Ready→事件循环），失败后 5s 重试 + Heartbeat liveness |
-| **飞书** | ✅ | 5s / 120s+jitter | SDK `ws_client.start()` 内部无限重连：首次 5s，反复失败使用服务端 `ReconnectInterval`（默认 120s）+ 随机抖动（0-30s）+ 独立 Heartbeat ticker (30s) |
-| **QQ** | ✅ | 5-30s | 外层 `loop` 包裹全流程，每次重连前刷新 `access_token`。连接失败 5s，Token/URL 获取失败 30s + Heartbeat liveness |
-| **个人微信** | ✅ | 5s | 长轮询 `loop` 内错误后 `sleep(5s)` 重试。连续 10 次失败视为 Session 过期，退出需重新扫码登录 + Heartbeat liveness |
+| **飞书** | ✅ | 5s / 120s+jitter | SDK `ws_client.start()` 内部无限重连：首次 5s，反复失败使用服务端 `ReconnectInterval`（默认 120s）+ 随机抖动（0-30s）。心跳**事件驱动**（收到消息/事件时 beat，不再使用独立定时器） |
+| **QQ** | ✅ | 5-30s | 外层 `loop` 包裹全流程，每次重连前刷新 `access_token`。连接失败 5s，Token/URL 获取失败 30s + Heartbeat liveness（重试路径均 beat） |
+| **个人微信** | ✅ | 5s | 长轮询 `loop` 内错误后 backoff_with_jitter 重试 + Heartbeat liveness（错误路径也 beat）。连续 **30 次**（约 15-20 分钟）失败后退出，凭据保留在磁盘等待健康监测自动重连 |
 
-> 所有重连循环响应 cancel 信号（`POST /adapters/{platform}/stop`），主动停止后不会继续重连。通用健康监控通过 EventBus 发布 `adapter.reconnecting`、`adapter.reconnected`、`adapter.reconnect_failed` 事件。
+> 所有重连循环响应 cancel 信号（`POST /adapters/{platform}/stop`），主动停止后不会继续重连。通用健康监控通过 EventBus 发布 `adapter.reconnecting`、`adapter.reconnected`、`adapter.reconnect_failed` 事件。健康检测统一使用 120s 心跳阈值（`DEFAULT_LIVENESS_THRESHOLD_MS`）。
 
 ### 重连指标对比
 
 | 平台 | 心跳/保活 | 重连触发条件 | 最长恢复时间 |
 |------|----------|-------------|-------------|
-| **Telegram** | 无（轮询即保活） | 网络 / API 错误 | ~35s（30s + 5s） |
-| **Discord** | Gateway 指定间隔 | WS close / 连接错误 | ~5s |
-| **飞书** | Ping/Pong（默认 120s） | WS close / 连接错误 | 5s（首）/ ~150s（反复） |
-| **QQ** | Gateway 管理 | WS close / Token 过期 | 5-30s |
-| **个人微信** | 无（轮询即保活） | 网络 / API 错误 / Session 过期 | ~40s（35s + 5s） |
+| **Telegram** | 轮询成功时 beat + 错误重试时 beat | 心跳过期（120s） | ~155s（120s 阈值 + 35s 超时） |
+| **Discord** | MessageCreate/Ready 事件 | 心跳过期（120s） | ~120s |
+| **飞书** | 收到事件时 beat（message_receive_v1 / chat.updated_v1）+ WS 启动时 beat | 心跳过期（120s） | ~120s |
+| **QQ** | Gateway dispatch/heartbeat ack + 重试路径 beat | 心跳过期（120s） | ~120s |
+| **个人微信** | 成功/Timeout/SessionExpired/错误重试时 beat | 心跳过期（120s） | ~120s |

@@ -341,10 +341,11 @@ declare_plugin!(MyAdapter, MyAdapter::new);
 | `heartbeat_age_ms()` | 返回上次心跳距今的毫秒数 |
 | `health_status()` | 综合连接状态和心跳延迟计算健康等级 |
 
-### 可选覆盖（默认返回 `capability_not_supported`）
+### 可选覆盖（有默认实现）
 
 | 方法 | 说明 |
 |------|------|
+| `retry_transport()` | **纯传输重启**（不鉴权）。取消旧后台任务后直接启动新任务。默认 `Ok(false)` 回退到完整 stop+start。`connect()` 含网络鉴权调用的适配器应覆盖为 `Ok(true)` |
 | `set_event_bus()` | 设置事件总线（用于接收平台消息推送） |
 | `send_media()` | 发送媒体消息（图片/音频/视频/文件） |
 | `send_interactive()` | 发送交互式消息（含 InlineKeyboard） |
@@ -421,10 +422,11 @@ impl PlatformAdapter for MyAdapter {
      │  Stopped     │  cleaned up
      └──────────────┘
 
-Recovery flows (auto):
-  Connected --(disconnect)--> Reconnecting --> Connecting --> Connected
-  Connected --(fatal err)--> Failed
-  Failed --(retry)--> Connecting --> Connected
+Recovery flows (auto, managed by AdapterManager health monitor):
+  Connected --(heartbeat stale > 120s)--> [Tier 1: retry_transport()] --(Ok(true))--> Connected
+  Connected --(Tier 1 exhausted / adapter removed)--> [Tier 2: reconnect_adapter()] --> Connecting --> Connected
+  Connected --(permanent auth err)--> Failed
+  Failed --(backoff retry via full stop+start)--> Connecting --> Connected
   any state --stop()--> Stopped
 ```
 

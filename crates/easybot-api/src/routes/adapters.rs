@@ -24,6 +24,10 @@ pub struct AdapterItem {
     pub display_name: String,
     #[schema(example = "Connected")]
     pub status: String,
+    /// 传输层健康状态：Healthy, Degraded, Down
+    /// 用于区分"适配器在运行"和"消息流是否正常"
+    #[schema(example = "Healthy")]
+    pub health: Option<String>,
     pub connected: bool,
 }
 
@@ -44,6 +48,7 @@ pub async fn list_adapters(State(state): State<AppState>) -> Json<AdapterListRes
             platform: s.platform,
             display_name: s.display_name,
             status: format!("{:?}", s.state),
+            health: s.health.map(|h| format!("{:?}", h)),
             connected: s.connected,
         })
         .collect();

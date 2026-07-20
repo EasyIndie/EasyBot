@@ -395,8 +395,6 @@ impl PlatformAdapter for FeishuAdapter {
         // 3. 如果配置了 EventBus，启动 WebSocket 事件订阅
         if let Some(ref event_bus) = self.event_bus {
             let (cancel_tx, mut cancel_rx) = broadcast::channel(1);
-            // Subscribe before moving cancel_tx into self so the spawned task can use it
-            let hb_cancel_rx = cancel_tx.subscribe();
             self.cancel_tx = Some(cancel_tx);
 
             let eb = event_bus.clone();
@@ -466,77 +464,80 @@ impl PlatformAdapter for FeishuAdapter {
                     },
                 );
                 EventDispatcher::new(verify_token, encrypt_key)
-            }
+            };
+
+            // 心跳引用，用于在收到消息事件时更新 liveness
+            let hb_for_events = self.heartbeat.clone();
+
             // 处理入站消息
-            .on_event(EVENT_MESSAGE_RECEIVE_V1, {
-                let rc = role_cache.clone();
-                move |event_data| {
-                    let eb = eb.clone();
-                    let bot_id = app_id_owned.clone();
-                    let secret = app_secret.clone();
-                    let hc = feishu_http.clone();
-                    let bu = feishu_base_url.clone();
-                    let ts = shared_token_store.clone();
-                    let rc = rc.clone();
-                    let mi = mi.clone();
-                    async move {
-                        let sender_role = Self::resolve_feishu_role(
-                            &event_data,
-                            &hc,
-                            &bu,
-                            &ts,
-                            &bot_id,
-                            &secret,
-                            &rc,
-                        )
-                        .await;
-                        event::handle_message_receive(event_data, &eb, &bot_id, sender_role).await;
-                        mi.fetch_add(1, Ordering::Relaxed);
-                        Ok(())
-                    }
-                }
-            })
-            // 监听群配置变更事件（群主转移、管理员变更等）
-            .on_event("im.chat.updated_v1", {
-                let rc = role_cache.clone();
-                move |event_data| {
-                    let rc = rc.clone();
-                    async move {
-                        // 清除该群的缓存，下次消息会重新获取角色
-                        if let Some(chat_id) =
-                            event_data.pointer("/chat_id").and_then(|v| v.as_str())
-                        {
-                            if let Ok(mut cache) = rc.lock() {
-                                cache.retain(|key, _| !key.starts_with(&format!("{}:", chat_id)));
-                            }
-                            tracing::info!("飞书群配置变更，已清除群 {} 的角色缓存", chat_id);
+            let dispatcher = dispatcher
+                .on_event(EVENT_MESSAGE_RECEIVE_V1, {
+                    let rc = role_cache.clone();
+                    let hb = hb_for_events.clone();
+                    move |event_data| {
+                        let eb = eb.clone();
+                        let bot_id = app_id_owned.clone();
+                        let secret = app_secret.clone();
+                        let hc = feishu_http.clone();
+                        let bu = feishu_base_url.clone();
+                        let ts = shared_token_store.clone();
+                        let rc = rc.clone();
+                        let mi = mi.clone();
+                        let hb = hb.clone();
+                        async move {
+                            let sender_role = Self::resolve_feishu_role(
+                                &event_data,
+                                &hc,
+                                &bu,
+                                &ts,
+                                &bot_id,
+                                &secret,
+                                &rc,
+                            )
+                            .await;
+                            event::handle_message_receive(event_data, &eb, &bot_id, sender_role)
+                                .await;
+                            mi.fetch_add(1, Ordering::Relaxed);
+                            hb.beat(); // 事件驱动心跳：成功收到消息时更新 liveness
+                            Ok(())
                         }
-                        Ok(())
                     }
-                }
-            });
-
-            let ws_client = sdk_client.ws_client(dispatcher);
-            let ws_client = ws_client.log_level(tracing::Level::WARN);
-
-            // 在后台任务中运行
-            let hb = self.heartbeat.clone();
-            tokio::spawn(async move {
-                // Separate heartbeat ticker — beats every 30s while ws_client is alive
-                let hb_for_tick = hb.clone();
-                let mut hb_cancel_rx_inner = hb_cancel_rx;
-                let hb_task: tokio::task::JoinHandle<()> = tokio::spawn(async move {
-                    let mut tick = tokio::time::interval(Duration::from_secs(30));
-                    loop {
-                        tokio::select! {
-                            _ = hb_cancel_rx_inner.recv() => break,
-                            _ = tick.tick() => {
-                                hb_for_tick.beat();
+                })
+                // 监听群配置变更事件（群主转移、管理员变更等）
+                .on_event("im.chat.updated_v1", {
+                    let rc = role_cache.clone();
+                    let hb = hb_for_events.clone();
+                    move |event_data| {
+                        let rc = rc.clone();
+                        let hb = hb.clone();
+                        async move {
+                            // 清除该群的缓存，下次消息会重新获取角色
+                            if let Some(chat_id) =
+                                event_data.pointer("/chat_id").and_then(|v| v.as_str())
+                            {
+                                if let Ok(mut cache) = rc.lock() {
+                                    cache.retain(|key, _| {
+                                        !key.starts_with(&format!("{}:", chat_id))
+                                    });
+                                }
+                                tracing::info!("飞书群配置变更，已清除群 {} 的角色缓存", chat_id);
                             }
+                            hb.beat(); // 事件驱动心跳：收到事件说明 WebSocket 存活
+                            Ok(())
                         }
                     }
                 });
 
+            let ws_client = sdk_client.ws_client(dispatcher);
+            let ws_client = ws_client.log_level(tracing::Level::WARN);
+
+            // 在后台任务中运行 WebSocket 事件订阅
+            // 注意：不再使用独立的心跳定时器。心跳由 on_event 回调中的
+            // heartbeat.beat() 驱动，确保心跳准确反映消息流活跃度。
+            // 首次连接时立即 beat 一次，避免启动后 120s 窗口期内无事件导致的误判。
+            let hb = self.heartbeat.clone();
+            hb.beat();
+            tokio::spawn(async move {
                 tokio::select! {
                     _ = cancel_rx.recv() => {
                         tracing::info!("飞书 WebSocket 事件订阅已停止");
@@ -548,9 +549,6 @@ impl PlatformAdapter for FeishuAdapter {
                         }
                     }
                 }
-
-                // Stop the heartbeat task when we exit
-                hb_task.abort();
             });
         }
 
@@ -571,6 +569,16 @@ impl PlatformAdapter for FeishuAdapter {
         self.state = AdapterState::Stopped;
         tracing::info!("飞书适配器已断开");
         Ok(())
+    }
+
+    /// 传输层重试：飞书的 WebSocket 设置与 connect() 紧密耦合，
+    /// 当前通过完整重连（stop+start）处理。心跳已改为事件驱动，
+    /// 不再使用独立定时器，确保健康监测器能正确检测 WebSocket 断连。
+    async fn retry_transport(&mut self) -> Result<bool, GatewayError> {
+        // Return false to fall back to full reconnect (stop + start).
+        // connect() succeeds without network thanks to cached token,
+        // so this is effectively a transport restart.
+        Ok(false)
     }
 
     fn state(&self) -> AdapterState {

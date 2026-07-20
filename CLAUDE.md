@@ -55,7 +55,7 @@ Adapters (easybot-adapter-*)  Telegram · Discord · 飞书 · QQ · WeChat
 | `crates/easybot-adapter-discord` | Discord Gateway |
 | `crates/easybot-adapter-feishu` | 飞书 REST + WebSocket |
 | `crates/easybot-adapter-qq` | QQBot Gateway |
-| `crates/easybot-adapter-wechat` | 个人微信 iLink Bot API 长轮询 |
+| `crates/easybot-adapter-wechat` | 个人微信 iLink Bot API 长轮询（v2，channel_version=2.2.0） |
 | `crates/easybot-plugin-sdk` | Re-exports core types for plugins |
 | `tests/` | Integration, e2e, mock-adapter, fixtures |
 
@@ -146,6 +146,10 @@ init(config) → connect() → send()/... → disconnect()
 | QQ chat type routing | QQ 适配器通过 `chat_types: Arc<Mutex<HashMap<String, ChatType>>>` 记录已知会话类型（由入站 Gateway 事件自动填充）。`try_send()` 优先查表直接路由到正确端点（`/channels/`, `/v2/groups/`, `/v2/users/`），仅在 chat type 未知时回退到三级级联。**改 media 发送时必须按 chat type 区分 msg_type，不可统一使用同一值。** |
 | QQ media msg_type | **Channel**: `msg_type:2` (rich media, image+text)。**Dm (C2C)**: `msg_type:1` (image embed, v2 API 不支持 msg_type:2)。**Group**: 必须走文件上传 + `msg_type:7` (media)，v2 群聊端点的 `msg_type:1/2` 均不可用——`content` 字段被 QQ API 统一按 markdown 解析，msg_type:2 触发 `40034011`/`40034127`。上传使用 JSON body + base64 `file_data`（非 multipart）。详见 `send_media()` / `send_group_media_upload()`。 |
 | QQ file upload | `/v2/{users\|groups}/{id}/files` — JSON body: `{"file_type": 1|2|3, "srv_send_msg": bool, "file_data": "<base64>"}`。`srv_send_msg=true` 上传后自动发送（不含文本）；`srv_send_msg=false` 仅获取 `file_info`，再通过 `msg_type:7` + `media.file_info` 手动发送。 |
+| Health monitor | 分级响应：`retry_transport()`（纯传输重启，不鉴权）→ `reconnect_adapter()`（完整 stop+start，含鉴权）→ 30min 慢重试。错误分类 `classify_error()` 区分永久（401/403 鉴权失败，立即 Failed）和瞬态（网络超时/DNS，退避重试）。详见 `core/src/adapter/manager.rs`。 |
+| `retry_transport()` trait | `PlatformAdapter` 新增方法，默认 `Ok(false)` 回退到完整重连。`connect()` 含网络鉴权的适配器（Telegram/Discord/飞书）需覆盖为 `Ok(true)`，取消旧后台任务后直接重启，**跳过鉴权**。内置重试循环的适配器（QQ/微信）无需覆盖。详见 `core/src/types/adapter.rs`。 |
+| Heartbeat 语义 | 心跳表示"后台任务存活且正在重试"，不要求消息一定成功。各适配器在错误重试路径中调用 `heartbeat.beat()`（如 `polling_loop` 错误分支、`gateway_loop` 重连循环）。**禁止**使用独立定时器无条件 beat（飞书已修复）。心跳过期 120s → `HealthStatus::Degraded` → 健康监测器介入。 |
+| WeChat iLink API | v2 协议（与官方 openclaw-weixin SDK 一致），`channel_version: "2.2.0"` 常量 `CHANNEL_VERSION`。`message_id` 字段兼容整数和字符串（`deserialize_flexible_id`）。`sendmessage` 请求需 `message_type: 2, message_state: 2`。`getupdates` 需 `base_info.channel_version`。 |
 
 ## Known Gaps
 

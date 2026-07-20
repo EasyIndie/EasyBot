@@ -90,7 +90,7 @@ curl http://localhost:8080/api/v1/health
 ```json
 {
   "status": "healthy",
-  "version": "0.0.14",
+  "version": "0.0.15",
   "uptime": 12,
   "adapters": { "total": 1, "connected": 1 },
   "sessions": { "active": 0 }
@@ -195,10 +195,10 @@ vim ~/.easybot/.env
 
 ```bash
 # Linux (x86_64)
-curl -LO https://github.com/EasyIndie/EasyBot/releases/download/v0.0.14/easybot-x86_64-unknown-linux-musl
+curl -LO https://github.com/EasyIndie/EasyBot/releases/download/v0.0.15/easybot-x86_64-unknown-linux-musl
 
 # macOS (Apple Silicon)
-curl -LO https://github.com/EasyIndie/EasyBot/releases/download/v0.0.14/easybot-aarch64-apple-darwin
+curl -LO https://github.com/EasyIndie/EasyBot/releases/download/v0.0.15/easybot-aarch64-apple-darwin
 
 chmod +x easybot-*
 ./easybot-x86_64-unknown-linux-musl --init --dir ~/.easybot
@@ -425,7 +425,7 @@ QQ_CLIENT_SECRET=your_secret
 
 ### 5.5 个人微信
 
-基于 [iLink Bot](https://www.ilinkbot.com/) 实现，**无需环境变量**，启动后扫码登录。
+基于 [iLink Bot API v2](https://github.com/Tencent/openclaw-weixin)（官方 OpenClaw 平台）实现，**无需环境变量**，启动后扫码登录。协议版本 `channel_version: "2.2.0"`。
 
 ```bash
 # 查看日志中的扫码信息
@@ -435,7 +435,7 @@ easybot --debug
 
 **发送消息：** `target: "wechat:{wxid}"`
 
-> ⚠️ 个人微信适配器使用 iLink Bot 长轮询，仅支持一对一私聊。受微信官方限制，可能不稳定。
+> 个人微信适配器使用 iLink Bot API v2 长轮询，仅支持一对一私聊（群聊不支持）。bot token 持久化到磁盘，断连后自动恢复无需重新扫码。
 
 | 功能 | 支持 |
 |------|------|
@@ -503,7 +503,7 @@ curl http://localhost:8080/api/v1/health
 ```json
 {
   "status": "healthy",
-  "version": "0.0.14",
+  "version": "0.0.15",
   "uptime": 3600,
   "adapters": { "total": 5, "connected": 3 },
   "sessions": { "active": 42 }
@@ -1001,4 +1001,4 @@ wscat -c ws://localhost:8080/api/v1/ws
 
 ---
 
-*最后更新：2026-07-10 · EasyBot v0.0.14*
+*最后更新：2026-07-20 · EasyBot v0.0.15*

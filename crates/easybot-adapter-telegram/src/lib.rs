@@ -495,6 +495,7 @@ impl TelegramAdapter {
                             poll_errors += 1;
                             let delay = easybot_core::util::backoff_with_jitter(poll_errors);
                             tracing::warn!("Telegram polling error (attempt {}): {} — retrying in {:?}", poll_errors, e, delay);
+                            heartbeat.beat(); // 告知健康监测器"后台任务仍在运行并重试中"
                             tokio::time::sleep(delay).await;
                         }
                     }
@@ -652,6 +653,52 @@ impl TelegramAdapter {
             }
         }
     }
+
+    /// 启动长轮询后台任务（不包含鉴权）。
+    ///
+    /// 由 `connect()`（首次连接）和 `retry_transport()`（传输重试）共用。
+    /// 需要 `self.event_bus` 已设置且 `self.config` 中有有效 token。
+    fn spawn_polling_task(&mut self) {
+        if let Some(event_bus) = self.event_bus.clone() {
+            // 先取消旧的轮询任务（如果存在）
+            if let Some(cancel_tx) = self.cancel_tx.take() {
+                let _ = cancel_tx.send(());
+            }
+
+            let token = match self.config.as_ref().and_then(|c| c.token.clone()) {
+                Some(t) => t,
+                None => {
+                    tracing::error!("Telegram: spawn_polling_task called without token");
+                    return;
+                }
+            };
+            let (cancel_tx, cancel_rx) = broadcast::channel(1);
+            self.cancel_tx = Some(cancel_tx);
+            let base_url = self
+                .config
+                .as_ref()
+                .and_then(|c| c.base_url.clone())
+                .unwrap_or_else(|| TELEGRAM_API.to_string());
+            let hb = self.heartbeat.clone();
+            let ac = self.admin_cache.clone();
+            let mi = self.messages_in.clone();
+            let polling_client = self.http_client().clone();
+
+            tokio::spawn(async move {
+                Self::polling_loop(
+                    polling_client,
+                    token,
+                    base_url,
+                    event_bus,
+                    cancel_rx,
+                    hb,
+                    ac,
+                    mi,
+                )
+                .await;
+            });
+        }
+    }
 }
 
 impl Default for TelegramAdapter {
@@ -691,7 +738,8 @@ impl PlatformAdapter for TelegramAdapter {
     }
 
     async fn connect(&mut self) -> Result<ConnectResult, GatewayError> {
-        let token = self
+        // 验证 token 已配置（后续 api_url/getMe/spawn_polling_task 从 self.config 读取）
+        let _token = self
             .config
             .as_ref()
             .and_then(|c| c.token.clone())
@@ -755,35 +803,7 @@ impl PlatformAdapter for TelegramAdapter {
         self.heartbeat.record_connection();
 
         // 启动长轮询（如果配置了 EventBus）
-        if let Some(event_bus) = self.event_bus.clone() {
-            let (cancel_tx, cancel_rx) = broadcast::channel(1);
-            self.cancel_tx = Some(cancel_tx);
-            let token_clone = token.clone();
-            let base_url = self
-                .config
-                .as_ref()
-                .and_then(|c| c.base_url.clone())
-                .unwrap_or_else(|| TELEGRAM_API.to_string());
-            let hb = self.heartbeat.clone();
-            let ac = self.admin_cache.clone();
-            let mi = self.messages_in.clone();
-            // 复用适配器的 HTTP 连接池（reqwest::Client 是 Arc 包装，clone 廉价）
-            let polling_client = self.http_client().clone();
-
-            tokio::spawn(async move {
-                Self::polling_loop(
-                    polling_client,
-                    token_clone,
-                    base_url,
-                    event_bus,
-                    cancel_rx,
-                    hb,
-                    ac,
-                    mi,
-                )
-                .await;
-            });
-        }
+        self.spawn_polling_task();
 
         Ok(ConnectResult {
             ok: true,
@@ -801,6 +821,16 @@ impl PlatformAdapter for TelegramAdapter {
         self.state = AdapterState::Stopped;
         tracing::info!("Telegram adapter disconnected");
         Ok(())
+    }
+
+    /// 传输层重试：取消旧轮询任务并启动新任务，不重新鉴权（跳过 getMe）。
+    async fn retry_transport(&mut self) -> Result<bool, GatewayError> {
+        if self.event_bus.is_none() {
+            return Ok(false);
+        }
+        self.spawn_polling_task();
+        tracing::info!("Telegram transport retry: polling task restarted");
+        Ok(true)
     }
 
     fn state(&self) -> AdapterState {

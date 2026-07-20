@@ -6,19 +6,19 @@
 
 ### iLink Bot API 接入
 
-个人微信适配器使用 **腾讯官方 iLink Bot API** (`ilinkai.weixin.qq.com`)，这是腾讯在 2026 年开放的官方个人微信 Bot 协议。
+个人微信适配器使用 **腾讯官方 iLink Bot API v2** (`ilinkai.weixin.qq.com`)，这是腾讯在 2026 年通过 OpenClaw 平台开放的官方个人微信 Bot 协议。协议版本 `channel_version: "2.2.0"`，与官方 `@tencent-weixin/openclaw-weixin` SDK 保持一致。
 
 **与 Openclaw/Hermes 对齐**：
-- Openclaw：`@tencent-weixin/openclaw-weixin` 官方插件
+- Openclaw：`@tencent-weixin/openclaw-weixin` 官方插件（v2）
 - Hermes：`weixin.py` 原生适配器（PR #7268）
-- EasyBot：`easybot-adapter-wechat`（Rust 实现）
+- EasyBot：`easybot-adapter-wechat`（Rust 实现，v2 协议）
 
 ### 登录流程
 
 首次启动时自动打印 QR 码，扫码后自动保存凭据。
 
 ```
-启动服务 → 终端打印 QQ 码链接
+启动服务 → 终端打印 QR 码链接
   → 手机打开链接 → 微信扫码确认
   → 凭据保存到 ~/.easybot/.wechat-credentials.json
   → 下次启动自动加载，无需扫码
@@ -162,10 +162,12 @@ curl -s "http://localhost:8080/api/v1/messages?platform=wechat" \
 
 | 属性 | 值 |
 |------|-----|
-| API 地址 | `https://ilinkai.weixin.qq.com/ilink/bot/*` |
+| API 地址 | `https://ilinkai.weixin.qq.com/ilink/bot/*`（v2，`channel_version: "2.2.0"`） |
+| 协议版本 | v2，所有请求体携带 `base_info.channel_version: "2.2.0"` |
 | 登录方式 | QR 码扫码 + bot_token |
-| 消息接收 | HTTP 长轮询 (35s timeout) |
-| 消息发送 | `POST /ilink/bot/sendmessage` |
+| 消息接收 | HTTP 长轮询 (35s timeout)，请求需携带 `base_info.channel_version` |
+| 消息发送 | `POST /ilink/bot/sendmessage`，`message_type: 2, message_state: 2` |
+| message_id | 灵活反序列化，兼容整数（v2）和字符串（v1）格式 |
 | 凭据有效期 | ~24 小时（过期后需重新扫码） |
 | 凭据持久化 | `~/.easybot/.wechat-credentials.json` (0600) |
 | 鉴权头 | `Authorization: Bearer <bot_token>` |

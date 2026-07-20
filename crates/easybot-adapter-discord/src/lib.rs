@@ -564,6 +564,48 @@ fn handle_gateway_event<E: std::fmt::Display>(
     }
 }
 
+impl DiscordAdapter {
+    /// 启动 Gateway WebSocket 后台任务（不包含鉴权）。
+    ///
+    /// 由 `connect()`（首次连接）和 `retry_transport()`（传输重试）共用。
+    /// 取消旧的 gateway 任务（如果存在），然后启动新任务。
+    fn spawn_gateway_task(&mut self) {
+        if let Some(ref event_bus) = self.event_bus {
+            // Cancel old gateway task first
+            if let Some(cancel_tx) = self.cancel_tx.take() {
+                let _ = cancel_tx.send(());
+            }
+
+            let token = match self.config.as_ref().and_then(|c| c.token.clone()) {
+                Some(t) => t,
+                None => {
+                    tracing::error!("Discord: spawn_gateway_task called without token");
+                    return;
+                }
+            };
+            let bot_id = match self.bot_user_id.clone() {
+                Some(id) => id,
+                None => {
+                    tracing::error!("Discord: spawn_gateway_task called without bot_user_id");
+                    return;
+                }
+            };
+
+            let (cancel_tx, cancel_rx) = broadcast::channel(1);
+            self.cancel_tx = Some(cancel_tx);
+            let eb = event_bus.clone();
+            let hb = self.heartbeat.clone();
+            let goc = self.guild_owner_cache.clone();
+            let gnc = self.guild_name_cache.clone();
+            let mi = self.messages_in.clone();
+
+            tokio::spawn(async move {
+                Self::gateway_shard_loop(token, eb, bot_id, cancel_rx, hb, goc, gnc, mi).await;
+            });
+        }
+    }
+}
+
 impl Default for DiscordAdapter {
     fn default() -> Self {
         Self::new()
@@ -599,7 +641,8 @@ impl PlatformAdapter for DiscordAdapter {
     }
 
     async fn connect(&mut self) -> Result<ConnectResult, GatewayError> {
-        let token = self
+        // 验证 token 已配置（后续 api_call/spawn_gateway_task 从 self.config 读取）
+        let _token = self
             .config
             .as_ref()
             .and_then(|c| c.token.clone())
@@ -638,22 +681,7 @@ impl PlatformAdapter for DiscordAdapter {
         );
 
         // Step 2: 启动 Gateway WebSocket 连接（如果配置了 EventBus）
-        if let Some(ref event_bus) = self.event_bus {
-            let (cancel_tx, cancel_rx) = broadcast::channel(1);
-            self.cancel_tx = Some(cancel_tx);
-
-            let token_clone = token;
-            let eb = event_bus.clone();
-            let hb = self.heartbeat.clone();
-            let goc = self.guild_owner_cache.clone();
-            let gnc = self.guild_name_cache.clone();
-            let mi = self.messages_in.clone();
-
-            tokio::spawn(async move {
-                Self::gateway_shard_loop(token_clone, eb, bot_id, cancel_rx, hb, goc, gnc, mi)
-                    .await;
-            });
-        }
+        self.spawn_gateway_task();
 
         Ok(ConnectResult {
             ok: true,
@@ -670,6 +698,16 @@ impl PlatformAdapter for DiscordAdapter {
         self.state = AdapterState::Stopped;
         tracing::info!("Discord adapter disconnected");
         Ok(())
+    }
+
+    /// 传输层重试：取消旧 Gateway 任务并启动新任务，不重新鉴权（跳过 /users/@me）。
+    async fn retry_transport(&mut self) -> Result<bool, GatewayError> {
+        if self.event_bus.is_none() {
+            return Ok(false);
+        }
+        self.spawn_gateway_task();
+        tracing::info!("Discord transport retry: gateway task restarted");
+        Ok(true)
     }
 
     fn state(&self) -> AdapterState {

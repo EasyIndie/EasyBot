@@ -46,16 +46,72 @@ pub struct AdapterManager {
 
 /// Per-platform reconnect state tracked by the health monitor.
 ///
-/// Maximum total reconnection attempts before giving up permanently.
-/// After this many failures, the adapter transitions to a "Failed" state
-/// that requires manual intervention (via API restart).
+/// Maximum total reconnection attempts before switching to slow retry mode.
+/// After this many failures, the adapter transitions to 30-minute retry intervals.
 const MAX_TOTAL_RECONNECT_ATTEMPTS: u32 = 20;
+
+/// Maximum number of transport-only retries before escalating to full restart.
+/// Transport retries skip re-authentication — only the background task is restarted.
+const MAX_TRANSPORT_RETRIES: u32 = 5;
+
+/// Backoff interval between transport-only retry attempts.
+const TRANSPORT_RETRY_BACKOFF: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone, Default)]
 struct ReconnectState {
     consecutive_failures: u32,
     total_failures: u32,
     backoff_until: Option<Instant>,
+    /// Number of transport-only retry attempts (resets on full reconnect success).
+    transport_retries: u32,
+    /// Whether the last health check was Healthy (used for hysteresis).
+    was_healthy: bool,
+    /// Set when a permanent failure (invalid credentials) is detected.
+    /// Once set, the health monitor stops retrying for this platform.
+    permanent_failure: bool,
+}
+
+/// Classifies a reconnect failure to decide the retry strategy.
+#[derive(Debug)]
+enum ReconnectFailure {
+    /// Transient: network unavailable, DNS failure, timeout — should retry.
+    Transient(String),
+    /// Permanent: invalid credentials, token revoked, API returns 401/403 — no retry.
+    Permanent(String),
+}
+
+/// Classify a [`GatewayError`] into [`ReconnectFailure`] based on error message heuristics.
+fn classify_error(error: &GatewayError) -> ReconnectFailure {
+    let msg = error.to_string().to_lowercase();
+    // Auth-related errors → permanent (credentials are bad, retrying won't help)
+    if msg.contains("unauthorized")
+        || msg.contains(" 401 ")
+        || msg.contains(" 403 ")
+        || msg.contains("forbidden")
+        || msg.contains("auth failed")
+        || msg.contains("invalid token")
+        || msg.contains("access token")
+    {
+        return ReconnectFailure::Permanent(error.to_string());
+    }
+    // Network-related errors → transient (will recover when network is back)
+    if msg.contains("dns")
+        || msg.contains("connection refused")
+        || msg.contains("timeout")
+        || msg.contains("network")
+        || msg.contains("tcp connect")
+        || msg.contains("resolve")
+        || msg.contains("unreachable")
+        || msg.contains("poll request failed")
+        || msg.contains("connect failed")
+        || msg.contains("fail to connect")
+        || msg.contains("failed to connect")
+    {
+        return ReconnectFailure::Transient(error.to_string());
+    }
+    // Default: treat unknown errors as transient to avoid permanently
+    // disabling an adapter from a one-off unexpected error.
+    ReconnectFailure::Transient(error.to_string())
 }
 
 /// A connection that is being established asynchronously in a background task.
@@ -778,90 +834,169 @@ impl AdapterManager {
                 }
             };
 
-            // After exhausting the normal retry budget, enter slow retry
-            // mode (30-minute intervals) instead of giving up permanently.
-            // This provides eventual recovery from extended network outages
-            // while avoiding tight retry loops against failing auth endpoints.
+            // Permanent failure guard: once credentials are confirmed invalid,
+            // don't waste resources retrying.
+            if state.permanent_failure {
+                continue;
+            }
+
+            // Slow retry guard for transient failures that exhausted the normal budget.
             if state.total_failures >= MAX_TOTAL_RECONNECT_ATTEMPTS
                 && let Some(until) = state.backoff_until
                 && Instant::now() < until
             {
                 continue; // still cooling down
             }
-            // Backoff expired — allow one attempt; a fresh long backoff
-            // will be set if it fails again.
 
             if needs_reconnect {
-                // 立即更新状态缓存，避免 health check 窗口期内 API 返回过时的 Connected 状态
+                // Check if the adapter instance still exists in the running map.
+                let adapter_exists = self.adapters.read().await.contains_key(platform);
+
+                // ── Tier 1: Transport-only retry (adapter exists, no re-auth) ──
+                if adapter_exists && state.transport_retries < MAX_TRANSPORT_RETRIES {
+                    // Update status to Reconnecting so the admin panel reflects recovery in progress
+                    {
+                        let mut statuses = self.statuses.write().await;
+                        if let Some(status) = statuses.get_mut(platform) {
+                            status.state = AdapterState::Reconnecting;
+                            status.connected = false;
+                        }
+                    }
+
+                    match self.retry_transport(platform).await {
+                        Ok(true) => {
+                            // Transport restart succeeded — adapter is healthy again.
+                            state.transport_retries += 1;
+                            state.backoff_until = Some(Instant::now() + TRANSPORT_RETRY_BACKOFF);
+                            // NOTE: do NOT reset total_failures — transport retries
+                            // are cheap; we still want to track overall instability.
+                            self.update_status_to_reconnecting(platform).await;
+                            info!(
+                                "Transport retry succeeded for '{}' (attempt {}/{})",
+                                platform, state.transport_retries, MAX_TRANSPORT_RETRIES
+                            );
+                            continue;
+                        }
+                        Ok(false) => {
+                            // Adapter doesn't support transport-only restart —
+                            // fall through to full reconnect below.
+                            info!(
+                                "Adapter '{}' does not support transport retry, \
+                                 falling back to full reconnect",
+                                platform
+                            );
+                        }
+                        Err(e) => {
+                            // Transport retry failed — classify the error.
+                            let failure = classify_error(&e);
+                            match failure {
+                                ReconnectFailure::Permanent(msg) => {
+                                    error!(
+                                        "Permanent failure during transport retry for '{}': {}",
+                                        platform, msg
+                                    );
+                                    state.permanent_failure = true;
+                                    self.set_status_failed(platform, &msg).await;
+                                    continue;
+                                }
+                                ReconnectFailure::Transient(msg) => {
+                                    state.transport_retries += 1;
+                                    state.backoff_until =
+                                        Some(Instant::now() + TRANSPORT_RETRY_BACKOFF);
+                                    warn!(
+                                        "Transport retry failed for '{}' ({}/{}): {} — \
+                                         next transport retry in {:?}",
+                                        platform,
+                                        state.transport_retries,
+                                        MAX_TRANSPORT_RETRIES,
+                                        msg,
+                                        TRANSPORT_RETRY_BACKOFF,
+                                    );
+                                    continue;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // ── Tier 2: Full reconnect (stop + start with re-auth) ──
+                // Update status to Reconnecting
                 {
                     let mut statuses = self.statuses.write().await;
                     if let Some(status) = statuses.get_mut(platform) {
+                        status.state = AdapterState::Reconnecting;
                         status.connected = false;
-                    } else {
-                        statuses.insert(
-                            platform.clone(),
-                            AdapterStatusSummary {
-                                platform: platform.clone(),
-                                connected: false,
-                                state: AdapterState::Failed,
-                                last_error: Some("Unhealthy — reconnecting".to_string()),
-                                display_name: platform.clone(),
-                                health: Some(HealthStatus::Down),
-                                uptime: None,
-                                messages_in: 0,
-                                messages_out: 0,
-                            },
-                        );
                     }
                 }
-                // 仅在需要重连时获取 config（避免为健康适配器克隆含 token 的 AdapterConfig）
+
+                // Clone config for the reconnect attempt
                 let config = { self.configs.read().await.get(platform).cloned() };
                 let config = match config {
                     Some(c) => c,
                     None => continue,
                 };
-                match self.reconnect_adapter(platform, config).await {
+
+                match self.do_full_reconnect(platform, config).await {
                     Ok(()) => {
                         state.consecutive_failures = 0;
                         state.total_failures = 0;
+                        state.transport_retries = 0;
                         state.backoff_until = None;
-                        info!("Reconnect succeeded for '{}'", platform);
+                        state.permanent_failure = false;
+                        info!("Full reconnect succeeded for '{}'", platform);
                     }
                     Err(e) => {
-                        state.consecutive_failures += 1;
-                        state.total_failures += 1;
+                        let failure = classify_error(&e);
+                        match failure {
+                            ReconnectFailure::Permanent(msg) => {
+                                // Auth failure — stop retrying immediately.
+                                error!(
+                                    "Permanent failure for '{}': {} — adapter disabled",
+                                    platform, msg
+                                );
+                                state.permanent_failure = true;
+                                self.set_status_failed(platform, &msg).await;
+                            }
+                            ReconnectFailure::Transient(_msg) => {
+                                state.consecutive_failures += 1;
+                                state.total_failures += 1;
 
-                        // After exhausting the normal retry budget, switch to
-                        // slow retry mode (30 min) to eventually recover from
-                        // extended outages without hammering the auth endpoint.
-                        let delay = if state.total_failures > MAX_TOTAL_RECONNECT_ATTEMPTS {
-                            Duration::from_secs(1800)
-                        } else {
-                            compute_backoff(state.consecutive_failures)
-                        };
-                        state.backoff_until = Some(Instant::now() + delay);
+                                let delay = if state.total_failures > MAX_TOTAL_RECONNECT_ATTEMPTS {
+                                    Duration::from_secs(1800) // 30-min slow retry
+                                } else {
+                                    compute_backoff(state.consecutive_failures)
+                                };
+                                state.backoff_until = Some(Instant::now() + delay);
 
-                        let attempt_label = if state.total_failures > MAX_TOTAL_RECONNECT_ATTEMPTS {
-                            format!(
-                                "slow retry #{} (every 30min)",
-                                state.total_failures - MAX_TOTAL_RECONNECT_ATTEMPTS
-                            )
-                        } else {
-                            format!(
-                                "attempt {}/{}",
-                                state.total_failures, MAX_TOTAL_RECONNECT_ATTEMPTS
-                            )
-                        };
-                        warn!(
-                            "Reconnect failed for '{}' ({}): {} — next retry in {:?}",
-                            platform, attempt_label, e, delay,
-                        );
+                                let attempt_label =
+                                    if state.total_failures > MAX_TOTAL_RECONNECT_ATTEMPTS {
+                                        format!(
+                                            "slow retry #{} (every 30min)",
+                                            state.total_failures - MAX_TOTAL_RECONNECT_ATTEMPTS
+                                        )
+                                    } else {
+                                        format!(
+                                            "attempt {}/{}",
+                                            state.total_failures, MAX_TOTAL_RECONNECT_ATTEMPTS
+                                        )
+                                    };
+                                warn!(
+                                    "Reconnect failed for '{}' ({}): {} — next retry in {:?}",
+                                    platform, attempt_label, e, delay,
+                                );
+                            }
+                        }
                     }
                 }
             } else {
-                // All healthy — reset backoff on the next failure
-                state.consecutive_failures = 0;
-                state.backoff_until = None;
+                // All healthy — reset transient counters with hysteresis
+                if state.was_healthy {
+                    // Two consecutive healthy checks → fully reset
+                    state.consecutive_failures = 0;
+                    state.transport_retries = 0;
+                    state.backoff_until = None;
+                }
+                state.was_healthy = true;
             }
         }
     }
@@ -944,6 +1079,60 @@ impl AdapterManager {
                 );
                 Err(e)
             }
+        }
+    }
+
+    /// Transport-only restart: delegates to the adapter's `retry_transport()`.
+    ///
+    /// This is a lightweight operation that cancels and restarts the background
+    /// transport task without re-authentication. It is intended for transient
+    /// network disruptions (WiFi drop, etc.).
+    async fn retry_transport(&self, platform: &str) -> Result<bool, GatewayError> {
+        let mut adapters = self.adapters.write().await;
+        if let Some(adapter) = adapters.get_mut(platform) {
+            adapter.retry_transport().await
+        } else {
+            Err(GatewayError::AdapterNotConnected(platform.to_string()))
+        }
+    }
+
+    /// Full reconnect (stop + start with re-auth).
+    ///
+    /// Delegates to the existing [`reconnect_adapter`] which handles the full
+    /// lifecycle, including publishing events.
+    async fn do_full_reconnect(
+        &self,
+        platform: &str,
+        config: AdapterConfig,
+    ) -> Result<(), GatewayError> {
+        self.reconnect_adapter(platform, config).await
+    }
+
+    /// Mark an adapter as permanently failed in the status cache.
+    async fn set_status_failed(&self, platform: &str, error_msg: &str) {
+        let mut statuses = self.statuses.write().await;
+        statuses.insert(
+            platform.to_string(),
+            AdapterStatusSummary {
+                platform: platform.to_string(),
+                display_name: platform.to_string(),
+                state: AdapterState::Failed,
+                connected: false,
+                health: Some(HealthStatus::Down),
+                last_error: Some(error_msg.to_string()),
+                uptime: None,
+                messages_in: 0,
+                messages_out: 0,
+            },
+        );
+        self.publish_adapter_error(platform, error_msg);
+    }
+
+    /// Update an existing status entry to Reconnecting state.
+    async fn update_status_to_reconnecting(&self, platform: &str) {
+        let mut statuses = self.statuses.write().await;
+        if let Some(status) = statuses.get_mut(platform) {
+            status.state = AdapterState::Reconnecting;
         }
     }
 

@@ -330,6 +330,22 @@ pub trait PlatformAdapter: Send + Sync {
         self.state() == AdapterState::Connected
     }
 
+    /// 仅重启后台传输任务（WebSocket / 长轮询），不重新鉴权。
+    ///
+    /// 健康监测器用于瞬态网络故障（WiFi 断连等）的快速恢复。
+    /// 与 `disconnect()` + `connect()` 不同，此方法跳过鉴权步骤，
+    /// 仅取消并重建后台传输任务。
+    ///
+    /// # 返回值语义
+    /// - `Ok(true)`：传输重启成功，适配器已恢复正常
+    /// - `Ok(false)`：适配器不支持轻量重启，健康监测器应回退到完整 stop+start
+    /// - `Err(e)`：尝试重启但失败，健康监测器应根据错误类型决定下一步
+    ///
+    /// 默认返回 `Ok(false)`——有内置重试循环且心跳在错误时也更新的适配器无需覆盖。
+    async fn retry_transport(&mut self) -> Result<bool, GatewayError> {
+        Ok(false)
+    }
+
     /// Returns the age of the last background liveness heartbeat in milliseconds.
     ///
     /// Returns `None` when the adapter does not support heartbeat tracking

@@ -50,6 +50,9 @@ use crypto::{
 /// iLink Bot API 基础 URL
 const ILINK_API: &str = "https://ilinkai.weixin.qq.com";
 
+/// iLink Bot API channel 版本号（v2，与官方 openclaw-weixin SDK 保持一致）
+const CHANNEL_VERSION: &str = "2.2.0";
+
 /// 长轮询超时（秒）
 const LONGPOLL_TIMEOUT: u64 = 35;
 
@@ -198,6 +201,7 @@ struct WeixinFileItem {
 ///
 /// iLink send API 可能返回空的 {}，或包含 ret/errmsg（错误时），
 /// 或包含 message_id/seq（成功时）。
+/// message_id 可能为整数或字符串，使用自定义反序列化器兼容两种格式。
 #[derive(Debug, serde::Deserialize)]
 #[allow(dead_code)]
 struct SendMessageResponse {
@@ -205,7 +209,7 @@ struct SendMessageResponse {
     ret: Option<i64>,
     #[serde(default)]
     errmsg: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_flexible_id")]
     message_id: Option<String>,
     #[serde(default)]
     msg_id: Option<i64>,
@@ -215,6 +219,26 @@ struct SendMessageResponse {
     msg_id_str: Option<String>,
     #[serde(default)]
     seq: Option<i64>,
+}
+
+/// 反序列化可能为整数或字符串的 message_id 字段。
+/// iLink API 在不同版本中返回格式不一致（v1 返回字符串，v2 返回整数）。
+fn deserialize_flexible_id<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    use serde::Deserialize as _;
+    use serde::de::Error;
+    let value: Option<serde_json::Value> = Option::deserialize(deserializer)?;
+    match value {
+        None => Ok(None),
+        Some(serde_json::Value::String(s)) => Ok(Some(s)),
+        Some(serde_json::Value::Number(n)) => Ok(Some(n.to_string())),
+        Some(v) => Err(Error::custom(format!(
+            "expected string or number for message_id, got {}",
+            v
+        ))),
+    }
 }
 
 /// Upload URL 响应
@@ -423,7 +447,7 @@ impl WeChatAdapter {
 
         let upload_req_body = serde_json::json!({
             "base_info": {
-                "channel_version": "2.2.0"
+                "channel_version": CHANNEL_VERSION
             },
             "filekey": filekey,
             "media_type": media_type,
@@ -611,7 +635,7 @@ impl WeChatAdapter {
                     "text_item": { "text": text }
                 }]
             },
-            "base_info": { "channel_version": "1.0.0" }
+            "base_info": { "channel_version": CHANNEL_VERSION }
         });
 
         if let Some(ct) = context_token {
@@ -1263,7 +1287,7 @@ impl PlatformAdapter for WeChatAdapter {
                 "item_list": [item],
             },
             "base_info": {
-                "channel_version": "1.0.0"
+                "channel_version": CHANNEL_VERSION
             }
         });
 
@@ -1511,15 +1535,18 @@ async fn longpoll_loop(
                         consecutive_failures += 1;
                         tracing::warn!("个人微信长轮询错误 (第{}次): {}", consecutive_failures, e);
 
-                        // 连续 10 次失败退出循环，但不清除凭据
-                        // 凭据留在磁盘上，健康监测机制可以自动重连而无需重新扫码
-                        if consecutive_failures >= 10 {
+                        // 连续 30 次失败退出循环（约 15-20 分钟），但不清除凭据。
+                        // 凭据留在磁盘上，健康监测机制可以自动重连而无需重新扫码。
+                        if consecutive_failures >= 30 {
                             tracing::error!(
                                 "个人微信长轮询连续失败 {} 次，退出。凭据保留在磁盘上等待健康监测自动重连",
                                 consecutive_failures
                             );
                             break;
                         }
+
+                        // 发送心跳告知健康监测器"后台任务仍在运行并重试中"
+                        heartbeat.beat();
 
                         // 指数退避重试（1s→2s→...→30s cap，+jitter）
                         let delay = easybot_core::util::backoff_with_jitter(consecutive_failures);
@@ -1539,6 +1566,9 @@ async fn poll_messages(
 ) -> Result<PollOutcome, GatewayError> {
     let body = serde_json::json!({
         "get_updates_buf": buf,
+        "base_info": {
+            "channel_version": CHANNEL_VERSION,
+        },
     });
 
     let raw_resp = client

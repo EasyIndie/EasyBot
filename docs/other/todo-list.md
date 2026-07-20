@@ -54,7 +54,7 @@
 
 ### 跨平台 / 基础设施
 - [x] **send_draft** 流式草稿 — Telegram (sendMessage/editMessageText) + Discord (POST/PATCH)
-- [x] **通用健康轮询 + 自动重连** — AdapterManager.start_health_monitor()，5 适配器 Heartbeat 集成，指数退避
+- [x] **通用健康轮询 + 自动重连** — AdapterManager.start_health_monitor()，5 适配器 Heartbeat 集成，分级响应（传输重试→完整重连→慢重试）+ 错误分类
 - [x] **Health 端点启动时间** — AppState.started_at → uptime 秒级
 - [x] **WeChat panic!() 修复** — 2 处 assert!(matches!(...)) 替换
 - [x] **AdapterManager 状态缓存修复** — list_statuses()/get_status() 实时查询 adapter.status_summary()

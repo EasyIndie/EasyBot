@@ -274,7 +274,7 @@ GET /health
 Response 200:
 {
   "status": "healthy",               // healthy | degraded
-  "version": "0.0.14",
+  "version": "0.0.15",
   "uptime": 86400,
   "adapters": { "total": 5, "connected": 4 },
   "sessions": { "active": 42 }
@@ -690,8 +690,9 @@ interface AdapterManager {
 ```
 
 - 自动检测凭据环境变量启用适配器（`enabled: None` = auto）
-- 健康监控每 30 秒检查所有适配器心跳
-- 指数退避重连：5s → 10s → 30s → 60s → 120s → 300s（封顶 20 次）
+- 健康监控每 30 秒检查所有适配器心跳（120s 过期阈值 → Degraded）
+- **分级响应**：传输重试 `retry_transport()`（不鉴权，5 次/30s）→ 完整重连 `reconnect_adapter()`（含鉴权，指数退避 5s→300s）→ 慢重试（20 次后 30min 间隔）
+- **错误分类**：永久错误（鉴权 401/403）→ 立即 Failed；瞬态错误（网络超时）→ 分级重试
 
 ---
 

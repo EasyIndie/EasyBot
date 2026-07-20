@@ -113,8 +113,12 @@ function renderMessageRow(m) {
 }
 
 // 统一状态徽章 class 计算（返回修饰类名，配合 "badge" 基类使用）
-function statusBadgeClass(status, connected) {
-  if (connected) return 'badge-green';
+function statusBadgeClass(status, connected, health) {
+  if (connected) {
+    // 适配器已连接但传输层不健康 → 警告色
+    if (health === 'Degraded' || health === 'Down') return 'badge-yellow';
+    return 'badge-green';
+  }
   if (status === 'Failed') return 'badge-red';
   if (status === 'Connecting' || status === 'Starting' || status === 'Disconnecting' || status === 'Stopping') return 'badge-blue';
   if (status === 'Reconnecting') return 'badge-yellow';
@@ -541,12 +545,25 @@ async function loadAdapters() {
     content.innerHTML = '<div class="grid-2">' + data.adapters.map(a => {
       // 如果有正在轮询中的状态，优先显示轮询状态
       const pollState = adapterPollTimers[a.platform] ? adapterPollTimers[a.platform].displayState : null;
-      const displayStatus = pollState || a.status;
-      const statusClass = statusBadgeClass(displayStatus, a.connected);
+      // 如果 Connected 但传输层不健康，显示 Degraded 而非 Connected
+      let displayStatus = pollState || a.status;
+      if (!pollState && a.status === 'Connected' && (a.health === 'Degraded' || a.health === 'Down')) {
+        displayStatus = 'Degraded';
+      }
+      const statusClass = statusBadgeClass(displayStatus, a.connected, a.health);
       const icon = icons[a.platform] || '🔌';
+      // 健康状态副标题
+      let healthSubtitle = '';
+      if (a.health && a.health !== 'Healthy') {
+        const healthLabel = a.health === 'Degraded' ? '传输异常' : '传输断开';
+        healthSubtitle = `<div style="font-size:12px;color:var(--text-muted);margin-top:2px">${healthLabel}</div>`;
+      }
       return `<div class="card" id="adapter-card-${a.platform}">
         <div style="display:flex;justify-content:space-between;align-items:center">
-          <h3>${icon} ${a.display_name} <span class="badge ${statusClass}" id="adapter-badge-${a.platform}">${displayStatus}</span></h3>
+          <div>
+            <h3>${icon} ${a.display_name} <span class="badge ${statusClass}" id="adapter-badge-${a.platform}">${displayStatus}</span></h3>
+            ${healthSubtitle}
+          </div>
           <div id="adapter-buttons-${a.platform}">
             <button class="btn btn-sm btn-primary" onclick="adapterAction('${a.platform}','start')" ${a.connected || pollState ? 'disabled':''}>启动</button>
             <button class="btn btn-sm btn-danger" onclick="adapterAction('${a.platform}','stop')" ${!a.connected || pollState ? 'disabled':''}>停止</button>
@@ -562,11 +579,17 @@ async function loadAdapters() {
 }
 
 // 更新单个 adapter 卡片的 badge 和按钮状态（不重新渲染整个列表）
-function updateAdapterCard(platform, status, connected, polling) {
+// health: 传输层健康状态（"Healthy" / "Degraded" / "Down" / null），null 表示不覆盖
+function updateAdapterCard(platform, status, connected, polling, health) {
   const badge = document.getElementById(`adapter-badge-${platform}`);
   if (badge) {
-    badge.className = `badge ${statusBadgeClass(status, connected)}`;
-    badge.textContent = status;
+    badge.className = `badge ${statusBadgeClass(status, connected, health)}`;
+    // 如果 Connected 但传输不健康，显示 Degraded
+    let displayStatus = status;
+    if (status === 'Connected' && (health === 'Degraded' || health === 'Down')) {
+      displayStatus = 'Degraded';
+    }
+    badge.textContent = displayStatus;
   }
   // 更新按钮状态
   const btnDiv = document.getElementById(`adapter-buttons-${platform}`);
@@ -592,14 +615,14 @@ async function waitForStableStatus(platform, targetConnected, timeoutMs = 15000)
         const connected = resp.connected || false;
         // 终止状态：启动目标为 connected=true，停止目标为 connected=false+非过渡状态
         if (targetConnected && connected) {
-          return { status: state, connected: true };
+          return { status: state, connected: true, health: resp.health || null };
         }
         if (!targetConnected && !connected && !['Connecting', 'Starting', 'Disconnecting', 'Stopping'].includes(state)) {
-          return { status: state, connected: false };
+          return { status: state, connected: false, health: resp.health || null };
         }
         // 失败的终止状态
         if (state === 'Failed') {
-          return { status: state, connected: false };
+          return { status: state, connected: false, health: resp.health || null };
         }
       }
     } catch (_) {
@@ -647,7 +670,7 @@ async function adapterAction(platform, action) {
     delete adapterPollTimers[platform];
 
     // 更新卡片显示最终状态
-    updateAdapterCard(platform, result.status, result.connected, false);
+    updateAdapterCard(platform, result.status, result.connected, false, result.health);
     showToast(`${platform} ${btnAction}成功`, 'success');
 
     // 如果 Overview 激活则刷新统计数据（适配器数、会话数）

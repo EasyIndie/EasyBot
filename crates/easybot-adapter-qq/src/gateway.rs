@@ -53,6 +53,7 @@ impl crate::QqAdapter {
                 && let Err(e) = token_store.refresh().await
             {
                 tracing::warn!("QQ token refresh failed: {}, retry 30s", e);
+                heartbeat.beat(); // 告知健康监测器"后台任务仍在运行并重试中"
                 tokio::time::sleep(Duration::from_secs(30)).await;
                 continue;
             }
@@ -68,6 +69,7 @@ impl crate::QqAdapter {
                         reconnect_attempts,
                         delay
                     );
+                    heartbeat.beat(); // 告知健康监测器"后台任务仍在运行并重试中"
                     tokio::time::sleep(delay).await;
                     continue;
                 }
@@ -134,6 +136,7 @@ impl crate::QqAdapter {
                         e,
                         delay
                     );
+                    heartbeat.beat(); // 告知健康监测器"后台任务仍在运行并重试中"
                     tokio::time::sleep(delay).await;
                     continue;
                 }

@@ -21,10 +21,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   传递依赖 `spin v0.9.8`（通过 `flume` → `sqlx`）已从 crates.io 撤回，且无 RUSTSEC 咨询
   ID 可忽略。修复：在 audit 工作流中添加 `--no-yanked` 跳过 yanked 检查（yanked 是发布管理
   问题而非安全漏洞）。
+- **飞书适配器独立心跳定时器** — `FeishuAdapter` 使用独立 `tokio::spawn` 每 30s 无条件调用
+  `heartbeat.beat()`，与 WebSocket 连接状态完全无关。导致 WiFi 断连期间健康监测器**从不触发
+  重连**，管理后台始终显示 "Connected"。修复：删除独立定时器，改为**事件驱动心跳**（收到
+  `message_receive_v1` / `chat.updated_v1` 事件时 beat，WS 任务启动时初始 beat）。
+- **WiFi 断连后 Telegram/Discord/QQ 恢复过慢** — `reconnect_adapter()` 对瞬态网络故障做完整
+  stop + start（含鉴权 API 调用），WiFi 断连期间鉴权必然失败，导致 20 次后进入 30 分钟慢重试。
+  修复：新增 `retry_transport()` trait 方法（仅重启后台传输，不鉴权）；健康监测器采用分级响应。
+- **微信 `message_id` 解析失败** — iLink API v2 返回整数格式 `message_id`，但代码定义为
+  `Option<String>`，serde 解析失败。修复：新增 `deserialize_flexible_id` 自定义反序列化器，
+  兼容整数和字符串两种格式。
+
+### Added
+
+- **`PlatformAdapter::retry_transport()` trait 方法** — 纯传输重启（取消旧后台任务后直接启动新
+  任务，跳过鉴权）。Telegram/Discord/飞书已实现。有内置重试循环的适配器（QQ/微信）使用默认
+  `Ok(false)` 回退到完整重连。
+- **健康监测器分级响应** — `run_health_check()` 采用两级重试：传输重试（5 次/30s，不鉴权）→
+  完整重连（指数退避 5s→300s，含鉴权）→ 慢重试（20 次后 30min 间隔）。新增 `classify_error()`
+  区分永久错误（401/403 鉴权失败，立即 Failed）和瞬态错误（网络超时、DNS 失败）。
+- **管理 API `health` 字段** — `/api/v1/adapters` 和 `/api/v1/adapters/{platform}/status` 响应
+  新增 `health` 字段（`"Healthy"` / `"Degraded"` / `"Down"`），区分"适配器在运行"和"消息流
+  是否正常"。
+- **管理后台健康状态展示** — 适配器卡片根据 `health` 字段显示不同徽章颜色：绿色 Healthy、
+  黄色 Degraded、红色 Failed。传输异常时显示 "传输异常" 副标题。
+- **心跳语义统一** — 所有适配器在错误重试路径中调用 `heartbeat.beat()`（Telegram polling loop、
+  QQ gateway loop、微信 longpoll loop），告诉健康监测器"后台任务存活且正在重试"。心跳过期
+  阈值统一为 120s（`DEFAULT_LIVENESS_THRESHOLD_MS`）。
+
+### Changed
+
+- **微信 iLink API 升级到 v2** — 统一 `channel_version: "2.2.0"`（与官方 openclaw-weixin SDK
+  一致）。`getupdates` 请求新增 `base_info.channel_version` 字段。引入 `CHANNEL_VERSION` 常量。
+- **微信长轮询容错增强** — 连续失败退出上限从 10 次提升到 30 次（约 15-20 分钟）。错误路径新增
+  `heartbeat.beat()`。
+- **飞书 WebSocket 任务简化** — 移除独立心跳定时器，心跳改为事件驱动。
 
 ### Docs
 
-- **CHANGELOG 更新** — 记录三项 CI/Security Audit 修复。
+- **CLAUDE.md 更新** — 新增 Health monitor、`retry_transport()`、Heartbeat 语义、WeChat iLink API
+  四个 Key Pattern 条目。适配器表格标注 WeChat v2。
+- **平台能力文档更新** — `03 platform-capabilities.md` 断线自动重连章节重写，反映分级响应机制
+  和事件驱动心跳。
+- **用户指南更新** — WeChat 章节 iLink Bot 链接更新为官方 openclaw-weixin SDK。
+- **架构文档更新** — 健康监控描述从简单"指数退避"更新为分级响应机制。
 
 ## [0.0.15] - 2026-07-10
 
