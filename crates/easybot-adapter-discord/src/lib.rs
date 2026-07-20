@@ -551,6 +551,7 @@ fn handle_gateway_event<E: std::fmt::Display>(
         }
         Some(Err(e)) => {
             tracing::warn!(error = %e, "Discord Gateway error, shard will auto-reconnect");
+            heartbeat.beat(); // SDK 正在内部重连，告知健康监测器任务存活
             EventAction::Continue
         }
         Some(_) => {
