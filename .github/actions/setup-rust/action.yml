@@ -33,8 +33,10 @@ inputs:
     default: ""
   cache-save-if:
     description: >
-      Condition string for saving the cache (e.g. "${{ github.ref == 'refs/heads/main' }}").
-      Useful to avoid PR branches polluting the shared cache. Default: always save.
+      Condition string for saving the cache (e.g. "github.ref == 'refs/heads/main'",
+      i.e. only save on the default branch).
+      Useful to avoid PR branches polluting the shared cache. Default: always save (the
+      literal string "true").
     required: false
     default: "true"
   cache-all-crates:
