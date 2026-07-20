@@ -1058,8 +1058,8 @@ impl PlatformAdapter for WeChatAdapter {
             display_name: self.display_name.clone(),
             state: self.state.clone(),
             connected: self.state == AdapterState::Connected,
-            health: None,
-            last_error: None,
+            health: Some(self.health_status()),
+            last_error: self.heartbeat.last_error_str(),
             uptime: self.heartbeat.uptime_secs().into(),
             messages_in: self.messages_in.load(Ordering::Relaxed),
             messages_out: self.messages_out.load(Ordering::Relaxed),
@@ -1831,6 +1831,9 @@ mod tests {
         let status = adapter.status_summary();
         assert_eq!(status.platform, "wechat");
         assert!(!status.connected);
+        // health should be present (not None) — frontend relies on this
+        assert!(status.health.is_some(), "health should not be None");
+        assert_eq!(status.health.unwrap(), HealthStatus::Down);
     }
 
     #[test]

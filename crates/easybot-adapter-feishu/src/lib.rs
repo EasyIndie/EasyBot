@@ -393,164 +393,7 @@ impl PlatformAdapter for FeishuAdapter {
         self.heartbeat.record_connection();
 
         // 3. 如果配置了 EventBus，启动 WebSocket 事件订阅
-        if let Some(ref event_bus) = self.event_bus {
-            let (cancel_tx, mut cancel_rx) = broadcast::channel(1);
-            self.cancel_tx = Some(cancel_tx);
-
-            let eb = event_bus.clone();
-            let app_id_owned = app_id.to_string();
-            let app_secret = config.token.clone().unwrap_or_default();
-
-            // 创建 SDK Client + EventDispatcher
-            let sdk_client = match Client::builder(&app_id_owned, &app_secret).build() {
-                Ok(c) => c,
-                Err(e) => {
-                    tracing::error!("飞书 SDK 客户端创建失败: {}", e);
-                    return Ok(ConnectResult {
-                        ok: true,
-                        error: Some(format!("SDK client init failed: {}", e)),
-                        bot_info: self.bot_info.clone(),
-                    });
-                }
-            };
-
-            // 群成员角色缓存（chat_id:member_open_id → role + TTL），30 秒过期
-            let role_cache: Arc<Mutex<HashMap<String, (SenderRole, Instant)>>> =
-                Arc::new(Mutex::new(HashMap::new()));
-            // 共享 token 存储（与适配器实例共用，避免两套缓存）
-            let shared_token_store = self.token_store.clone();
-            let feishu_http = reqwest::Client::new();
-            let feishu_base_url = self.api_base_url().to_string();
-            let mi = self.messages_in.clone();
-
-            // 读取事件验证配置（优先从 config.extra 读取，再从环境变量回退）
-            // verification_token: 飞书开放平台「事件订阅」→「配置」→「Verification Token」
-            // encrypt_key: 飞书开放平台「事件订阅」→「配置」→「Encrypt Key」（用于 AES 解密）
-            // 从 config.extra 或环境变量读取事件验证配置
-            let env_verify_token = std::env::var("FEISHU_VERIFICATION_TOKEN").ok();
-            let env_encrypt_key = std::env::var("FEISHU_ENCRYPT_KEY").ok();
-            let verify_token = config
-                .extra
-                .get("verification_token")
-                .and_then(|v| v.as_str())
-                .filter(|s| !s.is_empty())
-                .or_else(|| env_verify_token.as_deref().filter(|s| !s.is_empty()))
-                .unwrap_or("");
-            let encrypt_key = config
-                .extra
-                .get("encrypt_key")
-                .and_then(|v| v.as_str())
-                .filter(|s| !s.is_empty())
-                .or_else(|| env_encrypt_key.as_deref().filter(|s| !s.is_empty()))
-                .unwrap_or("");
-
-            let dispatcher = if verify_token.is_empty() && encrypt_key.is_empty() {
-                tracing::info!(
-                    "飞书事件签名验证未配置（WebSocket 连接使用 OAuth 鉴权），跳过 per-event 验证"
-                );
-                EventDispatcher::new("", "").skip_sign_verify()
-            } else {
-                tracing::info!(
-                    "飞书事件签名验证已启用（verify_token={}, encrypt_key={}）",
-                    if verify_token.is_empty() {
-                        "未设置"
-                    } else {
-                        "已配置"
-                    },
-                    if encrypt_key.is_empty() {
-                        "未设置"
-                    } else {
-                        "已配置"
-                    },
-                );
-                EventDispatcher::new(verify_token, encrypt_key)
-            };
-
-            // 心跳引用，用于在收到消息事件时更新 liveness
-            let hb_for_events = self.heartbeat.clone();
-
-            // 处理入站消息
-            let dispatcher = dispatcher
-                .on_event(EVENT_MESSAGE_RECEIVE_V1, {
-                    let rc = role_cache.clone();
-                    let hb = hb_for_events.clone();
-                    move |event_data| {
-                        let eb = eb.clone();
-                        let bot_id = app_id_owned.clone();
-                        let secret = app_secret.clone();
-                        let hc = feishu_http.clone();
-                        let bu = feishu_base_url.clone();
-                        let ts = shared_token_store.clone();
-                        let rc = rc.clone();
-                        let mi = mi.clone();
-                        let hb = hb.clone();
-                        async move {
-                            let sender_role = Self::resolve_feishu_role(
-                                &event_data,
-                                &hc,
-                                &bu,
-                                &ts,
-                                &bot_id,
-                                &secret,
-                                &rc,
-                            )
-                            .await;
-                            event::handle_message_receive(event_data, &eb, &bot_id, sender_role)
-                                .await;
-                            mi.fetch_add(1, Ordering::Relaxed);
-                            hb.beat(); // 事件驱动心跳：成功收到消息时更新 liveness
-                            Ok(())
-                        }
-                    }
-                })
-                // 监听群配置变更事件（群主转移、管理员变更等）
-                .on_event("im.chat.updated_v1", {
-                    let rc = role_cache.clone();
-                    let hb = hb_for_events.clone();
-                    move |event_data| {
-                        let rc = rc.clone();
-                        let hb = hb.clone();
-                        async move {
-                            // 清除该群的缓存，下次消息会重新获取角色
-                            if let Some(chat_id) =
-                                event_data.pointer("/chat_id").and_then(|v| v.as_str())
-                            {
-                                if let Ok(mut cache) = rc.lock() {
-                                    cache.retain(|key, _| {
-                                        !key.starts_with(&format!("{}:", chat_id))
-                                    });
-                                }
-                                tracing::info!("飞书群配置变更，已清除群 {} 的角色缓存", chat_id);
-                            }
-                            hb.beat(); // 事件驱动心跳：收到事件说明 WebSocket 存活
-                            Ok(())
-                        }
-                    }
-                });
-
-            let ws_client = sdk_client.ws_client(dispatcher);
-            let ws_client = ws_client.log_level(tracing::Level::WARN);
-
-            // 在后台任务中运行 WebSocket 事件订阅
-            // 注意：不再使用独立的心跳定时器。心跳由 on_event 回调中的
-            // heartbeat.beat() 驱动，确保心跳准确反映消息流活跃度。
-            // 首次连接时立即 beat 一次，避免启动后 120s 窗口期内无事件导致的误判。
-            let hb = self.heartbeat.clone();
-            hb.beat();
-            tokio::spawn(async move {
-                tokio::select! {
-                    _ = cancel_rx.recv() => {
-                        tracing::info!("飞书 WebSocket 事件订阅已停止");
-                    }
-                    result = ws_client.start() => {
-                        match result {
-                            Ok(()) => tracing::info!("飞书 WebSocket 连接正常关闭"),
-                            Err(e) => tracing::error!("飞书 WebSocket 连接异常: {}", e),
-                        }
-                    }
-                }
-            });
-        }
+        self.cancel_and_respawn_ws().await;
 
         Ok(ConnectResult {
             ok: true,
@@ -571,14 +414,19 @@ impl PlatformAdapter for FeishuAdapter {
         Ok(())
     }
 
-    /// 传输层重试：飞书的 WebSocket 设置与 connect() 紧密耦合，
-    /// 当前通过完整重连（stop+start）处理。心跳已改为事件驱动，
-    /// 不再使用独立定时器，确保健康监测器能正确检测 WebSocket 断连。
+    /// 传输层重试：取消旧 WebSocket 任务并启动新任务，不重新鉴权。
+    ///
+    /// 跳过 token 验证（token_store 中已有有效 token），仅重建
+    /// SDK Client 和 WebSocket 连接，比完整 stop+start 更轻量。
     async fn retry_transport(&mut self) -> Result<bool, GatewayError> {
-        // Return false to fall back to full reconnect (stop + start).
-        // connect() succeeds without network thanks to cached token,
-        // so this is effectively a transport restart.
-        Ok(false)
+        if self.event_bus.is_none() {
+            return Ok(false);
+        }
+        // Cancel old WebSocket task and spawn a new one, reusing the
+        // cached token_store (no re-auth network call needed).
+        self.cancel_and_respawn_ws().await;
+        tracing::info!("飞书 transport retry: WebSocket 任务已重启");
+        Ok(true)
     }
 
     fn state(&self) -> AdapterState {
@@ -629,8 +477,8 @@ impl PlatformAdapter for FeishuAdapter {
             display_name: self.display_name.clone(),
             state: self.state.clone(),
             connected: self.state == AdapterState::Connected,
-            health: None,
-            last_error: None,
+            health: Some(self.health_status()),
+            last_error: self.heartbeat.last_error_str(),
             uptime: self.heartbeat.uptime_secs().into(),
             messages_in: self.messages_in.load(Ordering::Relaxed),
             messages_out: self.messages_out.load(Ordering::Relaxed),
@@ -927,6 +775,175 @@ impl PlatformAdapter for FeishuAdapter {
 // ── 辅助方法 ──
 
 impl FeishuAdapter {
+    /// Cancel the old WebSocket task (if any) and spawn a new one.
+    ///
+    /// Used by both `connect()` (first connection) and `retry_transport()`
+    /// (lightweight reconnect without re-auth).  The token is expected to
+    /// already be cached in `self.token_store` — no network call is made
+    /// to refresh it.
+    async fn cancel_and_respawn_ws(&mut self) {
+        let event_bus = match self.event_bus.as_ref() {
+            Some(eb) => eb.clone(),
+            None => return,
+        };
+
+        // Cancel old WebSocket task first
+        if let Some(cancel_tx) = self.cancel_tx.take() {
+            let _ = cancel_tx.send(());
+        }
+
+        let config = match self.config.as_ref() {
+            Some(c) => c,
+            None => {
+                tracing::error!("飞书 cancel_and_respawn_ws: config not set");
+                return;
+            }
+        };
+        let app_id_owned = match config.extra.get("app_id").and_then(|v| v.as_str()) {
+            Some(id) => id.to_string(),
+            None => {
+                tracing::error!("飞书 cancel_and_respawn_ws: app_id not in config");
+                return;
+            }
+        };
+        let app_secret = match config.token.clone() {
+            Some(s) => s,
+            None => {
+                tracing::error!("飞书 cancel_and_respawn_ws: token not in config");
+                return;
+            }
+        };
+
+        let (cancel_tx, mut cancel_rx) = broadcast::channel(1);
+        self.cancel_tx = Some(cancel_tx);
+
+        // Create SDK Client (no network I/O — token is fetched lazily)
+        let sdk_client = match Client::builder(&app_id_owned, &app_secret).build() {
+            Ok(c) => c,
+            Err(e) => {
+                tracing::error!("飞书 SDK 客户端创建失败: {}", e);
+                return;
+            }
+        };
+
+        // Role cache shared across event handlers
+        let role_cache: Arc<Mutex<HashMap<String, (SenderRole, Instant)>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+        let shared_token_store = self.token_store.clone();
+        let feishu_http = reqwest::Client::new();
+        let feishu_base_url = self.api_base_url().to_string();
+        let mi = self.messages_in.clone();
+
+        // Event verification config
+        let env_verify_token = std::env::var("FEISHU_VERIFICATION_TOKEN").ok();
+        let env_encrypt_key = std::env::var("FEISHU_ENCRYPT_KEY").ok();
+        let verify_token = config
+            .extra
+            .get("verification_token")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .or_else(|| env_verify_token.as_deref().filter(|s| !s.is_empty()))
+            .unwrap_or("");
+        let encrypt_key = config
+            .extra
+            .get("encrypt_key")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .or_else(|| env_encrypt_key.as_deref().filter(|s| !s.is_empty()))
+            .unwrap_or("");
+
+        let dispatcher = if verify_token.is_empty() && encrypt_key.is_empty() {
+            tracing::info!(
+                "飞书事件签名验证未配置（WebSocket 连接使用 OAuth 鉴权），跳过 per-event 验证"
+            );
+            EventDispatcher::new("", "").skip_sign_verify()
+        } else {
+            EventDispatcher::new(verify_token, encrypt_key)
+        };
+
+        let hb_for_events = self.heartbeat.clone();
+        let dispatcher = dispatcher
+            .on_event(EVENT_MESSAGE_RECEIVE_V1, {
+                let rc = role_cache.clone();
+                let hb = hb_for_events.clone();
+                let eb = event_bus.clone();
+                let bot_id = app_id_owned.clone();
+                let secret = app_secret.clone();
+                let hc = feishu_http.clone();
+                let bu = feishu_base_url.clone();
+                let ts = shared_token_store.clone();
+                let mi = mi.clone();
+                move |event_data| {
+                    let eb = eb.clone();
+                    let bot_id = bot_id.clone();
+                    let secret = secret.clone();
+                    let hc = hc.clone();
+                    let bu = bu.clone();
+                    let ts = ts.clone();
+                    let rc = rc.clone();
+                    let mi = mi.clone();
+                    let hb = hb.clone();
+                    async move {
+                        let sender_role = Self::resolve_feishu_role(
+                            &event_data,
+                            &hc,
+                            &bu,
+                            &ts,
+                            &bot_id,
+                            &secret,
+                            &rc,
+                        )
+                        .await;
+                        event::handle_message_receive(event_data, &eb, &bot_id, sender_role).await;
+                        mi.fetch_add(1, Ordering::Relaxed);
+                        hb.beat();
+                        Ok(())
+                    }
+                }
+            })
+            .on_event("im.chat.updated_v1", {
+                let rc = role_cache.clone();
+                let hb = hb_for_events.clone();
+                move |event_data| {
+                    let rc = rc.clone();
+                    let hb = hb.clone();
+                    async move {
+                        if let Some(chat_id) =
+                            event_data.pointer("/chat_id").and_then(|v| v.as_str())
+                        {
+                            if let Ok(mut cache) = rc.lock() {
+                                cache.retain(|key, _| !key.starts_with(&format!("{}:", chat_id)));
+                            }
+                            tracing::info!("飞书群配置变更，已清除群 {} 的角色缓存", chat_id);
+                        }
+                        hb.beat();
+                        Ok(())
+                    }
+                }
+            });
+
+        let ws_client = sdk_client.ws_client(dispatcher);
+        let ws_client = ws_client.log_level(tracing::Level::WARN);
+
+        // Initial heartbeat beat to avoid false Degraded signal during the
+        // 120 s window before the first inbound event arrives.
+        let hb = self.heartbeat.clone();
+        hb.beat();
+        tokio::spawn(async move {
+            tokio::select! {
+                _ = cancel_rx.recv() => {
+                    tracing::info!("飞书 WebSocket 事件订阅已停止");
+                }
+                result = ws_client.start() => {
+                    match result {
+                        Ok(()) => tracing::info!("飞书 WebSocket 连接正常关闭"),
+                        Err(e) => tracing::error!("飞书 WebSocket 连接异常: {}", e),
+                    }
+                }
+            }
+        });
+    }
+
     /// 上传媒体文件到飞书，返回 file_key
     async fn upload_media(&self, media: &MediaAttachment) -> Result<String, GatewayError> {
         let token = self.ensure_token().await?;
@@ -1201,6 +1218,9 @@ mod tests {
         assert_eq!(status.platform, "feishu");
         assert_eq!(status.display_name, "飞书");
         assert!(!status.connected);
+        // health should be present (not None) — frontend relies on this
+        assert!(status.health.is_some(), "health should not be None");
+        assert_eq!(status.health.unwrap(), HealthStatus::Down);
     }
 
     #[tokio::test]

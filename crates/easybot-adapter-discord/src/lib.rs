@@ -1251,8 +1251,8 @@ impl PlatformAdapter for DiscordAdapter {
             display_name: self.display_name.clone(),
             state: self.state.clone(),
             connected: self.state == AdapterState::Connected,
-            health: None,
-            last_error: None,
+            health: Some(self.health_status()),
+            last_error: self.heartbeat.last_error_str(),
             uptime: self.heartbeat.uptime_secs().into(),
             messages_in: self.messages_in.load(Ordering::Relaxed),
             messages_out: self.messages_out.load(Ordering::Relaxed),
@@ -1328,6 +1328,9 @@ mod tests {
         assert_eq!(s.platform, "discord");
         assert_eq!(s.display_name, "Discord");
         assert!(!s.connected);
+        // health should be present (not None) — frontend relies on this
+        assert!(s.health.is_some(), "health should not be None");
+        assert_eq!(s.health.unwrap(), HealthStatus::Down);
     }
 
     #[tokio::test]

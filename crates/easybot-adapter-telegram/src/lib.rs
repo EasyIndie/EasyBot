@@ -1375,8 +1375,8 @@ impl PlatformAdapter for TelegramAdapter {
             display_name: self.display_name.clone(),
             state: self.state.clone(),
             connected: self.state == AdapterState::Connected,
-            health: None,
-            last_error: None,
+            health: Some(self.health_status()),
+            last_error: self.heartbeat.last_error_str(),
             uptime: self.heartbeat.uptime_secs().into(),
             messages_in: self.messages_in.load(Ordering::Relaxed),
             messages_out: self.messages_out.load(Ordering::Relaxed),
@@ -1430,6 +1430,17 @@ mod tests {
         assert_eq!(s.platform, "telegram");
         assert_eq!(s.display_name, "Telegram");
         assert!(!s.connected);
+        // health should be present (not None) — frontend relies on this
+        assert!(s.health.is_some(), "health should not be None");
+        assert_eq!(s.health.unwrap(), HealthStatus::Down);
+    }
+
+    #[test]
+    fn test_status_summary_includes_health() {
+        let adapter = TelegramAdapter::new();
+        // Before init/connect, state is Created → health_status() → Down
+        let s = adapter.status_summary();
+        assert_eq!(s.health, Some(HealthStatus::Down));
     }
 
     #[tokio::test]

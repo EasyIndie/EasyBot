@@ -541,10 +541,25 @@ impl AdapterManager {
             adapters.values().map(|a| a.status_summary()).collect()
         };
 
-        // 仅更新缓存时获取写锁（缩短写锁持有时间）
+        // 合并到缓存时获取写锁。保留缓存中的终止状态（Failed/Stopped），
+        // 避免健康监测器设置的永久失败状态被适配器自身报告覆盖。
         let mut statuses = self.statuses.write().await;
         for s in &fresh_statuses {
-            statuses.insert(s.platform.clone(), s.clone());
+            let should_update = match statuses.get(&s.platform) {
+                Some(cached)
+                    if cached.state == AdapterState::Failed
+                        || cached.state == AdapterState::Stopped =>
+                {
+                    // 健康监测器已将适配器标记为终止状态，不要用 live adapter
+                    // 的 self-report 覆盖（可能在 transport retry 永久失败后
+                    // adapter 实例尚未从 adapters map 中移除）
+                    false
+                }
+                _ => true,
+            };
+            if should_update {
+                statuses.insert(s.platform.clone(), s.clone());
+            }
         }
         statuses.values().cloned().collect()
     }
@@ -834,6 +849,16 @@ impl AdapterManager {
                 let adapter_exists = self.adapters.read().await.contains_key(platform);
 
                 // ── Tier 1: Transport-only retry (adapter exists, no re-auth) ──
+                //
+                // Adapters that need network-auth in connect() (Telegram, Discord,
+                // Feishu) override retry_transport() to return Ok(true) and restart
+                // just the background task without re-authentication.
+                //
+                // Adapters with built-in retry loops (QQ, WeChat) use the default
+                // Ok(false) and fall through to Tier 2. During transient failures
+                // their heartbeat stays fresh (beat on retry), so the health monitor
+                // won't reach this code path. When heartbeat goes stale the internal
+                // loop has exited — full reconnect is the correct recovery.
                 if adapter_exists && state.transport_retries < MAX_TRANSPORT_RETRIES {
                     // Update status to Reconnecting so the admin panel reflects recovery in progress
                     {
@@ -1092,11 +1117,16 @@ impl AdapterManager {
     /// Mark an adapter as permanently failed in the status cache.
     async fn set_status_failed(&self, platform: &str, error_msg: &str) {
         let mut statuses = self.statuses.write().await;
+        // Preserve display_name from existing cache entry if available
+        let display_name = statuses
+            .get(platform)
+            .map(|s| s.display_name.clone())
+            .unwrap_or_else(|| platform.to_string());
         statuses.insert(
             platform.to_string(),
             AdapterStatusSummary {
                 platform: platform.to_string(),
-                display_name: platform.to_string(),
+                display_name,
                 state: AdapterState::Failed,
                 connected: false,
                 health: Some(HealthStatus::Down),
@@ -1293,7 +1323,7 @@ mod tests {
                 display_name: self.display.clone(),
                 state: self.state.clone(),
                 connected: self.state == AdapterState::Connected,
-                health: None,
+                health: Some(self.health_status()),
                 last_error: None,
                 uptime: None,
                 messages_in: 0,
@@ -1783,6 +1813,148 @@ mod tests {
         let status = statuses.iter().find(|s| s.platform == "test-mock");
         assert!(status.is_some());
         assert!(!status.unwrap().connected);
+    }
+
+    // ── health / status_summary 相关测试 ─────────────────────
+
+    #[tokio::test]
+    async fn test_list_statuses_preserves_terminal_failed_state() {
+        let manager = new_manager().await;
+        register_mock_adapter(&manager).await;
+
+        // Start adapter and wait for connection
+        let config = AdapterConfig {
+            enabled: Some(true),
+            token: Some("t".into()),
+            api_key: None,
+            base_url: None,
+            extra: serde_json::json!({}),
+        };
+        manager.start("test-mock", config).await.unwrap();
+        wait_connected(&manager, "test-mock").await;
+
+        // Simulate the race condition: health monitor calls set_status_failed
+        // during a transport retry while the adapter is still in the adapters
+        // map (Tier 1 permanent failure path). The adapter instance hasn't
+        // been removed yet, but the cache has the Failed state.
+        manager
+            .set_status_failed("test-mock", "permanent auth failure")
+            .await;
+
+        // list_statuses should preserve the Failed state from cache,
+        // NOT overwrite it with the live adapter's self-reported Connected.
+        let statuses = manager.list_statuses().await;
+        let test_status = statuses.iter().find(|s| s.platform == "test-mock").unwrap();
+        assert_eq!(
+            test_status.state,
+            AdapterState::Failed,
+            "terminal Failed state should be preserved"
+        );
+        assert_eq!(
+            test_status.last_error.as_deref(),
+            Some("permanent auth failure")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_set_status_failed_preserves_display_name() {
+        let manager = new_manager().await;
+        register_mock_adapter(&manager).await;
+
+        // First, populate the cache with a real display name via start
+        let config = AdapterConfig {
+            enabled: Some(true),
+            token: Some("t".into()),
+            api_key: None,
+            base_url: None,
+            extra: serde_json::json!({}),
+        };
+        manager.start("test-mock", config).await.unwrap();
+        wait_connected(&manager, "test-mock").await;
+
+        // Verify the display name is correct
+        {
+            let statuses = manager.statuses.read().await;
+            let s = statuses.get("test-mock").unwrap();
+            assert_eq!(s.display_name, "Test Mock");
+        }
+
+        // Simulate set_status_failed
+        manager
+            .set_status_failed("test-mock", "permanent auth error")
+            .await;
+
+        // Verify display_name is preserved, not overwritten with "test-mock"
+        let statuses = manager.statuses.read().await;
+        let s = statuses.get("test-mock").unwrap();
+        assert_eq!(s.state, AdapterState::Failed);
+        assert_eq!(s.display_name, "Test Mock");
+        assert_eq!(s.last_error.as_deref(), Some("permanent auth error"));
+    }
+
+    #[tokio::test]
+    async fn test_health_status_computation() {
+        // Test the default health_status() implementation on the trait.
+        // MockTestAdapter uses the default health_status() which checks:
+        //   - Connected + no heartbeat mechanism → Healthy
+        //   - Connected + fresh heartbeat → Healthy
+        //   - Connected + stale heartbeat → Degraded
+        //   - Anything else → Down
+        //
+        // MockTestAdapter does NOT override heartbeat_age_ms() (returns None),
+        // so when Connected, health_status() returns Healthy.
+        // When Created, it returns Down.
+
+        let manager = new_manager().await;
+        register_mock_adapter(&manager).await;
+
+        // Before start: state is Created → health_status() → Down
+        let s = manager.get_status("test-mock").await;
+        // No status yet (adapter never started)
+        assert!(s.is_none());
+
+        // Start and connect
+        let config = AdapterConfig {
+            enabled: Some(true),
+            token: Some("t".into()),
+            api_key: None,
+            base_url: None,
+            extra: serde_json::json!({}),
+        };
+        manager.start("test-mock", config).await.unwrap();
+        wait_connected(&manager, "test-mock").await;
+
+        // After connect: state is Connected, no heartbeat → Healthy
+        let adapters = manager.adapters.read().await;
+        let adapter = adapters.get("test-mock").unwrap();
+        let health = adapter.health().await;
+        assert_eq!(health.status, HealthStatus::Healthy);
+        assert!(health.connected);
+    }
+
+    #[tokio::test]
+    async fn test_list_statuses_reflects_live_adapter_health() {
+        // When an adapter is connected and healthy, list_statuses should
+        // return the live status with correct health (not None).
+        let manager = new_manager().await;
+        register_mock_adapter(&manager).await;
+
+        let config = AdapterConfig {
+            enabled: Some(true),
+            token: Some("t".into()),
+            api_key: None,
+            base_url: None,
+            extra: serde_json::json!({}),
+        };
+        manager.start("test-mock", config).await.unwrap();
+        wait_connected(&manager, "test-mock").await;
+
+        let statuses = manager.list_statuses().await;
+        let s = statuses.iter().find(|s| s.platform == "test-mock").unwrap();
+        assert_eq!(s.state, AdapterState::Connected);
+        assert!(s.connected);
+        // For the mock adapter (no heartbeat mechanism), Connected → Healthy
+        assert_eq!(s.health, Some(HealthStatus::Healthy));
     }
 }
 
