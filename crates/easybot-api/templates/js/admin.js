@@ -552,12 +552,10 @@ async function loadAdapters() {
       }
       const statusClass = statusBadgeClass(displayStatus, a.connected, a.health);
       const icon = icons[a.platform] || '🔌';
-      // 健康状态副标题
-      let healthSubtitle = '';
-      if (a.health && a.health !== 'Healthy') {
-        const healthLabel = a.health === 'Degraded' ? '传输异常' : '传输断开';
-        healthSubtitle = `<div style="font-size:12px;color:var(--text-muted);margin-top:2px">${healthLabel}</div>`;
-      }
+      // 健康状态副标题（默认隐藏，通过 WebSocket 事件更新时显示）
+      const healthLabel = a.health === 'Degraded' ? '传输异常' : a.health === 'Down' ? '传输断开' : '';
+      const healthDisplay = healthLabel ? 'block' : 'none';
+      const healthSubtitle = `<div id="adapter-health-${a.platform}" style="font-size:12px;color:var(--text-muted);margin-top:2px;display:${healthDisplay}">${healthLabel}</div>`;
       return `<div class="card" id="adapter-card-${a.platform}">
         <div style="display:flex;justify-content:space-between;align-items:center">
           <div>
@@ -597,6 +595,17 @@ function updateAdapterCard(platform, status, connected, polling, health) {
     const [startBtn, stopBtn] = btnDiv.querySelectorAll('button');
     if (startBtn) startBtn.disabled = connected || polling;
     if (stopBtn) stopBtn.disabled = !connected || polling;
+  }
+  // 更新健康状态副标题
+  const healthDiv = document.getElementById(`adapter-health-${platform}`);
+  if (healthDiv) {
+    if (health && health !== 'Healthy') {
+      const healthLabel = health === 'Degraded' ? '传输异常' : '传输断开';
+      healthDiv.textContent = healthLabel;
+      healthDiv.style.display = 'block';
+    } else {
+      healthDiv.style.display = 'none';
+    }
   }
 }
 
@@ -1856,7 +1865,7 @@ function handleGatewayEvent(msg) {
       };
       const mapped = statusMap[t];
       if (platform && mapped) {
-        updateAdapterCard(platform, mapped.status, mapped.connected, false, null);
+        updateAdapterCard(platform, mapped.status, mapped.connected, false, msg.data?.health || null);
       } else {
         tabRegistry.adapters.refresh();
       }

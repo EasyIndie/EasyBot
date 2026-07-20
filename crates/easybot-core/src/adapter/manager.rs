@@ -896,6 +896,12 @@ impl AdapterManager {
                         }
                     }
 
+                    // Publish reconnecting event so frontend can update in real-time
+                    self.publish_event(
+                        event_types::ADAPTER_RECONNECTING,
+                        serde_json::json!({"platform": platform}),
+                    );
+
                     match self.retry_transport(platform).await {
                         Ok(true) => {
                             // Transport restart succeeded — adapter is healthy again.
@@ -903,7 +909,27 @@ impl AdapterManager {
                             state.backoff_until = Some(Instant::now() + TRANSPORT_RETRY_BACKOFF);
                             // NOTE: do NOT reset total_failures — transport retries
                             // are cheap; we still want to track overall instability.
-                            self.update_status_to_reconnecting(platform).await;
+                            // Restore Connected status and publish event so the frontend
+                            // reflects the recovery in real-time.
+                            let health_status = {
+                                let adapters = self.adapters.read().await;
+                                adapters.get(platform.as_str()).map(|a| a.health_status())
+                            };
+                            {
+                                let mut statuses = self.statuses.write().await;
+                                if let Some(status) = statuses.get_mut(platform) {
+                                    status.state = AdapterState::Connected;
+                                    status.connected = true;
+                                }
+                            }
+                            self.publish_event(
+                                event_types::ADAPTER_RECONNECTED,
+                                serde_json::json!({
+                                    "platform": platform,
+                                    "connected": true,
+                                    "health": health_status,
+                                }),
+                            );
                             info!(
                                 "Transport retry succeeded for '{}' (attempt {}/{})",
                                 platform, state.transport_retries, MAX_TRANSPORT_RETRIES
@@ -940,6 +966,13 @@ impl AdapterManager {
                                         let _ = adapter.disconnect().await;
                                     }
                                     self.set_status_failed(platform, &msg).await;
+                                    self.publish_event(
+                                        event_types::ADAPTER_RECONNECT_FAILED,
+                                        serde_json::json!({
+                                            "platform": platform,
+                                            "error": &msg,
+                                        }),
+                                    );
                                     continue;
                                 }
                                 ReconnectFailure::Transient(msg) => {
@@ -1187,14 +1220,6 @@ impl AdapterManager {
             );
         }
         self.publish_adapter_error(platform, error_msg);
-    }
-
-    /// Update an existing status entry to Reconnecting state.
-    async fn update_status_to_reconnecting(&self, platform: &str) {
-        let mut statuses = self.statuses.write().await;
-        if let Some(status) = statuses.get_mut(platform) {
-            status.state = AdapterState::Reconnecting;
-        }
     }
 
     /// 发布事件到 EventBus
