@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.16] - 2026-07-20
+
 ### Fixed
 
 - **管理后台适配器状态变化未能实时更新** — 健康监测器 Tier 1（transport-only retry）路径存在四个
