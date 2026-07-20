@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **CI: composite action `${{ }}` 表达式解析失败** — `.github/actions/setup-rust/action.yml`
+  `cache-save-if` 输入描述的例子里包含 `${{ github.ref }}` 表达式，GitHub Actions 在解析
+  复合 action 元数据时对所有 `${{ }}` 语法求值，但 `github` 上下文在此层面不可用。
+  修复：description 中使用纯文本示例，去除表达式符号。
+- **CI: feature-check 矩阵缺少 protoc** — `.github/workflows/ci.yml` feature-check 矩阵前
+  两组使用 `install-protoc: none`，但 `cargo check --workspace` 编译所有 workspace 成员
+  （含 `easybot-adapter-feishu`，依赖需 protoc 的 `larksuite-oapi-sdk-rs`）。修复：所有
+  矩阵条目统一使用 `install-protoc: auto`。
+- **Security Audit: `spin v0.9.8` yanked 告警阻塞** — `cargo audit --deny warnings` 检测到
+  传递依赖 `spin v0.9.8`（通过 `flume` → `sqlx`）已从 crates.io 撤回，且无 RUSTSEC 咨询
+  ID 可忽略。修复：在 audit 工作流中添加 `--no-yanked` 跳过 yanked 检查（yanked 是发布管理
+  问题而非安全漏洞）。
+
+### Docs
+
+- **CHANGELOG 更新** — 记录三项 CI/Security Audit 修复。
+
 ## [0.0.15] - 2026-07-10
 
 ### Added
