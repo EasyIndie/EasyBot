@@ -113,6 +113,12 @@ pub async fn create_pool(db_path: &std::path::Path) -> Result<SqlitePool, StoreE
         .execute(&pool)
         .await
         .ok();
+    // 启用增量 vacuum：删除数据后自动标记空闲页，配合 periodic  incremental_vacuum
+    // 将空闲页归还给文件系统，防止数据库文件长期膨胀
+    sqlx::query("PRAGMA auto_vacuum=INCREMENTAL")
+        .execute(&pool)
+        .await
+        .ok();
 
     Ok(pool)
 }

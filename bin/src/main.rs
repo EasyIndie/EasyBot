@@ -36,6 +36,55 @@ struct Cli {
     debug: bool,
 }
 
+/// 删除指定目录中超过 `cutoff` 时间的 easybot 日志文件。
+///
+/// 日志文件命名格式为 `easybot.YYYY-MM-DD`（由 tracing-appender DAILY rotation 生成）。
+/// 此函数会扫描日志目录，删除修改时间早于 `cutoff` 的 `.log` 文件（排除当前正在写入的文件）。
+fn cleanup_old_logs(
+    log_dir: &std::path::Path,
+    cutoff: std::time::SystemTime,
+) -> std::io::Result<()> {
+    let dir = match std::fs::read_dir(log_dir) {
+        Ok(d) => d,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e),
+    };
+    let mut deleted = 0u32;
+    for entry in dir.flatten() {
+        let path = entry.path();
+        // 只处理 easybot 日志文件（命名以 easybot 开头且以 .log 结尾，或者是无扩展名的日期文件）
+        let is_log = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .map(|n| n.starts_with("easybot"))
+            .unwrap_or(false);
+        if !is_log {
+            continue;
+        }
+        match entry.metadata().and_then(|m| m.modified()) {
+            Ok(modified) if modified < cutoff => {
+                if let Err(e) = std::fs::remove_file(&path) {
+                    tracing::warn!("Failed to remove old log file {}: {}", path.display(), e);
+                } else {
+                    deleted += 1;
+                }
+            }
+            Err(e) => {
+                tracing::warn!("Failed to stat log file {}: {}", path.display(), e);
+            }
+            _ => {}
+        }
+    }
+    if deleted > 0 {
+        tracing::info!(
+            "Cleaned {} old log files from {}",
+            deleted,
+            log_dir.display()
+        );
+    }
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
@@ -555,7 +604,7 @@ async fn main() -> anyhow::Result<()> {
         tracing::info!("No session store available, TTL retention disabled");
     }
 
-    // 启动 SQLite WAL checkpoint 后台任务（防止 WAL 文件无限增长）
+    // 启动 SQLite 维护后台任务（WAL checkpoint + 增量 VACUUM）
     if let Some(ref pool) = retention_pool {
         let pool = pool.clone();
         let interval = std::time::Duration::from_secs(ttl_cleanup_interval_secs);
@@ -563,18 +612,23 @@ async fn main() -> anyhow::Result<()> {
             tokio::time::sleep(interval).await; // 与 RetentionWorker 相同的首次延迟
             loop {
                 tokio::time::sleep(interval).await;
+                // WAL checkpoint: 归零 WAL 文件，防止无限增长
                 if let Err(e) = sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
                     .execute(&pool)
                     .await
                 {
                     tracing::warn!("WAL checkpoint failed: {}", e);
                 }
+                // 增量 VACUUM: 将已标记的空闲页归还给文件系统，防止数据库文件长期膨胀
+                if let Err(e) = sqlx::query("PRAGMA incremental_vacuum")
+                    .execute(&pool)
+                    .await
+                {
+                    tracing::warn!("Incremental vacuum failed: {}", e);
+                }
             }
         });
-        tracing::info!(
-            "SQLite WAL checkpoint task started (interval: {:?})",
-            interval
-        );
+        tracing::info!("SQLite maintenance task started (interval: {:?})", interval);
     }
 
     // 启动 SessionManager 内存清理任务（配合 RetentionWorker 的数据库 TTL）
@@ -594,6 +648,24 @@ async fn main() -> anyhow::Result<()> {
             tokio::time::sleep(std::time::Duration::from_secs(ttl_cleanup_interval_secs)).await;
         }
     });
+
+    // 启动日志文件清理后台任务（删除超过 30 天的旧日志，防止无限堆积）
+    if log_output == "file" {
+        let log_dir = paths.logs_dir.clone();
+        let cleanup_interval = std::time::Duration::from_secs(86_400); // 每天清理一次
+        tokio::spawn(async move {
+            tokio::time::sleep(cleanup_interval).await;
+            loop {
+                tokio::time::sleep(cleanup_interval).await;
+                let cutoff =
+                    std::time::SystemTime::now() - std::time::Duration::from_secs(30 * 86_400); // 30 天
+                if let Err(e) = cleanup_old_logs(&log_dir, cutoff) {
+                    tracing::warn!("Log cleanup failed: {}", e);
+                }
+            }
+        });
+        tracing::info!("Log file cleanup task started (max 30 days, interval: 24h)");
+    }
 
     // 发布网关启动事件
     event_bus.publish(GatewayEvent::new(
