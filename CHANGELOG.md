@@ -57,10 +57,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `heartbeat.beat()`。
 - **飞书 WebSocket 任务简化** — 移除独立心跳定时器，心跳改为事件驱动。
 
+### Cleanup
+
+- **移除 `PendingConnection` 死代码** — struct 的两个字段（`platform`、`display_name`）从未被读取，
+  HashMap key 已存储平台名。替换为 `HashSet<String>`，语义更清晰。
+- **CLAUDE.md 新增约束** — `assets/` 目录中的图片即使未被代码引用也不算死文件（品牌素材）。
+
 ### Docs
 
 - **CLAUDE.md 更新** — 新增 Health monitor、`retry_transport()`、Heartbeat 语义、WeChat iLink API
-  四个 Key Pattern 条目。适配器表格标注 WeChat v2。
+  四个 Key Pattern 条目。适配器表格标注 WeChat v2。新增 `assets/` 品牌素材保护规则。
 - **平台能力文档更新** — `03 platform-capabilities.md` 断线自动重连章节重写，反映分级响应机制
   和事件驱动心跳。
 - **用户指南更新** — WeChat 章节 iLink Bot 链接更新为官方 openclaw-weixin SDK。
