@@ -172,6 +172,7 @@ fn available_space(path: &Path) -> Result<u64, UpdateError> {
 }
 
 #[cfg(not(unix))]
+#[allow(dead_code)]
 fn available_space(_path: &Path) -> Result<u64, UpdateError> {
     // Windows: 使用 GetDiskFreeSpaceEx
     Ok(1_000_000_000) // 保守返回 1GB

@@ -159,6 +159,7 @@ fn set_executable(path: &Path) -> Result<(), UpdateError> {
 }
 
 #[cfg(not(unix))]
+#[allow(dead_code)]
 fn set_executable(_path: &Path) -> Result<(), UpdateError> {
     // Windows 没有 Unix 风格的可执行位
     Ok(())
