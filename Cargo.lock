@@ -1025,6 +1025,7 @@ dependencies = [
  "rand_core 0.9.5",
  "regex",
  "reqwest",
+ "semver",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -1716,7 +1717,9 @@ version = "0.0.16"
 dependencies = [
  "easybot-core",
  "easybot-plugin-sdk",
+ "semver",
  "serde_json",
+ "sqlx",
  "tempfile",
  "tokio",
  "tracing",

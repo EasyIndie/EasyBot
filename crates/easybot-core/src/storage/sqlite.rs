@@ -12,55 +12,13 @@ use crate::types::session::{ResetPolicy, Session, SessionFilter, SessionSource};
 
 // ── Schema ──
 
-const SCHEMA_SQL: &str = "
-CREATE TABLE IF NOT EXISTS sessions (
-    key          TEXT PRIMARY KEY,
-    platform     TEXT NOT NULL,
-    chat_id      TEXT NOT NULL,
-    thread_id    TEXT,
-    created_at   INTEGER NOT NULL,
-    updated_at   INTEGER NOT NULL,
-    source_json  TEXT NOT NULL,
-    reset_policy TEXT NOT NULL,
-    metadata     TEXT NOT NULL DEFAULT '{}',
-    last_message TEXT,
-    last_message_at INTEGER
-);
-
-CREATE INDEX IF NOT EXISTS idx_sessions_platform ON sessions(platform);
-CREATE INDEX IF NOT EXISTS idx_sessions_updated ON sessions(updated_at DESC);
-
-CREATE TABLE IF NOT EXISTS messages (
-    id           TEXT PRIMARY KEY,
-    session_key  TEXT NOT NULL,
-    platform     TEXT NOT NULL,
-    chat_id      TEXT NOT NULL,
-    role         TEXT NOT NULL,
-    text         TEXT,
-    raw_data     TEXT NOT NULL,
-    timestamp    INTEGER NOT NULL,
-    created_at   INTEGER NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_messages_sk ON messages(session_key, timestamp DESC);
-CREATE INDEX IF NOT EXISTS idx_messages_pc ON messages(platform, chat_id, timestamp DESC);
-CREATE INDEX IF NOT EXISTS idx_messages_ct ON messages(created_at);
-
-CREATE TABLE IF NOT EXISTS api_keys (
-    id            TEXT PRIMARY KEY,
-    name          TEXT NOT NULL,
-    prefix        TEXT NOT NULL,
-    created_at    INTEGER NOT NULL,
-    expires_at    INTEGER,
-    last_used_at  INTEGER,
-    revoked       INTEGER NOT NULL DEFAULT 0,
-    permissions   TEXT NOT NULL DEFAULT '[]',
-    event_filters TEXT NOT NULL DEFAULT '[]',
-    hash          TEXT NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_api_keys_created ON api_keys(created_at DESC);
-";
+/// 运行数据库迁移（版本化）
+///
+/// 从旧版幂等 CREATE TABLE 升级为版本化增量迁移。
+/// 调用 `migration::run_migrations()` 逐版执行并追踪版本。
+pub async fn run_migrations(pool: &SqlitePool) -> Result<(), StoreError> {
+    crate::storage::migration::run_migrations(pool).await
+}
 
 // ── 连接与迁移 ──
 
@@ -160,12 +118,6 @@ pub async fn create_shared_pool(db_path: &std::path::Path) -> Result<SqlitePool,
         .ok();
 
     Ok(pool)
-}
-
-/// 运行数据库迁移（幂等）
-pub async fn run_migrations(pool: &SqlitePool) -> Result<(), StoreError> {
-    sqlx::query(SCHEMA_SQL).execute(pool).await?;
-    Ok(())
 }
 
 // ── Session 行类型 ──

@@ -81,6 +81,8 @@ impl Modify for SecurityAddon {
         routes::admin::admin_login,
         // System
         routes::system::system_info,
+        // Version update check
+        routes::update::update_check,
         // Logs
         routes::logs::log_entries,
     ),
@@ -165,6 +167,8 @@ impl Modify for SecurityAddon {
             // Error
             easybot_core::types::error::ApiErrorResponse,
             easybot_core::types::error::ApiErrorDetail,
+            // Update check
+            routes::update::UpdateCheckResponse,
             // Logs
             routes::logs::LogQuery,
         )

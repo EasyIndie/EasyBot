@@ -145,7 +145,11 @@ impl Server {
             // API Key management
             (_, _) if route_path.starts_with("/api-keys") => Permission::ApiKeysManage,
             // System and logs endpoints require config read
-            (&Method::GET, _) if route_path == "/system" => Permission::ConfigRead,
+            (&Method::GET, _)
+                if route_path == "/system" || route_path == "/system/update-check" =>
+            {
+                Permission::ConfigRead
+            }
             (&Method::GET, _) if route_path == "/logs" => Permission::ConfigRead,
             // Chats endpoints require adapters read
             (&Method::GET, _) if route_path.starts_with("/chats") => Permission::AdaptersRead,
@@ -343,6 +347,8 @@ pub fn create_router(state: AppState) -> Router {
         .route("/config", put(routes::config::update_config))
         // 系统信息（管理后台概览页）
         .route("/system", get(routes::system::system_info))
+        // 版本更新检查
+        .route("/system/update-check", get(routes::update::update_check))
         // 日志查询（管理后台日志页）
         .route("/logs", get(routes::logs::log_entries))
         // API Key 管理
