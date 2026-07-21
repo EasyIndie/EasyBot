@@ -5,6 +5,7 @@
 //! SessionManager 使用 SessionStore 做持久化写入；
 //! MessageStore 用于消息历史存储。
 
+pub mod migration;
 pub mod postgres;
 pub mod retention;
 pub mod sqlite;
