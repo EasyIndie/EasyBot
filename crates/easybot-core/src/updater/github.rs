@@ -18,6 +18,7 @@ pub struct GitHubClient {
     client: reqwest::Client,
     owner: String,
     repo: String,
+    base_url: String,
     #[allow(dead_code)]
     token: Option<String>,
 
@@ -32,6 +33,11 @@ impl GitHubClient {
     ///
     /// 自动检查 `GITHUB_TOKEN` 环境变量以提升速率限制。
     pub fn new(owner: &str, repo: &str) -> Self {
+        Self::with_base_url(owner, repo, GITHUB_API_BASE)
+    }
+
+    /// 创建带自定义 base URL 的客户端（用于测试）
+    fn with_base_url(owner: &str, repo: &str, base_url: &str) -> Self {
         let token = std::env::var("GITHUB_TOKEN").ok().filter(|t| !t.is_empty());
 
         let mut headers = reqwest::header::HeaderMap::new();
@@ -60,6 +66,7 @@ impl GitHubClient {
             client,
             owner: owner.to_string(),
             repo: repo.to_string(),
+            base_url: base_url.to_string(),
             token,
             release_cache: None,
             manifest_cache: None,
@@ -78,7 +85,7 @@ impl GitHubClient {
 
         let url = format!(
             "{}/repos/{}/{}/releases/latest",
-            GITHUB_API_BASE, self.owner, self.repo
+            self.base_url, self.owner, self.repo
         );
 
         let resp = self.client.get(&url).send().await?;
@@ -123,7 +130,7 @@ impl GitHubClient {
         // 先从 release 中找到 version.json 资产
         let release_url = format!(
             "{}/repos/{}/{}/releases/tags/{}",
-            GITHUB_API_BASE, self.owner, self.repo, tag
+            self.base_url, self.owner, self.repo, tag
         );
 
         let resp = self.client.get(&release_url).send().await?;
@@ -137,7 +144,6 @@ impl GitHubClient {
 
         let release: ReleaseInfo = resp.json().await?;
 
-        // 查找 easybot-version.json asset
         let asset_url = release
             .assets
             .iter()
@@ -203,7 +209,7 @@ impl GitHubClient {
         // 获取 checksums.txt 的下载 URL
         let release_url = format!(
             "{}/repos/{}/{}/releases/tags/{}",
-            GITHUB_API_BASE, self.owner, self.repo, tag
+            self.base_url, self.owner, self.repo, tag
         );
 
         let resp = self.client.get(&release_url).send().await?;
@@ -401,5 +407,148 @@ mod tests {
         // 验证客户端创建成功
         assert_eq!(client.owner, "EasyIndie");
         assert_eq!(client.repo, "EasyBot");
+    }
+
+    #[tokio::test]
+    async fn test_github_api_latest_release_mock() {
+        // 启动 wiremock 服务器
+        let mock_server = wiremock::MockServer::start().await;
+
+        // Mock 最新 release 响应
+        let release_body = serde_json::json!({
+            "tag_name": "v0.1.0",
+            "html_url": "https://github.com/EasyIndie/EasyBot/releases/tag/v0.1.0",
+            "body": "Release notes",
+            "published_at": "2026-07-22T00:00:00Z",
+            "assets": [
+                {
+                    "name": "easybot-x86_64-unknown-linux-musl",
+                    "size": 12345678,
+                    "browser_download_url": "https://github.com/EasyIndie/EasyBot/releases/download/v0.1.0/easybot-x86_64-unknown-linux-musl"
+                },
+                {
+                    "name": "checksums.txt",
+                    "size": 512,
+                    "browser_download_url": "https://github.com/EasyIndie/EasyBot/releases/download/v0.1.0/checksums.txt"
+                }
+            ]
+        });
+
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path(
+                "/repos/EasyIndie/EasyBot/releases/latest",
+            ))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200)
+                    .set_body_json(&release_body)
+                    .insert_header("Content-Type", "application/json"),
+            )
+            .mount(&mock_server)
+            .await;
+
+        // 创建指向 mock 服务器的客户端
+        let mut client = GitHubClient::with_base_url("EasyIndie", "EasyBot", &mock_server.uri());
+
+        // 测试获取最新 release
+        let release = client.latest_release().await.expect("Should fetch release");
+        assert_eq!(release.tag_name, "v0.1.0");
+        assert_eq!(release.assets.len(), 2);
+        assert_eq!(release.assets[0].name, "easybot-x86_64-unknown-linux-musl");
+    }
+
+    #[tokio::test]
+    async fn test_github_api_rate_limit() {
+        let mock_server = wiremock::MockServer::start().await;
+
+        // Mock 403 响应（速率限制）
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path(
+                "/repos/EasyIndie/EasyBot/releases/latest",
+            ))
+            .respond_with(wiremock::ResponseTemplate::new(403))
+            .mount(&mock_server)
+            .await;
+
+        let mut client = GitHubClient::with_base_url("EasyIndie", "EasyBot", &mock_server.uri());
+
+        let result = client.latest_release().await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            UpdateError::RateLimited => {} // 预期的错误
+            e => panic!("Expected RateLimited, got: {}", e),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_github_api_not_found() {
+        let mock_server = wiremock::MockServer::start().await;
+
+        // Mock 404 响应
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path(
+                "/repos/EasyIndie/EasyBot/releases/latest",
+            ))
+            .respond_with(wiremock::ResponseTemplate::new(404))
+            .mount(&mock_server)
+            .await;
+
+        let mut client = GitHubClient::with_base_url("EasyIndie", "EasyBot", &mock_server.uri());
+
+        let result = client.latest_release().await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_github_api_checksums_mock() {
+        let mock_server = wiremock::MockServer::start().await;
+
+        let checksums_content =
+            "abc123def456  easybot-x86_64-unknown-linux-musl\n789abc012def  checksums.txt\n";
+
+        // Mock release 列表返回
+        let release_body = serde_json::json!({
+            "tag_name": "v0.1.0",
+            "html_url": "https://github.com/EasyIndie/EasyBot/releases/tag/v0.1.0",
+            "body": "",
+            "assets": [
+                {
+                    "name": "checksums.txt",
+                    "size": 512,
+                    "browser_download_url": format!("{}/assets/checksums.txt", mock_server.uri())
+                }
+            ]
+        });
+
+        // Mock release by tag
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path(
+                "/repos/EasyIndie/EasyBot/releases/tags/v0.1.0",
+            ))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200)
+                    .set_body_json(&release_body)
+                    .insert_header("Content-Type", "application/json"),
+            )
+            .mount(&mock_server)
+            .await;
+
+        // Mock checksums.txt asset
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/assets/checksums.txt"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(checksums_content))
+            .mount(&mock_server)
+            .await;
+
+        let mut client = GitHubClient::with_base_url("EasyIndie", "EasyBot", &mock_server.uri());
+
+        let checksums = client
+            .checksums("v0.1.0")
+            .await
+            .expect("Should fetch checksums");
+        assert_eq!(checksums.len(), 2);
+        assert_eq!(
+            checksums.get("easybot-x86_64-unknown-linux-musl").unwrap(),
+            "abc123def456"
+        );
     }
 }
