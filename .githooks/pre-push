@@ -1,6 +1,6 @@
 #!/bin/sh
 # EasyBot pre-push hook
-# 安装: git config core.hooksPath scripts   (或运行 make setup)
+# 安装: cargo-husky 在 cargo build 时自动配置
 #
 # push 前自动运行验收脚本，失败则阻止推送，避免 CI 不通过。
 # 完整模式（默认）：bash scripts/verify.sh

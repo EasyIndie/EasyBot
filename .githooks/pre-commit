@@ -1,6 +1,6 @@
 #!/bin/sh
 # EasyBot pre-commit hook
-# 安装: git config core.hooksPath scripts   (或运行 make setup)
+# 安装: cargo-husky 在 cargo build 时自动配置
 #
 # 提交前自动检查 cargo fmt 和 cargo clippy，不通过则阻止提交。
 # fmt 会尝试自动格式化后再阻止，clippy 直接阻止。

@@ -9,12 +9,6 @@ help:  ## 显示此帮助
 	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | sort | \
 		awk 'BEGIN {FS = ":.*## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
 
-# ── 项目初始化 ────────────────────────────────
-
-setup:  ## 首次克隆后：配置 git hooks 路径
-	git config core.hooksPath scripts
-	@echo "✅ Git hooks 已配置 (core.hooksPath = scripts)"
-
 # ── CI / 验收 ─────────────────────────────────
 
 verify:  ## 运行完整验收（与 CI 一致）
