@@ -122,6 +122,34 @@ jobs:
           name: release-body
           path: release_body.md
 
+      # Generate easybot-version.json for the auto-update system
+      - name: Generate easybot-version.json
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          cat > easybot-version.json <<'EOF'
+          {
+            "version": "'"$VERSION"'",
+            "tag": "v'"$VERSION"'",
+            "release_date": "$(date +%Y-%m-%d)",
+            "schema_version": 1,
+            "requires_db_migration": false,
+            "migrations": [],
+            "requires_config_migration": false,
+            "config_changes": [],
+            "breaking_changes": [],
+            "plugin_abi_version": 1,
+            "min_upgradable_from": "0.0.10"
+          }
+          EOF
+          echo "Generated easybot-version.json for v$VERSION"
+
+      - name: Upload easybot-version.json
+        uses: actions/upload-artifact@v7
+        with:
+          name: easybot-version
+          path: easybot-version.json
+
       # Commit version bump and push to main (skipped if no changes — re-run safe)
       - name: Commit version bump and push to main
         env:
@@ -350,6 +378,12 @@ jobs:
           name: release-body
           path: .release-body
 
+      - name: Download easybot-version.json
+        uses: actions/download-artifact@v8
+        with:
+          name: easybot-version
+          path: .
+
       - name: Create Release
         uses: softprops/action-gh-release@v3
         with:
@@ -361,6 +395,7 @@ jobs:
           files: |
             easybot-*/easybot-*
             checksums.txt
+            easybot-version.json
 
   # ── Build and push Docker image ────────────────────
   docker:

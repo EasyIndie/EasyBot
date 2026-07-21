@@ -11,4 +11,5 @@ pub mod logs;
 pub mod messages;
 pub mod sessions;
 pub mod system;
+pub mod update;
 pub mod ws;

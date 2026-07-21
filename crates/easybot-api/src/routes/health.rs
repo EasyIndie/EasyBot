@@ -12,6 +12,8 @@ pub struct HealthResponse {
     pub status: String,
     #[schema(example = "0.1.0")]
     pub version: String,
+    /// 数据库 schema 版本
+    pub schema_version: i64,
     /// 服务运行时间（秒）
     pub uptime: i64,
     pub adapters: AdapterSummary,
@@ -53,6 +55,7 @@ pub async fn health_check(State(state): State<AppState>) -> Json<HealthResponse>
             "degraded".to_string()
         },
         version: env!("CARGO_PKG_VERSION").to_string(),
+        schema_version: easybot_core::storage::migration::SCHEMA_VERSION,
         uptime: state.started_at.elapsed().as_secs() as i64,
         adapters: AdapterSummary {
             total: statuses.len(),
