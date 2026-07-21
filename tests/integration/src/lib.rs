@@ -8,6 +8,9 @@
 mod cli;
 
 #[cfg(test)]
+mod updater;
+
+#[cfg(test)]
 mod tests {
     use easybot_core::AdapterConfig;
     use easybot_core::AdapterState;
