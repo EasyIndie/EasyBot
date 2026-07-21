@@ -72,6 +72,7 @@ impl WsClient {
 /// 启动 WebSocket 测试服务器
 ///
 /// 绑定随机端口，启动 axum 服务，返回 (AppState, api_key, SocketAddr)。
+/// 启动后通过重试 TCP 连接确保服务器 Accept 循环已运行，避免并发下的竞态条件。
 async fn ws_server() -> (AppState, String, SocketAddr) {
     let (state, key) = common::test_app_state().await;
     let router = easybot_api::server::create_router(state.clone());
@@ -84,8 +85,18 @@ async fn ws_server() -> (AppState, String, SocketAddr) {
         axum::serve(listener, router).await.unwrap();
     });
 
-    // 等待服务器启动
-    tokio::time::sleep(Duration::from_millis(50)).await;
+    // 主动轮询直到服务端可连接，替代固定 sleep
+    let start = std::time::Instant::now();
+    loop {
+        if tokio::net::TcpStream::connect(addr).await.is_ok() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+        assert!(
+            start.elapsed() < Duration::from_secs(5),
+            "WS test server failed to start within 5s"
+        );
+    }
 
     (state, key, addr)
 }
