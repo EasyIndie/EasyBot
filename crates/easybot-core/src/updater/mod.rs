@@ -175,8 +175,8 @@ impl Updater {
             Ok(_) => {
                 tracing::info!("New binary verification passed");
 
-                // 清理备份
-                let _ = BackupManager::cleanup(&manifest).await;
+                // Keep backups and the manifest so `easybot rollback` remains available
+                // after a successful update.
 
                 // 清理临时下载文件
                 let _ = tokio::fs::remove_file(&temp_path).await;
