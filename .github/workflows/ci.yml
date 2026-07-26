@@ -86,27 +86,36 @@ jobs:
       - name: Check (${{ matrix.features }})
         run: cargo check --workspace ${{ matrix.features }} --locked
 
-  # ── Cross-platform check (Linux arm64, macOS arm64, Windows x64/arm64) ──
+  # ── Cross-platform check (Linux/macOS/Windows × x64/arm64) ──
   cross-check:
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
         include:
-          - os: ubuntu-24.04-arm
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-musl
           - os: macos-latest
+            target: x86_64-apple-darwin
+          - os: macos-latest
+            target: aarch64-apple-darwin
           - os: windows-latest
+            target: x86_64-pc-windows-msvc
           - os: windows-11-arm
+            target: aarch64-pc-windows-msvc
       fail-fast: false
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup-rust
         with:
+          target: ${{ matrix.target }}
           install-protoc: auto
-          cache-shared-key: cross-check-${{ runner.os }}-${{ runner.arch }}
+          cache-shared-key: cross-check-${{ matrix.target }}
           cache-save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Check
-        run: cargo check --workspace --features "default,plugin-system" --locked
+        run: cargo check --workspace --features "default,plugin-system" --target ${{ matrix.target }} --locked
 
   # ── Code coverage ───────────────────────────────────────────────────
   coverage:

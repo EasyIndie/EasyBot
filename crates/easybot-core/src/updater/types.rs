@@ -6,6 +6,16 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+/// EasyBot officially published binary targets.
+pub const SUPPORTED_TARGETS: &[&str] = &[
+    "x86_64-unknown-linux-musl",
+    "aarch64-unknown-linux-musl",
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+    "x86_64-pc-windows-msvc",
+    "aarch64-pc-windows-msvc",
+];
+
 /// 目标平台对应的 Release artifact 名称
 ///
 /// 映射规则与 `.github/workflows/release.yml` 的 build-matrix 一致。
@@ -20,13 +30,18 @@ pub struct PlatformAsset {
 ///
 /// 当平台不支持自动更新时返回 `UnsupportedPlatform` 错误。
 pub fn current_target_triple() -> Result<&'static str, UpdateError> {
-    match (std::env::consts::ARCH, std::env::consts::OS) {
-        ("x86_64", "linux") => Ok("x86_64-unknown-linux-musl"),
-        ("aarch64", "linux") => Ok("aarch64-unknown-linux-musl"),
-        ("x86_64", "macos") => Ok("x86_64-apple-darwin"),
-        ("aarch64", "macos") => Ok("aarch64-apple-darwin"),
-        ("x86_64", "windows") => Ok("x86_64-pc-windows-msvc"),
-        ("aarch64", "windows") => Ok("aarch64-pc-windows-msvc"),
+    target_triple_for(std::env::consts::ARCH, std::env::consts::OS)
+}
+
+/// Map Rust runtime architecture and OS names to EasyBot release targets.
+pub fn target_triple_for(arch: &str, os: &str) -> Result<&'static str, UpdateError> {
+    match (arch, os) {
+        ("x86_64", "linux") => Ok(SUPPORTED_TARGETS[0]),
+        ("aarch64", "linux") => Ok(SUPPORTED_TARGETS[1]),
+        ("x86_64", "macos") => Ok(SUPPORTED_TARGETS[2]),
+        ("aarch64", "macos") => Ok(SUPPORTED_TARGETS[3]),
+        ("x86_64", "windows") => Ok(SUPPORTED_TARGETS[4]),
+        ("aarch64", "windows") => Ok(SUPPORTED_TARGETS[5]),
         _ => Err(UpdateError::UnsupportedPlatform),
     }
 }
@@ -36,11 +51,16 @@ pub fn current_target_triple() -> Result<&'static str, UpdateError> {
 /// 例: `easybot-x86_64-unknown-linux-musl`（Windows 追加 `.exe`）
 pub fn current_asset_name() -> Result<String, UpdateError> {
     let triple = current_target_triple()?;
-    Ok(if cfg!(target_os = "windows") {
-        format!("easybot-{}.exe", triple)
+    Ok(asset_name_for_target(triple))
+}
+
+/// Return the expected GitHub Release asset name for a supported target.
+pub fn asset_name_for_target(target_triple: &str) -> String {
+    if target_triple.contains("windows") {
+        format!("easybot-{}.exe", target_triple)
     } else {
-        format!("easybot-{}", triple)
-    })
+        format!("easybot-{}", target_triple)
+    }
 }
 
 /// 版本比较
@@ -302,6 +322,55 @@ mod tests {
             name.starts_with("easybot-"),
             "asset should start with easybot-"
         );
+    }
+
+    #[test]
+    fn test_supported_platform_matrix() {
+        let cases = [
+            (
+                "x86_64",
+                "linux",
+                "x86_64-unknown-linux-musl",
+                "easybot-x86_64-unknown-linux-musl",
+            ),
+            (
+                "aarch64",
+                "linux",
+                "aarch64-unknown-linux-musl",
+                "easybot-aarch64-unknown-linux-musl",
+            ),
+            (
+                "x86_64",
+                "macos",
+                "x86_64-apple-darwin",
+                "easybot-x86_64-apple-darwin",
+            ),
+            (
+                "aarch64",
+                "macos",
+                "aarch64-apple-darwin",
+                "easybot-aarch64-apple-darwin",
+            ),
+            (
+                "x86_64",
+                "windows",
+                "x86_64-pc-windows-msvc",
+                "easybot-x86_64-pc-windows-msvc.exe",
+            ),
+            (
+                "aarch64",
+                "windows",
+                "aarch64-pc-windows-msvc",
+                "easybot-aarch64-pc-windows-msvc.exe",
+            ),
+        ];
+
+        assert_eq!(SUPPORTED_TARGETS.len(), cases.len());
+        for (arch, os, target, asset) in cases {
+            assert_eq!(target_triple_for(arch, os).unwrap(), target);
+            assert_eq!(asset_name_for_target(target), asset);
+            assert!(SUPPORTED_TARGETS.contains(&target));
+        }
     }
 
     #[test]

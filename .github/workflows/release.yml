@@ -372,6 +372,31 @@ jobs:
             fi
           done
 
+      - name: Verify release asset matrix
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected=(
+            "easybot-x86_64-unknown-linux-musl"
+            "easybot-aarch64-unknown-linux-musl"
+            "easybot-x86_64-apple-darwin"
+            "easybot-aarch64-apple-darwin"
+            "easybot-x86_64-pc-windows-msvc.exe"
+            "easybot-aarch64-pc-windows-msvc.exe"
+          )
+
+          for asset in "${expected[@]}"; do
+            matches=(easybot-*/"$asset")
+            if [ ! -f "${matches[0]}" ]; then
+              echo "::error::Missing release asset: $asset"
+              exit 1
+            fi
+            if ! grep -qE "^[0-9a-f]{64}[[:space:]]+$asset$" checksums.txt; then
+              echo "::error::Missing checksum entry for: $asset"
+              exit 1
+            fi
+          done
+
       - name: Download release body
         uses: actions/download-artifact@v8
         with:
