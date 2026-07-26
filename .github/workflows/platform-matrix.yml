@@ -67,13 +67,19 @@ jobs:
         with:
           target: ${{ matrix.target }}
           install-protoc: auto
-          install-zigbuild: ${{ inputs.operation == 'build' && contains(matrix.target, 'musl') }}
+          install-zigbuild: ${{ contains(matrix.target, 'musl') }}
           cache-shared-key: platform-${{ inputs.operation }}-${{ matrix.target }}
           cache-save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Check target
-        if: inputs.operation == 'check'
+        if: inputs.operation == 'check' && !contains(matrix.target, 'musl')
         run: cargo check --workspace --features "default,plugin-system" --target ${{ matrix.target }} --locked
+
+      # musl dependencies such as ring and aws-lc-sys compile C sources.
+      # Validate the release binary with zigbuild's cross C toolchain.
+      - name: Check target (musl)
+        if: inputs.operation == 'check' && contains(matrix.target, 'musl')
+        run: cargo zigbuild --bin easybot --features "default,plugin-system" --target ${{ matrix.target }} --locked
 
       - name: Build release binary (musl)
         if: inputs.operation == 'build' && contains(matrix.target, 'musl')
