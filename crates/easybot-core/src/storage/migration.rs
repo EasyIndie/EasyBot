@@ -163,9 +163,25 @@ CREATE TABLE IF NOT EXISTS messages (
 CREATE INDEX IF NOT EXISTS idx_messages_sk ON messages(session_key, timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_messages_pc ON messages(platform, chat_id, timestamp DESC);
 CREATE INDEX IF NOT EXISTS idx_messages_ct ON messages(created_at);
+
+CREATE TABLE IF NOT EXISTS api_keys (
+    id            VARCHAR(255) PRIMARY KEY,
+    name          TEXT NOT NULL,
+    prefix        VARCHAR(64) NOT NULL,
+    created_at    BIGINT NOT NULL,
+    expires_at    BIGINT,
+    last_used_at  BIGINT,
+    revoked       BOOLEAN NOT NULL DEFAULT FALSE,
+    permissions   JSONB NOT NULL DEFAULT '[]',
+    event_filters JSONB NOT NULL DEFAULT '[]',
+    hash          TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_api_keys_created ON api_keys(created_at DESC);
 ";
 
 const V1_ROLLBACK_POSTGRES: &str = "
+DROP TABLE IF EXISTS api_keys;
 DROP TABLE IF EXISTS messages;
 DROP TABLE IF EXISTS sessions;
 ";

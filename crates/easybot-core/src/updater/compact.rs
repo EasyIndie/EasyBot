@@ -208,26 +208,6 @@ impl BackupManager {
 
         Ok(())
     }
-
-    /// 删除所有备份文件
-    pub async fn cleanup(manifest: &UpdateManifest) -> Result<(), UpdateError> {
-        let paths = [
-            manifest.binary_backup.as_deref(),
-            manifest.db_backup.as_deref(),
-            manifest.config_backup.as_deref(),
-        ];
-
-        for path in paths.iter().flatten() {
-            let p = Path::new(path);
-            if p.exists()
-                && let Err(e) = tokio::fs::remove_file(p).await
-            {
-                tracing::warn!("Failed to remove backup {}: {}", path, e);
-            }
-        }
-
-        Ok(())
-    }
 }
 
 // ══════════════════════════════════════════════════════════════════

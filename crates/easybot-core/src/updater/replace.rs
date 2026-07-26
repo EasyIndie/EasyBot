@@ -113,12 +113,12 @@ fn create_backup(exe_path: &Path, version: &str) -> Result<PathBuf, UpdateError>
 
 /// 验证新二进制能否正常启动
 ///
-/// 通过运行 `{new_bin} --check-update` 检测退出码。
+/// 通过运行 `{new_bin} check-update` 检测退出码。
 pub async fn verify_binary(bin_path: &Path) -> Result<(), UpdateError> {
     let bin = bin_path.to_path_buf();
     tokio::task::spawn_blocking(move || {
         let output = std::process::Command::new(&bin)
-            .arg("--check-update")
+            .arg("check-update")
             .output()
             .map_err(|e| {
                 UpdateError::VerificationFailed(format!("Cannot start new binary: {}", e))
