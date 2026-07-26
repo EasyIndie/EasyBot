@@ -1,9 +1,9 @@
 #!/bin/sh
 # EasyBot pre-commit hook
-# 安装: cargo-husky 在 cargo build 时自动配置
+# 安装: bin/build.rs 在 cargo build/check/test 时自动配置 core.hooksPath
 #
-# 提交前自动检查 cargo fmt 和 cargo clippy，不通过则阻止提交。
-# fmt 会尝试自动格式化后再阻止，clippy 直接阻止。
+# 提交前只运行快速检查，不通过则阻止提交。
+# 更重的 clippy/test 放到 pre-push，完整验收请运行 make verify。
 #
 # 跳过检查（不推荐）: git commit --no-verify
 
@@ -15,7 +15,7 @@ if command -v cargo >/dev/null 2>&1; then
 elif command -v wsl >/dev/null 2>&1; then
     CARGO="wsl cargo"
 else
-    echo ">>> 跳过 cargo fmt/clippy（cargo 不可用）"
+    echo ">>> 跳过 Rust 检查（cargo 不可用）"
     exit 0
 fi
 
@@ -33,13 +33,12 @@ if git diff --cached --name-only --diff-filter=ACMR | grep -q '\.rs$'; then
     fi
     echo ">>> cargo fmt 通过"
 
-    # ── cargo clippy ──
-    echo ">>> 检查 cargo clippy..."
-    if ! $CARGO clippy --all-targets -- -D warnings 2>/dev/null; then
+    # ── cargo check ──
+    echo ">>> 快速编译检查 cargo check..."
+    if ! $CARGO check --workspace --features "default,plugin-system"; then
         echo ""
-        echo ">>> cargo clippy 未通过。请修复以上 warning/error 后重试。"
-        echo "    快速查看: cargo clippy --all-targets"
+        echo ">>> cargo check 未通过。请修复以上 error 后重试。"
         exit 1
     fi
-    echo ">>> cargo clippy 通过"
+    echo ">>> cargo check 通过"
 fi
