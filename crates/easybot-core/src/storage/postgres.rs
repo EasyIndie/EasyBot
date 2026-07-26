@@ -9,43 +9,6 @@ use sqlx::PgPool;
 use super::{MessageFilter, MessageRole, MessageStore, SessionStore, StoreError, StoredMessage};
 use crate::types::session::{ResetPolicy, Session, SessionFilter, SessionSource};
 
-// ── Schema ──
-
-const SCHEMA_SQL: &str = "
-CREATE TABLE IF NOT EXISTS sessions (
-    key          VARCHAR(255) PRIMARY KEY,
-    platform     VARCHAR(64) NOT NULL,
-    chat_id      VARCHAR(255) NOT NULL,
-    thread_id    VARCHAR(255),
-    created_at   BIGINT NOT NULL,
-    updated_at   BIGINT NOT NULL,
-    source_json  TEXT NOT NULL,
-    reset_policy VARCHAR(32) NOT NULL,
-    metadata     JSONB NOT NULL DEFAULT '{}',
-    last_message TEXT,
-    last_message_at BIGINT
-);
-
-CREATE INDEX IF NOT EXISTS idx_sessions_platform ON sessions(platform);
-CREATE INDEX IF NOT EXISTS idx_sessions_updated ON sessions(updated_at DESC);
-
-CREATE TABLE IF NOT EXISTS messages (
-    id           VARCHAR(255) PRIMARY KEY,
-    session_key  VARCHAR(255) NOT NULL,
-    platform     VARCHAR(64) NOT NULL,
-    chat_id      VARCHAR(255) NOT NULL,
-    role         VARCHAR(16) NOT NULL,
-    text         TEXT,
-    raw_data     JSONB NOT NULL,
-    timestamp    BIGINT NOT NULL,
-    created_at   BIGINT NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_messages_sk ON messages(session_key, timestamp DESC);
-CREATE INDEX IF NOT EXISTS idx_messages_pc ON messages(platform, chat_id, timestamp DESC);
-CREATE INDEX IF NOT EXISTS idx_messages_ct ON messages(created_at);
-";
-
 // ── 连接与迁移 ──
 
 /// 创建 PostgreSQL 连接池
@@ -62,10 +25,11 @@ pub async fn create_pool(
     Ok(pool)
 }
 
-/// 运行数据库迁移（幂等）
+/// 运行数据库迁移（版本化，带 `pg_advisory_lock` 互斥）
+///
+/// 从旧版幂等 CREATE TABLE 升级为版本化增量迁移。
 pub async fn run_migrations(pool: &PgPool) -> Result<(), StoreError> {
-    sqlx::query(SCHEMA_SQL).execute(pool).await?;
-    Ok(())
+    crate::storage::migration::run_migrations_pg(pool).await
 }
 
 // ── Session 行类型 ──

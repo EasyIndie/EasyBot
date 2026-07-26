@@ -1,5 +1,6 @@
 ---
 source: crates/easybot-api/tests/routes.rs
+assertion_line: 86
 expression: json
 ---
 {
@@ -7,6 +8,7 @@ expression: json
     "connected": 0,
     "total": 0
   },
+  "schema_version": 1,
   "sessions": {
     "active": 0
   },

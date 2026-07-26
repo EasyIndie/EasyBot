@@ -93,6 +93,21 @@ async fn test_health_no_auth_needed() {
     assert_eq!(status, StatusCode::OK);
 }
 
+// ── 版本更新检查 ──
+
+#[tokio::test]
+async fn test_update_check_returns_structure() {
+    let (state, key) = common::test_app_state().await;
+    let (status, json) = get(state, "/api/v1/system/update-check", Some(&key)).await;
+
+    // 即使 GitHub API 不可达，也应返回 200 并包含版本信息
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["current_version"], "0.0.16");
+    assert!(json["schema_version"].is_number());
+    assert!(json["update_available"].is_boolean());
+    assert!(json["requires_db_migration"].is_boolean());
+}
+
 // ── 认证测试 ──
 
 #[tokio::test]

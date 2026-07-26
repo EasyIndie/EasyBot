@@ -7,7 +7,7 @@
 //!   easybot --dir ~/.easybot
 //!   easybot init
 
-use clap::Parser;
+use clap::{Parser, Subcommand};
 #[allow(unused_imports)]
 use easybot_core::PlatformAdapter;
 use easybot_core::types::event::{GatewayEvent, event_types};
@@ -15,10 +15,15 @@ use std::sync::Arc;
 
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 /// EasyBot 命令行参数
 #[derive(Parser)]
 #[command(name = "easybot", version, about = "EasyBot - IM Gateway Service")]
 struct Cli {
+    /// 更新相关的子命令（独立运行，不启动网关）
+    #[command(subcommand)]
+    command: Option<Commands>,
+
     /// 配置文件路径（优先级高于 --dir）
     #[arg(short, long)]
     config: Option<String>,
@@ -34,6 +39,25 @@ struct Cli {
     /// 调试模式（启用 DEBUG 日志）
     #[arg(short, long)]
     debug: bool,
+}
+
+/// EasyBot 子命令
+#[derive(Subcommand)]
+enum Commands {
+    /// Check for available updates (show version diff + migration plan)
+    CheckUpdate,
+    /// Download and install the latest version
+    Update {
+        /// Skip confirmation prompt
+        #[arg(long)]
+        yes: bool,
+    },
+    /// Rollback to the previous version
+    Rollback {
+        /// Skip confirmation prompt
+        #[arg(long)]
+        yes: bool,
+    },
 }
 
 /// 删除指定目录中超过 `cutoff` 时间的 easybot 日志文件。
@@ -88,6 +112,20 @@ fn cleanup_old_logs(
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
+
+    // ── 处理更新相关子命令（独立运行，不启动网关）──
+    match &cli.command {
+        Some(Commands::CheckUpdate) => {
+            return handle_check_update(cli.dir.clone()).await;
+        }
+        Some(Commands::Update { yes }) => {
+            return handle_update(cli.dir.clone(), *yes).await;
+        }
+        Some(Commands::Rollback { yes }) => {
+            return handle_rollback(cli.dir.clone(), *yes).await;
+        }
+        None => {}
+    }
 
     // 创建内存日志收集器（不依赖配置，提前创建供管理后台使用）
     let log_collector = Arc::new(easybot_api::log_collector::LogCollector::new(5000));
@@ -281,6 +319,20 @@ async fn main() -> anyhow::Result<()> {
                     easybot_core::storage::postgres::run_migrations(&pool)
                         .await
                         .map_err(|e| anyhow::anyhow!("PostgreSQL migration failed: {}", e))?;
+
+                    // 校验 schema 版本
+                    let pg_ver = easybot_core::storage::migration::get_current_version_pg(&pool)
+                        .await
+                        .map_err(|e| anyhow::anyhow!("Failed to check schema version: {}", e))?;
+                    if pg_ver > 0 && pg_ver != easybot_core::storage::migration::SCHEMA_VERSION {
+                        anyhow::bail!(
+                            "Schema version mismatch: database is v{}, binary expects v{}. \
+                             Run `easybot update` to upgrade.",
+                            pg_ver,
+                            easybot_core::storage::migration::SCHEMA_VERSION
+                        );
+                    }
+
                     // 脱敏连接字符串：仅日志 host/db，隐藏 user:password
                     let safe_conn = conn_str.split('@').next_back().unwrap_or(&conn_str);
                     tracing::info!("PostgreSQL storage initialized: {}", safe_conn);
@@ -311,6 +363,22 @@ async fn main() -> anyhow::Result<()> {
                     easybot_core::storage::sqlite::run_migrations(&pool)
                         .await
                         .map_err(|e| anyhow::anyhow!("Migration failed: {}", e))?;
+
+                    // 校验 schema 版本
+                    let sqlite_ver = easybot_core::storage::migration::get_current_version(&pool)
+                        .await
+                        .map_err(|e| anyhow::anyhow!("Failed to check schema version: {}", e))?;
+                    if sqlite_ver > 0
+                        && sqlite_ver != easybot_core::storage::migration::SCHEMA_VERSION
+                    {
+                        anyhow::bail!(
+                            "Schema version mismatch: database is v{}, binary expects v{}. \
+                             Run `easybot update` to upgrade.",
+                            sqlite_ver,
+                            easybot_core::storage::migration::SCHEMA_VERSION
+                        );
+                    }
+
                     tracing::info!("SQLite storage initialized: {}", db_path.display());
 
                     // 使用独立连接池：Session 读取不阻塞 Message 写入（反之亦然）
@@ -976,5 +1044,191 @@ async fn register_builtin_adapters(
         tracing::warn!(
             "No adapters enabled (compile with features to enable: adapter-telegram, adapter-discord, adapter-feishu, adapter-qq, adapter-wechat)"
         );
+    }
+}
+
+// ══════════════════════════════════════════════════════════════════
+// 更新命令处理函数
+// ══════════════════════════════════════════════════════════════════
+
+/// 处理 `easybot check-update` 命令
+async fn handle_check_update(dir_override: Option<String>) -> anyhow::Result<()> {
+    let home = easybot_core::config::resolve_home(dir_override.map(std::path::PathBuf::from));
+    let mut updater = easybot_core::updater::Updater::new(home);
+
+    match updater.check_update().await {
+        Ok(plan) => {
+            println!("✓ Current version: v{}", plan.current_version);
+            println!("✓ Latest version:  v{}", plan.target_version);
+            if !plan.breaking_changes.is_empty() {
+                println!("\n  ⚠ Breaking changes:");
+                for c in &plan.breaking_changes {
+                    println!("    • {}", c);
+                }
+            }
+            if plan.requires_db_migration {
+                println!("\n  📦 Database migrations:");
+                for m in &plan.db_migrations {
+                    println!("    • v{}: {}", m.version, m.description);
+                }
+            }
+            if !plan.plugin_incompatible.is_empty() {
+                println!("\n  ⚠ Incompatible plugins: {:?}", plan.plugin_incompatible);
+            }
+            if plan.binary_size > 0 {
+                let size_mb = plan.binary_size as f64 / 1_000_000.0;
+                println!("\n  📥 Download size: {:.1} MB", size_mb);
+            }
+            println!("\n  Run `easybot update` to install.");
+            Ok(())
+        }
+        Err(e) => match &e {
+            easybot_core::updater::types::UpdateError::AlreadyUpToDate(v) => {
+                println!("✓ Already up to date (v{})", v);
+                Ok(())
+            }
+            easybot_core::updater::types::UpdateError::RateLimited => {
+                eprintln!("✗ GitHub API rate limited. Set GITHUB_TOKEN env var.");
+                Ok(())
+            }
+            _ => {
+                eprintln!("✗ Update check failed: {}", e);
+                Ok(())
+            }
+        },
+    }
+}
+
+/// 处理 `easybot update` 命令
+async fn handle_update(dir_override: Option<String>, yes: bool) -> anyhow::Result<()> {
+    let home = easybot_core::config::resolve_home(dir_override.map(std::path::PathBuf::from));
+    let mut updater = easybot_core::updater::Updater::new(home.clone());
+
+    println!("• Checking for updates...");
+    let plan = match updater.check_update().await {
+        Ok(p) => p,
+        Err(e) => match &e {
+            easybot_core::updater::types::UpdateError::AlreadyUpToDate(v) => {
+                println!("✓ Already up to date (v{})", v);
+                return Ok(());
+            }
+            _ => {
+                eprintln!("✗ {}", e);
+                return Ok(());
+            }
+        },
+    };
+
+    println!(
+        "  Current: v{} → Latest: v{}",
+        plan.current_version, plan.target_version
+    );
+
+    println!("• Running pre-flight checks...");
+    let precheck = updater.run_precheck().await;
+
+    if precheck.is_docker {
+        eprintln!("✗ Running inside Docker. Use `docker compose pull` instead.");
+        return Ok(());
+    }
+    if precheck.is_dev_mode {
+        eprintln!("✗ Development mode. Auto-update not supported.");
+        return Ok(());
+    }
+    if !precheck.disk_space_ok {
+        eprintln!("✗ Insufficient disk space.");
+        return Ok(());
+    }
+    if !precheck.permissions_ok {
+        eprintln!("✗ Permission denied. Try running with sudo.");
+        return Ok(());
+    }
+    if precheck.is_offline {
+        eprintln!("✗ Offline mode.");
+        return Ok(());
+    }
+
+    if !plan.breaking_changes.is_empty() {
+        println!("\n  ⚠ Breaking changes:");
+        for c in &plan.breaking_changes {
+            println!("    • {}", c);
+        }
+    }
+    if plan.requires_db_migration {
+        println!("\n  📦 Database migrations to apply:");
+        for m in &plan.db_migrations {
+            println!("    • v{}: {}", m.version, m.description);
+        }
+    }
+
+    if !yes {
+        println!("\n  Type 'yes' to continue: ");
+        use std::io::Write;
+        std::io::stdout().flush()?;
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input)?;
+        if input.trim().to_lowercase() != "yes" {
+            println!("✗ Update cancelled.");
+            return Ok(());
+        }
+    }
+
+    println!("\n• Applying update...");
+    match updater.perform_update().await {
+        Ok(result) => {
+            println!(
+                "\n✓ Update complete: v{} → v{}",
+                result.old_version, result.new_version
+            );
+            if result.migrations_applied > 0 {
+                println!(
+                    "  ✓ {} database migration(s) prepared",
+                    result.migrations_applied
+                );
+            }
+            println!("\n  ──────────────────────────────────────");
+            println!("  Restart EasyBot to apply the update:");
+            println!("    systemctl restart easybot      (systemd)");
+            println!("    ./easybot.sh restart            (init script)");
+            println!("    docker compose restart           (Docker)");
+            println!("  ──────────────────────────────────────");
+            println!("\n  To rollback: easybot rollback");
+            Ok(())
+        }
+        Err(e) => {
+            eprintln!("✗ Update failed: {}", e);
+            Ok(())
+        }
+    }
+}
+
+/// 处理 `easybot rollback` 命令
+async fn handle_rollback(dir_override: Option<String>, yes: bool) -> anyhow::Result<()> {
+    let home = easybot_core::config::resolve_home(dir_override.map(std::path::PathBuf::from));
+    let updater = easybot_core::updater::Updater::new(home);
+
+    if !yes {
+        println!("⚠ This will revert the binary and database to the previous version.");
+        println!("  Type 'yes' to continue: ");
+        use std::io::Write;
+        std::io::stdout().flush()?;
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input)?;
+        if input.trim().to_lowercase() != "yes" {
+            println!("✗ Rollback cancelled.");
+            return Ok(());
+        }
+    }
+
+    println!("• Rolling back...");
+    match updater.rollback().await {
+        Ok(()) => {
+            println!("\n✓ Rollback complete. Restart EasyBot to apply.");
+            Ok(())
+        }
+        Err(e) => {
+            eprintln!("✗ Rollback failed: {}", e);
+            Ok(())
+        }
     }
 }

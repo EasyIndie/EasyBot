@@ -1001,4 +1001,46 @@ wscat -c ws://localhost:8080/api/v1/ws
 
 ---
 
-*最后更新：2026-07-20 · EasyBot v0.0.15*
+## 6. 升级更新
+
+### 6.1 自动更新（二进制部署）
+
+```bash
+# 检查可用更新（显示版本号、数据库迁移、破坏性变更）
+easybot check-update
+
+# 执行更新（自动备份 + 二进制替换 + 数据库迁移）
+easybot update
+
+# 跳过确认提示（用于自动化脚本）
+easybot update --yes
+
+# 回滚到上一个版本
+easybot rollback
+```
+
+更新流程说明：
+1. `check-update`：对比当前版本与 GitHub 最新发布版本，显示迁移计划和破坏性变更
+2. `update`：预检（磁盘/权限/Docker 检测）→ 备份二进制+数据库+配置 → 下载新二进制 + SHA256 校验 → 原子替换 → 服务路径更新 → 验证
+3. 任何步骤失败自动回滚
+4. 更新完成后需重启服务生效
+
+### 6.2 Docker 部署更新
+
+```bash
+docker compose pull && docker compose up -d
+```
+
+### 6.3 升级后重启
+
+| 部署方式 | 重启命令 |
+|---------|---------|
+| systemd | `sudo systemctl restart easybot` |
+| launchd | `./easybot.sh restart` |
+| 管理脚本 | `./easybot.sh restart` |
+| Docker | `docker compose restart` |
+| 直接运行 | 重新启动 `easybot` 进程 |
+
+---
+
+*最后更新：2026-07-22 · EasyBot v0.0.16*

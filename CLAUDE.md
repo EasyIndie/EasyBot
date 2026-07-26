@@ -44,6 +44,39 @@ Adapters (easybot-adapter-*)  Telegram · Discord · 飞书 · QQ · WeChat
 | `docs.html` | `templates/docs_layout.html` + `docs/*.md` + `vendor/` |
 | `home.html` | `templates/home_layout.html` |
 
+### 版本化迁移系统
+
+`crates/easybot-core/src/storage/migration.rs` — 数据库 schema 从"幂等全量建表"升级为"版本化增量迁移"。
+
+| 概念 | 说明 |
+|---|---|
+| `SCHEMA_VERSION` | 当前二进制期望的 schema 版本（编译时常量） |
+| `MIGRATIONS` | 所有已注册的迁移数组，按版本递增 |
+| `_schema_version` 表 | 记录已执行的迁移历史 |
+| `run_migrations()` | 前向迁移引擎（SQLite），迭代未执行的迁移 |
+| `run_migrations_pg()` | 同上 + `pg_advisory_lock` 互斥（PostgreSQL 多实例） |
+| `rollback_to()` | 反向迁移引擎，执行 rollback_sql |
+
+**新增 schema 迁移时**：向 `MIGRATIONS` 追加 `Migration` 条目，提供 `sql_sqlite` + `sql_postgres` 双后端 SQL，及对应的 `rollback_sqlite/rollback_postgres`。**禁止修改或删除已发行的迁移条目**。
+
+### 自动更新系统
+
+`crates/easybot-core/src/updater/` — 完整更新生命周期管理：
+
+| 模块 | 职责 |
+|---|---|
+| `types.rs` | `UpdateInfo`, `UpdatePlan`, `UpdateError`, 平台检测, 版本比较 |
+| `precheck.rs` | 磁盘空间/权限/Docker/dev 模式/插件兼容性检测 |
+| `github.rs` | GitHub Releases API 客户端（缓存 + 速率限制） |
+| `download.rs` | 流式下载 + SHA256 校验 |
+| `compact.rs` | 备份管理（二进制+DB+config） + 服务单元路径更新 |
+| `replace.rs` | 原子二进制替换 + 回滚 |
+| `mod.rs` | `Updater` struct 编排完整流程 |
+
+**升级流程**：`check-update`（GitHub API → 版本对比 → 迁移清单）→ 预检 → 备份 → 下载+SHA256 → 原子替换 → DB 迁移 → 验证 → 清理。失败时自动回滚。
+
+**启动时版本锁定**：`main.rs` 中 storage 初始化后校验 `DB.schema_version == SCHEMA_VERSION`，不匹配则拒绝启动并提示运行 `easybot update`。
+
 ### Crate Layout
 
 | Crate | Role |

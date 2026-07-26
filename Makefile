@@ -2,58 +2,50 @@
 
 .DEFAULT_GOAL := help
 
-.PHONY: help setup verify verify-fast test test-full lint fmt \
-        run run-init run-fresh watch check clean
+CARGO ?= cargo
+FEATURES ?= default,plugin-system
+
+.PHONY: help setup verify verify-push check lint fmt test run clean
 
 help:  ## 显示此帮助
-	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | sort | \
+	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | \
 		awk 'BEGIN {FS = ":.*## "}; {printf "\033[36m%-20s\033[0m %s\n", $$1, $$2}'
 
-# ── CI / 验收 ─────────────────────────────────
+# ── 环境 ─────────────────────────────────────
+
+setup:  ## 初始化本地开发环境
+	git config core.hooksPath .githooks
+
+# ── Hook / CI 验收 ───────────────────────────
 
 verify:  ## 运行完整验收（与 CI 一致）
 	bash scripts/verify.sh
 
-verify-fast:  ## 快速验收（跳过 clippy + fmt）
-	bash scripts/verify.sh --fast
-
-test:  ## 运行所有测试
-	cargo test --workspace
-
-test-full:  ## 运行全部测试（含 plugin-system feature）
-	cargo test --workspace --features "default,plugin-system"
+verify-push:  ## push 前门禁（clippy + build + test，快于完整验收）
+	bash scripts/verify-push.sh
 
 # ── 代码质量 ──────────────────────────────────
 
-lint:  ## 代码规范检查（fmt + clippy）
-	cargo fmt --all --check
-	cargo clippy --workspace --features "default,plugin-system" --all-targets -- -D warnings
+check:  ## 快速编译检查（同 pre-commit）
+	$(CARGO) fmt --all --check
+	$(CARGO) check --workspace --features "$(FEATURES)"
 
 fmt:  ## 自动格式化代码
-	cargo fmt --all
+	$(CARGO) fmt --all
 
-check:  ## 快速编译检查
-	cargo check
+lint:  ## 代码规范检查（fmt + clippy）
+	$(CARGO) fmt --all --check
+	$(CARGO) clippy --workspace --features "$(FEATURES)" --all-targets -- -D warnings
+
+test:  ## 运行所有测试
+	$(CARGO) test --workspace --features "$(FEATURES)"
 
 # ── 本地开发 ──────────────────────────────────
 
 DEBUG_FLAG ?= --debug
 
 run:  ## 编译并启动（默认 --debug，make run DEBUG= 可去掉）
-	cargo run -- $(DEBUG_FLAG)
-
-run-init:  ## 初始化隔离目录后启动（不影响 ~/.easybot/）
-	@test -d /tmp/easybot-dev || cargo run -- --dir /tmp/easybot-dev --init
-	cargo run -- --dir /tmp/easybot-dev $(DEBUG_FLAG)
-
-run-fresh:  ## 清理隔离目录后全新初始化并启动
-	rm -rf /tmp/easybot-dev
-	cargo run -- --dir /tmp/easybot-dev --init
-	cargo run -- --dir /tmp/easybot-dev $(DEBUG_FLAG)
-
-watch:  ## Watch 模式：改代码自动重编重启（自动安装依赖）
-	@command -v cargo-watch >/dev/null 2>&1 || ( echo "📦 正在安装 cargo-watch ..."; cargo install cargo-watch --quiet )
-	cargo watch -x 'run -- --debug'
+	$(CARGO) run -- $(DEBUG_FLAG)
 
 clean:  ## 清理编译产物
-	cargo clean
+	$(CARGO) clean
