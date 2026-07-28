@@ -22,7 +22,7 @@ use easybot_core::types::adapter::*;
 use easybot_core::types::error::GatewayError;
 use easybot_core::types::event::event_types;
 use easybot_core::types::message::*;
-use larksuite_oapi_sdk_rs::{Client, EventDispatcher};
+use larksuite_oapi_sdk_rs::{EventDispatcher, LarkClient};
 use tokio::sync::broadcast;
 use types::*;
 
@@ -822,7 +822,7 @@ impl FeishuAdapter {
         self.cancel_tx = Some(cancel_tx);
 
         // Create SDK Client (no network I/O — token is fetched lazily)
-        let sdk_client = match Client::builder(&app_id_owned, &app_secret).build() {
+        let sdk_client = match LarkClient::builder(&app_id_owned, &app_secret).build() {
             Ok(c) => c,
             Err(e) => {
                 tracing::error!("飞书 SDK 客户端创建失败: {}", e);
@@ -898,7 +898,8 @@ impl FeishuAdapter {
                             &rc,
                         )
                         .await;
-                        event::handle_message_receive(event_data, &eb, &bot_id, sender_role).await;
+                        event::handle_message_receive(event_data.into(), &eb, &bot_id, sender_role)
+                            .await;
                         mi.fetch_add(1, Ordering::Relaxed);
                         hb.beat_success();
                         Ok(())
