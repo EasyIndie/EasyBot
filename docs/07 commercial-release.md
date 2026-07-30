@@ -69,4 +69,4 @@ gh attestation verify ./downloaded/easybot-x86_64-unknown-linux-musl \
 - 保存发布批准记录、测试结果、已知风险和回滚负责人；
 - 若产物、标签或证明存在不一致，停止发布并创建新版本，不覆盖已发布资产。
 
-Windows Authenticode 使用 `WINDOWS_CODE_SIGNING_CERT_BASE64` 和 `WINDOWS_CODE_SIGNING_CERT_PASSWORD` 两个仓库 Secret。macOS Secret 配置见[公证配置指南](other/macos-notarization.md)。商业 Release 缺少任一平台签名/公证凭据时会直接失败，不发布未签名桌面产物。
+Windows Authenticode 使用 `WINDOWS_CODE_SIGNING_CERT_BASE64` 和 `WINDOWS_CODE_SIGNING_CERT_PASSWORD` 两个仓库 Secret。macOS Secret 配置见[公证配置指南](other/macos-notarization.md)。缺少签名/公证凭据时，Release 会发布未签名桌面产物并在 Actions 中输出 warning；正式对外分发前必须补齐对应平台签名凭据，或在发布记录中明确标注该平台产物为 unsigned。

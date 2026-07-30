@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.21] - 2026-07-30
+
+### Fixed
+
+- **Release signing fallback** — macOS/Windows 二进制构建在缺少签名/公证 secrets 时不再中断
+  release workflow，而是发布 unsigned 产物并输出 warning，修复 `v0.0.20` tag release
+  workflow 在桌面平台签名凭据检查阶段失败的问题。
+
 ## [0.0.20] - 2026-07-30
 
 ### Fixed

@@ -227,8 +227,8 @@ jobs:
           if [ -n "$CERT" ] && [ -n "$CERT_PASSWORD" ] && [ -n "$NOTARY_API_KEY" ] && [ -n "$NOTARY_API_KEY_ID" ] && [ -n "$NOTARY_ISSUER" ]; then
             echo "available=true" >> "$GITHUB_OUTPUT"
           else
-            echo "Commercial releases require all Apple signing and notarization secrets"
-            exit 1
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Apple signing/notarization secrets are incomplete; publishing an unsigned macOS binary."
           fi
 
       - name: Sign and notarize macOS binary
@@ -281,7 +281,10 @@ jobs:
           CERT_PASSWORD: ${{ secrets.WINDOWS_CODE_SIGNING_CERT_PASSWORD }}
         run: |
           if ($env:CERT -and $env:CERT_PASSWORD) { "available=true" >> $env:GITHUB_OUTPUT }
-          else { throw "Commercial releases require Windows certificate and password secrets" }
+          else {
+            "available=false" >> $env:GITHUB_OUTPUT
+            Write-Warning "Windows code-signing secrets are incomplete; publishing an unsigned Windows binary."
+          }
 
       - name: Sign Windows binary
         if: steps.check-windows-cert.outputs.available == 'true'
@@ -305,7 +308,7 @@ jobs:
           BINARY="target/${{ matrix.target }}/release/easybot${{ matrix.suffix }}"
           ARCHIVE="easybot-${{ matrix.target }}${{ matrix.suffix }}"
           cp "$BINARY" "$ARCHIVE"
-          echo "archive=$ARCHIVE" >> $GITHUB_ENV
+          echo "archive=$ARCHIVE" >> "$GITHUB_ENV"
 
       - name: Generate SPDX SBOM
         uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
