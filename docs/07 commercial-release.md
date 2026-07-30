@@ -28,7 +28,7 @@ Release 创建必须等待完整测试、Clippy、依赖/许可证策略和灾�
 
 `.github/workflows/container-audit.yml` 每日重新扫描当前 `latest` 正式镜像，用于发现发布后新披露的高危漏洞。仓库必须为该工作流失败配置安全值班通知；失败后应定位受影响 digest、暂停新部署并按严重等级执行补丁发布或有期限的风险接受，不能仅重新运行工作流消除告警。
 
-`Dockerfile` 与 `Dockerfile.release` 的 Rust、Debian 基础镜像同时保留可读 tag 和不可变的多架构 manifest digest。升级基础系统或 Rust 工具链时，应从 Docker Hub 官方仓库重新取得 manifest digest，审核 amd64/arm64 子清单及漏洞扫描结果后在同一变更中更新；发布预检会拒绝任何没有 `@sha256:` 的 `FROM` 引用。
+`Dockerfile` 的 Rust/Debian 构建与开发镜像、`Dockerfile.release` 的 Alpine 发布运行时镜像同时保留可读 tag 和不可变的多架构 manifest digest。升级基础系统或 Rust 工具链时，应从 Docker Hub 官方仓库重新取得 manifest digest，审核 amd64/arm64 子清单及漏洞扫描结果后在同一变更中更新；发布预检会拒绝任何没有 `@sha256:` 的 `FROM` 引用。
 
 所有第三方 GitHub Actions 均固定到 40 位 commit SHA，行尾版本注释仅用于可读性，不参与解析。升级 Action 时必须从其官方仓库解析目标标签（注释标签需取解引用后的 commit），审阅变更记录与权限需求后更新 SHA；`test-actions-pinning.sh` 会阻止分支、版本标签或短 SHA 重新进入 CI。
 

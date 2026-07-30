@@ -14,7 +14,7 @@ for file in Dockerfile Dockerfile.release; do
     echo "$file healthcheck must use the liveness endpoint: $expected" >&2
     exit 1
   }
-  grep -Fq 'useradd -r -u 10001 --user-group' "$file" || {
+  grep -Eq 'useradd -r -u 10001 --user-group|addgroup -S -g 10001 easybot' "$file" || {
     echo "$file must create the fixed non-root runtime UID 10001" >&2
     exit 1
   }

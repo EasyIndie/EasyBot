@@ -1,14 +1,10 @@
 # syntax=docker/dockerfile:1
 # EasyBot — Release Docker Image (pre-built binary)
-# Uses binaries produced by the build-binaries CI job, skipping Rust compilation.
-FROM debian:bookworm-slim@sha256:60eac759739651111db372c07be67863818726f754804b8707c90979bda511df
+# Uses musl binaries produced by the build-binaries CI job, skipping Rust compilation.
+FROM alpine:3.22@sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce
 
-RUN apt-get update && apt-get install -y \
-    ca-certificates \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
-
-RUN useradd -r -u 10001 --user-group -m -s /bin/bash easybot \
+RUN addgroup -S -g 10001 easybot \
+    && adduser -S -D -H -u 10001 -G easybot easybot \
     && mkdir -p /var/lib/easybot/data /var/lib/easybot/logs /var/lib/easybot/plugins /etc/easybot \
     && chown -R easybot:easybot /var/lib/easybot /etc/easybot
 
@@ -20,6 +16,6 @@ RUN chmod +x /usr/local/bin/easybot
 
 USER easybot
 EXPOSE 8080
-HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD ["curl", "-f", "http://localhost:8080/api/v1/live"]
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD ["wget", "-q", "-O", "/dev/null", "http://localhost:8080/api/v1/live"]
 ENTRYPOINT ["easybot"]
 CMD ["--config", "/etc/easybot/gateway.yaml"]

@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.22] - 2026-07-31
+
+### Fixed
+
+- **Release container runtime** — `Dockerfile.release` 切换到 pinned Alpine 运行时镜像，
+  保留固定 UID 与 `/api/v1/live` 容器健康检查，同时移除 Debian slim 运行时包面，修复
+  `v0.0.21` tag release workflow 在 Docker Trivy 高危/严重漏洞扫描阶段失败的问题。
+
 ## [0.0.21] - 2026-07-30
 
 ### Fixed
