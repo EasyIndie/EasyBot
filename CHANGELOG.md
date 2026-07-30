@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.19] - 2026-07-30
+
+### Fixed
+
+- **Release preflight portability** — 修复 `commercial-launch-gate.sh` 在 Linux CI runner
+  上读取 evidence 文件权限时误用 BSD `stat -f` 语义的问题，修复 `v0.0.18` tag release
+  workflow 在 Commercial release preflight 阶段中断的问题。
+
 ## [0.0.18] - 2026-07-30
 
 ### Fixed

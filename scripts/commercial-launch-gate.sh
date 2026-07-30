@@ -6,7 +6,9 @@ if [ "${1:-}" = "--offline" ]; then OFFLINE=true; shift; fi
 [ "$#" -ge 1 ] && [ "$#" -le 2 ] || { usage; exit 64; }
 EVIDENCE_ENV=$1; REPORT_JSON=${2:-}
 [ -f "$EVIDENCE_ENV" ] || { echo "Evidence file not found: $EVIDENCE_ENV" >&2; exit 66; }
-evidence_mode=$(stat -f '%Lp' "$EVIDENCE_ENV" 2>/dev/null || stat -c '%a' "$EVIDENCE_ENV" 2>/dev/null || echo '')
+file_mode() { stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1" 2>/dev/null || echo ''; }
+file_mtime() { stat -c '%Y' "$1" 2>/dev/null || stat -f '%m' "$1" 2>/dev/null || echo 0; }
+evidence_mode=$(file_mode "$EVIDENCE_ENV")
 [[ "$evidence_mode" =~ ^[0-7]{3,4}$ ]] || { echo "Unable to determine evidence file permissions" >&2; exit 65; }
 permission_digits=${evidence_mode: -3}
 group_digit=${permission_digits:1:1}; other_digit=${permission_digits:2:1}
@@ -60,7 +62,7 @@ for key in "${required_files[@]}"; do
   [ -n "$path" ] || { fail "missing path: $key"; continue; }
   [[ "$path" = /* ]] || path="$ROOT/$path"
   [ -s "$path" ] || { fail "missing or empty evidence: $key ($path)"; continue; }
-  modified=$(stat -f '%m' "$path" 2>/dev/null || stat -c '%Y' "$path" 2>/dev/null || echo 0)
+  modified=$(file_mtime "$path")
   age_days=$(( (now - modified) / 86400 ))
   [ "$age_days" -le "$MAX_AGE" ] || fail "stale evidence: $key (${age_days}d > ${MAX_AGE}d)"
   if [ "$key" = LOAD_TEST_REPORT ]; then

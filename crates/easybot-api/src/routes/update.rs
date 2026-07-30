@@ -11,7 +11,7 @@ use utoipa::ToSchema;
 /// 更新检查响应
 #[derive(Debug, Serialize, ToSchema)]
 pub struct UpdateCheckResponse {
-    #[schema(example = "0.0.18")]
+    #[schema(example = "0.0.19")]
     pub current_version: String,
     /// 数据库 schema 版本
     pub schema_version: i64,
