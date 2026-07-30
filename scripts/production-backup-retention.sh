@@ -17,7 +17,7 @@ if [ "$MODE" = --apply ] && [ "${EASYBOT_CONFIRM_BACKUP_DELETE:-}" != yes ]; the
   exit 65
 fi
 
-mtime() { stat -f '%m' "$1" 2>/dev/null || stat -c '%Y' "$1" 2>/dev/null; }
+mtime() { stat -c '%Y' "$1" 2>/dev/null || stat -f '%m' "$1" 2>/dev/null; }
 batches=()
 while IFS= read -r batch; do batches+=("$batch"); done < <(
   find "$BACKUP_ROOT" -mindepth 1 -maxdepth 1 -type d -name 'easybot-????????T??????Z' -print | sort -r

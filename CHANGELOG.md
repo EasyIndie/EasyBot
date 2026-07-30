@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.20] - 2026-07-30
+
+### Fixed
+
+- **Release preflight portability** — 统一生产脚本中的 `stat` 调用顺序为 GNU/Linux 优先、
+  BSD/macOS 兜底，修复 `v0.0.19` tag release workflow 在 backup retention
+  preflight 阶段因 Linux `stat -f` 输出进入算术表达式而中断的问题。
+
 ## [0.0.19] - 2026-07-30
 
 ### Fixed

@@ -34,7 +34,7 @@ for value in "$REQUESTS" "$CONCURRENCY"; do
 done
 [ "$CONCURRENCY" -le "$REQUESTS" ] || { echo "concurrency cannot exceed requests" >&2; exit 64; }
 [ -f "$TOKEN_FILE" ] || { echo "token file not found: $TOKEN_FILE" >&2; exit 66; }
-mode=$(stat -f '%Lp' "$TOKEN_FILE" 2>/dev/null || stat -c '%a' "$TOKEN_FILE" 2>/dev/null || true)
+mode=$(stat -c '%a' "$TOKEN_FILE" 2>/dev/null || stat -f '%Lp' "$TOKEN_FILE" 2>/dev/null || true)
 [ "$mode" = "600" ] || { echo "token file must have mode 0600 (found ${mode:-unknown})" >&2; exit 65; }
 token=$(tr -d '\r\n' < "$TOKEN_FILE")
 [ -n "$token" ] || { echo "token file is empty" >&2; exit 65; }

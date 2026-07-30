@@ -14,8 +14,8 @@ MODE=${1:-up}
 [[ "$EASYBOT_DOMAIN" =~ ^([A-Za-z0-9-]+\.)+[A-Za-z]{2,63}$ ]] || { echo "Invalid public EASYBOT_DOMAIN" >&2; exit 65; }
 [ -d "$EASYBOT_SECRETS_DIR" ] || { echo "Secrets directory does not exist" >&2; exit 66; }
 
-file_mode() { stat -f '%Lp' "$1" 2>/dev/null || stat -c '%a' "$1" 2>/dev/null; }
-file_uid() { stat -f '%u' "$1" 2>/dev/null || stat -c '%u' "$1" 2>/dev/null; }
+file_mode() { stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1" 2>/dev/null; }
+file_uid() { stat -c '%u' "$1" 2>/dev/null || stat -f '%u' "$1" 2>/dev/null; }
 validate_owner_only_path() {
   local path=$1 kind=$2 mode uid
   [ ! -L "$path" ] || { echo "$kind must not be a symbolic link: $path" >&2; exit 65; }
