@@ -54,7 +54,7 @@ POSTGRES_ARCHIVE="$BATCH/$postgres_name"
 AUTH_ARCHIVE="$BATCH/$auth_name"
 "$ROOT/scripts/easybot-backup.sh" verify "$POSTGRES_ARCHIVE" >/dev/null
 "$ROOT/scripts/easybot-backup.sh" verify "$AUTH_ARCHIVE" >/dev/null
-archive_schema_version=$(sqlite3 "$AUTH_ARCHIVE" 'PRAGMA user_version;')
+archive_schema_version=$(sqlite3 "$AUTH_ARCHIVE" 'SELECT COALESCE(MAX(version), 0) FROM _schema_version;')
 [ "$archive_schema_version" = "$auth_schema_version" ] || {
   echo "auth archive schema version does not match manifest" >&2; exit 65;
 }

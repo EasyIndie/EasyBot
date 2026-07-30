@@ -6,6 +6,7 @@ TMP=$(mktemp -d "${TMPDIR:-/tmp}/easybot-production-restore.XXXXXX")
 trap 'rm -rf "$TMP"' EXIT
 mkdir -p "$TMP/bin" "$TMP/data" "$TMP/secrets" "$TMP/backups" "$TMP/safety"
 sqlite3 "$TMP/data/auth.db" 'CREATE TABLE proof(value TEXT); INSERT INTO proof VALUES("before");'
+sqlite3 "$TMP/data/auth.db" 'CREATE TABLE _schema_version(version INTEGER NOT NULL, applied_at INTEGER NOT NULL, description TEXT NOT NULL); INSERT INTO _schema_version VALUES(2, 1, "commercial schema");'
 printf 'postgresql://easybot:secret@db/easybot\n' > "$TMP/secrets/database_url"
 cat > "$TMP/bin/pg_dump" <<'EOF'
 #!/usr/bin/env bash

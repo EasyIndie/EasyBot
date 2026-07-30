@@ -25,6 +25,7 @@ for file in LICENSE SECURITY.md README.md deny.toml Dockerfile.release deploy/Ca
   "docs/10 message-idempotency.md" \
   "docs/11 api-lifecycle.md" \
   "docs/12 client-resilience.md" \
+  "docs/14 commercial-g0-scope.md" \
   scripts/easybot-backup.sh scripts/test-backup.sh easybot-alerts.yml; do
   [ -s "$file" ] || { echo "Required commercial release file missing: $file" >&2; exit 1; }
 done

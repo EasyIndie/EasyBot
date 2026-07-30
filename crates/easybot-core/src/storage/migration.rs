@@ -25,7 +25,7 @@
 
 use crate::storage::StoreError;
 use chrono::Utc;
-use sqlx::{PgPool, SqlitePool};
+use sqlx::{PgPool, Sqlite, SqlitePool, Transaction};
 
 /// 当前二进制所期望的数据库 schema 版本。
 ///
@@ -77,8 +77,8 @@ pub static MIGRATIONS: &[Migration] = &[
         description: "Commercial readiness: delivery, audit, usage, billing and idempotency ledgers",
         sql_sqlite: V2_SQLITE,
         sql_postgres: V2_POSTGRES,
-        rollback_sqlite: None,
-        rollback_postgres: None,
+        rollback_sqlite: Some(V2_ROLLBACK_SQLITE),
+        rollback_postgres: Some(V2_ROLLBACK_POSTGRES),
     },
     // ── 后续版本在此追加 ──
     // Migration { version: 2, description: "Add webhook_url to sessions", ... }
@@ -201,8 +201,6 @@ DROP TABLE IF EXISTS sessions;
 ";
 
 const V2_SQLITE: &str = "
-ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS subject_id TEXT;
-ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS requests_per_minute INTEGER;
 UPDATE api_keys SET subject_id = id WHERE subject_id IS NULL OR subject_id = '';
 
 CREATE TABLE IF NOT EXISTS api_key_rotation_transitions (
@@ -490,6 +488,36 @@ CREATE TABLE IF NOT EXISTS api_idempotency (
 CREATE INDEX IF NOT EXISTS idx_api_idempotency_expiry ON api_idempotency(expires_at);
 ";
 
+const V2_ROLLBACK_SQLITE: &str = "
+DROP TABLE IF EXISTS api_idempotency;
+DROP TABLE IF EXISTS billing_ledger_state;
+DROP TABLE IF EXISTS billing_events;
+DROP TABLE IF EXISTS api_usage_ledger_state;
+DROP TABLE IF EXISTS api_usage_integrity;
+DROP TABLE IF EXISTS api_usage_hourly;
+DROP TABLE IF EXISTS audit_chain_state;
+DROP TABLE IF EXISTS audit_events;
+DROP TABLE IF EXISTS api_quota_events;
+DROP TABLE IF EXISTS outbound_deliveries;
+DROP TABLE IF EXISTS api_key_rotation_transitions;
+";
+
+const V2_ROLLBACK_POSTGRES: &str = "
+DROP TABLE IF EXISTS api_idempotency;
+DROP TABLE IF EXISTS billing_ledger_state;
+DROP TABLE IF EXISTS billing_events;
+DROP TABLE IF EXISTS api_usage_ledger_state;
+DROP TABLE IF EXISTS api_usage_integrity;
+DROP TABLE IF EXISTS api_usage_hourly;
+DROP TABLE IF EXISTS audit_chain_state;
+DROP TABLE IF EXISTS audit_events;
+DROP TABLE IF EXISTS api_quota_events;
+DROP TABLE IF EXISTS outbound_deliveries;
+DROP TABLE IF EXISTS api_key_rotation_transitions;
+ALTER TABLE api_keys DROP COLUMN IF EXISTS requests_per_minute;
+ALTER TABLE api_keys DROP COLUMN IF EXISTS subject_id;
+";
+
 // ══════════════════════════════════════════════════════════════════
 // SQLite 迁移函数
 // ══════════════════════════════════════════════════════════════════
@@ -510,8 +538,8 @@ pub async fn get_current_version(pool: &SqlitePool) -> Result<i64, StoreError> {
 }
 
 /// 记录已应用的 SQLite 迁移
-async fn record_migration(
-    pool: &SqlitePool,
+async fn record_migration_sqlite_tx(
+    tx: &mut Transaction<'_, Sqlite>,
     version: i64,
     description: &str,
 ) -> Result<(), StoreError> {
@@ -519,16 +547,7 @@ async fn record_migration(
         .bind(version)
         .bind(Utc::now().timestamp_millis())
         .bind(description)
-        .execute(pool)
-        .await?;
-    Ok(())
-}
-
-/// 删除迁移记录（回滚时）
-async fn delete_migration(pool: &SqlitePool, version: i64) -> Result<(), StoreError> {
-    sqlx::query("DELETE FROM _schema_version WHERE version = ?")
-        .bind(version)
-        .execute(pool)
+        .execute(&mut **tx)
         .await?;
     Ok(())
 }
@@ -541,7 +560,12 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), StoreError> {
     sqlx::query(VERSION_TABLE_SQL).execute(pool).await?;
 
     // 2. 检查是否已有数据表但无版本记录（从旧版迁移系统升级）
-    let current = get_current_version(pool).await?;
+    let mut current = get_current_version(pool).await?;
+    if current > SCHEMA_VERSION {
+        return Err(StoreError::Database(format!(
+            "SQLite schema version {current} is newer than supported version {SCHEMA_VERSION}"
+        )));
+    }
     if current == 0 && has_existing_tables(pool).await? {
         // 已有表结构但无版本记录 → 假定为 v1
         sqlx::query(
@@ -553,20 +577,111 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), StoreError> {
         .execute(pool)
         .await?;
         tracing::info!("Auto-detected existing schema as v1");
-        return Ok(());
+        current = 1;
     }
 
     // 3. 逐版执行未应用的迁移
     for m in MIGRATIONS {
         if m.version > current {
             tracing::info!("Running SQLite migration v{}: {}", m.version, m.description);
-            sqlx::query(m.sql_sqlite).execute(pool).await?;
-            record_migration(pool, m.version, m.description).await?;
+            let mut tx = pool.begin().await?;
+            let outcome = async {
+                if m.version == 2 {
+                    apply_sqlite_v2(&mut tx).await?;
+                } else {
+                    execute_sqlite_batch(&mut tx, m.sql_sqlite).await?;
+                }
+                record_migration_sqlite_tx(&mut tx, m.version, m.description).await
+            }
+            .await;
+            match outcome {
+                Ok(()) => tx.commit().await?,
+                Err(error) => {
+                    let _ = tx.rollback().await;
+                    return Err(error);
+                }
+            }
             tracing::info!("SQLite migration v{} applied", m.version);
         }
     }
 
     Ok(())
+}
+
+async fn apply_sqlite_v2(tx: &mut Transaction<'_, Sqlite>) -> Result<(), StoreError> {
+    add_sqlite_column_if_missing(
+        tx,
+        "SELECT name FROM pragma_table_info('api_keys')",
+        "subject_id",
+        "ALTER TABLE api_keys ADD COLUMN subject_id TEXT",
+    )
+    .await?;
+    add_sqlite_column_if_missing(
+        tx,
+        "SELECT name FROM pragma_table_info('api_keys')",
+        "requests_per_minute",
+        "ALTER TABLE api_keys ADD COLUMN requests_per_minute INTEGER",
+    )
+    .await?;
+    sqlx::query("UPDATE api_keys SET subject_id = id WHERE subject_id IS NULL OR subject_id = ''")
+        .execute(&mut **tx)
+        .await?;
+    if sqlite_table_exists(tx, "api_usage_hourly").await? {
+        add_sqlite_column_if_missing(
+            tx,
+            "SELECT name FROM pragma_table_info('api_usage_hourly')",
+            "subject_id",
+            "ALTER TABLE api_usage_hourly ADD COLUMN subject_id TEXT",
+        )
+        .await?;
+        sqlx::query(
+            "UPDATE api_usage_hourly SET subject_id = key_id WHERE subject_id IS NULL OR subject_id = ''",
+        )
+        .execute(&mut **tx)
+        .await?;
+    }
+    execute_sqlite_batch(tx, V2_SQLITE).await?;
+    Ok(())
+}
+
+async fn execute_sqlite_batch(
+    tx: &mut Transaction<'_, Sqlite>,
+    sql: &'static str,
+) -> Result<(), StoreError> {
+    for statement in sql.split(';').map(str::trim).filter(|sql| !sql.is_empty()) {
+        // Migration SQL is compiled into this binary and never includes user input.
+        sqlx::query(sqlx::AssertSqlSafe(statement))
+            .execute(&mut **tx)
+            .await?;
+    }
+    Ok(())
+}
+
+async fn add_sqlite_column_if_missing(
+    tx: &mut Transaction<'_, Sqlite>,
+    table_info_sql: &'static str,
+    column: &str,
+    alter_sql: &'static str,
+) -> Result<(), StoreError> {
+    let columns = sqlx::query_scalar::<_, String>(table_info_sql)
+        .fetch_all(&mut **tx)
+        .await?;
+    if !columns.iter().any(|existing| existing == column) {
+        sqlx::query(alter_sql).execute(&mut **tx).await?;
+    }
+    Ok(())
+}
+
+async fn sqlite_table_exists(
+    tx: &mut Transaction<'_, Sqlite>,
+    table: &str,
+) -> Result<bool, StoreError> {
+    let count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?1")
+            .bind(table)
+            .fetch_one(&mut **tx)
+            .await?;
+    Ok(count == 1)
 }
 
 /// 回滚 SQLite schema 到指定版本
@@ -589,8 +704,23 @@ pub async fn rollback_to(pool: &SqlitePool, target_version: i64) -> Result<(), S
                     m.version,
                     m.description
                 );
-                sqlx::query(rollback).execute(pool).await?;
-                delete_migration(pool, m.version).await?;
+                let mut tx = pool.begin().await?;
+                let outcome = async {
+                    execute_sqlite_batch(&mut tx, rollback).await?;
+                    sqlx::query("DELETE FROM _schema_version WHERE version = ?")
+                        .bind(m.version)
+                        .execute(&mut *tx)
+                        .await?;
+                    Ok::<(), StoreError>(())
+                }
+                .await;
+                match outcome {
+                    Ok(()) => tx.commit().await?,
+                    Err(error) => {
+                        let _ = tx.rollback().await;
+                        return Err(error);
+                    }
+                }
                 tracing::info!("SQLite migration v{} rolled back", m.version);
             } else {
                 tracing::warn!(
@@ -686,7 +816,12 @@ async fn run_migrations_pg_inner(pool: &PgPool) -> Result<(), StoreError> {
     sqlx::query(VERSION_TABLE_SQL).execute(pool).await?;
 
     // 2. 检查是否已有数据表但无版本记录
-    let current = get_current_version_pg(pool).await?;
+    let mut current = get_current_version_pg(pool).await?;
+    if current > SCHEMA_VERSION {
+        return Err(StoreError::Database(format!(
+            "PostgreSQL schema version {current} is newer than supported version {SCHEMA_VERSION}"
+        )));
+    }
     if current == 0 && has_existing_tables_pg(pool).await? {
         sqlx::query(
             "INSERT INTO _schema_version (version, applied_at, description) VALUES ($1, $2, $3)",
@@ -697,7 +832,7 @@ async fn run_migrations_pg_inner(pool: &PgPool) -> Result<(), StoreError> {
         .execute(pool)
         .await?;
         tracing::info!("Auto-detected existing PostgreSQL schema as v1");
-        return Ok(());
+        current = 1;
     }
 
     // 3. 逐版执行
@@ -708,7 +843,7 @@ async fn run_migrations_pg_inner(pool: &PgPool) -> Result<(), StoreError> {
                 m.version,
                 m.description
             );
-            sqlx::query(m.sql_postgres).execute(pool).await?;
+            sqlx::raw_sql(m.sql_postgres).execute(pool).await?;
             record_migration_pg(pool, m.version, m.description).await?;
             tracing::info!("PostgreSQL migration v{} applied", m.version);
         }
@@ -799,17 +934,20 @@ mod tests {
     async fn test_migration_forward() {
         let pool = create_test_pool().await;
 
-        // 空库 → 运行迁移 → 版本应为 1
+        // 空库 → 运行迁移 → 版本应为当前 schema 版本
         run_migrations(&pool).await.unwrap();
         let version = get_current_version(&pool).await.unwrap();
-        assert_eq!(version, 1, "After migration, schema version should be 1");
+        assert_eq!(
+            version, SCHEMA_VERSION,
+            "After migration, schema version should be current"
+        );
 
         // 验证表存在
-        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('sessions', 'messages', 'api_keys', '_schema_version')")
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('sessions', 'messages', 'api_keys', 'outbound_deliveries', 'audit_events', 'api_usage_hourly', 'billing_events', 'api_idempotency', '_schema_version')")
             .fetch_one(&pool)
             .await
             .unwrap_or(0);
-        assert_eq!(count, 4, "All 4 tables should exist");
+        assert_eq!(count, 9, "All commercial schema tables should exist");
     }
 
     #[tokio::test]
@@ -821,7 +959,10 @@ mod tests {
         run_migrations(&pool).await.unwrap();
 
         let version = get_current_version(&pool).await.unwrap();
-        assert_eq!(version, 1, "Idempotent: version should still be 1");
+        assert_eq!(
+            version, SCHEMA_VERSION,
+            "Idempotent: version should stay current"
+        );
     }
 
     #[tokio::test]
@@ -830,7 +971,7 @@ mod tests {
 
         // 前向迁移
         run_migrations(&pool).await.unwrap();
-        assert_eq!(get_current_version(&pool).await.unwrap(), 1);
+        assert_eq!(get_current_version(&pool).await.unwrap(), SCHEMA_VERSION);
 
         // 验证 sessions 表存在
         let has_sessions: bool = sqlx::query_scalar(
@@ -841,11 +982,9 @@ mod tests {
         .unwrap_or(false);
         assert!(has_sessions, "sessions table should exist after migration");
 
-        // 回滚到 v0
         rollback_to(&pool, 0).await.unwrap();
         assert_eq!(get_current_version(&pool).await.unwrap(), 0);
 
-        // 验证表被删除
         let has_sessions_after: bool = sqlx::query_scalar(
             "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='sessions'",
         )
@@ -857,25 +996,31 @@ mod tests {
             "sessions table should be gone after rollback"
         );
 
-        // 再次前向迁移
         run_migrations(&pool).await.unwrap();
-        assert_eq!(get_current_version(&pool).await.unwrap(), 1);
+        assert_eq!(get_current_version(&pool).await.unwrap(), SCHEMA_VERSION);
     }
 
     #[tokio::test]
     async fn test_auto_detect_existing_schema() {
         let pool = create_test_pool().await;
 
-        // 模拟旧版系统：手动创建 sessions 表（无 _schema_version 表）
-        sqlx::query("CREATE TABLE sessions (key TEXT PRIMARY KEY, platform TEXT NOT NULL, chat_id TEXT NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL, source_json TEXT NOT NULL, reset_policy TEXT NOT NULL, metadata TEXT NOT NULL DEFAULT '{}')")
-            .execute(&pool)
-            .await
-            .unwrap();
+        // 模拟旧版系统：完整 v1 schema 已存在但无 _schema_version 表。
+        sqlx::query(V1_SQLITE).execute(&pool).await.unwrap();
 
-        // 运行新版迁移 → 应自动识别旧 schema 为 v1
+        // 运行新版迁移 → 自动识别 v1，并继续应用后续商业迁移。
         run_migrations(&pool).await.unwrap();
         let version = get_current_version(&pool).await.unwrap();
-        assert_eq!(version, 1, "Should auto-detect existing schema as v1");
+        assert_eq!(
+            version, SCHEMA_VERSION,
+            "Should auto-detect v1 and apply pending migrations"
+        );
+        let has_billing: bool = sqlx::query_scalar(
+            "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='billing_events'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap_or(false);
+        assert!(has_billing, "commercial v2 tables should be created");
     }
 
     #[tokio::test]
@@ -884,7 +1029,7 @@ mod tests {
         run_migrations(&pool).await.unwrap();
 
         // 回滚到相同版本应报错
-        let result = rollback_to(&pool, 1).await;
+        let result = rollback_to(&pool, SCHEMA_VERSION).await;
         assert!(result.is_err(), "Rollback to same version should fail");
     }
 }

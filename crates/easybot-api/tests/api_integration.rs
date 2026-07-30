@@ -642,8 +642,11 @@ async fn test_durable_usage_export_is_reconciled_and_permission_scoped() {
     assert_eq!(subject_export.status(), 200);
     let subject_body: Value = subject_export.json().await.unwrap();
     assert_eq!(subject_body["total_requests"], 3);
-    assert_eq!(subject_body["page_requests"], 2);
     assert_eq!(subject_body["records"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        subject_body["page_requests"],
+        subject_body["records"][0]["request_count"]
+    );
     assert_eq!(subject_body["truncated"], true);
     assert_eq!(subject_body["next_offset"], 1);
     let second_page: Value = authed_client(&billing_key)

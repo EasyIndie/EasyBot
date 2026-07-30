@@ -1,6 +1,6 @@
 # EasyBot 后续商用化推进路线图
 
-> 基线：`codex/opt`，2026-07-26
+> 基线：`codex/opt`，2026-07-30
 
 ## 1. 当前判断
 
@@ -32,7 +32,7 @@ EasyBot 的主要商用工程底座已经存在：
 
    ```bash
    bash scripts/verify.sh --locked
-   scripts/release-preflight.sh 0.0.15
+   scripts/release-preflight.sh 0.0.17
    git diff --check
    ```
 
@@ -49,7 +49,7 @@ EasyBot 的主要商用工程底座已经存在：
 
 - 完整验证和 release preflight 日志；
 - 候选 Git commit、tag 和不可变镜像 digest；
-- 一页 SKU、平台能力边界和暂不支持清单。
+- 一页 SKU、平台能力边界和暂不支持清单，见 `docs/14 commercial-g0-scope.md`。
 
 ### G1：预生产环境验收（3–5 天）
 

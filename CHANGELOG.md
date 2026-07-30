@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.17] - 2026-07-30
+
+### Added
+
+- **G0 商用候选范围** — 新增 `docs/14 commercial-g0-scope.md`，冻结首个封闭付费试点的
+  Managed Pilot SKU、单客户独立实例边界、平台承诺前置条件和暂不支持清单，避免商用化目标继续发散。
+
+### Fixed
+
+- **SQLite 商用迁移可靠性** — SQLite v2 migration 改为事务化执行，避免部分语句成功后留下半迁移
+  schema；自动识别旧 v1 schema 后继续应用待执行迁移；程序遇到高于当前代码支持的 schema version
+  时拒绝启动。
+- **SQLite v2 rollback/reapply** — 补齐 v2 rollback，覆盖商用账本、审计、幂等、delivery journal
+  等新增表，并验证 rollback 后可重新应用迁移。
+- **auth schema version 口径不一致** — 生产 backup/restore、健康检查和 API Key 管理统一读取
+  `_schema_version`，不再混用旧的 `PRAGMA user_version`。
+- **usage export 分页断言** — 修正 `limit=1` 时 `page_requests` 的测试期望，使其等于当前页实际返回
+  记录的 request_count，同时保留 total_requests 和 key rotation 后 subject 归并验证。
+
+### Security
+
+- **GitHub Actions supply-chain hardening** — 发布、CI、labeler、platform matrix 和复合 Rust setup
+  action 中的第三方 action 统一 pin 到 commit SHA，并补齐最小 `permissions`。
+
+### Docs
+
+- **商用化路线收窄** — 更新 commercial readiness、roadmap、用户指南和架构文档，将当前工程推进目标
+  从“大商用平台”收窄为 `v0.0.17` G0 候选版本。
+
 ## [0.0.16] - 2026-07-20
 
 ### Fixed

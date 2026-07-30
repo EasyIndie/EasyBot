@@ -38,7 +38,7 @@ unset DATABASE_URL
 auth_archive=$("$ROOT/scripts/easybot-backup.sh" backup sqlite "$AUTH_DB" "$partial")
 "$ROOT/scripts/easybot-backup.sh" verify "$postgres_archive" >/dev/null
 "$ROOT/scripts/easybot-backup.sh" verify "$auth_archive" >/dev/null
-auth_schema_version=$(sqlite3 "$auth_archive" 'PRAGMA user_version;')
+auth_schema_version=$(sqlite3 "$auth_archive" 'SELECT COALESCE(MAX(version), 0) FROM _schema_version;')
 [[ "$auth_schema_version" =~ ^[0-9]+$ ]] || { echo "auth.db schema version is invalid" >&2; exit 65; }
 
 {

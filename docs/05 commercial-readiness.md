@@ -60,7 +60,7 @@ scripts/production-up.sh
 
 增量迁移在单个 `BEGIN IMMEDIATE` 事务内完成：先通过 `pragma_table_info` 检查目标列，仅在缺失时执行 `ALTER TABLE`，回填旧数据后再创建依赖新列的完整 schema；任一步失败会回滚此前的 DDL 和数据变更。不得用忽略全部错误的方式容忍重复列；只读介质、磁盘故障、锁超时或非法 schema 都必须使迁移失败并阻止服务启动。迁移可重复执行，升级演练需要同时验证旧数据回填、失败回滚和第二次运行幂等。
 
-成功迁移把 SQLite `PRAGMA user_version` 设置为当前 schema 版本 `1`。启动时若数据库版本高于二进制支持版本，会在任何 DDL 前失败关闭，防止版本回滚时旧程序静默修改未来 schema。应用语义版本与 schema 版本是不同维度：迁移演练报告仍记录发布版本，备份/恢复验收还应记录 `user_version`；降级前必须使用与目标二进制兼容的数据库备份，不能只回滚容器镜像。
+成功迁移会把 `_schema_version` 记录推进到当前二进制支持的 `SCHEMA_VERSION`。启动时若数据库版本高于二进制支持版本，会在任何 DDL 前失败关闭，防止版本回滚时旧程序静默修改未来 schema。应用语义版本与 schema 版本是不同维度：迁移演练报告仍记录发布版本，备份/恢复验收还应记录 `auth_schema_version`；降级前必须使用与目标二进制兼容的数据库备份，不能只回滚容器镜像。
 
 ```bash
 EASYBOT_DATA_DIR=/var/lib/easybot/data \

@@ -6,7 +6,7 @@ TMP=$(mktemp -d "${TMPDIR:-/tmp}/easybot-production-backup.XXXXXX")
 trap 'rm -rf "$TMP"' EXIT
 mkdir -p "$TMP/bin" "$TMP/data" "$TMP/secrets" "$TMP/backups"
 sqlite3 "$TMP/data/auth.db" 'CREATE TABLE proof(value TEXT); INSERT INTO proof VALUES("paired");'
-sqlite3 "$TMP/data/auth.db" 'PRAGMA user_version=1;'
+sqlite3 "$TMP/data/auth.db" 'CREATE TABLE _schema_version(version INTEGER NOT NULL, applied_at INTEGER NOT NULL, description TEXT NOT NULL); INSERT INTO _schema_version VALUES(2, 1, "commercial schema");'
 printf 'postgresql://easybot:secret@db/easybot\n' > "$TMP/secrets/database_url"
 cat > "$TMP/bin/pg_dump" <<'EOF'
 #!/usr/bin/env bash
@@ -24,7 +24,7 @@ BATCH=$(PATH="$TMP/bin:$PATH" "$ROOT/scripts/production-backup.sh" "$TMP/backups
 [ -f "$BATCH/COMPLETE" ]
 [ -f "$BATCH/manifest.txt" ]
 [ -f "$BATCH/manifest.txt.sha256" ]
-grep -Fxq 'auth_schema_version=1' "$BATCH/manifest.txt"
+grep -Fxq 'auth_schema_version=2' "$BATCH/manifest.txt"
 [ "$(find "$BATCH" -name '*.dump' | wc -l | tr -d ' ')" = 1 ]
 [ "$(find "$BATCH" -name '*.sqlite3' | wc -l | tr -d ' ')" = 1 ]
 [ "$(find "$BATCH" -name '*.sha256' | wc -l | tr -d ' ')" = 3 ]

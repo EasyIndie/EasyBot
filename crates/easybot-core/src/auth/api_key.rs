@@ -1817,7 +1817,7 @@ impl ApiKeyManager {
         let Some(pool) = &self.pool else {
             return Ok(0);
         };
-        sqlx::query_scalar("PRAGMA user_version")
+        sqlx::query_scalar("SELECT COALESCE(MAX(version), 0) FROM _schema_version")
             .fetch_one(pool)
             .await
             .map_err(|error| error.to_string())
@@ -2733,7 +2733,19 @@ mod tests {
         );
         assert!(!manager.metering_ready());
         assert!(!manager.probe_metering_ready().await);
-        crate::storage::sqlite::run_migrations(&pool).await.unwrap();
+        sqlx::query(
+            "CREATE TABLE api_usage_hourly (
+                key_id TEXT NOT NULL,
+                subject_id TEXT NOT NULL,
+                bucket_start INTEGER NOT NULL,
+                status_class INTEGER NOT NULL,
+                request_count INTEGER NOT NULL CHECK (request_count >= 0),
+                PRIMARY KEY (key_id, bucket_start, status_class)
+            )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
         assert!(manager.probe_metering_ready().await);
         assert!(manager.metering_ready());
     }

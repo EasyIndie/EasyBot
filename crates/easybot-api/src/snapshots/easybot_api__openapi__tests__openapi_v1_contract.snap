@@ -1,5 +1,6 @@
 ---
 source: crates/easybot-api/src/openapi.rs
+assertion_line: 356
 expression: "ApiDoc::openapi()"
 ---
 {
@@ -10,7 +11,7 @@ expression: "ApiDoc::openapi()"
     "license": {
       "name": "GPL-3.0"
     },
-    "version": "0.0.15"
+    "version": "0.0.17"
   },
   "servers": [
     {
@@ -2984,6 +2985,78 @@ expression: "ApiDoc::openapi()"
         }
       }
     },
+    "/api/v1/system/update-check": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "检查版本更新",
+        "description": "返回当前版本号和最新可用版本信息（从 GitHub Releases API 获取）。\n用于管理后台显示更新提示和自动化运维。",
+        "operationId": "update_check",
+        "responses": {
+          "200": {
+            "description": "Update availability check result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpdateCheckResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, expired, or revoked API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "API key lacks the required permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Global, IP, or subject quota exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal operation failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Durable metering, quota, storage, or adapter unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/usage": {
       "get": {
         "tags": [
@@ -3188,6 +3261,14 @@ expression: "ApiDoc::openapi()"
           "display_name": {
             "type": "string",
             "example": "Telegram"
+          },
+          "health": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "传输层健康状态：Healthy, Degraded, Down\n用于区分\"适配器在运行\"和\"消息流是否正常\"",
+            "example": "Healthy"
           },
           "platform": {
             "type": "string",
@@ -4426,6 +4507,7 @@ expression: "ApiDoc::openapi()"
         "required": [
           "status",
           "version",
+          "schema_version",
           "uptime",
           "adapters",
           "sessions"
@@ -4433,6 +4515,11 @@ expression: "ApiDoc::openapi()"
         "properties": {
           "adapters": {
             "$ref": "#/components/schemas/AdapterSummary"
+          },
+          "schema_version": {
+            "type": "integer",
+            "format": "int64",
+            "description": "数据库 schema 版本"
           },
           "sessions": {
             "$ref": "#/components/schemas/SessionSummary"
@@ -5667,6 +5754,65 @@ expression: "ApiDoc::openapi()"
           },
           "keyFile": {
             "type": "string"
+          }
+        }
+      },
+      "UpdateCheckResponse": {
+        "type": "object",
+        "description": "更新检查响应",
+        "required": [
+          "current_version",
+          "schema_version",
+          "update_available",
+          "requires_db_migration"
+        ],
+        "properties": {
+          "breaking_changes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "破坏性变更列表"
+          },
+          "current_version": {
+            "type": "string",
+            "example": "0.0.17"
+          },
+          "last_checked": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "上次检查时间戳（毫秒）"
+          },
+          "latest_schema_version": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "最新版本对应的 schema 版本"
+          },
+          "latest_version": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "最新可用版本（来自 GitHub API，可能为 None 如果检查失败）"
+          },
+          "requires_db_migration": {
+            "type": "boolean",
+            "description": "是否需要数据库迁移"
+          },
+          "schema_version": {
+            "type": "integer",
+            "format": "int64",
+            "description": "数据库 schema 版本"
+          },
+          "update_available": {
+            "type": "boolean",
+            "description": "是否有可用更新"
           }
         }
       },

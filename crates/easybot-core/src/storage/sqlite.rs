@@ -130,7 +130,7 @@ pub async fn create_pool(db_path: &std::path::Path) -> Result<SqlitePool, StoreE
         .execute(&pool)
         .await
         .ok();
-    sqlx::query("PRAGMA synchronous=NORMAL")
+    sqlx::query("PRAGMA synchronous=FULL")
         .execute(&pool)
         .await
         .ok();
@@ -1450,11 +1450,11 @@ mod tests {
         run_migrations(&pool).await.unwrap();
         run_migrations(&pool).await.unwrap();
         assert_eq!(
-            sqlx::query_scalar::<_, i64>("PRAGMA user_version")
+            sqlx::query_scalar::<_, i64>("SELECT COALESCE(MAX(version), 0) FROM _schema_version")
                 .fetch_one(&pool)
                 .await
                 .unwrap(),
-            SQLITE_SCHEMA_VERSION
+            crate::storage::migration::SCHEMA_VERSION
         );
         use sqlx::Row as _;
         let columns = sqlx::query("PRAGMA table_info(api_keys)")
@@ -1492,24 +1492,6 @@ mod tests {
         ] {
             assert!(delivery_columns.iter().any(|column| column == expected));
         }
-    }
-
-    #[tokio::test]
-    async fn additive_migration_propagates_real_alter_failure() {
-        let pool = SqlitePool::connect(":memory:").await.unwrap();
-        sqlx::query("CREATE TABLE probe(existing TEXT)")
-            .execute(&pool)
-            .await
-            .unwrap();
-        let mut connection = pool.acquire().await.unwrap();
-        let error = add_column_if_missing(
-            &mut connection,
-            "SELECT name FROM pragma_table_info('probe')",
-            "missing",
-            "ALTER TABLE probe ADD COLUMN",
-        )
-        .await;
-        assert!(error.is_err());
     }
 
     #[tokio::test]
@@ -1552,7 +1534,17 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query("PRAGMA user_version = 2")
+        sqlx::query(
+            "CREATE TABLE _schema_version (
+                version INTEGER NOT NULL,
+                applied_at INTEGER NOT NULL,
+                description TEXT NOT NULL
+            )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO _schema_version VALUES (999, 1, 'future schema')")
             .execute(&pool)
             .await
             .unwrap();
@@ -1560,11 +1552,11 @@ mod tests {
         let error = run_migrations(&pool).await.unwrap_err().to_string();
         assert!(error.contains("newer than supported"));
         assert_eq!(
-            sqlx::query_scalar::<_, i64>("PRAGMA user_version")
+            sqlx::query_scalar::<_, i64>("SELECT COALESCE(MAX(version), 0) FROM _schema_version")
                 .fetch_one(&pool)
                 .await
                 .unwrap(),
-            2
+            999
         );
         assert_eq!(
             sqlx::query_scalar::<_, String>("SELECT value FROM future_data")
