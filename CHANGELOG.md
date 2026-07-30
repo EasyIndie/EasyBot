@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.18] - 2026-07-30
+
+### Fixed
+
+- **Release supply-chain policy** — 更新 `deny.toml` 的 `unmaintained` 配置以兼容
+  `cargo-deny 0.20.x`，修复 `v0.0.17` tag release workflow 在 Supply-chain policy 阶段
+  因配置反序列化失败而中断的问题。
+
 ## [0.0.17] - 2026-07-30
 
 ### Added

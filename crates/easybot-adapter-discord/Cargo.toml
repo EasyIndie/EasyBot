@@ -2,6 +2,7 @@
 name = "easybot-adapter-discord"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 
 [dependencies]
 easybot-core = { path = "../easybot-core" }

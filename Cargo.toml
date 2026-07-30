@@ -21,11 +21,11 @@ description = "IM Gateway — 统一多平台即时通讯网关"
 repository = "https://github.com/EasyIndie/EasyBot"
 documentation = "https://github.com/EasyIndie/EasyBot"
 readme = "README.md"
-version = "0.0.17"
+version = "0.0.18"
 edition = "2024"
 rust-version = "1.94"
 authors = ["EasyBot Contributors"]
-license = "GPL-3.0"
+license = "GPL-3.0-only"
 
 [workspace.dependencies]
 # 异步运行时

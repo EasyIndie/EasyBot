@@ -32,7 +32,7 @@ EasyBot 的主要商用工程底座已经存在：
 
    ```bash
    bash scripts/verify.sh --locked
-   scripts/release-preflight.sh 0.0.17
+   scripts/release-preflight.sh 0.0.18
    git diff --check
    ```
 
