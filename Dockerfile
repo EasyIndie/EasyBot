@@ -41,6 +41,6 @@ RUN useradd -r -u 10001 --user-group -m -s /bin/bash easybot \
 COPY --from=builder --chown=easybot:easybot /easybot /usr/local/bin/easybot
 USER easybot
 EXPOSE 8080
-HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD ["curl", "-f", "http://localhost:8080/api/v1/live"]
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD ["curl", "-f", "http://127.0.0.1:8080/api/v1/live"]
 ENTRYPOINT ["easybot"]
 CMD ["--config", "/etc/easybot/gateway.yaml"]

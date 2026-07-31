@@ -5,7 +5,7 @@ version: "3.9"
 # Quick start:
 #   cp .env.example .env     # Edit tokens — adapters auto-enable when tokens are set
 #   docker compose up -d
-#   curl localhost:8080/api/v1/live
+#   curl 127.0.0.1:8080/api/v1/live
 #
 # 启用适配器: 只需在下方 environment 或 .env 中设置令牌即可自动启用。
 # 无需编辑 gateway.yaml — 系统自动检测已配置凭据的平台。
@@ -99,7 +99,7 @@ services:
     healthcheck:
       # Liveness must not restart the process merely because an external IM
       # platform is unavailable. Load balancers should use /api/v1/ready.
-      test: ["CMD", "curl", "-f", "http://localhost:8080/api/v1/live"]
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8080/api/v1/live"]
       interval: 30s
       timeout: 5s
       retries: 3

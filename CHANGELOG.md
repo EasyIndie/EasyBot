@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.23] - 2026-07-31
+
+### Fixed
+
+- **Production container smoke** — 生产 Compose 改用 release Alpine 运行时内置的 `wget`
+  执行 `/api/v1/live` 健康检查，并统一使用 `127.0.0.1` 避免 `localhost` 解析差异导致误判。
+- **Read-only production runtime** — 为生产 Compose 的只读根文件系统补齐
+  `/var/lib/easybot/logs`、`plugins`、`certs` 和 `secrets` tmpfs，修复真实部署启动时
+  初始化运行时目录触发 `Read-only file system` 的问题。
+
 ## [0.0.22] - 2026-07-31
 
 ### Fixed

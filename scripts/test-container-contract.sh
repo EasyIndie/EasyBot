@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT=$(git rev-parse --show-toplevel)
 cd "$ROOT"
 
-expected='http://localhost:8080/api/v1/live'
+expected='http://127.0.0.1:8080/api/v1/live'
 for file in Dockerfile Dockerfile.release; do
   grep -Fq "HEALTHCHECK" "$file" || {
     echo "$file has no container healthcheck" >&2
@@ -32,6 +32,10 @@ done
 
 grep -Fq "$expected" docker-compose.yml || {
   echo "docker-compose.yml healthcheck must use the liveness endpoint" >&2
+  exit 1
+}
+grep -Fq 'wget, -q, -O, /dev/null, http://127.0.0.1:8080/api/v1/live' deploy/docker-compose.production.yml || {
+  echo "production compose healthcheck must use wget because the release runtime is Alpine without curl" >&2
   exit 1
 }
 
@@ -75,6 +79,16 @@ fi
 for runtime_policy in 'pids_limit:' 'mem_limit:' 'cpus:' 'stop_grace_period: 45s' 'max-size:' 'max-file:'; do
   grep -Fq "$runtime_policy" deploy/docker-compose.production.yml || {
     echo "production compose is missing runtime policy: $runtime_policy" >&2
+    exit 1
+  }
+done
+for writable_runtime_dir in \
+  '/var/lib/easybot/logs:size=64M' \
+  '/var/lib/easybot/plugins:size=16M' \
+  '/var/lib/easybot/certs:size=16M' \
+  '/var/lib/easybot/secrets:size=16M'; do
+  grep -Fq "$writable_runtime_dir" deploy/docker-compose.production.yml || {
+    echo "production compose must provide writable tmpfs for: $writable_runtime_dir" >&2
     exit 1
   }
 done
