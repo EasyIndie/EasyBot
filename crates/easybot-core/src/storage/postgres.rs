@@ -778,13 +778,15 @@ mod tests {
             },
             reset_policy: ResetPolicy::Never,
             metadata: serde_json::json!({}),
+            last_message: None,
+            last_message_at: None,
         }
     }
 
     fn make_test_inbound() -> InboundMessage {
         InboundMessage {
             id: "msg1".to_string(),
-            platform: "telegram".to_string(),
+            platform: "telegram".to_string().into(),
             chat_id: "123".to_string(),
             chat_name: None,
             chat_type: ChatType::Dm,
@@ -800,9 +802,6 @@ mod tests {
                 language_code: None,
             },
             recipient: None,
-            chat_id: "123".to_string(),
-            chat_name: None,
-            chat_type: ChatType::Dm,
             guild_id: None,
             thread_id: None,
             root_id: None,

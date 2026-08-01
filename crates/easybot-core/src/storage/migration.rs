@@ -748,7 +748,7 @@ async fn has_existing_tables(pool: &SqlitePool) -> Result<bool, StoreError> {
 /// 获取 PostgreSQL 当前 schema 版本
 pub async fn get_current_version_pg(pool: &PgPool) -> Result<i64, StoreError> {
     let result: Result<Option<i64>, _> =
-        sqlx::query_scalar("SELECT COALESCE(MAX(version), 0) FROM _schema_version")
+        sqlx::query_scalar("SELECT COALESCE(MAX(version), 0)::BIGINT FROM _schema_version")
             .fetch_one(pool)
             .await;
 
