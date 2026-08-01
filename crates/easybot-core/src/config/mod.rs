@@ -537,6 +537,18 @@ pub fn generate_local_config_example() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Mutex, MutexGuard, OnceLock};
+
+    // Environment variables are process-global. Keep tests that call `load_env`
+    // serialized so temporary *_FILE variables cannot leak into another test.
+    static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    fn env_lock() -> MutexGuard<'static, ()> {
+        ENV_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("environment test lock poisoned")
+    }
 
     #[test]
     fn test_resolve_env_vars() {
@@ -663,6 +675,7 @@ adapters:
 
     #[test]
     fn test_load_env_creates_variables() {
+        let _env_lock = env_lock();
         use std::fs;
         let dir = std::env::temp_dir().join("easybot_env_test_basic");
         let _ = fs::create_dir_all(&dir);
@@ -679,6 +692,7 @@ adapters:
 
     #[test]
     fn test_load_env_missing_file_returns_ok() {
+        let _env_lock = env_lock();
         let dir = std::env::temp_dir().join("easybot_env_test_missing");
         let paths = EasyBotPaths::new(dir.clone()).unwrap();
         // .env 不存在 -> 应静默返回 Ok
@@ -688,6 +702,7 @@ adapters:
 
     #[test]
     fn test_load_env_does_not_override_existing() {
+        let _env_lock = env_lock();
         use std::fs;
         let dir = std::env::temp_dir().join("easybot_env_test_override");
         let _ = fs::create_dir_all(&dir);
@@ -710,6 +725,7 @@ adapters:
 
     #[test]
     fn test_load_env_reads_secret_file() {
+        let _env_lock = env_lock();
         use std::fs;
         let dir =
             std::env::temp_dir().join(format!("easybot_secret_file_test_{}", std::process::id()));

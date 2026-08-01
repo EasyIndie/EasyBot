@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.26] - 2026-08-01
+
+### Fixed
+
+- **Environment test isolation** — 串行化读取部署密钥文件的配置测试，避免并发测试互相污染进程环境变量。
+
 ## [0.0.25] - 2026-08-01
 
 ### Fixed

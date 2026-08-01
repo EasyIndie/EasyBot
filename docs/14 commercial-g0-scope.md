@@ -1,6 +1,6 @@
 # EasyBot G0 首发商用候选范围
 
-> 候选版本：0.0.25
+> 候选版本：0.0.26
 > 当前阶段：G0，冻结首个商用版本
 > 更新日期：2026-07-30
 
@@ -80,7 +80,7 @@ G3 退出前不建设或承诺：
 G0 完成时至少需要：
 
 - `bash scripts/verify.sh --locked` 通过日志；
-- `scripts/release-preflight.sh 0.0.25` 通过日志；
+- `scripts/release-preflight.sh 0.0.26` 通过日志；
 - `git diff --check` 通过日志；
 - 候选 commit；
 - 候选 tag；
