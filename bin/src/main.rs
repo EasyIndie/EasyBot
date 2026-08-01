@@ -563,11 +563,6 @@ async fn main() -> anyhow::Result<()> {
             }
             Err(e) => tracing::warn!("Failed to create dev API key: {}", e),
         }
-    } else if production_mode && key_file_path.exists() {
-        tracing::warn!(
-            path = %key_file_path.display(),
-            "Ignoring legacy plaintext dev API key in production; remove it after confirming no development process uses it"
-        );
     }
 
     // 解析管理后台密码（优先级：EASYBOT_ADMIN_PASSWORD > gateway.yaml > 默认值）

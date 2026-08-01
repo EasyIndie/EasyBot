@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.27] - 2026-08-01
+
+### Changed
+
+- **Pre-launch compatibility boundary** — Remove unversioned legacy database detection,
+  old message/config aliases, legacy Release metadata fallback, and implicit plugin ABI defaults.
+  Versioned databases continue to use automatic migrations and rollback safeguards.
+- **Automatic upgrade baseline** — Future automatic upgrades require EasyBot `0.0.26` or newer
+  and a release `easybot-version.json` manifest.
+
+### Fixed
+
+- **Release metadata generation** — Derive schema and plugin ABI versions from source and emit
+  valid expanded JSON for the updater manifest.
+
 ## [0.0.26] - 2026-08-01
 
 ### Fixed

@@ -25,7 +25,6 @@ pub struct InboundMessage {
 
     // ── 收发双方 ──
     /// 消息发送者
-    #[serde(alias = "author")]
     pub sender: MessageSender,
     /// 接收该消息的机器人 ID（用于多 bot 路由）
     pub recipient: Option<String>,
@@ -116,7 +115,7 @@ pub enum SenderRole {
     Anonymous,
 }
 
-/// 消息发送者（增强版，替换 MessageAuthor）
+/// 消息发送者
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct MessageSender {
     /// 平台用户 ID
@@ -145,10 +144,6 @@ pub struct MentionInfo {
     /// 提及范围：single / all / here
     pub scope: Option<String>,
 }
-
-/// 消息作者（已弃用，请使用 MessageSender）
-#[deprecated(since = "0.3.0", note = "use MessageSender instead")]
-pub type MessageAuthor = MessageSender;
 
 /// 出站消息（发往 IM 平台的消息）
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -457,8 +452,7 @@ mod tests {
     }
 
     #[test]
-    fn test_inbound_message_serde_alias_author() {
-        // 兼容旧 JSON 格式：author → sender 通过 serde(alias) 反序列化
+    fn test_inbound_message_requires_sender_field() {
         let old_json = serde_json::json!({
             "id": "msg1",
             "platform": "test",
@@ -473,10 +467,7 @@ mod tests {
             "chat_type": "Dm",
             "timestamp": 1000
         });
-        let msg: InboundMessage = serde_json::from_value(old_json).unwrap();
-        assert_eq!(msg.sender.id, "user1");
-        assert_eq!(msg.sender.name, Some("Alice".to_string()));
-        assert_eq!(msg.msg_type, MessageType::Text);
+        assert!(serde_json::from_value::<InboundMessage>(old_json).is_err());
     }
 
     #[test]

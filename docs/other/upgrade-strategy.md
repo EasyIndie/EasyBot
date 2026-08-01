@@ -225,7 +225,7 @@ CREATE TABLE IF NOT EXISTS _schema_version (
     "The /api/v1/messages endpoint now requires 'platform' parameter"
   ],
   "plugin_abi_version": 1,
-  "min_upgradable_from": "0.0.10"
+  "min_upgradable_from": "0.0.26"
 }
 ```
 
@@ -295,7 +295,7 @@ pub struct UpdatePlan {
 | ✅ 版本化增量迁移 | 可追溯、可控、可回滚、可跳过已执行 | 需要 schema 版本表 |
 | ❌ 全量幂等 `CREATE TABLE IF NOT EXISTS` | 简单 | 不支持 `ALTER TABLE`、无回滚 |
 
-**结论**：将现有全量迁移改造为版本化增量迁移。首次迁移系统记录现有 schema 为 v1。
+**结论**：使用版本化增量迁移。上线前不再自动识别没有版本记录的旧 schema；这类数据库必须重置。已有 `_schema_version` 的数据库仍按版本逐步升级。
 
 ### 5.4 嵌入迁移脚本 vs 外部 SQL 文件
 

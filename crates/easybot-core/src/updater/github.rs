@@ -148,45 +148,19 @@ impl GitHubClient {
             .assets
             .iter()
             .find(|a| a.name == "easybot-version.json")
-            .map(|a| a.download_url.clone());
+            .map(|a| a.download_url.clone())
+            .ok_or_else(|| {
+                UpdateError::Other(format!(
+                    "Release {tag} has no easybot-version.json; legacy releases are not supported"
+                ))
+            })?;
 
-        let url = match asset_url {
-            Some(url) => url,
-            None => {
-                // 没有版本清单文件可能是旧版 release
-                // 返回一个合理的默认值
-                return Ok(VersionManifest {
-                    version: tag.trim_start_matches('v').to_string(),
-                    tag: tag.to_string(),
-                    release_date: None,
-                    schema_version: 1,
-                    requires_db_migration: false,
-                    migrations: Vec::new(),
-                    requires_config_migration: false,
-                    config_changes: Vec::new(),
-                    breaking_changes: Vec::new(),
-                    plugin_abi_version: 1,
-                    min_upgradable_from: "0.0.10".to_string(),
-                });
-            }
-        };
-
-        let resp = self.client.get(&url).send().await?;
+        let resp = self.client.get(&asset_url).send().await?;
         if !resp.status().is_success() {
-            // 回退到默认值
-            return Ok(VersionManifest {
-                version: tag.trim_start_matches('v').to_string(),
-                tag: tag.to_string(),
-                release_date: None,
-                schema_version: 1,
-                requires_db_migration: false,
-                migrations: Vec::new(),
-                requires_config_migration: false,
-                config_changes: Vec::new(),
-                breaking_changes: Vec::new(),
-                plugin_abi_version: 1,
-                min_upgradable_from: "0.0.10".to_string(),
-            });
+            return Err(UpdateError::NetworkError(format!(
+                "Failed to fetch version manifest for {tag}: {}",
+                resp.status()
+            )));
         }
 
         let manifest: VersionManifest = resp.json().await?;
@@ -496,6 +470,38 @@ mod tests {
 
         let result = client.latest_release().await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_version_manifest_requires_release_asset() {
+        let mock_server = wiremock::MockServer::start().await;
+        let release_body = serde_json::json!({
+            "tag_name": "v0.1.0",
+            "html_url": "https://github.com/EasyIndie/EasyBot/releases/tag/v0.1.0",
+            "body": "",
+            "published_at": null,
+            "assets": []
+        });
+
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path(
+                "/repos/EasyIndie/EasyBot/releases/tags/v0.1.0",
+            ))
+            .respond_with(
+                wiremock::ResponseTemplate::new(200)
+                    .set_body_json(&release_body)
+                    .insert_header("Content-Type", "application/json"),
+            )
+            .mount(&mock_server)
+            .await;
+
+        let mut client = GitHubClient::with_base_url("EasyIndie", "EasyBot", &mock_server.uri());
+        let error = client.version_manifest("v0.1.0").await.unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("legacy releases are not supported")
+        );
     }
 
     #[tokio::test]

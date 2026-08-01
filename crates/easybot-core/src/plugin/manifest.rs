@@ -19,9 +19,8 @@ pub struct PluginManifest {
     /// 插件版本
     #[serde(default = "default_version")]
     pub version: String,
-    /// 所需 easybot-plugin-sdk ABI 版本（可选，默认当前版本）
-    #[serde(default)]
-    pub sdk_version: Option<u32>,
+    /// 所需 easybot-plugin-sdk ABI 版本（必填）
+    pub sdk_version: u32,
     /// 作者信息
     #[serde(default)]
     pub author: Option<String>,
@@ -97,12 +96,12 @@ author: "EasyBot Contributors"
         let manifest = PluginManifest::from_yaml(yaml).unwrap();
         assert_eq!(manifest.name, "slack");
         assert_eq!(manifest.display_name.unwrap(), "Slack Plugin");
-        assert_eq!(manifest.sdk_version, Some(1));
+        assert_eq!(manifest.sdk_version, 1);
     }
 
     #[test]
     fn test_manifest_minimal() {
-        let yaml = r#"name: "test-plugin""#;
+        let yaml = "name: \"test-plugin\"\nsdk_version: 1";
         let manifest = PluginManifest::from_yaml(yaml).unwrap();
         assert_eq!(manifest.name, "test-plugin");
         assert_eq!(manifest.version, "0.1.0");
@@ -116,7 +115,7 @@ author: "EasyBot Contributors"
             display_name: None,
             description: None,
             version: "1.0.0".into(),
-            sdk_version: None,
+            sdk_version: 1,
             author: None,
             library: None,
         };
@@ -142,7 +141,7 @@ author: "EasyBot Contributors"
             display_name: None,
             description: None,
             version: "1.0.0".into(),
-            sdk_version: None,
+            sdk_version: 1,
             author: None,
             library: Some("custom.so".into()),
         };
@@ -158,7 +157,7 @@ author: "EasyBot Contributors"
             display_name: None,
             description: None,
             version: "1.0.0".into(),
-            sdk_version: None,
+            sdk_version: 1,
             author: None,
             library: Some("/usr/lib/libc.so.6".into()),
         };
@@ -173,7 +172,7 @@ author: "EasyBot Contributors"
             display_name: None,
             description: None,
             version: "1.0.0".into(),
-            sdk_version: None,
+            sdk_version: 1,
             author: None,
             library: Some("../../../usr/lib/libc.so.6".into()),
         };

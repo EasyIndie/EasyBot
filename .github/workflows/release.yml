@@ -85,19 +85,23 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          cat > easybot-version.json <<'EOF'
+          SCHEMA_VERSION=$(sed -nE 's/^pub const SCHEMA_VERSION: i64 = ([0-9]+);$/\1/p' crates/easybot-core/src/storage/migration.rs)
+          PLUGIN_ABI_VERSION=$(sed -nE 's/^pub const EASYBOT_PLUGIN_ABI_VERSION: u32 = ([0-9]+);$/\1/p' crates/easybot-plugin-sdk/src/ffi.rs)
+          test -n "$SCHEMA_VERSION"
+          test -n "$PLUGIN_ABI_VERSION"
+          cat > easybot-version.json <<EOF
           {
-            "version": "'"$VERSION"'",
-            "tag": "v'"$VERSION"'",
+            "version": "$VERSION",
+            "tag": "v$VERSION",
             "release_date": "$(date +%Y-%m-%d)",
-            "schema_version": 1,
+            "schema_version": $SCHEMA_VERSION,
             "requires_db_migration": false,
             "migrations": [],
             "requires_config_migration": false,
             "config_changes": [],
             "breaking_changes": [],
-            "plugin_abi_version": 1,
-            "min_upgradable_from": "0.0.10"
+            "plugin_abi_version": $PLUGIN_ABI_VERSION,
+            "min_upgradable_from": "0.0.26"
           }
           EOF
           echo "Generated easybot-version.json for v$VERSION"

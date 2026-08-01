@@ -18,7 +18,7 @@ use crate::types::session::{ResetPolicy, Session, SessionFilter, SessionSource};
 
 /// 运行数据库迁移（版本化）
 ///
-/// 从旧版幂等 CREATE TABLE 升级为版本化增量迁移。
+/// 对带版本记录的数据库执行版本化增量迁移。
 /// 调用 `migration::run_migrations()` 逐版执行并追踪版本。
 pub async fn run_migrations(pool: &SqlitePool) -> Result<(), StoreError> {
     crate::storage::migration::run_migrations(pool).await
@@ -1442,6 +1442,25 @@ mod tests {
             "INSERT INTO api_keys
              (id, name, prefix, created_at, revoked, permissions, event_filters, hash)
              VALUES ('legacy-key', 'legacy', 'eb_old', 1, 0, '[]', '[]', 'hash')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Versioned v1 databases remain supported for automatic upgrades.
+        sqlx::query(
+            "CREATE TABLE _schema_version (
+                version INTEGER NOT NULL,
+                applied_at BIGINT NOT NULL,
+                description TEXT NOT NULL
+            )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO _schema_version (version, applied_at, description)
+             VALUES (1, 0, 'Initial schema')",
         )
         .execute(&pool)
         .await

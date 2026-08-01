@@ -559,25 +559,18 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), StoreError> {
     // 1. 确保版本追踪表存在
     sqlx::query(VERSION_TABLE_SQL).execute(pool).await?;
 
-    // 2. 检查是否已有数据表但无版本记录（从旧版迁移系统升级）
-    let mut current = get_current_version(pool).await?;
+    // 2. 未版本化的旧数据库不在上线前兼容范围内。
+    let current = get_current_version(pool).await?;
     if current > SCHEMA_VERSION {
         return Err(StoreError::Database(format!(
             "SQLite schema version {current} is newer than supported version {SCHEMA_VERSION}"
         )));
     }
     if current == 0 && has_existing_tables(pool).await? {
-        // 已有表结构但无版本记录 → 假定为 v1
-        sqlx::query(
-            "INSERT INTO _schema_version (version, applied_at, description) VALUES (?, ?, ?)",
-        )
-        .bind(1_i64)
-        .bind(Utc::now().timestamp_millis())
-        .bind("Initial schema (auto-detected)")
-        .execute(pool)
-        .await?;
-        tracing::info!("Auto-detected existing schema as v1");
-        current = 1;
+        return Err(StoreError::Database(
+            "Unversioned existing SQLite schema is not supported; reset the database before starting"
+                .into(),
+        ));
     }
 
     // 3. 逐版执行未应用的迁移
@@ -737,7 +730,7 @@ pub async fn rollback_to(pool: &SqlitePool, target_version: i64) -> Result<(), S
     Ok(())
 }
 
-/// 检查是否已有数据表（用于自动检测旧版 schema 版本）
+/// 检查是否存在未版本化的数据表。
 async fn has_existing_tables(pool: &SqlitePool) -> Result<bool, StoreError> {
     let count: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('sessions', 'messages', 'api_keys')",
@@ -821,24 +814,18 @@ async fn run_migrations_pg_inner(pool: &PgPool) -> Result<(), StoreError> {
         .execute(pool)
         .await?;
 
-    // 2. 检查是否已有数据表但无版本记录
-    let mut current = get_current_version_pg(pool).await?;
+    // 2. 未版本化的旧数据库不在上线前兼容范围内。
+    let current = get_current_version_pg(pool).await?;
     if current > SCHEMA_VERSION {
         return Err(StoreError::Database(format!(
             "PostgreSQL schema version {current} is newer than supported version {SCHEMA_VERSION}"
         )));
     }
     if current == 0 && has_existing_tables_pg(pool).await? {
-        sqlx::query(
-            "INSERT INTO _schema_version (version, applied_at, description) VALUES ($1, $2, $3)",
-        )
-        .bind(1_i64)
-        .bind(Utc::now().timestamp_millis())
-        .bind("Initial schema (auto-detected)")
-        .execute(pool)
-        .await?;
-        tracing::info!("Auto-detected existing PostgreSQL schema as v1");
-        current = 1;
+        return Err(StoreError::Database(
+            "Unversioned existing PostgreSQL schema is not supported; reset the database before starting"
+                .into(),
+        ));
     }
 
     // 3. 逐版执行
@@ -909,7 +896,7 @@ async fn rollback_to_pg_inner(pool: &PgPool, target_version: i64) -> Result<(), 
     Ok(())
 }
 
-/// 检查 PostgreSQL 是否已有数据表
+/// 检查 PostgreSQL 是否存在未版本化的数据表。
 async fn has_existing_tables_pg(pool: &PgPool) -> Result<bool, StoreError> {
     let count: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM information_schema.tables \
@@ -1012,26 +999,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_auto_detect_existing_schema() {
+    async fn test_reject_unversioned_existing_schema() {
         let pool = create_test_pool().await;
 
-        // 模拟旧版系统：完整 v1 schema 已存在但无 _schema_version 表。
+        // 未版本化的旧 schema 不再作为上线前兼容目标。
         sqlx::query(V1_SQLITE).execute(&pool).await.unwrap();
 
-        // 运行新版迁移 → 自动识别 v1，并继续应用后续商业迁移。
-        run_migrations(&pool).await.unwrap();
-        let version = get_current_version(&pool).await.unwrap();
-        assert_eq!(
-            version, SCHEMA_VERSION,
-            "Should auto-detect v1 and apply pending migrations"
-        );
-        let has_billing: bool = sqlx::query_scalar(
-            "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='billing_events'",
-        )
-        .fetch_one(&pool)
-        .await
-        .unwrap_or(false);
-        assert!(has_billing, "commercial v2 tables should be created");
+        let error = run_migrations(&pool).await.unwrap_err().to_string();
+        assert!(error.contains("Unversioned existing SQLite schema"));
+        assert_eq!(get_current_version(&pool).await.unwrap(), 0);
     }
 
     #[tokio::test]

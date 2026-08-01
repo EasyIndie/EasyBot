@@ -257,7 +257,7 @@ fn check_plugin_abi(manifest_path: &Path) -> Result<(), ()> {
     let sdk_version = manifest
         .get("sdk_version")
         .and_then(|v| v.as_u64())
-        .unwrap_or(1); // 未指定时假设为 1
+        .ok_or(())?;
 
     #[cfg(feature = "plugin-system")]
     let current_abi = crate::plugin::loader::EASYBOT_PLUGIN_ABI_VERSION as u64;
@@ -333,5 +333,17 @@ mod tests {
         let result = check_plugin_compatibility();
         assert!(result.is_ok(), "No plugins dir should return Ok");
         assert_eq!(result.unwrap().len(), 0);
+    }
+
+    #[test]
+    fn test_plugin_manifest_requires_sdk_version() {
+        let path = std::env::temp_dir().join(format!(
+            "easybot-plugin-manifest-missing-sdk-{}",
+            std::process::id()
+        ));
+        std::fs::write(&path, "name: test-plugin\n").unwrap();
+
+        assert!(check_plugin_abi(&path).is_err());
+        let _ = std::fs::remove_file(path);
     }
 }
