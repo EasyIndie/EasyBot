@@ -21,6 +21,7 @@ for file in LICENSE SECURITY.md README.md deny.toml Dockerfile.release deploy/Ca
   crates/easybot-api/src/snapshots/easybot_api__openapi__tests__openapi_v1_contract.snap \
   "docs/05 commercial-readiness.md" "docs/06 privacy-and-data-rights.md" \
   "docs/08 commercial-launch-acceptance.md" commercial/evidence.env.example \
+  deploy/gateway.production.local.yaml \
   "docs/09 billing-integration.md" \
   "docs/10 message-idempotency.md" \
   "docs/11 api-lifecycle.md" \

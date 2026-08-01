@@ -90,7 +90,7 @@ curl http://localhost:8080/api/v1/health
 ```json
 {
   "status": "healthy",
-  "version": "0.0.24",
+  "version": "0.0.25",
   "uptime": 12,
   "adapters": { "total": 1, "connected": 1 },
   "sessions": { "active": 0 }
@@ -195,10 +195,10 @@ vim ~/.easybot/.env
 
 ```bash
 # Linux (x86_64)
-curl -LO https://github.com/EasyIndie/EasyBot/releases/download/v0.0.24/easybot-x86_64-unknown-linux-musl
+curl -LO https://github.com/EasyIndie/EasyBot/releases/download/v0.0.25/easybot-x86_64-unknown-linux-musl
 
 # macOS (Apple Silicon)
-curl -LO https://github.com/EasyIndie/EasyBot/releases/download/v0.0.24/easybot-aarch64-apple-darwin
+curl -LO https://github.com/EasyIndie/EasyBot/releases/download/v0.0.25/easybot-aarch64-apple-darwin
 
 chmod +x easybot-*
 ./easybot-x86_64-unknown-linux-musl --init --dir ~/.easybot
@@ -496,7 +496,7 @@ curl http://localhost:8080/api/v1/health
 ```json
 {
   "status": "healthy",
-  "version": "0.0.24",
+  "version": "0.0.25",
   "uptime": 3600,
   "adapters": { "total": 5, "connected": 3 },
   "sessions": { "active": 42 }
@@ -827,7 +827,7 @@ easybot --debug
 | 管理后台密码 | 设置 `EASYBOT_ADMIN_PASSWORD` |
 | 数据库 | 生产推荐 PostgreSQL |
 | TLS | 配置反向代理（Nginx / Caddy）终止 TLS |
-| 监听地址 | `server.host` 改为 `0.0.0.0` |
+| 监听地址 | 生产 Compose 自动挂载 `deploy/gateway.production.local.yaml`，让容器监听 `0.0.0.0`；Caddy 是唯一公网入口 |
 | 资源限制 | Docker 设置 CPU/内存上限 |
 | 日志格式 | 使用 JSON 格式输出 |
 | 监控 | 启用 Prometheus 指标采集 |
@@ -1036,4 +1036,4 @@ docker compose pull && docker compose up -d
 
 ---
 
-*最后更新：2026-08-01 · EasyBot v0.0.24*
+*最后更新：2026-08-01 · EasyBot v0.0.25*

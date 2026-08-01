@@ -1,0 +1,4 @@
+# 生产 Compose 由 Caddy 通过容器内网反向代理到 EasyBot。
+# 应用不直接暴露公网，仅监听容器网络地址。
+server:
+  host: "0.0.0.0"

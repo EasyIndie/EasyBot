@@ -72,6 +72,8 @@ grep -Fq 'production-tls' docker-compose.yml
 grep -Fq 'EASYBOT_DOMAIN=' docker-compose.yml
 grep -Fq 'image: ${EASYBOT_IMAGE:?' deploy/docker-compose.production.yml
 grep -Fq '${EASYBOT_DATA_DIR:?' deploy/docker-compose.production.yml
+grep -Fq './gateway.production.local.yaml:/var/lib/easybot/gateway.local.yaml:ro' deploy/docker-compose.production.yml
+grep -Fq 'host: "0.0.0.0"' deploy/gateway.production.local.yaml
 if grep -Fq 'build:' deploy/docker-compose.production.yml; then
   echo "production compose must never build an unverified local image" >&2
   exit 1

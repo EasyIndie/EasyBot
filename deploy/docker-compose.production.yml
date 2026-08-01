@@ -46,6 +46,7 @@ services:
       QQ_CLIENT_SECRET_FILE: ${QQ_CLIENT_SECRET_FILE:-}
     volumes:
       - ../gateway.yaml:/etc/easybot/gateway.yaml:ro
+      - ./gateway.production.local.yaml:/var/lib/easybot/gateway.local.yaml:ro
       - ${EASYBOT_SECRETS_DIR:?Absolute secrets directory is required}:/run/secrets:ro
       - ${EASYBOT_DATA_DIR:?Absolute EasyBot data directory is required}:/var/lib/easybot/data
     cap_drop: [ALL]

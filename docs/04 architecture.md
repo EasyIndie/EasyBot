@@ -274,7 +274,7 @@ GET /health
 Response 200:
 {
   "status": "healthy",               // healthy | degraded
-  "version": "0.0.24",
+  "version": "0.0.25",
   "uptime": 86400,
   "adapters": { "total": 5, "connected": 4 },
   "sessions": { "active": 42 }

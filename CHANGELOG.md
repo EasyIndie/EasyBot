@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.25] - 2026-08-01
+
+### Fixed
+
+- **Production proxy reachability** — 生产 Compose 挂载容器内网监听 override，让 Caddy
+  可以访问 EasyBot 的 `/api/v1/live`，修复应用仅监听 `127.0.0.1` 导致反向代理 503 的问题。
+
 ## [0.0.24] - 2026-08-01
 
 ### Fixed
