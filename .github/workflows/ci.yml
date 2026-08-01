@@ -14,6 +14,9 @@ on:
   merge_group:
     branches: [main]
 
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -26,8 +29,8 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1
         with:
           components: rustfmt
       - name: Format
@@ -37,7 +40,7 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
       - uses: ./.github/actions/setup-rust
         with:
           components: clippy, rustfmt
@@ -55,7 +58,7 @@ jobs:
         run: cargo build -p mock-adapter --locked
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@43aecc8d72668fbcfe75c31400bc4f890f1c5853 # v2
         with:
           tool: cargo-nextest
 
@@ -76,7 +79,7 @@ jobs:
             protoc: "auto"
       fail-fast: false
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
       - uses: ./.github/actions/setup-rust
         with:
           install-protoc: ${{ matrix.protoc }}
@@ -85,6 +88,14 @@ jobs:
 
       - name: Check (${{ matrix.features }})
         run: cargo check --workspace ${{ matrix.features }} --locked
+
+  # ── Disaster recovery: backup integrity and restore drill ──────────
+  disaster-recovery:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - name: SQLite backup, tamper detection and restore
+        run: bash scripts/test-backup.sh
 
   # ── Cross-platform check (Linux/macOS/Windows × x64/arm64) ──
   cross-check:
@@ -97,13 +108,13 @@ jobs:
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
       - uses: ./.github/actions/setup-rust
         with:
           install-protoc: auto
 
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@43aecc8d72668fbcfe75c31400bc4f890f1c5853 # v2
         with:
           tool: cargo-llvm-cov
 
@@ -117,7 +128,7 @@ jobs:
         run: cargo llvm-cov --workspace --features "default,plugin-system" --locked --lcov --output-path lcov.info
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v7
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: lcov.info

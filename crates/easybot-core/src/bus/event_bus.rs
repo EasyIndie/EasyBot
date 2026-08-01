@@ -47,7 +47,7 @@ impl EventBus {
     ///
     /// SECURITY: Logs a warning when message.inbound events are published
     /// by non-adapter sources (potential event spoofing).
-    pub fn publish(&self, event: GatewayEvent) {
+    pub fn publish(&self, event: GatewayEvent) -> usize {
         // SECURITY: Warn on suspicious event source mismatches
         if event.event_type == crate::types::event::event_types::MESSAGE_INBOUND
             && event.source != "api"
@@ -59,7 +59,9 @@ impl EventBus {
         }
         let event_type = event.event_type.clone();
         if let Some(tx) = self.channels.get(&event_type) {
-            let _ = tx.send(event);
+            tx.send(event).unwrap_or(0)
+        } else {
+            0
         }
     }
 

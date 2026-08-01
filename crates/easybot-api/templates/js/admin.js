@@ -1,11 +1,9 @@
-// SECURITY: Use sessionStorage instead of localStorage.
-// sessionStorage is cleared when the tab/browser closes, limiting
-// exposure of the API key to the current browser session.
 const LS_KEY = 'easybot_api_key';
-let apiKey = sessionStorage.getItem(LS_KEY) || '';
+// Privileged credentials remain in memory only. Reload requires a new login.
+let apiKey = '';
 // key display removed — dev key changes on restart, use API Key tab for permanent keys
 
-function setKey(k) { apiKey = k; sessionStorage.setItem(LS_KEY, k); }
+function setKey(k) { apiKey = k; }
 function clearKey() { apiKey = ''; sessionStorage.removeItem(LS_KEY); }
 
 
@@ -93,12 +91,12 @@ function renderMessageRow(m) {
   const role = m.role || 'User';
   const typeLabel = msgTypeLabel(m.raw_data);
   tr.innerHTML = `<td style="font-size:11px;color:var(--text-muted);white-space:nowrap">${new Date(m.timestamp).toLocaleTimeString()}</td>
-    <td><span class="badge ${platformBadgeClass(m.platform)}">${m.platform}</span></td>
-    <td style="font-size:12px">${m.chat_id}</td>
-    <td><span class="badge ${msgRoleBadgeClass(role)}">${role}</span></td>
-    <td><span class="badge ${msgTypeBadgeClass(m.raw_data)}">${typeLabel}</span></td>
-    <td style="font-size:12px;color:var(--text-muted);max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${(m.text || '').substring(0, 80)}</td>
-    <td><button class="btn btn-sm btn-reply" data-platform="${m.platform}" data-chat-id="${m.chat_id}" title="回复该会话">回复</button></td>`;
+    <td><span class="badge ${platformBadgeClass(m.platform)}">${escapeHtml(String(m.platform || ''))}</span></td>
+    <td style="font-size:12px">${escapeHtml(String(m.chat_id || ''))}</td>
+    <td><span class="badge ${msgRoleBadgeClass(role)}">${escapeHtml(String(role))}</span></td>
+    <td><span class="badge ${msgTypeBadgeClass(m.raw_data)}">${escapeHtml(String(typeLabel))}</span></td>
+    <td style="font-size:12px;color:var(--text-muted);max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(String(m.text || '').substring(0, 80))}</td>
+    <td><button class="btn btn-sm btn-reply" title="回复该会话">回复</button></td>`;
   tr.querySelector('.btn-reply').addEventListener('click', e => {
     e.stopPropagation();
     const target = m.platform + ':' + m.chat_id;
@@ -367,7 +365,7 @@ function renderMetricsVisual(parsed) {
   if (adapterList.length) {
     detail += '<div class="card" style="padding:12px 16px"><h3 style="font-size:14px;margin-bottom:8px">🔌 适配器状态</h3><div style="display:flex;gap:8px;flex-wrap:wrap">';
     for (const a of adapterList) {
-      detail += `<span style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;background:var(--bg-tertiary);border-radius:6px;border:1px solid var(--border-muted);font-size:13px">${a.connected?'🟢':'🔴'} ${a.platform} <span style="color:var(--text-muted);font-size:11px">${a.connected?'在线':'离线'}</span></span>`;
+      detail += `<span style="display:inline-flex;align-items:center;gap:4px;padding:4px 10px;background:var(--bg-tertiary);border-radius:6px;border:1px solid var(--border-muted);font-size:13px">${a.connected?'🟢':'🔴'} ${escapeHtml(String(a.platform || ''))} <span style="color:var(--text-muted);font-size:11px">${a.connected?'在线':'离线'}</span></span>`;
     }
     detail += '</div></div>';
   }
@@ -552,23 +550,27 @@ async function loadAdapters() {
       }
       const statusClass = statusBadgeClass(displayStatus, a.connected, a.health);
       const icon = icons[a.platform] || '🔌';
+      const platform = escapeHtml(String(a.platform || ''));
       // 健康状态副标题（默认隐藏，通过 WebSocket 事件更新时显示）
       const healthLabel = a.health === 'Degraded' ? '传输异常' : a.health === 'Down' ? '传输断开' : '';
       const healthDisplay = healthLabel ? 'block' : 'none';
-      const healthSubtitle = `<div id="adapter-health-${a.platform}" style="font-size:12px;color:var(--text-muted);margin-top:2px;display:${healthDisplay}">${healthLabel}</div>`;
-      return `<div class="card" id="adapter-card-${a.platform}">
+      const healthSubtitle = `<div data-adapter-health="${platform}" style="font-size:12px;color:var(--text-muted);margin-top:2px;display:${healthDisplay}">${escapeHtml(healthLabel)}</div>`;
+      return `<div class="card" data-adapter-card="${platform}">
         <div style="display:flex;justify-content:space-between;align-items:center">
           <div>
-            <h3>${icon} ${a.display_name} <span class="badge ${statusClass}" id="adapter-badge-${a.platform}">${displayStatus}</span></h3>
+            <h3>${icon} ${escapeHtml(String(a.display_name || ''))} <span class="badge ${statusClass}" data-adapter-badge="${platform}">${escapeHtml(String(displayStatus || ''))}</span></h3>
             ${healthSubtitle}
           </div>
-          <div id="adapter-buttons-${a.platform}">
-            <button class="btn btn-sm btn-primary" onclick="adapterAction('${a.platform}','start')" ${a.connected || pollState ? 'disabled':''}>启动</button>
-            <button class="btn btn-sm btn-danger" onclick="adapterAction('${a.platform}','stop')" ${!a.connected || pollState ? 'disabled':''}>停止</button>
+          <div data-adapter-buttons="${platform}">
+            <button class="btn btn-sm btn-primary adapter-action" data-platform="${platform}" data-action="start" ${a.connected || pollState ? 'disabled':''}>启动</button>
+            <button class="btn btn-sm btn-danger adapter-action" data-platform="${platform}" data-action="stop" ${!a.connected || pollState ? 'disabled':''}>停止</button>
           </div>
         </div>
       </div>`;
     }).join('') + '</div>';
+    content.querySelectorAll('.adapter-action').forEach(button => {
+      button.addEventListener('click', () => adapterAction(button.dataset.platform, button.dataset.action));
+    });
     loading.style.display = 'none';
     content.style.display = 'block';
   } catch (e) {
@@ -579,7 +581,8 @@ async function loadAdapters() {
 // 更新单个 adapter 卡片的 badge 和按钮状态（不重新渲染整个列表）
 // health: 传输层健康状态（"Healthy" / "Degraded" / "Down" / null），null 表示不覆盖
 function updateAdapterCard(platform, status, connected, polling, health) {
-  const badge = document.getElementById(`adapter-badge-${platform}`);
+  const selector = CSS.escape(String(platform));
+  const badge = document.querySelector(`[data-adapter-badge="${selector}"]`);
   if (badge) {
     badge.className = `badge ${statusBadgeClass(status, connected, health)}`;
     // 如果 Connected 但传输不健康，显示 Degraded
@@ -590,14 +593,14 @@ function updateAdapterCard(platform, status, connected, polling, health) {
     badge.textContent = displayStatus;
   }
   // 更新按钮状态
-  const btnDiv = document.getElementById(`adapter-buttons-${platform}`);
+  const btnDiv = document.querySelector(`[data-adapter-buttons="${selector}"]`);
   if (btnDiv) {
     const [startBtn, stopBtn] = btnDiv.querySelectorAll('button');
     if (startBtn) startBtn.disabled = connected || polling;
     if (stopBtn) stopBtn.disabled = !connected || polling;
   }
   // 更新健康状态副标题
-  const healthDiv = document.getElementById(`adapter-health-${platform}`);
+  const healthDiv = document.querySelector(`[data-adapter-health="${selector}"]`);
   if (healthDiv) {
     if (health && health !== 'Healthy') {
       const healthLabel = health === 'Degraded' ? '传输异常' : '传输断开';
@@ -810,15 +813,18 @@ function copyKey(el, key) {
 function renderSessionRow(s) {
   const tr = document.createElement('tr');
   tr.setAttribute('data-session-key', s.key);
+  const key = escapeHtml(String(s.key || ''));
   tr.innerHTML = `<td>
-    <div style="font-weight:600;color:var(--text-primary)">${getDisplayName(s)}</div>
-    <div style="margin-top:5px;font-size:11px;color:var(--text-faint);font-family:var(--font-mono);cursor:pointer" onclick="copyKey(this,'${s.key}')" title="点击复制">${s.key}</div>
+    <div style="font-weight:600;color:var(--text-primary)">${escapeHtml(String(getDisplayName(s) || ''))}</div>
+    <div class="session-key-copy" style="margin-top:5px;font-size:11px;color:var(--text-faint);font-family:var(--font-mono);cursor:pointer" title="点击复制">${key}</div>
   </td>
-    <td><span class="badge ${platformBadgeClass(s.platform)}">${s.platform}</span></td>
-    <td><span class="badge ${chatTypeBadgeClass(s.source?.chat_type)}">${s.source?.chat_type || '-'}</span></td>
-    <td style="max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;color:var(--text-secondary)" title="${(s.last_message || '').replace(/"/g, '&quot;')}">${s.last_message || '-'}</td>
+    <td><span class="badge ${platformBadgeClass(s.platform)}">${escapeHtml(String(s.platform || ''))}</span></td>
+    <td><span class="badge ${chatTypeBadgeClass(s.source?.chat_type)}">${escapeHtml(String(s.source?.chat_type || '-'))}</span></td>
+    <td style="max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;color:var(--text-secondary)" title="${escapeHtml(String(s.last_message || ''))}">${escapeHtml(String(s.last_message || '-'))}</td>
     <td style="font-size:12px;color:var(--text-muted)">${new Date(s.created_at).toLocaleString()}</td>
-    <td><button class="btn btn-sm btn-danger" onclick="deleteSession('${s.key}')">删除</button></td>`;
+    <td><button class="btn btn-sm btn-danger session-delete">删除</button></td>`;
+  tr.querySelector('.session-key-copy').addEventListener('click', event => copyKey(event.currentTarget, s.key));
+  tr.querySelector('.session-delete').addEventListener('click', () => deleteSession(s.key));
   return tr;
 }
 
@@ -970,7 +976,7 @@ document.getElementById('msg-send-btn').addEventListener('click', async () => {
   result.innerHTML = '<span style="color:var(--text-muted)">⏳ 正在发送...</span>';
   try {
     const data = await api('/api/v1/messages/send', { method: 'POST', body: { target, text, parseMode: parseMode || null } });
-    result.innerHTML = '<span class="success-msg">✅ 已发送 (id: ' + data.messageId + ', status: ' + data.status + ')</span>';
+    result.innerHTML = '<span class="success-msg">✅ 已发送 (id: ' + escapeHtml(String(data.messageId || '')) + ', status: ' + escapeHtml(String(data.status || '')) + ')</span>';
     showToast('消息已发送', 'success');
     document.getElementById('msg-text').value = '';
     prependNewMessages();
@@ -1148,7 +1154,7 @@ async function loadApiKeys() {
   }
 
   try {
-    const keys = await api('/api/v1/api-keys');
+    const keys = await api('/api/v1/api-keys?limit=1000&offset=0');
 
     let html = '<div style="display:flex;gap:8px;margin-bottom:12px">';
     html += '<button class="btn btn-primary" id="apikey-create-btn">➕ 创建 API Key</button>';
@@ -1158,31 +1164,34 @@ async function loadApiKeys() {
       html += '<div class="card"><p style="color:var(--text-muted)">暂无 API Key</p></div>';
     } else {
       html += '<div class="table-wrapper"><table><thead><tr>' +
-        '<th>名称</th><th>Key</th><th>权限</th><th>事件过滤</th><th>状态</th><th>创建时间</th><th>操作</th>' +
+        '<th>名称</th><th>Key</th><th>权限</th><th>事件过滤</th><th>分钟配额</th><th>状态</th><th>创建时间</th><th>操作</th>' +
         '</tr></thead><tbody>';
       for (const k of keys.filter(k => k.name !== 'dev')) {
-        const masked = k.prefix ? k.prefix + '****' : '****';
+        const masked = String(k.prefix ? k.prefix + '****' : '****');
+        const keyId = escapeHtml(String(k.id || ''));
+        const keyName = escapeHtml(String(k.name || ''));
         const statusHtml = k.revoked
           ? '<span class="badge badge-red">已吊销</span>'
           : '<span class="badge badge-green">正常</span>';
         const permHtml = k.permissions.includes('*')
           ? '<span class="badge badge-blue">全部</span>'
-          : k.permissions.map(p => '<span class="badge badge-gray" style="margin:1px">' + p + '</span>').join('');
+          : k.permissions.map(p => '<span class="badge badge-gray" style="margin:1px">' + escapeHtml(String(p)) + '</span>').join('');
         const filterHtml = !k.event_filters || !k.event_filters.length
           ? '<span class="badge badge-blue">全部事件</span>'
-          : k.event_filters.map(ef => '<span class="badge badge-gray" style="margin:1px">' + ef + '</span>').join('');
+          : k.event_filters.map(ef => '<span class="badge badge-gray" style="margin:1px">' + escapeHtml(String(ef)) + '</span>').join('');
         const created = new Date(k.created_at).toLocaleString();
         const debugBtn = k.revoked
           ? '<button class="btn btn-sm" disabled>调试</button>'
-          : `<button class="btn btn-sm" onclick="openDebugPanel('${k.id}','${k.name}','${masked}','${k.event_filters.join(',')}')">🔍 调试</button>`;
+          : `<button class="btn btn-sm api-key-action" data-action="debug" data-key-id="${keyId}">🔍 调试</button>`;
         const revokeBtn = k.revoked
-          ? `<button class="btn btn-sm btn-danger" onclick="deleteApiKey('${k.id}','${k.name}')">删除</button>`
-          : `<button class="btn btn-sm btn-danger" onclick="revokeApiKey('${k.id}','${k.name}')">吊销</button>`;
+          ? `<button class="btn btn-sm btn-danger api-key-action" data-action="delete" data-key-id="${keyId}">删除</button>`
+          : `<button class="btn btn-sm btn-danger api-key-action" data-action="revoke" data-key-id="${keyId}">吊销</button>`;
         html += `<tr>
-          <td style="white-space:nowrap"><strong>${k.name}</strong></td>
-          <td style="font-family:monospace;font-size:12px">${masked}</td>
+          <td style="white-space:nowrap"><strong>${keyName}</strong></td>
+          <td style="font-family:monospace;font-size:12px">${escapeHtml(masked)}</td>
           <td style="font-size:12px">${permHtml}</td>
           <td style="font-size:12px">${filterHtml}</td>
+          <td style="font-size:12px">${k.requests_per_minute ?? '无限制'}</td>
           <td>${statusHtml}</td>
           <td style="font-size:12px;color:var(--text-muted)">${created}</td>
           <td style="white-space:nowrap">${debugBtn} ${revokeBtn}</td>
@@ -1195,6 +1204,19 @@ async function loadApiKeys() {
     html += '<div class="debug-panel" id="debug-panel" style="display:none"></div>';
 
     content.innerHTML = html;
+    content.querySelectorAll('.api-key-action').forEach(button => {
+      button.addEventListener('click', () => {
+        const key = keys.find(item => String(item.id) === button.dataset.keyId);
+        if (!key) return;
+        if (button.dataset.action === 'debug') {
+          openDebugPanel(key.id, key.name, key.prefix ? key.prefix + '****' : '****', (key.event_filters || []).join(','));
+        } else if (button.dataset.action === 'delete') {
+          deleteApiKey(key.id, key.name);
+        } else {
+          revokeApiKey(key.id, key.name);
+        }
+      });
+    });
     loading.style.display = 'none';
     content.style.display = 'block';
 
@@ -1232,7 +1254,7 @@ function buildPermHtml() {
     { title: '适配器', items: ['adaptersread', 'adaptersmanage'] },
     { title: '配置', items: ['configread', 'configwrite'] },
     { title: '会话', items: ['sessionsread', 'sessionsmanage'] },
-    { title: '其他', items: ['websocketconnect', 'apikeysmanage'] },
+    { title: '其他', items: ['websocketconnect', 'apikeysmanage', 'metricsread', 'auditread'] },
   ];
   let html = '';
   for (const group of permGroups) {
@@ -1273,6 +1295,11 @@ function showCreateDialog() {
         <div class="form-group">
           <label>名称 <span style="color:var(--danger)">*</span></label>
           <input type="text" id="create-key-name" placeholder="例如: 客服机器人">
+        </div>
+
+        <div class="form-group">
+          <label>每分钟请求配额（留空表示不设置 Key 级配额）</label>
+          <input type="number" id="create-key-rpm" min="1" max="1000000" placeholder="例如: 600">
         </div>
 
         <div class="form-group">
@@ -1389,9 +1416,6 @@ function onStarPermissionChange() {
 }
 
 function openDebugWithNewKey() {
-  if (lastCreatedKey) {
-    sessionStorage.setItem('easybot_debug_key', lastCreatedKey);
-  }
   closeCreateDialog();
   // 切换到 API Key tab 并自动打开调试面板
   if (currentTab !== 'apikeys') {
@@ -1426,6 +1450,12 @@ async function submitCreateKey() {
     showToast('请至少选择一个权限', 'error');
     return;
   }
+  const quotaInput = document.getElementById('create-key-rpm').value.trim();
+  const requests_per_minute = quotaInput === '' ? null : Number(quotaInput);
+  if (requests_per_minute !== null && (!Number.isInteger(requests_per_minute) || requests_per_minute < 1 || requests_per_minute > 1000000)) {
+    showToast('每分钟请求配额必须是 1 到 1000000 之间的整数', 'error');
+    return;
+  }
 
   const btn = document.getElementById('create-key-submit');
   btn.disabled = true;
@@ -1434,13 +1464,9 @@ async function submitCreateKey() {
   try {
     const result = await api('/api/v1/api-keys', {
       method: 'POST',
-      body: { name, permissions, event_filters },
+      body: { name, permissions, event_filters, requests_per_minute },
     });
     lastCreatedKey = result.key || '';
-    // 保存到 sessionStorage，供调试面板自动填充
-    if (lastCreatedKey) {
-      sessionStorage.setItem('easybot_debug_key', lastCreatedKey);
-    }
     document.getElementById('create-form-area').style.display = 'none';
     document.getElementById('create-result').style.display = 'block';
     document.getElementById('create-result-key').textContent = lastCreatedKey;
@@ -1507,7 +1533,7 @@ function openDebugPanel(id, name, masked, eventFiltersStr) {
 
   // 尝试从之前创建 Key 的结果中填充 Key（仅本次会话有效），
   // 如果没有则自动填入当前主页面的 API Key
-  const savedTestKey = sessionStorage.getItem('easybot_debug_key') || apiKey || '';
+  const savedTestKey = lastCreatedKey || apiKey || '';
 
   panel.style.display = 'block';
   panel.innerHTML = `
@@ -1959,4 +1985,3 @@ window.addEventListener('unhandledrejection', e => {
 // ─── Initialize ────────────────────────────────
 document.getElementById('metrics-refresh').addEventListener('click', () => loadMetrics(true));
 initAuth();
-

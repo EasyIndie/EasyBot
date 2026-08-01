@@ -1,0 +1,6058 @@
+---
+source: crates/easybot-api/src/openapi.rs
+assertion_line: 356
+expression: "ApiDoc::openapi()"
+---
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "EasyBot API",
+    "description": "EasyBot 即时通信网关服务 API\n\nEasyBot 是一个独立的 IM 网关服务，连接多个即时通信平台（Telegram、Discord 等），\n对外提供统一的 REST API 和 WebSocket 实时事件推送。\n\n## 目标格式\n所有涉及消息发送的接口，目标格式为 `platform:chatId`，例如 `telegram:123456789`。\n\n## 认证\n除 health/live/ready 与管理员密码登录外，REST API 请求需要携带 API Key。\nWebSocket 在连接后的第一条应用消息中发送 API Key，不使用 HTTP Bearer 握手。\n认证方式：在 HTTP Header 中添加 `Authorization: Bearer <api-key>`。\n在 Swagger UI 中点击右上角的 **Authorize** 按钮，输入 API Key（如 `eb_xxxxxxxx`）即可。",
+    "license": {
+      "name": "GPL-3.0"
+    },
+    "version": "0.0.27"
+  },
+  "servers": [
+    {
+      "url": "/",
+      "description": "Current origin (HTTPS in production)"
+    }
+  ],
+  "paths": {
+    "/admin/login": {
+      "post": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "POST /admin/login — 密码登录，返回 API Key",
+        "description": "SECURITY: Uses constant-time comparison to prevent timing side-channel attacks.\nRate limiting is handled by the dedicated admin login rate limiter in server.rs.",
+        "operationId": "admin_login",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "登录成功，返回 API Key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LoginResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "密码字段为空或超过 1024 字节",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "密码错误或未配置"
+          },
+          "413": {
+            "description": "请求体超过 4 KiB"
+          }
+        },
+        "security": []
+      }
+    },
+    "/api/v1/adapters": {
+      "get": {
+        "tags": [
+          "Adapters"
+        ],
+        "summary": "获取适配器列表",
+        "operationId": "list_adapters",
+        "responses": {
+          "200": {
+            "description": "List of all registered adapters",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdapterListResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, expired, or revoked API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "API key lacks the required permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Global, IP, or subject quota exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal operation failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Durable metering, quota, storage, or adapter unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/adapters/{platform}/start": {
+      "post": {
+        "tags": [
+          "Adapters"
+        ],
+        "summary": "启动适配器",
+        "operationId": "start_adapter",
+        "parameters": [
+          {
+            "name": "platform",
+            "in": "path",
+            "description": "Platform identifier, e.g. 'telegram'",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Start result",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, expired, or revoked API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "API key lacks the required permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Platform not found"
+          },
+          "429": {
+            "description": "Global, IP, or subject quota exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal operation failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Durable metering, quota, storage, or adapter unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/adapters/{platform}/status": {
+      "get": {
+        "tags": [
+          "Adapters"
+        ],
+        "summary": "获取适配器详细状态",
+        "operationId": "adapter_status",
+        "parameters": [
+          {
+            "name": "platform",
+            "in": "path",
+            "description": "Platform identifier",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Adapter status details",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, expired, or revoked API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "API key lacks the required permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Platform not found"
+          },
+          "429": {
+            "description": "Global, IP, or subject quota exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal operation failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Durable metering, quota, storage, or adapter unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/adapters/{platform}/stop": {
+      "post": {
+        "tags": [
+          "Adapters"
+        ],
+        "summary": "停止适配器",
+        "operationId": "stop_adapter",
+        "parameters": [
+          {
+            "name": "platform",
+            "in": "path",
+            "description": "Platform identifier",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Stop result",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, expired, or revoked API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "API key lacks the required permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Global, IP, or subject quota exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal operation failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Durable metering, quota, storage, or adapter unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/api-keys": {
+      "get": {
+        "tags": [
+          "API Keys"
+        ],
+        "summary": "GET /api/v1/api-keys — 列出所有 Key",
+        "operationId": "list_api_keys",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size, 1-1000; default 100",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "Stable history offset, max 10000000",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "API Key 列表",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ApiKeyResponse"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, expired, or revoked API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "API key lacks the required permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Global, IP, or subject quota exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal operation failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Durable metering, quota, storage, or adapter unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "API Keys"
+        ],
+        "summary": "POST /api/v1/api-keys — 创建 Key",
+        "operationId": "create_api_key",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateApiKeyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "创建成功，返回 raw key（仅此一次）",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreateApiKeyResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "请求参数无效"
+          },
+          "401": {
+            "description": "Missing, invalid, expired, or revoked API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "API key lacks the required permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Global, IP, or subject quota exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal operation failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Durable metering, quota, storage, or adapter unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/api-keys/rotations": {
+      "get": {
+        "tags": [
+          "API Keys"
+        ],
+        "operationId": "list_rotation_transitions",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/ApiKeyRotationTransition"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, expired, or revoked API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "API key lacks the required permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Global, IP, or subject quota exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal operation failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Durable metering, quota, storage, or adapter unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/api-keys/rotations/{source_id}/{replacement_id}/reconcile": {
+      "post": {
+        "tags": [
+          "API Keys"
+        ],
+        "operationId": "reconcile_rotation_transition",
+        "parameters": [
+          {
+            "name": "source_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "replacement_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReconcileRotationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RotationReconcileResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Action does not match durable transition state"
+          },
+          "401": {
+            "description": "Missing, invalid, expired, or revoked API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "API key lacks the required permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Global, IP, or subject quota exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal operation failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Durable metering, quota, storage, or adapter unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/api-keys/types": {
+      "get": {
+        "tags": [
+          "API Keys"
+        ],
+        "summary": "GET /api/v1/api-keys/types — 获取可用事件类型和权限列表",
+        "operationId": "list_api_key_types",
+        "responses": {
+          "200": {
+            "description": "可用事件类型和权限列表",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiKeyTypesResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, expired, or revoked API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "API key lacks the required permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Global, IP, or subject quota exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal operation failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Durable metering, quota, storage, or adapter unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/api-keys/{id}": {
+      "delete": {
+        "tags": [
+          "API Keys"
+        ],
+        "summary": "DELETE /api/v1/api-keys/{id} — 吊销 Key",
+        "operationId": "revoke_api_key",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "API Key ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "吊销成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RevokeResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Key 未找到"
+          },
+          "401": {
+            "description": "Missing, invalid, expired, or revoked API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "API key lacks the required permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Global, IP, or subject quota exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal operation failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Durable metering, quota, storage, or adapter unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/api-keys/{id}/purge": {
+      "delete": {
+        "tags": [
+          "API Keys"
+        ],
+        "summary": "DELETE /api/v1/api-keys/{id}/purge — 永久删除已吊销的 Key",
+        "operationId": "purge_api_key",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "API Key ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "永久删除成功",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RevokeResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Key 未吊销或不存在"
+          },
+          "401": {
+            "description": "Missing, invalid, expired, or revoked API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "API key lacks the required permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Global, IP, or subject quota exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal operation failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Durable metering, quota, storage, or adapter unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/api-keys/{id}/rotate": {
+      "post": {
+        "tags": [
+          "API Keys"
+        ],
+        "summary": "Replace a key while preserving its permissions, filters and quota.",
+        "operationId": "rotate_api_key",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RotateApiKeyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreateApiKeyResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid expiry or key state"
+          },
+          "401": {
+            "description": "Missing, invalid, expired, or revoked API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "API key lacks the required permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Key not found"
+          },
+          "429": {
+            "description": "Global, IP, or subject quota exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal operation failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Durable metering, quota, storage, or adapter unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/audit-events": {
+      "get": {
+        "tags": [
+          "Audit"
+        ],
+        "summary": "Query newest management audit events and verify the full hash chain.",
+        "operationId": "list_audit_events",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Newest events to return, max 1000",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuditEventsResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "limit must be between 1 and 1000",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, expired, or revoked API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "API key lacks the required permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Global, IP, or subject quota exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "The full audit hash chain failed integrity validation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Durable metering, quota, storage, or adapter unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/billing/events": {
+      "get": {
+        "tags": [
+          "Billing"
+        ],
+        "operationId": "list_billing_events",
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "customer_ref",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "provider",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "event_type",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BillingEventsResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, expired, or revoked API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "API key lacks the required permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Global, IP, or subject quota exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal operation failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Durable metering, quota, storage, or adapter unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Billing"
+        ],
+        "operationId": "create_billing_event",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateBillingEventRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BillingEventWriteResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, expired, or revoked API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "API key lacks the required permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": ""
+          },
+          "429": {
+            "description": "Global, IP, or subject quota exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal operation failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Durable metering, quota, storage, or adapter unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/chats/{platform}": {
+      "get": {
+        "tags": [
+          "Chats"
+        ],
+        "summary": "获取指定平台的聊天列表",
+        "operationId": "list_chats",
+        "parameters": [
+          {
+            "name": "platform",
+            "in": "path",
+            "description": "Platform identifier",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of chats",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, expired, or revoked API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "API key lacks the required permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Global, IP, or subject quota exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal operation failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Durable metering, quota, storage, or adapter unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/chats/{platform}/{chat_id}": {
+      "get": {
+        "tags": [
+          "Chats"
+        ],
+        "summary": "获取指定聊天的详细信息",
+        "operationId": "get_chat",
+        "parameters": [
+          {
+            "name": "platform",
+            "in": "path",
+            "description": "Platform identifier",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "chat_id",
+            "in": "path",
+            "description": "Chat ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Chat info",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, expired, or revoked API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "API key lacks the required permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Global, IP, or subject quota exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal operation failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Durable metering, quota, storage, or adapter unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/config": {
+      "get": {
+        "tags": [
+          "Config"
+        ],
+        "summary": "获取当前配置（已脱敏：隐藏适配器凭据字段）",
+        "operationId": "get_config",
+        "responses": {
+          "200": {
+            "description": "Current gateway configuration",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, expired, or revoked API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "API key lacks the required permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Global, IP, or subject quota exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal operation failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Durable metering, quota, storage, or adapter unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Config"
+        ],
+        "summary": "更新配置（热重载）",
+        "operationId": "update_config",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {}
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "401": {
+            "description": "Missing, invalid, expired, or revoked API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "API key lacks the required permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Runtime configuration changes require a reviewed restart",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Global, IP, or subject quota exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal operation failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Durable metering, quota, storage, or adapter unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/health": {
+      "get": {
+        "tags": [
+          "Health"
+        ],
+        "summary": "健康检查",
+        "description": "返回网关服务的当前状态，包括适配器连接情况和活跃会话数。",
+        "operationId": "health_check",
+        "responses": {
+          "200": {
+            "description": "Service health status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": []
+      }
+    },
+    "/api/v1/live": {
+      "get": {
+        "tags": [
+          "Health"
+        ],
+        "summary": "Process liveness only. Never checks external platforms.",
+        "operationId": "live",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProbeResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": []
+      }
+    },
+    "/api/v1/logs": {
+      "get": {
+        "tags": [
+          "Logs"
+        ],
+        "summary": "查询日志条目",
+        "operationId": "log_entries",
+        "parameters": [
+          {
+            "name": "level",
+            "in": "query",
+            "description": "过滤级别: ERROR / WARN / INFO / DEBUG / TRACE",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "search",
+            "in": "query",
+            "description": "文本搜索",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "返回条数（默认 100，最大 500）",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "since",
+            "in": "query",
+            "description": "起始时间戳（Unix 毫秒），用于增量拉取",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "日志条目列表",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid level, search, or pagination",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, expired, or revoked API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "API key lacks the required permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Global, IP, or subject quota exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal operation failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Durable metering, quota, storage, or adapter unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/messages": {
+      "get": {
+        "tags": [
+          "Messages"
+        ],
+        "summary": "查询消息历史",
+        "description": "从持久化存储中查询消息历史，支持按会话键、平台、聊天 ID 过滤。\n分页使用 before 游标（基于时间戳）和 limit。",
+        "operationId": "message_history",
+        "parameters": [
+          {
+            "name": "session_key",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "platform",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "chat_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size, 1-200; defaults to 50.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1
+            }
+          },
+          {
+            "name": "before",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Message history",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessageHistoryResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, expired, or revoked API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "API key lacks the required permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Global, IP, or subject quota exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal operation failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Durable metering, quota, storage, or adapter unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/messages/batch-send": {
+      "post": {
+        "tags": [
+          "Messages"
+        ],
+        "summary": "批量发送消息",
+        "description": "向多个目标发送相同的文本消息。每个目标格式为 \"platform:chatId\"。\n使用并发限制（最大 5 个并发）和整体 30 秒超时。",
+        "operationId": "batch_send",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "8-128 safe ASCII characters; retained 24 hours",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BatchSendRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Batch send results",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Missing, invalid, expired, or revoked API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "API key lacks the required permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Global, IP, or subject quota exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal operation failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Durable metering, quota, storage, or adapter unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/messages/deliveries": {
+      "get": {
+        "tags": [
+          "Messages"
+        ],
+        "operationId": "list_deliveries",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "1-200, defaults to 50.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Actor-scoped outbound delivery journal"
+          },
+          "401": {
+            "description": "Missing, invalid, expired, or revoked API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "API key lacks the required permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Global, IP, or subject quota exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal operation failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Durable metering, quota, storage, or adapter unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/messages/deliveries/{delivery_id}/reconcile": {
+      "post": {
+        "tags": [
+          "Messages"
+        ],
+        "operationId": "reconcile_delivery",
+        "parameters": [
+          {
+            "name": "delivery_id",
+            "in": "path",
+            "description": "Stable delivery ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReconcileDeliveryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Pending delivery reconciled"
+          },
+          "400": {
+            "description": "Invalid resolution or evidence"
+          },
+          "401": {
+            "description": "Missing, invalid, expired, or revoked API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "API key lacks the required permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Delivery is absent, belongs to another actor, or is final"
+          },
+          "429": {
+            "description": "Global, IP, or subject quota exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal operation failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Durable metering, quota, storage, or adapter unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/messages/send": {
+      "post": {
+        "tags": [
+          "Messages"
+        ],
+        "summary": "发送消息",
+        "description": "向指定 IM 平台的目标聊天发送一条文本消息。\n目标格式为 \"platform:chatId\"，例如 \"telegram:123456789\"。",
+        "operationId": "send_message",
+        "parameters": [
+          {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "description": "8-128 safe ASCII characters; retained 24 hours",
+            "required": false,
+            "schema": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SendMessageRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Message sent",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request or target format"
+          },
+          "401": {
+            "description": "Missing, invalid, expired, or revoked API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "API key lacks the required permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Platform or chat not found"
+          },
+          "429": {
+            "description": "Global, IP, or subject quota exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal operation failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Durable metering, quota, storage, or adapter unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/messages/{message_id}": {
+      "put": {
+        "tags": [
+          "Messages"
+        ],
+        "summary": "编辑消息",
+        "description": "编辑已发送的消息内容。目标格式为 \"platform:chatId\"。\n仅当适配器支持 MessageEdit 能力时有效。",
+        "operationId": "edit_message",
+        "parameters": [
+          {
+            "name": "message_id",
+            "in": "path",
+            "description": "Platform message ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EditMessageRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Message edited",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Missing, invalid, expired, or revoked API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "API key lacks the required permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Message or platform not found"
+          },
+          "429": {
+            "description": "Global, IP, or subject quota exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal operation failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Durable metering, quota, storage, or adapter unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Messages"
+        ],
+        "summary": "删除消息",
+        "description": "删除已发送的消息。目标格式为 \"platform:chatId\"。\n仅当适配器支持 MessageDelete 能力时有效。",
+        "operationId": "delete_message",
+        "parameters": [
+          {
+            "name": "message_id",
+            "in": "path",
+            "description": "Platform message ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeleteMessageRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Message deleted",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "401": {
+            "description": "Missing, invalid, expired, or revoked API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "API key lacks the required permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Message or platform not found"
+          },
+          "429": {
+            "description": "Global, IP, or subject quota exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal operation failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Durable metering, quota, storage, or adapter unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/ready": {
+      "get": {
+        "tags": [
+          "Health"
+        ],
+        "summary": "Traffic readiness. Requires durable storage and at least one connected\nadapter when adapters have been registered.",
+        "operationId": "ready",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadinessResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReadinessResponse"
+                }
+              }
+            }
+          }
+        },
+        "security": []
+      }
+    },
+    "/api/v1/sessions": {
+      "get": {
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "获取会话列表",
+        "operationId": "list_sessions",
+        "responses": {
+          "200": {
+            "description": "List of active sessions",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, expired, or revoked API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "API key lacks the required permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Global, IP, or subject quota exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal operation failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Durable metering, quota, storage, or adapter unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{key}": {
+      "get": {
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "获取会话详情",
+        "operationId": "get_session",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "description": "Session key in 'platform:chatId' format",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Session details",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, expired, or revoked API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "API key lacks the required permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Session not found"
+          },
+          "429": {
+            "description": "Global, IP, or subject quota exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal operation failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Durable metering, quota, storage, or adapter unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "删除会话",
+        "operationId": "delete_session",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "description": "Session key to delete",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Delete result",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, expired, or revoked API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "API key lacks the required permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Session not found"
+          },
+          "429": {
+            "description": "Global, IP, or subject quota exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal operation failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Durable metering, quota, storage, or adapter unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/sessions/{key}/export": {
+      "get": {
+        "tags": [
+          "Privacy"
+        ],
+        "summary": "Export one page of all personal data associated with a session.",
+        "operationId": "export_session_data",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "before",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "delivery_offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, expired, or revoked API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "API key lacks the required permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": ""
+          },
+          "429": {
+            "description": "Global, IP, or subject quota exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal operation failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Durable metering, quota, storage, or adapter unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/system": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "获取服务器软硬件信息及性能负载",
+        "operationId": "system_info",
+        "responses": {
+          "200": {
+            "description": "系统信息（操作系统、CPU、内存、运行时间）",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, expired, or revoked API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "API key lacks the required permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Global, IP, or subject quota exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal operation failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Durable metering, quota, storage, or adapter unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/system/update-check": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "检查版本更新",
+        "description": "返回当前版本号和最新可用版本信息（从 GitHub Releases API 获取）。\n用于管理后台显示更新提示和自动化运维。",
+        "operationId": "update_check",
+        "responses": {
+          "200": {
+            "description": "Update availability check result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UpdateCheckResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, expired, or revoked API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "API key lacks the required permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Global, IP, or subject quota exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal operation failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Durable metering, quota, storage, or adapter unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/usage": {
+      "get": {
+        "tags": [
+          "Billing"
+        ],
+        "summary": "GET /api/v1/usage — export durable hourly usage for invoice reconciliation.",
+        "operationId": "list_usage",
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "description": "Inclusive UTC Unix milliseconds",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "description": "Exclusive UTC Unix milliseconds",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "key_id",
+            "in": "query",
+            "description": "Optional internal API key ID",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "subject_id",
+            "in": "query",
+            "description": "Optional stable caller subject ID",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Page size, 1-1000; default 500",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "description": "Stable row offset",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Hourly usage records",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UsageResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid or excessive range"
+          },
+          "401": {
+            "description": "Missing, invalid, expired, or revoked API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "API key lacks the required permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Global, IP, or subject quota exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal operation failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Durable metering, quota, storage, or adapter unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/ws": {
+      "get": {
+        "tags": [
+          "WebSocket"
+        ],
+        "summary": "WebSocket 实时事件流",
+        "description": "通过 WebSocket 连接订阅网关事件的实时推送。连接后需要先发送认证帧。\n认证帧示例: { \"token\": \"your-api-key\" }\n认证成功后会自动推送 message.inbound, message.sent, adapter.connected 等事件。",
+        "operationId": "ws_handler",
+        "responses": {
+          "101": {
+            "description": "WebSocket upgrade successful"
+          },
+          "400": {
+            "description": "WebSocket upgrade failed"
+          }
+        },
+        "security": []
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AdapterConfig": {
+        "type": "object",
+        "description": "适配器配置（来源自配置文件）\n\n`enabled` 支持三态：\n- `None`（默认）：自动检测 — 凭据环境变量已设置则启用\n- `Some(true)`：强制启用，即使未检测到凭据\n- `Some(false)`：强制禁用，即使凭据已设置",
+        "properties": {
+          "api_key": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "base_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "自定义 API 基础 URL（用于测试或代理场景，默认使用平台官方 API）"
+          },
+          "enabled": {
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "extra": {},
+          "token": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "AdapterItem": {
+        "type": "object",
+        "description": "适配器列表项",
+        "required": [
+          "platform",
+          "display_name",
+          "status",
+          "connected"
+        ],
+        "properties": {
+          "connected": {
+            "type": "boolean"
+          },
+          "display_name": {
+            "type": "string",
+            "example": "Telegram"
+          },
+          "health": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "传输层健康状态：Healthy, Degraded, Down\n用于区分\"适配器在运行\"和\"消息流是否正常\"",
+            "example": "Healthy"
+          },
+          "platform": {
+            "type": "string",
+            "example": "telegram"
+          },
+          "status": {
+            "type": "string",
+            "example": "Connected"
+          }
+        }
+      },
+      "AdapterListResponse": {
+        "type": "object",
+        "description": "适配器列表响应",
+        "required": [
+          "adapters"
+        ],
+        "properties": {
+          "adapters": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdapterItem"
+            }
+          }
+        }
+      },
+      "AdapterRuntimeConfig": {
+        "type": "object",
+        "description": "适配器运行时配置状态",
+        "required": [
+          "enabled",
+          "token_configured",
+          "extra"
+        ],
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "extra": {},
+          "token_configured": {
+            "type": "boolean"
+          }
+        }
+      },
+      "AdapterState": {
+        "type": "string",
+        "description": "适配器状态",
+        "enum": [
+          "Created",
+          "Starting",
+          "Connecting",
+          "Connected",
+          "Reconnecting",
+          "Failed",
+          "Stopped"
+        ]
+      },
+      "AdapterStatusSummary": {
+        "type": "object",
+        "description": "适配器状态摘要（对外 API 使用）",
+        "required": [
+          "platform",
+          "display_name",
+          "state",
+          "connected",
+          "messages_in",
+          "messages_out"
+        ],
+        "properties": {
+          "connected": {
+            "type": "boolean"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "health": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/HealthStatus"
+              }
+            ]
+          },
+          "last_error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "messages_in": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "messages_out": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "platform": {
+            "type": "string"
+          },
+          "state": {
+            "$ref": "#/components/schemas/AdapterState"
+          },
+          "uptime": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "AdapterSummary": {
+        "type": "object",
+        "description": "适配器摘要",
+        "required": [
+          "total",
+          "connected"
+        ],
+        "properties": {
+          "connected": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "total": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "ApiConfig": {
+        "type": "object",
+        "description": "API 配置",
+        "properties": {
+          "basePath": {
+            "type": "string"
+          },
+          "metrics": {
+            "$ref": "#/components/schemas/MetricsConfig"
+          },
+          "rateLimit": {
+            "$ref": "#/components/schemas/RateLimitConfig"
+          },
+          "rawPayloadEnabled": {
+            "type": "boolean",
+            "description": "是否在 WebSocket 事件中透传各平台的原始 payload（metadata 字段）。\n开发/调试时开启便于排查适配问题，生产环境建议关闭。"
+          },
+          "websocket": {
+            "$ref": "#/components/schemas/WebSocketConfig"
+          }
+        }
+      },
+      "ApiErrorDetail": {
+        "type": "object",
+        "description": "API 错误详情",
+        "required": [
+          "code",
+          "message"
+        ],
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "details": {},
+          "message": {
+            "type": "string"
+          }
+        }
+      },
+      "ApiErrorResponse": {
+        "type": "object",
+        "description": "API 错误响应格式",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/ApiErrorDetail"
+          }
+        }
+      },
+      "ApiKeyResponse": {
+        "type": "object",
+        "description": "API Key 列表响应项（不含 raw key）",
+        "required": [
+          "id",
+          "subject_id",
+          "name",
+          "prefix",
+          "created_at",
+          "revoked",
+          "permissions",
+          "event_filters"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "event_filters": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "expires_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "id": {
+            "type": "string"
+          },
+          "last_used_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "name": {
+            "type": "string"
+          },
+          "permissions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "prefix": {
+            "type": "string"
+          },
+          "requests_per_minute": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "revoked": {
+            "type": "boolean"
+          },
+          "subject_id": {
+            "type": "string"
+          }
+        }
+      },
+      "ApiKeyRotationTransition": {
+        "type": "object",
+        "required": [
+          "source_id",
+          "replacement_id",
+          "state",
+          "created_at",
+          "source_revoked",
+          "replacement_revoked"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "replacement_id": {
+            "type": "string"
+          },
+          "replacement_revoked": {
+            "type": "boolean"
+          },
+          "source_id": {
+            "type": "string"
+          },
+          "source_revoked": {
+            "type": "boolean"
+          },
+          "state": {
+            "type": "string"
+          }
+        }
+      },
+      "ApiKeyTypesResponse": {
+        "type": "object",
+        "description": "可用事件类型和权限列表",
+        "required": [
+          "event_types",
+          "permissions"
+        ],
+        "properties": {
+          "event_types": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "permissions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "AuditEvent": {
+        "type": "object",
+        "description": "Immutable management audit event. Hashes form an ordered chain so deletion\nor modification is detectable during verification.",
+        "required": [
+          "id",
+          "timestamp",
+          "actor_id",
+          "action",
+          "resource",
+          "metadata",
+          "previous_hash",
+          "event_hash"
+        ],
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "actor_id": {
+            "type": "string"
+          },
+          "event_hash": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "metadata": {},
+          "previous_hash": {
+            "type": "string"
+          },
+          "resource": {
+            "type": "string"
+          },
+          "timestamp": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "AuditEventsResponse": {
+        "type": "object",
+        "required": [
+          "integrity_valid",
+          "events"
+        ],
+        "properties": {
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AuditEvent"
+            }
+          },
+          "integrity_valid": {
+            "type": "boolean"
+          }
+        }
+      },
+      "BatchSendRequest": {
+        "type": "object",
+        "description": "批量发送请求",
+        "required": [
+          "targets",
+          "text"
+        ],
+        "properties": {
+          "parse_mode": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ParseMode",
+                "description": "文本解析模式"
+              }
+            ]
+          },
+          "targets": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "目标列表，每个元素格式 \"platform:chatId\"",
+            "example": [
+              "telegram:123456",
+              "telegram:789012"
+            ]
+          },
+          "text": {
+            "type": "string",
+            "description": "消息文本",
+            "example": "Broadcast message"
+          }
+        }
+      },
+      "BillingEvent": {
+        "type": "object",
+        "required": [
+          "provider",
+          "event_id",
+          "event_type",
+          "object_id",
+          "customer_ref",
+          "amount_minor",
+          "currency",
+          "occurred_at",
+          "received_at",
+          "event_hash"
+        ],
+        "properties": {
+          "amount_minor": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "currency": {
+            "type": "string"
+          },
+          "customer_ref": {
+            "type": "string"
+          },
+          "event_hash": {
+            "type": "string"
+          },
+          "event_id": {
+            "type": "string"
+          },
+          "event_type": {
+            "type": "string"
+          },
+          "object_id": {
+            "type": "string"
+          },
+          "occurred_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "provider": {
+            "type": "string"
+          },
+          "received_at": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "BillingEventQuery": {
+        "type": "object",
+        "required": [
+          "from",
+          "to"
+        ],
+        "properties": {
+          "customer_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "event_type": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "from": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "limit": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "offset": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "provider": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "to": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "BillingEventWriteResponse": {
+        "type": "object",
+        "required": [
+          "disposition"
+        ],
+        "properties": {
+          "disposition": {
+            "type": "string"
+          }
+        }
+      },
+      "BillingEventsResponse": {
+        "type": "object",
+        "required": [
+          "events",
+          "integrity_valid",
+          "total_events",
+          "truncated"
+        ],
+        "properties": {
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BillingEvent"
+            }
+          },
+          "integrity_valid": {
+            "type": "boolean"
+          },
+          "next_offset": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "total_events": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        }
+      },
+      "BotInfo": {
+        "type": "object",
+        "description": "机器人基本信息",
+        "required": [
+          "name",
+          "id"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "username": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "Button": {
+        "type": "object",
+        "description": "按钮",
+        "required": [
+          "text"
+        ],
+        "properties": {
+          "callback_data": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "text": {
+            "type": "string"
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "CallbackData": {
+        "type": "object",
+        "description": "按钮回调",
+        "required": [
+          "data",
+          "message_id"
+        ],
+        "properties": {
+          "data": {
+            "type": "string"
+          },
+          "message_id": {
+            "type": "string"
+          }
+        }
+      },
+      "CallbackEvent": {
+        "type": "object",
+        "description": "按钮回调事件",
+        "required": [
+          "id",
+          "platform",
+          "chat_id",
+          "user_id",
+          "data",
+          "message_id"
+        ],
+        "properties": {
+          "chat_id": {
+            "type": "string"
+          },
+          "data": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "message_id": {
+            "type": "string"
+          },
+          "metadata": {},
+          "platform": {
+            "type": "string"
+          },
+          "user_id": {
+            "type": "string"
+          }
+        }
+      },
+      "Capability": {
+        "type": "object",
+        "description": "适配器能力声明",
+        "required": [
+          "name",
+          "supported"
+        ],
+        "properties": {
+          "limits": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CapabilityLimits"
+              }
+            ]
+          },
+          "name": {
+            "$ref": "#/components/schemas/CapabilityName"
+          },
+          "supported": {
+            "type": "boolean"
+          }
+        }
+      },
+      "CapabilityLimits": {
+        "type": "object",
+        "description": "能力限制",
+        "properties": {
+          "max_buttons": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "max_file_size": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "max_text_length": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          }
+        }
+      },
+      "CapabilityName": {
+        "type": "string",
+        "description": "适配器能力名称",
+        "enum": [
+          "Text",
+          "Image",
+          "Audio",
+          "Video",
+          "Document",
+          "Interactive",
+          "Streaming",
+          "Voice",
+          "Markdown",
+          "Html",
+          "CodeBlock",
+          "Thread",
+          "Topic",
+          "Group",
+          "ChatList",
+          "MessageEdit",
+          "MessageDelete",
+          "TypingIndicator"
+        ]
+      },
+      "ChatFilter": {
+        "type": "object",
+        "description": "聊天过滤器",
+        "properties": {
+          "chat_type": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ChatType"
+              }
+            ]
+          },
+          "query": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "ChatInfo": {
+        "type": "object",
+        "description": "聊天信息",
+        "required": [
+          "chat_id",
+          "chat_type"
+        ],
+        "properties": {
+          "chat_id": {
+            "type": "string"
+          },
+          "chat_type": {
+            "$ref": "#/components/schemas/ChatType"
+          },
+          "member_count": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "ChatType": {
+        "type": "string",
+        "description": "聊天类型",
+        "enum": [
+          "Dm",
+          "Group",
+          "Channel",
+          "Thread"
+        ]
+      },
+      "CommandData": {
+        "type": "object",
+        "description": "斜杠命令",
+        "required": [
+          "name",
+          "args"
+        ],
+        "properties": {
+          "args": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          }
+        }
+      },
+      "CreateApiKeyRequest": {
+        "type": "object",
+        "description": "创建 API Key 请求体",
+        "required": [
+          "name",
+          "permissions"
+        ],
+        "properties": {
+          "event_filters": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "expires_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "UTC Unix timestamp in milliseconds. Commercial keys should expire."
+          },
+          "name": {
+            "type": "string"
+          },
+          "permissions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "requests_per_minute": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "Optional per-subject quota. Rotated credentials share the same window.",
+            "minimum": 0
+          }
+        }
+      },
+      "CreateApiKeyResponse": {
+        "type": "object",
+        "description": "创建 API Key 响应（含 raw key，仅返回一次）",
+        "required": [
+          "id",
+          "subject_id",
+          "key",
+          "name",
+          "permissions",
+          "event_filters",
+          "created_at"
+        ],
+        "properties": {
+          "created_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "event_filters": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "expires_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "id": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "permissions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "requests_per_minute": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "minimum": 0
+          },
+          "subject_id": {
+            "type": "string"
+          }
+        }
+      },
+      "CreateBillingEventRequest": {
+        "type": "object",
+        "required": [
+          "provider",
+          "event_id",
+          "event_type",
+          "object_id",
+          "customer_ref",
+          "amount_minor",
+          "currency",
+          "occurred_at"
+        ],
+        "properties": {
+          "amount_minor": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "currency": {
+            "type": "string"
+          },
+          "customer_ref": {
+            "type": "string"
+          },
+          "event_id": {
+            "type": "string"
+          },
+          "event_type": {
+            "type": "string"
+          },
+          "object_id": {
+            "type": "string"
+          },
+          "occurred_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "provider": {
+            "type": "string"
+          }
+        }
+      },
+      "DeleteMessageRequest": {
+        "type": "object",
+        "description": "删除消息请求",
+        "required": [
+          "target"
+        ],
+        "properties": {
+          "target": {
+            "type": "string",
+            "description": "目标格式 \"platform:chatId\"，例如 \"telegram:123456\"",
+            "example": "telegram:123456"
+          }
+        }
+      },
+      "DeleteResult": {
+        "type": "object",
+        "description": "删除结果",
+        "required": [
+          "success"
+        ],
+        "properties": {
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "success": {
+            "type": "boolean"
+          }
+        }
+      },
+      "EditMessageParams": {
+        "type": "object",
+        "description": "编辑消息参数",
+        "required": [
+          "chat_id",
+          "message_id",
+          "message"
+        ],
+        "properties": {
+          "chat_id": {
+            "type": "string",
+            "description": "目标聊天 ID"
+          },
+          "keyboard": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/InlineKeyboard",
+                "description": "更新后的键盘（可选）"
+              }
+            ]
+          },
+          "message": {
+            "$ref": "#/components/schemas/OutboundMessage",
+            "description": "新消息内容"
+          },
+          "message_id": {
+            "type": "string",
+            "description": "平台消息 ID"
+          }
+        }
+      },
+      "EditMessageRequest": {
+        "type": "object",
+        "description": "编辑消息请求",
+        "required": [
+          "target",
+          "text"
+        ],
+        "properties": {
+          "keyboard": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/InlineKeyboard",
+                "description": "更新后的行内键盘（可选）"
+              }
+            ]
+          },
+          "parse_mode": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ParseMode",
+                "description": "文本解析模式"
+              }
+            ]
+          },
+          "target": {
+            "type": "string",
+            "description": "目标格式 \"platform:chatId\"，例如 \"telegram:123456\"",
+            "example": "telegram:123456"
+          },
+          "text": {
+            "type": "string",
+            "description": "新的消息文本",
+            "example": "Updated text"
+          }
+        }
+      },
+      "EditResult": {
+        "type": "object",
+        "description": "编辑结果",
+        "required": [
+          "success"
+        ],
+        "properties": {
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "success": {
+            "type": "boolean"
+          },
+          "updated_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          }
+        }
+      },
+      "EventMetadata": {
+        "type": "object",
+        "description": "事件元数据",
+        "properties": {
+          "correlation_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "关联 ID，用于追踪消息链路"
+          },
+          "session_key": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "关联的会话键"
+          }
+        }
+      },
+      "GatewayConfig": {
+        "type": "object",
+        "description": "网关主配置",
+        "properties": {
+          "adapters": {
+            "type": "object",
+            "description": "适配器配置",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/AdapterConfig"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "api": {
+            "$ref": "#/components/schemas/ApiConfig",
+            "description": "外部 API 配置"
+          },
+          "logging": {
+            "$ref": "#/components/schemas/LoggingConfig",
+            "description": "日志配置"
+          },
+          "server": {
+            "$ref": "#/components/schemas/ServerConfig",
+            "description": "服务器配置"
+          },
+          "storage": {
+            "$ref": "#/components/schemas/StorageConfig",
+            "description": "存储配置"
+          },
+          "webhooks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/WebhookConfig"
+            },
+            "description": "Webhook 配置"
+          }
+        }
+      },
+      "GatewayEvent": {
+        "type": "object",
+        "description": "网关内部事件",
+        "required": [
+          "event",
+          "source",
+          "timestamp",
+          "data"
+        ],
+        "properties": {
+          "data": {
+            "description": "事件数据（按类型不同）"
+          },
+          "event": {
+            "type": "string",
+            "description": "事件类型，如 \"message.inbound\", \"adapter.connected\""
+          },
+          "metadata": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/EventMetadata",
+                "description": "事件元数据"
+              }
+            ]
+          },
+          "source": {
+            "type": "string",
+            "description": "事件来源标识"
+          },
+          "timestamp": {
+            "type": "integer",
+            "format": "int64",
+            "description": "事件时间戳（毫秒）"
+          }
+        }
+      },
+      "HealthReport": {
+        "type": "object",
+        "description": "健康报告",
+        "required": [
+          "status",
+          "connected",
+          "messages_in",
+          "messages_out",
+          "errors"
+        ],
+        "properties": {
+          "connected": {
+            "type": "boolean"
+          },
+          "errors": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "last_connected_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "last_error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "last_error_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "messages_in": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "messages_out": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "status": {
+            "$ref": "#/components/schemas/HealthStatus"
+          },
+          "uptime": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "HealthResponse": {
+        "type": "object",
+        "description": "健康检查响应",
+        "required": [
+          "status",
+          "version",
+          "schema_version",
+          "uptime",
+          "adapters",
+          "sessions"
+        ],
+        "properties": {
+          "adapters": {
+            "$ref": "#/components/schemas/AdapterSummary"
+          },
+          "schema_version": {
+            "type": "integer",
+            "format": "int64",
+            "description": "数据库 schema 版本"
+          },
+          "sessions": {
+            "$ref": "#/components/schemas/SessionSummary"
+          },
+          "status": {
+            "type": "string",
+            "example": "healthy"
+          },
+          "uptime": {
+            "type": "integer",
+            "format": "int64",
+            "description": "服务运行时间（秒）"
+          },
+          "version": {
+            "type": "string",
+            "example": "0.1.0"
+          }
+        }
+      },
+      "HealthStatus": {
+        "type": "string",
+        "description": "健康状态",
+        "enum": [
+          "Healthy",
+          "Degraded",
+          "Down"
+        ]
+      },
+      "InboundMessage": {
+        "type": "object",
+        "description": "入站消息（从 IM 平台接收的消息）",
+        "required": [
+          "id",
+          "platform",
+          "msg_type",
+          "sender",
+          "chat_id",
+          "chat_type",
+          "timestamp"
+        ],
+        "properties": {
+          "callback": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CallbackData",
+                "description": "按钮回调"
+              }
+            ]
+          },
+          "chat_id": {
+            "type": "string",
+            "description": "来源聊天 ID"
+          },
+          "chat_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "聊天名称"
+          },
+          "chat_type": {
+            "$ref": "#/components/schemas/ChatType",
+            "description": "聊天类型"
+          },
+          "command": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/CommandData",
+                "description": "斜杠命令"
+              }
+            ]
+          },
+          "guild_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "所属服务器/频道 ID（Discord guild_id, QQ channel guild_id）"
+          },
+          "id": {
+            "type": "string",
+            "description": "平台消息 ID"
+          },
+          "media": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/MediaAttachment"
+            },
+            "description": "媒体附件"
+          },
+          "mentioned": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "是否 @了机器人（仅群聊场景有意义，None 表示不适用或未知）"
+          },
+          "mentions": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/MentionInfo"
+            },
+            "description": "@提及列表"
+          },
+          "metadata": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "平台特有元数据（JSON 字符串，使用 String 避免 serde_json::to_value 热路径创建 Value 树）"
+          },
+          "msg_type": {
+            "$ref": "#/components/schemas/MessageType",
+            "description": "消息内容类型"
+          },
+          "platform": {
+            "type": "string",
+            "description": "来源平台标识"
+          },
+          "recipient": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "接收该消息的机器人 ID（用于多 bot 路由）"
+          },
+          "reply_to": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/MessageReference",
+                "description": "回复引用"
+              }
+            ]
+          },
+          "root_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "线程根消息 ID（飞书 root_id）"
+          },
+          "sender": {
+            "$ref": "#/components/schemas/MessageSender",
+            "description": "消息发送者"
+          },
+          "text": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "消息文本内容"
+          },
+          "thread_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "话题/子线程 ID"
+          },
+          "timestamp": {
+            "type": "integer",
+            "format": "int64",
+            "description": "消息时间戳（毫秒）"
+          }
+        }
+      },
+      "InlineKeyboard": {
+        "type": "object",
+        "description": "行内键盘（按钮布局）",
+        "required": [
+          "rows"
+        ],
+        "properties": {
+          "rows": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/KeyboardRow"
+            }
+          }
+        }
+      },
+      "KeyboardRow": {
+        "type": "object",
+        "description": "键盘行",
+        "required": [
+          "buttons"
+        ],
+        "properties": {
+          "buttons": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Button"
+            }
+          }
+        }
+      },
+      "LogQuery": {
+        "type": "object",
+        "description": "日志查询参数",
+        "properties": {
+          "level": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "过滤级别: ERROR / WARN / INFO / DEBUG / TRACE"
+          },
+          "limit": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "返回条数（默认 100，最大 500）",
+            "minimum": 0
+          },
+          "search": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "文本搜索"
+          },
+          "since": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "起始时间戳（Unix 毫秒），用于增量拉取"
+          }
+        }
+      },
+      "LoggingConfig": {
+        "type": "object",
+        "description": "日志配置",
+        "properties": {
+          "format": {
+            "type": "string"
+          },
+          "level": {
+            "type": "string"
+          },
+          "output": {
+            "type": "string"
+          }
+        }
+      },
+      "LoginRequest": {
+        "type": "object",
+        "description": "登录请求体",
+        "required": [
+          "password"
+        ],
+        "properties": {
+          "password": {
+            "type": "string",
+            "description": "管理后台密码",
+            "example": "your-password"
+          }
+        }
+      },
+      "LoginResponse": {
+        "type": "object",
+        "description": "登录成功响应",
+        "required": [
+          "key"
+        ],
+        "properties": {
+          "key": {
+            "type": "string",
+            "description": "用于 API 认证的 Bearer token"
+          }
+        }
+      },
+      "MediaAttachment": {
+        "type": "object",
+        "description": "媒体附件",
+        "required": [
+          "media_type",
+          "mime_type"
+        ],
+        "properties": {
+          "caption": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "data": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "duration": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "file_size": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "minimum": 0
+          },
+          "filename": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "media_type": {
+            "$ref": "#/components/schemas/MediaType"
+          },
+          "mime_type": {
+            "type": "string"
+          },
+          "thumbnail_url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "MediaType": {
+        "type": "string",
+        "description": "媒体类型",
+        "enum": [
+          "Image",
+          "Audio",
+          "Video",
+          "Document",
+          "Sticker",
+          "Animation"
+        ]
+      },
+      "MentionInfo": {
+        "type": "object",
+        "description": "@提及信息",
+        "properties": {
+          "scope": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "提及范围：single / all / here"
+          },
+          "user_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "被提及的用户 ID（平台原始 ID）"
+          },
+          "username": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "被提及的用户名"
+          }
+        }
+      },
+      "MessageHistoryParams": {
+        "type": "object",
+        "description": "消息历史查询参数",
+        "properties": {
+          "before": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "chat_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "limit": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "description": "Page size, 1-200; defaults to 50.",
+            "minimum": 0
+          },
+          "platform": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "session_key": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "MessageHistoryResponse": {
+        "type": "object",
+        "description": "消息历史查询响应",
+        "required": [
+          "messages",
+          "has_more"
+        ],
+        "properties": {
+          "has_more": {
+            "type": "boolean"
+          },
+          "messages": {
+            "type": "array",
+            "items": {}
+          }
+        }
+      },
+      "MessageReference": {
+        "type": "object",
+        "description": "消息引用（回复链）",
+        "required": [
+          "message_id"
+        ],
+        "properties": {
+          "message_id": {
+            "type": "string"
+          },
+          "text": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "MessageSender": {
+        "type": "object",
+        "description": "消息发送者",
+        "required": [
+          "id",
+          "is_bot"
+        ],
+        "properties": {
+          "avatar_url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "头像 URL"
+          },
+          "id": {
+            "type": "string",
+            "description": "平台用户 ID"
+          },
+          "is_bot": {
+            "type": "boolean",
+            "description": "是否为机器人"
+          },
+          "language_code": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "语言代码（IETF tag，Telegram 特有）"
+          },
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "显示名称"
+          },
+          "role": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SenderRole",
+                "description": "发送者角色"
+              }
+            ]
+          },
+          "username": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "平台特有用户名/句柄（telegram @username, discord username）"
+          }
+        }
+      },
+      "MessageType": {
+        "type": "string",
+        "description": "消息内容类型（平台无关）",
+        "enum": [
+          "Text",
+          "Image",
+          "Audio",
+          "Video",
+          "File",
+          "Sticker",
+          "Animation",
+          "RichText",
+          "Interactive",
+          "Share",
+          "Location",
+          "Contact",
+          "Link",
+          "System",
+          "Unknown"
+        ]
+      },
+      "MetricsConfig": {
+        "type": "object",
+        "description": "Prometheus 指标配置",
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "path": {
+            "type": "string",
+            "description": "指标端点路径"
+          }
+        }
+      },
+      "OutboundMessage": {
+        "type": "object",
+        "description": "出站消息（发往 IM 平台的消息）",
+        "required": [
+          "text"
+        ],
+        "properties": {
+          "parse_mode": {
+            "$ref": "#/components/schemas/ParseMode",
+            "description": "文本解析模式"
+          },
+          "text": {
+            "type": "string",
+            "description": "消息文本"
+          }
+        }
+      },
+      "ParseMode": {
+        "type": "string",
+        "description": "文本解析模式",
+        "enum": [
+          "markdown",
+          "html",
+          "none"
+        ]
+      },
+      "ProbeResponse": {
+        "type": "object",
+        "required": [
+          "status",
+          "version",
+          "uptime"
+        ],
+        "properties": {
+          "status": {
+            "type": "string"
+          },
+          "uptime": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "version": {
+            "type": "string"
+          }
+        }
+      },
+      "RateLimitConfig": {
+        "type": "object",
+        "description": "速率限制配置",
+        "properties": {
+          "burstSize": {
+            "type": "integer",
+            "format": "int32",
+            "description": "突发大小（1 秒内允许的峰值请求）",
+            "minimum": 0
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "requestsPerMinute": {
+            "type": "integer",
+            "format": "int64",
+            "description": "每分钟允许的请求数",
+            "minimum": 0
+          }
+        }
+      },
+      "ReadinessResponse": {
+        "type": "object",
+        "required": [
+          "status",
+          "storage",
+          "auth_schema_version",
+          "message_storage",
+          "metering",
+          "quota",
+          "key_rotations",
+          "pending_key_rotations",
+          "delivery_journal",
+          "pending_deliveries",
+          "stale_pending_deliveries",
+          "unpublished_delivery_events",
+          "adapters_total",
+          "adapters_connected"
+        ],
+        "properties": {
+          "adapters_connected": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "adapters_total": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "auth_schema_version": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "delivery_journal": {
+            "type": "string"
+          },
+          "key_rotations": {
+            "type": "string"
+          },
+          "message_storage": {
+            "type": "string",
+            "description": "Message and session history database."
+          },
+          "metering": {
+            "type": "string"
+          },
+          "pending_deliveries": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "pending_key_rotations": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "quota": {
+            "type": "string"
+          },
+          "stale_pending_deliveries": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "status": {
+            "type": "string"
+          },
+          "storage": {
+            "type": "string",
+            "description": "API key, audit, and billing database."
+          },
+          "unpublished_delivery_events": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          }
+        }
+      },
+      "ReconcileDeliveryRequest": {
+        "type": "object",
+        "required": [
+          "resolution",
+          "evidence"
+        ],
+        "properties": {
+          "evidence": {
+            "type": "string",
+            "description": "20-2000 characters describing the external evidence used."
+          },
+          "resolution": {
+            "type": "string",
+            "description": "Confirmed external outcome: \"succeeded\" or \"failed\"."
+          }
+        }
+      },
+      "ReconcileRotationRequest": {
+        "type": "object",
+        "required": [
+          "action"
+        ],
+        "properties": {
+          "action": {
+            "type": "string",
+            "description": "`cancel` for a created transition; `complete` for a prepared transition."
+          }
+        }
+      },
+      "ResetPolicy": {
+        "type": "string",
+        "description": "会话重置策略",
+        "enum": [
+          "Never",
+          "After1h",
+          "After24h",
+          "After50Msgs",
+          "Daily",
+          "Manual"
+        ]
+      },
+      "RetentionConfig": {
+        "type": "object",
+        "description": "TTL 保留策略配置",
+        "properties": {
+          "cleanupIntervalSecs": {
+            "type": "integer",
+            "format": "int64",
+            "description": "清理间隔秒数（默认 3600 = 1 小时）",
+            "minimum": 0
+          },
+          "messageTtlDays": {
+            "type": "integer",
+            "format": "int64",
+            "description": "消息保留天数（默认 90）",
+            "minimum": 0
+          },
+          "sessionTtlDays": {
+            "type": "integer",
+            "format": "int64",
+            "description": "会话保留天数（默认 365）",
+            "minimum": 0
+          }
+        }
+      },
+      "RevokeResponse": {
+        "type": "object",
+        "description": "吊销/删除响应",
+        "required": [
+          "success",
+          "message"
+        ],
+        "properties": {
+          "message": {
+            "type": "string"
+          },
+          "success": {
+            "type": "boolean"
+          }
+        }
+      },
+      "RotateApiKeyRequest": {
+        "type": "object",
+        "required": [
+          "expires_at"
+        ],
+        "properties": {
+          "expires_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "UTC Unix timestamp in milliseconds for the replacement key."
+          }
+        }
+      },
+      "RotationReconcileResponse": {
+        "type": "object",
+        "required": [
+          "success",
+          "action"
+        ],
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "success": {
+            "type": "boolean"
+          }
+        }
+      },
+      "SendInteractiveParams": {
+        "type": "object",
+        "description": "发送交互式消息（带按钮）参数",
+        "required": [
+          "chat_id",
+          "text",
+          "keyboard"
+        ],
+        "properties": {
+          "chat_id": {
+            "type": "string",
+            "description": "目标聊天 ID"
+          },
+          "keyboard": {
+            "$ref": "#/components/schemas/InlineKeyboard",
+            "description": "行内键盘"
+          },
+          "reply_to": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "被回复消息 ID（可选）"
+          },
+          "text": {
+            "type": "string",
+            "description": "消息文本"
+          }
+        }
+      },
+      "SendMediaParams": {
+        "type": "object",
+        "description": "发送媒体消息参数",
+        "required": [
+          "chat_id",
+          "media"
+        ],
+        "properties": {
+          "chat_id": {
+            "type": "string",
+            "description": "目标聊天 ID"
+          },
+          "media": {
+            "$ref": "#/components/schemas/MediaAttachment",
+            "description": "媒体附件"
+          },
+          "reply_to": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "被回复消息 ID（可选）"
+          },
+          "text": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "文本说明（可选）"
+          }
+        }
+      },
+      "SendMessageRequest": {
+        "type": "object",
+        "description": "发送消息请求",
+        "required": [
+          "target",
+          "text"
+        ],
+        "properties": {
+          "keyboard": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/InlineKeyboard",
+                "description": "行内键盘（可选，如果提供则发送交互式消息，优先级低于 media）"
+              }
+            ]
+          },
+          "media": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/MediaAttachment",
+                "description": "媒体附件（可选，如果提供则发送媒体消息）"
+              }
+            ]
+          },
+          "metadata": {
+            "description": "平台特有元数据"
+          },
+          "parse_mode": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ParseMode",
+                "description": "文本解析模式（markdown / html / none）"
+              }
+            ]
+          },
+          "reply_to": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "被回复消息 ID（可选）"
+          },
+          "target": {
+            "type": "string",
+            "description": "目标格式 \"platform:chatId\"，例如 \"telegram:123456\"",
+            "example": "telegram:123456"
+          },
+          "text": {
+            "type": "string",
+            "description": "消息文本内容",
+            "example": "Hello, World!"
+          }
+        }
+      },
+      "SendResult": {
+        "type": "object",
+        "description": "发送结果",
+        "required": [
+          "success",
+          "retryable"
+        ],
+        "properties": {
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "example": "null"
+          },
+          "error_code": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "example": "null"
+          },
+          "message_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "example": "msg_abc123"
+          },
+          "retryable": {
+            "type": "boolean",
+            "example": false
+          },
+          "success": {
+            "type": "boolean",
+            "example": true
+          },
+          "timestamp": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          }
+        }
+      },
+      "SendTextParams": {
+        "type": "object",
+        "description": "发送文本消息参数",
+        "required": [
+          "chat_id",
+          "message"
+        ],
+        "properties": {
+          "chat_id": {
+            "type": "string",
+            "description": "目标聊天 ID"
+          },
+          "message": {
+            "$ref": "#/components/schemas/OutboundMessage",
+            "description": "消息内容"
+          },
+          "metadata": {
+            "description": "平台特有元数据"
+          },
+          "reply_to": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "被回复消息 ID（可选）"
+          }
+        }
+      },
+      "SenderRole": {
+        "type": "string",
+        "description": "发送者角色",
+        "enum": [
+          "Admin",
+          "Member",
+          "Owner",
+          "Bot",
+          "Anonymous"
+        ]
+      },
+      "ServerConfig": {
+        "type": "object",
+        "description": "服务器配置",
+        "properties": {
+          "adminPassword": {
+            "type": "string",
+            "description": "管理后台登录密码（可通过 EASYBOT_ADMIN_PASSWORD 环境变量覆盖）"
+          },
+          "corsAllowedOrigins": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "CORS 允许的 Origins（生产环境白名单，debug 模式忽略）"
+          },
+          "host": {
+            "type": "string"
+          },
+          "port": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "tls": {
+            "$ref": "#/components/schemas/TlsConfig"
+          }
+        }
+      },
+      "Session": {
+        "type": "object",
+        "description": "会话",
+        "required": [
+          "key",
+          "platform",
+          "chat_id",
+          "created_at",
+          "updated_at",
+          "source"
+        ],
+        "properties": {
+          "chat_id": {
+            "type": "string",
+            "description": "聊天 ID"
+          },
+          "created_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "创建时间戳（毫秒）"
+          },
+          "key": {
+            "type": "string",
+            "description": "会话键，格式 \"platform:chatId\" 或 \"platform:chatId:threadId\""
+          },
+          "last_message": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "最近一条消息（文本摘要）"
+          },
+          "last_message_at": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "最近一条消息的时间戳（毫秒）"
+          },
+          "metadata": {
+            "description": "自定义元数据"
+          },
+          "platform": {
+            "type": "string",
+            "description": "平台标识"
+          },
+          "reset_policy": {
+            "$ref": "#/components/schemas/ResetPolicy",
+            "description": "重置策略"
+          },
+          "source": {
+            "$ref": "#/components/schemas/SessionSource",
+            "description": "会话来源信息"
+          },
+          "thread_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "话题 ID（可选）"
+          },
+          "updated_at": {
+            "type": "integer",
+            "format": "int64",
+            "description": "最后更新时间戳（毫秒）"
+          }
+        }
+      },
+      "SessionSource": {
+        "type": "object",
+        "description": "会话来源",
+        "required": [
+          "platform",
+          "chat_id",
+          "chat_type",
+          "is_bot"
+        ],
+        "properties": {
+          "chat_id": {
+            "type": "string",
+            "description": "聊天 ID"
+          },
+          "chat_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "聊天名称"
+          },
+          "chat_type": {
+            "$ref": "#/components/schemas/ChatType",
+            "description": "聊天类型"
+          },
+          "is_bot": {
+            "type": "boolean",
+            "description": "是否为机器人"
+          },
+          "platform": {
+            "type": "string",
+            "description": "平台标识"
+          },
+          "user_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "用户 ID"
+          },
+          "user_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "用户名"
+          },
+          "user_role": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/SenderRole",
+                "description": "发送者角色"
+              }
+            ]
+          },
+          "user_username": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "平台特有用户名/句柄"
+          }
+        }
+      },
+      "SessionSummary": {
+        "type": "object",
+        "description": "会话摘要",
+        "required": [
+          "active"
+        ],
+        "properties": {
+          "active": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "StorageConfig": {
+        "type": "object",
+        "description": "存储配置",
+        "properties": {
+          "connectionString": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "poolSize": {
+            "type": "integer",
+            "format": "int32",
+            "description": "PostgreSQL 连接池大小（仅 postgres 类型有效）",
+            "minimum": 0
+          },
+          "retention": {
+            "$ref": "#/components/schemas/RetentionConfig",
+            "description": "TTL 保留策略"
+          },
+          "sslMode": {
+            "type": "string",
+            "description": "PostgreSQL SSL 模式（仅 postgres 类型有效）"
+          },
+          "storageType": {
+            "type": "string"
+          }
+        }
+      },
+      "TlsConfig": {
+        "type": "object",
+        "description": "TLS 配置",
+        "properties": {
+          "certFile": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "keyFile": {
+            "type": "string"
+          }
+        }
+      },
+      "UpdateCheckResponse": {
+        "type": "object",
+        "description": "更新检查响应",
+        "required": [
+          "current_version",
+          "schema_version",
+          "update_available",
+          "requires_db_migration"
+        ],
+        "properties": {
+          "breaking_changes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "破坏性变更列表"
+          },
+          "current_version": {
+            "type": "string",
+            "example": "0.0.27"
+          },
+          "last_checked": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "上次检查时间戳（毫秒）"
+          },
+          "latest_schema_version": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "最新版本对应的 schema 版本"
+          },
+          "latest_version": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "最新可用版本（来自 GitHub API，可能为 None 如果检查失败）"
+          },
+          "requires_db_migration": {
+            "type": "boolean",
+            "description": "是否需要数据库迁移"
+          },
+          "schema_version": {
+            "type": "integer",
+            "format": "int64",
+            "description": "数据库 schema 版本"
+          },
+          "update_available": {
+            "type": "boolean",
+            "description": "是否有可用更新"
+          }
+        }
+      },
+      "UsageQuery": {
+        "type": "object",
+        "required": [
+          "from",
+          "to"
+        ],
+        "properties": {
+          "from": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "key_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "limit": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "offset": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "subject_id": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "to": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "UsageRecord": {
+        "type": "object",
+        "description": "Durable hourly API usage suitable for invoice reconciliation.",
+        "required": [
+          "key_id",
+          "subject_id",
+          "bucket_start",
+          "status_class",
+          "request_count"
+        ],
+        "properties": {
+          "bucket_start": {
+            "type": "integer",
+            "format": "int64",
+            "description": "UTC Unix timestamp in milliseconds, truncated to the hour."
+          },
+          "key_id": {
+            "type": "string"
+          },
+          "request_count": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "status_class": {
+            "type": "integer",
+            "format": "int32",
+            "description": "HTTP status class (2, 3, 4 or 5)."
+          },
+          "subject_id": {
+            "type": "string"
+          }
+        }
+      },
+      "UsageResponse": {
+        "type": "object",
+        "required": [
+          "from",
+          "to",
+          "records",
+          "total_requests",
+          "page_requests",
+          "truncated"
+        ],
+        "properties": {
+          "from": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "next_offset": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "minimum": 0
+          },
+          "page_requests": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "records": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UsageRecord"
+            }
+          },
+          "to": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "total_requests": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Sum across the entire filtered time range, not only this page."
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        }
+      },
+      "WebSocketConfig": {
+        "type": "object",
+        "description": "WebSocket 配置",
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "heartbeatIntervalSecs": {
+            "type": "integer",
+            "format": "int64",
+            "minimum": 0
+          },
+          "maxClients": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      },
+      "WebhookConfig": {
+        "type": "object",
+        "description": "Webhook 配置",
+        "required": [
+          "name",
+          "url",
+          "events"
+        ],
+        "properties": {
+          "events": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "name": {
+            "type": "string"
+          },
+          "platforms": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "secret": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "url": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "securitySchemes": {
+      "ApiKeyAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "eb_xxxx",
+        "description": "输入完整的 Bearer token，例如 `Bearer eb_xxxxxxxxxxxx`"
+      }
+    }
+  },
+  "security": [
+    {
+      "ApiKeyAuth": []
+    }
+  ],
+  "tags": [
+    {
+      "name": "Health",
+      "description": "服务健康检查"
+    },
+    {
+      "name": "Adapters",
+      "description": "适配器管理（启动/停止/状态查询）"
+    },
+    {
+      "name": "Messages",
+      "description": "消息发送与管理"
+    },
+    {
+      "name": "Sessions",
+      "description": "会话管理"
+    },
+    {
+      "name": "Chats",
+      "description": "聊天信息查询"
+    },
+    {
+      "name": "Config",
+      "description": "网关配置管理"
+    },
+    {
+      "name": "WebSocket",
+      "description": "WebSocket 实时事件推送"
+    },
+    {
+      "name": "API Keys",
+      "description": "API Key 管理（创建/列出/吊销/删除）"
+    },
+    {
+      "name": "System",
+      "description": "系统信息查询"
+    },
+    {
+      "name": "Logs",
+      "description": "日志查询"
+    },
+    {
+      "name": "Admin",
+      "description": "管理后台登录"
+    }
+  ]
+}

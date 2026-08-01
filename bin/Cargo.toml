@@ -2,6 +2,7 @@
 name = "easybot-bin"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 
 [dependencies]
 easybot-core = { path = "../crates/easybot-core" }

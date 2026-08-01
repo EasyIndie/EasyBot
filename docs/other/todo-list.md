@@ -11,7 +11,7 @@
 | **P1 MVP** | 100% ✅ | 核心类型、Telegram 适配器、REST API、配置加载 |
 | **P2 Bidirectional** | 100% ✅ | 事件总线、WebSocket 推送、入站消息、消息编辑/删除 |
 | **P3 Multi-platform** | 100% ✅ | 五平台适配器全部完成（微信受限于 iLink Bot API） |
-| **P4 Production** | 95% ✅ | 仅 TLS/HTTPS 和 RBAC 暂缓，其余全部完成 |
+| **P4 Production engineering** | 100% ✅ | TLS 由固定镜像的 Caddy 终止；API Key 已实施细粒度权限、审计、配额与商用发布门禁。真实上线仍需外部证据验收 |
 | **P5 Plugin System** | 100% ✅ | Plugin SDK、动态加载、开发者文档 |
 
 ---
@@ -61,12 +61,13 @@
 
 ---
 
-## 暂缓项
+## 架构边界与外部上线项
 
 | 项目 | 文件 | 原因 |
 |------|------|------|
-| **TLS/HTTPS** | `crates/easybot-api/src/server.rs` | TlsConfig 结构体存在但未接入应用层，可通过反向代理规避 |
-| **RBAC 权限模型** | `crates/easybot-core/src/auth/` | 多用户场景才需要，单用户部署不影响功能 |
+| **应用进程内 TLS** | `crates/easybot-api/src/server.rs` | 明确不作为生产 TLS 终止点；`deploy/Caddyfile`/云负载均衡负责证书、HSTS 与 WebSocket 代理 |
+| **进程内多租户隔离** | `crates/easybot-core/src/auth/` | 当前采用“每客户独立实例与数据库”；不能把互不信任客户放进同一实例 |
+| **真实商业运营证据** | `commercial/evidence.env.example` | 法务、支付/开票、告警送达、容量、迁移、备份恢复及回滚必须在真实环境验收，代码库不能自行证明 |
 
 ---
 
@@ -103,4 +104,4 @@
 | 依赖与供应链 | 8.0 | 8.0 | — |
 | **综合** | **7.1** | **7.5** | **+0.4 ⬆️** |
 
-> 下一阶段关注 TLS/HTTPS 和 RBAC 权限模型的覆盖。
+> 下一阶段关注真实预生产/生产证据、支付与财税系统接入，以及需要横向扩容时的外部共享配额和租户隔离。

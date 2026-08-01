@@ -6,7 +6,11 @@
 use async_trait::async_trait;
 use sqlx::SqlitePool;
 
-use super::{MessageFilter, MessageRole, MessageStore, SessionStore, StoreError, StoredMessage};
+use super::{
+    MessageFilter, MessageRole, MessageStore, OutboundDelivery, OutboundDeliveryRecord,
+    OutboundDeliveryState, OutboundDeliveryStats, OutboundEvent, SessionStore, StoreError,
+    StoredMessage,
+};
 use crate::types::message::{InboundMessage, SendResult};
 use crate::types::session::{ResetPolicy, Session, SessionFilter, SessionSource};
 
@@ -14,7 +18,7 @@ use crate::types::session::{ResetPolicy, Session, SessionFilter, SessionSource};
 
 /// 运行数据库迁移（版本化）
 ///
-/// 从旧版幂等 CREATE TABLE 升级为版本化增量迁移。
+/// 对带版本记录的数据库执行版本化增量迁移。
 /// 调用 `migration::run_migrations()` 逐版执行并追踪版本。
 pub async fn run_migrations(pool: &SqlitePool) -> Result<(), StoreError> {
     crate::storage::migration::run_migrations(pool).await
@@ -27,6 +31,14 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), StoreError> {
 /// 自动启用 WAL 模式、外键约束和忙超时。
 /// 使用 `create_if_missing(true)` 确保数据库文件在不存在时自动创建。
 pub async fn create_pool(db_path: &std::path::Path) -> Result<SqlitePool, StoreError> {
+    if tokio::fs::symlink_metadata(db_path)
+        .await
+        .is_ok_and(|metadata| metadata.file_type().is_symlink())
+    {
+        return Err(StoreError::Database(
+            "Refusing to open SQLite database through a symbolic link".into(),
+        ));
+    }
     // 确保父目录存在
     if let Some(parent) = db_path.parent() {
         tokio::fs::create_dir_all(parent)
@@ -34,23 +46,71 @@ pub async fn create_pool(db_path: &std::path::Path) -> Result<SqlitePool, StoreE
             .map_err(|e| StoreError::Database(format!("Failed to create db directory: {}", e)))?;
     }
 
-    use sqlx::sqlite::SqliteConnectOptions;
+    use sqlx::sqlite::{
+        SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous,
+    };
 
     // `:memory:` 必须用 `SqlitePool::connect(":memory:")` 方式连接
     // 以确保池中所有连接共享同一个内存数据库（`in_memory(true)` 会创建独立连接）
     let is_memory = db_path.to_string_lossy() == ":memory:";
     if is_memory {
-        let pool = SqlitePool::connect(":memory:")
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect(":memory:")
             .await
             .map_err(|e| StoreError::Database(format!("Failed to connect to SQLite: {}", e)))?;
         // 内存库不需要 PRAGMA 优化
         return Ok(pool);
     }
 
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{OpenOptionsExt as _, PermissionsExt as _};
+        match tokio::fs::metadata(db_path).await {
+            Ok(metadata) => {
+                if !metadata.is_file() {
+                    return Err(StoreError::Database(
+                        "SQLite database path is not a regular file".into(),
+                    ));
+                }
+                tokio::fs::set_permissions(db_path, std::fs::Permissions::from_mode(0o600))
+                    .await
+                    .map_err(|error| {
+                        StoreError::Database(format!(
+                            "Failed to secure existing SQLite database: {error}"
+                        ))
+                    })?;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .mode(0o600)
+                    .open(db_path)
+                    .map_err(|error| {
+                        StoreError::Database(format!(
+                            "Failed to securely create SQLite database: {error}"
+                        ))
+                    })?;
+            }
+            Err(error) => {
+                return Err(StoreError::Database(format!(
+                    "Failed to inspect SQLite database: {error}"
+                )));
+            }
+        }
+    }
+
     let connect_opts = SqliteConnectOptions::new()
         .filename(db_path)
-        .create_if_missing(true);
-    let pool = SqlitePool::connect_with(connect_opts)
+        .create_if_missing(!cfg!(unix))
+        .journal_mode(SqliteJournalMode::Wal)
+        .busy_timeout(std::time::Duration::from_secs(5))
+        .synchronous(SqliteSynchronous::Full)
+        .foreign_keys(true);
+    let pool = SqlitePoolOptions::new()
+        .max_connections(5)
+        .connect_with(connect_opts)
         .await
         .map_err(|e| StoreError::Database(format!("Failed to connect to SQLite: {}", e)))?;
 
@@ -70,7 +130,7 @@ pub async fn create_pool(db_path: &std::path::Path) -> Result<SqlitePool, StoreE
         .execute(&pool)
         .await
         .ok();
-    sqlx::query("PRAGMA synchronous=NORMAL")
+    sqlx::query("PRAGMA synchronous=FULL")
         .execute(&pool)
         .await
         .ok();
@@ -87,11 +147,23 @@ pub async fn create_pool(db_path: &std::path::Path) -> Result<SqlitePool, StoreE
 /// 与 `create_pool` 创建的池共享同一个 SQLite 数据库文件。
 /// 两池间通过 WAL 模式的并发读写能力协同工作——写入不阻塞读取。
 pub async fn create_shared_pool(db_path: &std::path::Path) -> Result<SqlitePool, StoreError> {
-    use sqlx::sqlite::SqliteConnectOptions;
+    if tokio::fs::symlink_metadata(db_path)
+        .await
+        .is_ok_and(|metadata| metadata.file_type().is_symlink())
+    {
+        return Err(StoreError::Database(
+            "Refusing to open SQLite database through a symbolic link".into(),
+        ));
+    }
+    use sqlx::sqlite::{
+        SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous,
+    };
 
     let is_memory = db_path.to_string_lossy() == ":memory:";
     if is_memory {
-        return SqlitePool::connect(":memory:")
+        return SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect(":memory:")
             .await
             .map_err(|e| StoreError::Database(format!("Failed to connect to SQLite: {}", e)));
     }
@@ -99,23 +171,16 @@ pub async fn create_shared_pool(db_path: &std::path::Path) -> Result<SqlitePool,
     let connect_opts = SqliteConnectOptions::new()
         .filename(db_path)
         .read_only(false)
-        .create_if_missing(false);
-    let pool = SqlitePool::connect_with(connect_opts)
+        .create_if_missing(false)
+        .journal_mode(SqliteJournalMode::Wal)
+        .busy_timeout(std::time::Duration::from_secs(5))
+        .synchronous(SqliteSynchronous::Full)
+        .foreign_keys(true);
+    let pool = SqlitePoolOptions::new()
+        .max_connections(5)
+        .connect_with(connect_opts)
         .await
         .map_err(|e| StoreError::Database(format!("Failed to connect secondary pool: {}", e)))?;
-
-    sqlx::query("PRAGMA journal_mode=WAL")
-        .execute(&pool)
-        .await
-        .ok();
-    sqlx::query("PRAGMA busy_timeout=5000")
-        .execute(&pool)
-        .await
-        .ok();
-    sqlx::query("PRAGMA synchronous=NORMAL")
-        .execute(&pool)
-        .await
-        .ok();
 
     Ok(pool)
 }
@@ -406,6 +471,315 @@ impl SqliteMessageStore {
 
 #[async_trait]
 impl MessageStore for SqliteMessageStore {
+    async fn prepare_outbound_delivery(
+        &self,
+        delivery: &OutboundDelivery,
+    ) -> Result<(), StoreError> {
+        sqlx::query(
+            "INSERT INTO outbound_deliveries
+             (id, actor_id, idempotency_key, platform, chat_id, request_json, state, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)",
+        )
+        .bind(&delivery.id)
+        .bind(&delivery.actor_id)
+        .bind(&delivery.idempotency_key)
+        .bind(&delivery.platform)
+        .bind(&delivery.chat_id)
+        .bind(serde_json::to_string(&delivery.request_json)?)
+        .bind(delivery.created_at)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn finalize_outbound_delivery(
+        &self,
+        delivery_id: &str,
+        state: OutboundDeliveryState,
+        result: &serde_json::Value,
+        message: Option<&StoredMessage>,
+    ) -> Result<(), StoreError> {
+        let mut tx = self.pool.begin().await?;
+        if let Some(msg) = message {
+            let role = match msg.role {
+                MessageRole::User => "user",
+                MessageRole::Assistant => "assistant",
+            };
+            sqlx::query(
+                "INSERT OR IGNORE INTO messages
+                 (id, session_key, platform, chat_id, role, text, raw_data, timestamp, created_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            )
+            .bind(&msg.id)
+            .bind(&msg.session_key)
+            .bind(&msg.platform)
+            .bind(&msg.chat_id)
+            .bind(role)
+            .bind(&msg.text)
+            .bind(serde_json::to_string(&msg.raw_data)?)
+            .bind(msg.timestamp)
+            .bind(msg.created_at)
+            .execute(&mut *tx)
+            .await?;
+        }
+        let state = match state {
+            OutboundDeliveryState::Succeeded => "succeeded",
+            OutboundDeliveryState::Failed => "failed",
+        };
+        let updated = sqlx::query(
+            "UPDATE outbound_deliveries SET state = ?, result_json = ?, completed_at = ?
+             WHERE id = ? AND state = 'pending'",
+        )
+        .bind(state)
+        .bind(serde_json::to_string(result)?)
+        .bind(chrono::Utc::now().timestamp_millis())
+        .bind(delivery_id)
+        .execute(&mut *tx)
+        .await?;
+        if updated.rows_affected() != 1 {
+            return Err(StoreError::Database(
+                "outbound delivery is missing or already finalized".into(),
+            ));
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
+    async fn unpublished_outbound_events(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<OutboundEvent>, StoreError> {
+        let rows: Vec<(String, String, String, String, String, i64)> = sqlx::query_as(
+            "SELECT id, platform, chat_id, state, result_json, completed_at
+             FROM outbound_deliveries WHERE state != 'pending' AND event_published = 0
+             ORDER BY completed_at, id LIMIT ?",
+        )
+        .bind(limit.min(1000) as i64)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter()
+            .map(
+                |(delivery_id, platform, chat_id, state, result_json, completed_at)| {
+                    Ok(OutboundEvent {
+                        delivery_id,
+                        platform,
+                        chat_id,
+                        state: if state == "succeeded" {
+                            OutboundDeliveryState::Succeeded
+                        } else {
+                            OutboundDeliveryState::Failed
+                        },
+                        result_json: serde_json::from_str(&result_json)?,
+                        completed_at,
+                    })
+                },
+            )
+            .collect()
+    }
+
+    async fn mark_outbound_event_published(&self, delivery_id: &str) -> Result<(), StoreError> {
+        let updated = sqlx::query(
+            "UPDATE outbound_deliveries SET event_published = 1
+             WHERE id = ? AND state != 'pending'",
+        )
+        .bind(delivery_id)
+        .execute(&self.pool)
+        .await?;
+        if updated.rows_affected() != 1 {
+            return Err(StoreError::NotFound(format!(
+                "completed outbound delivery {delivery_id}"
+            )));
+        }
+        Ok(())
+    }
+
+    async fn list_outbound_deliveries(
+        &self,
+        actor_id: &str,
+        limit: usize,
+    ) -> Result<Vec<OutboundDeliveryRecord>, StoreError> {
+        type Row = (
+            String,
+            String,
+            Option<String>,
+            String,
+            String,
+            String,
+            String,
+            Option<String>,
+            i64,
+            Option<i64>,
+            Option<String>,
+            Option<String>,
+        );
+        let rows: Vec<Row> = sqlx::query_as(
+            "SELECT id, actor_id, idempotency_key, platform, chat_id, request_json, state,
+                    result_json, created_at, completed_at, reconciliation_evidence, reconciled_by
+             FROM outbound_deliveries WHERE actor_id = ? ORDER BY created_at DESC, id DESC LIMIT ?",
+        )
+        .bind(actor_id)
+        .bind(limit.clamp(1, 200) as i64)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter()
+            .map(|row| {
+                Ok(OutboundDeliveryRecord {
+                    id: row.0,
+                    actor_id: row.1,
+                    idempotency_key: row.2,
+                    platform: row.3,
+                    chat_id: row.4,
+                    request_json: serde_json::from_str(&row.5)?,
+                    state: row.6,
+                    result_json: row
+                        .7
+                        .map(|value| serde_json::from_str(&value))
+                        .transpose()?,
+                    created_at: row.8,
+                    completed_at: row.9,
+                    reconciliation_evidence: row.10,
+                    reconciled_by: row.11,
+                })
+            })
+            .collect()
+    }
+
+    async fn list_outbound_deliveries_by_session(
+        &self,
+        platform: &str,
+        chat_id: &str,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<OutboundDeliveryRecord>, StoreError> {
+        type Row = (
+            String,
+            String,
+            Option<String>,
+            String,
+            String,
+            String,
+            String,
+            Option<String>,
+            i64,
+            Option<i64>,
+            Option<String>,
+            Option<String>,
+        );
+        let rows: Vec<Row> = sqlx::query_as(
+            "SELECT id, actor_id, idempotency_key, platform, chat_id, request_json, state,
+                    result_json, created_at, completed_at, reconciliation_evidence, reconciled_by
+             FROM outbound_deliveries WHERE platform = ? AND chat_id = ?
+             ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
+        )
+        .bind(platform)
+        .bind(chat_id)
+        .bind(limit.clamp(1, 1001) as i64)
+        .bind(offset as i64)
+        .fetch_all(&self.pool)
+        .await?;
+        rows.into_iter()
+            .map(|row| {
+                Ok(OutboundDeliveryRecord {
+                    id: row.0,
+                    actor_id: row.1,
+                    idempotency_key: row.2,
+                    platform: row.3,
+                    chat_id: row.4,
+                    request_json: serde_json::from_str(&row.5)?,
+                    state: row.6,
+                    result_json: row
+                        .7
+                        .map(|value| serde_json::from_str(&value))
+                        .transpose()?,
+                    created_at: row.8,
+                    completed_at: row.9,
+                    reconciliation_evidence: row.10,
+                    reconciled_by: row.11,
+                })
+            })
+            .collect()
+    }
+
+    async fn delete_outbound_deliveries_by_session(
+        &self,
+        platform: &str,
+        chat_id: &str,
+    ) -> Result<u64, StoreError> {
+        Ok(
+            sqlx::query("DELETE FROM outbound_deliveries WHERE platform = ? AND chat_id = ?")
+                .bind(platform)
+                .bind(chat_id)
+                .execute(&self.pool)
+                .await?
+                .rows_affected(),
+        )
+    }
+
+    async fn delete_expired_outbound_deliveries(&self, before: i64) -> Result<u64, StoreError> {
+        Ok(
+            sqlx::query("DELETE FROM outbound_deliveries WHERE created_at < ?")
+                .bind(before)
+                .execute(&self.pool)
+                .await?
+                .rows_affected(),
+        )
+    }
+
+    async fn outbound_delivery_stats(
+        &self,
+        stale_before: i64,
+    ) -> Result<OutboundDeliveryStats, StoreError> {
+        let (pending, stale_pending, unpublished): (i64, i64, i64) = sqlx::query_as(
+            "SELECT
+                COALESCE(SUM(CASE WHEN state = 'pending' THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN state = 'pending' AND created_at < ? THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN state != 'pending' AND event_published = 0 THEN 1 ELSE 0 END), 0)
+             FROM outbound_deliveries",
+        )
+        .bind(stale_before)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(OutboundDeliveryStats {
+            pending: pending as u64,
+            stale_pending: stale_pending as u64,
+            unpublished_events: unpublished as u64,
+        })
+    }
+
+    async fn reconcile_outbound_delivery(
+        &self,
+        delivery_id: &str,
+        actor_id: &str,
+        state: OutboundDeliveryState,
+        evidence: &str,
+        reconciled_by: &str,
+    ) -> Result<bool, StoreError> {
+        let state = match state {
+            OutboundDeliveryState::Succeeded => "succeeded",
+            OutboundDeliveryState::Failed => "failed",
+        };
+        let now = chrono::Utc::now().timestamp_millis();
+        let result = sqlx::query(
+            "UPDATE outbound_deliveries
+             SET state = ?, result_json = ?, completed_at = ?, reconciliation_evidence = ?,
+                 reconciled_by = ?, event_published = 0
+             WHERE id = ? AND actor_id = ? AND state = 'pending'",
+        )
+        .bind(state)
+        .bind(serde_json::to_string(&serde_json::json!({
+            "manually_reconciled": true,
+            "state": state,
+        }))?)
+        .bind(now)
+        .bind(evidence)
+        .bind(reconciled_by)
+        .bind(delivery_id)
+        .bind(actor_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() == 1)
+    }
+
     async fn store_message(&self, msg: &StoredMessage) -> Result<(), StoreError> {
         let role_str = match msg.role {
             MessageRole::User => "user",
@@ -516,6 +890,14 @@ impl MessageStore for SqliteMessageStore {
             .execute(&self.pool)
             .await?;
         Ok(result.rows_affected() > 0)
+    }
+
+    async fn delete_messages_by_session(&self, session_key: &str) -> Result<u64, StoreError> {
+        let result = sqlx::query("DELETE FROM messages WHERE session_key = ?")
+            .bind(session_key)
+            .execute(&self.pool)
+            .await?;
+        Ok(result.rows_affected())
     }
 
     async fn delete_expired_messages(&self, before: i64) -> Result<u64, StoreError> {
@@ -761,6 +1143,152 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn outbound_delivery_finalization_is_atomic_with_message_history() {
+        let pool = create_test_pool().await;
+        let store = SqliteMessageStore::new(pool.clone());
+        let delivery = OutboundDelivery {
+            id: "delivery-1".into(),
+            actor_id: "customer-key".into(),
+            idempotency_key: Some("request-123".into()),
+            platform: "telegram".into(),
+            chat_id: "123".into(),
+            request_json: serde_json::json!({"text": "hello"}),
+            created_at: 1_000_000,
+        };
+        store.prepare_outbound_delivery(&delivery).await.unwrap();
+
+        let send_result = SendResult {
+            success: true,
+            message_id: Some("platform-message-1".into()),
+            timestamp: Some(1_000_001),
+            error: None,
+            error_code: None,
+            retryable: false,
+        };
+        let message = StoredMessage::from_outbound("telegram", "123", None, "hello", &send_result);
+        store
+            .finalize_outbound_delivery(
+                &delivery.id,
+                OutboundDeliveryState::Succeeded,
+                &serde_json::to_value(&send_result).unwrap(),
+                Some(&message),
+            )
+            .await
+            .unwrap();
+
+        let state: String =
+            sqlx::query_scalar("SELECT state FROM outbound_deliveries WHERE id = ?")
+                .bind(&delivery.id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let message_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM messages WHERE id = ?")
+            .bind(&message.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(state, "succeeded");
+        assert_eq!(message_count, 1);
+
+        let unpublished = store.unpublished_outbound_events(10).await.unwrap();
+        assert_eq!(unpublished.len(), 1);
+        assert_eq!(unpublished[0].delivery_id, delivery.id);
+        assert_eq!(unpublished[0].state, OutboundDeliveryState::Succeeded);
+        store
+            .mark_outbound_event_published(&delivery.id)
+            .await
+            .unwrap();
+        assert!(
+            store
+                .unpublished_outbound_events(10)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+
+        let duplicate = store
+            .finalize_outbound_delivery(
+                &delivery.id,
+                OutboundDeliveryState::Succeeded,
+                &serde_json::json!({}),
+                Some(&message),
+            )
+            .await;
+        assert!(duplicate.is_err(), "a delivery can only be finalized once");
+
+        let pending = OutboundDelivery {
+            id: "delivery-pending".into(),
+            actor_id: "customer-key".into(),
+            idempotency_key: None,
+            platform: "telegram".into(),
+            chat_id: "456".into(),
+            request_json: serde_json::json!({"text": "uncertain"}),
+            created_at: 2_000_000,
+        };
+        store.prepare_outbound_delivery(&pending).await.unwrap();
+        let stats = store.outbound_delivery_stats(3_000_000).await.unwrap();
+        assert_eq!(stats.pending, 1);
+        assert_eq!(stats.stale_pending, 1);
+        assert!(
+            store
+                .list_outbound_deliveries("another-customer", 10)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            !store
+                .reconcile_outbound_delivery(
+                    &pending.id,
+                    "another-customer",
+                    OutboundDeliveryState::Succeeded,
+                    "platform search found message 123",
+                    "another-customer",
+                )
+                .await
+                .unwrap()
+        );
+        assert!(
+            store
+                .reconcile_outbound_delivery(
+                    &pending.id,
+                    "customer-key",
+                    OutboundDeliveryState::Succeeded,
+                    "platform search found message 123",
+                    "customer-key",
+                )
+                .await
+                .unwrap()
+        );
+        assert!(
+            !store
+                .reconcile_outbound_delivery(
+                    &pending.id,
+                    "customer-key",
+                    OutboundDeliveryState::Failed,
+                    "second finalization must be rejected",
+                    "customer-key",
+                )
+                .await
+                .unwrap()
+        );
+        let records = store
+            .list_outbound_deliveries("customer-key", 10)
+            .await
+            .unwrap();
+        let reconciled = records.iter().find(|row| row.id == pending.id).unwrap();
+        assert_eq!(reconciled.state, "succeeded");
+        assert_eq!(
+            reconciled.reconciliation_evidence.as_deref(),
+            Some("platform search found message 123")
+        );
+        let stats = store.outbound_delivery_stats(3_000_000).await.unwrap();
+        assert_eq!(stats.pending, 0);
+        assert_eq!(stats.stale_pending, 0);
+        assert_eq!(stats.unpublished_events, 1);
+    }
+
+    #[tokio::test]
     async fn test_message_store_multiple() {
         let pool = create_test_pool().await;
         let store = SqliteMessageStore::new(pool);
@@ -823,6 +1351,26 @@ mod tests {
         assert_eq!(stored.text.as_deref(), Some("Reply"));
     }
 
+    #[test]
+    fn outbound_local_ids_are_unique_when_platform_reuses_message_id() {
+        let result = SendResult {
+            success: true,
+            message_id: Some("platform-shared-id".into()),
+            timestamp: Some(1),
+            error: None,
+            error_code: None,
+            retryable: false,
+        };
+        let first = StoredMessage::from_outbound("telegram", "chat-1", None, "one", &result);
+        let second = StoredMessage::from_outbound("telegram", "chat-2", None, "two", &result);
+        assert_ne!(first.id, second.id);
+        assert_eq!(first.raw_data["result"]["message_id"], "platform-shared-id");
+        assert_eq!(
+            second.raw_data["result"]["message_id"],
+            "platform-shared-id"
+        );
+    }
+
     #[tokio::test]
     async fn test_field_specific_query() {
         let pool = create_test_pool().await;
@@ -857,5 +1405,244 @@ mod tests {
         let msgs = store.list_messages(&filter).await.unwrap();
         assert_eq!(msgs.len(), 1);
         assert_eq!(msgs[0].text.as_deref(), Some("Chat 111 msg"));
+    }
+
+    #[tokio::test]
+    async fn test_migration_adds_api_key_quota_to_existing_database() {
+        let pool = SqlitePool::connect(":memory:").await.unwrap();
+        sqlx::query(
+            "CREATE TABLE api_keys (
+                id TEXT PRIMARY KEY, name TEXT NOT NULL, prefix TEXT NOT NULL,
+                created_at INTEGER NOT NULL, expires_at INTEGER, last_used_at INTEGER,
+                revoked INTEGER NOT NULL DEFAULT 0, permissions TEXT NOT NULL DEFAULT '[]',
+                event_filters TEXT NOT NULL DEFAULT '[]', hash TEXT NOT NULL
+            )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "CREATE TABLE api_usage_hourly (
+                key_id TEXT NOT NULL, bucket_start INTEGER NOT NULL,
+                status_class INTEGER NOT NULL, request_count INTEGER NOT NULL,
+                PRIMARY KEY (key_id, bucket_start, status_class)
+            )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO api_usage_hourly (key_id, bucket_start, status_class, request_count)
+             VALUES ('legacy-key', 0, 2, 7)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO api_keys
+             (id, name, prefix, created_at, revoked, permissions, event_filters, hash)
+             VALUES ('legacy-key', 'legacy', 'eb_old', 1, 0, '[]', '[]', 'hash')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Versioned v1 databases remain supported for automatic upgrades.
+        sqlx::query(
+            "CREATE TABLE _schema_version (
+                version INTEGER NOT NULL,
+                applied_at BIGINT NOT NULL,
+                description TEXT NOT NULL
+            )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO _schema_version (version, applied_at, description)
+             VALUES (1, 0, 'Initial schema')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        run_migrations(&pool).await.unwrap();
+        run_migrations(&pool).await.unwrap();
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT COALESCE(MAX(version), 0) FROM _schema_version")
+                .fetch_one(&pool)
+                .await
+                .unwrap(),
+            crate::storage::migration::SCHEMA_VERSION
+        );
+        use sqlx::Row as _;
+        let columns = sqlx::query("PRAGMA table_info(api_keys)")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        assert!(
+            columns
+                .iter()
+                .any(|row| { row.get::<String, _>("name") == "requests_per_minute" })
+        );
+        let subject_id: String =
+            sqlx::query_scalar("SELECT subject_id FROM api_keys WHERE id = 'legacy-key'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(subject_id, "legacy-key");
+        let usage_subject: String = sqlx::query_scalar(
+            "SELECT subject_id FROM api_usage_hourly WHERE key_id = 'legacy-key'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(usage_subject, "legacy-key");
+        let delivery_columns = sqlx::query_scalar::<_, String>(
+            "SELECT name FROM pragma_table_info('outbound_deliveries')",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        for expected in [
+            "event_published",
+            "reconciliation_evidence",
+            "reconciled_by",
+        ] {
+            assert!(delivery_columns.iter().any(|column| column == expected));
+        }
+    }
+
+    #[tokio::test]
+    async fn failed_multi_step_migration_rolls_back_prior_schema_changes() {
+        let pool = SqlitePool::connect(":memory:").await.unwrap();
+        sqlx::query(
+            "CREATE TABLE api_keys (
+                id TEXT PRIMARY KEY, name TEXT NOT NULL, prefix TEXT NOT NULL,
+                created_at INTEGER NOT NULL, expires_at INTEGER, last_used_at INTEGER,
+                revoked INTEGER NOT NULL DEFAULT 0, permissions TEXT NOT NULL DEFAULT '[]',
+                event_filters TEXT NOT NULL DEFAULT '[]', hash TEXT NOT NULL
+            )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("CREATE VIEW api_usage_hourly AS SELECT 'blocked' AS key_id")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        assert!(run_migrations(&pool).await.is_err());
+        let columns =
+            sqlx::query_scalar::<_, String>("SELECT name FROM pragma_table_info('api_keys')")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert!(!columns.iter().any(|column| column == "subject_id"));
+        assert!(!columns.iter().any(|column| column == "requests_per_minute"));
+    }
+
+    #[tokio::test]
+    async fn migration_refuses_database_from_newer_schema_version() {
+        let pool = SqlitePool::connect(":memory:").await.unwrap();
+        sqlx::query("CREATE TABLE future_data(value TEXT)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO future_data VALUES ('preserve-me')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "CREATE TABLE _schema_version (
+                version INTEGER NOT NULL,
+                applied_at INTEGER NOT NULL,
+                description TEXT NOT NULL
+            )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO _schema_version VALUES (999, 1, 'future schema')")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let error = run_migrations(&pool).await.unwrap_err().to_string();
+        assert!(error.contains("newer than supported"));
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("SELECT COALESCE(MAX(version), 0) FROM _schema_version")
+                .fetch_one(&pool)
+                .await
+                .unwrap(),
+            999
+        );
+        assert_eq!(
+            sqlx::query_scalar::<_, String>("SELECT value FROM future_data")
+                .fetch_one(&pool)
+                .await
+                .unwrap(),
+            "preserve-me"
+        );
+    }
+
+    #[tokio::test]
+    async fn file_pool_applies_durable_security_pragmas_to_every_connection() {
+        let path = std::env::temp_dir().join(format!("easybot-pool-{}.db", uuid::Uuid::new_v4()));
+        let pool = create_pool(&path).await.unwrap();
+        let mut connections = Vec::new();
+        for _ in 0..5 {
+            connections.push(pool.acquire().await.unwrap());
+        }
+        for connection in &mut connections {
+            let foreign_keys: i64 = sqlx::query_scalar("PRAGMA foreign_keys")
+                .fetch_one(&mut **connection)
+                .await
+                .unwrap();
+            let busy_timeout: i64 = sqlx::query_scalar("PRAGMA busy_timeout")
+                .fetch_one(&mut **connection)
+                .await
+                .unwrap();
+            let synchronous: i64 = sqlx::query_scalar("PRAGMA synchronous")
+                .fetch_one(&mut **connection)
+                .await
+                .unwrap();
+            assert_eq!(foreign_keys, 1);
+            assert_eq!(busy_timeout, 5_000);
+            assert_eq!(synchronous, 2);
+        }
+        sqlx::query("CREATE TABLE permission_probe(value TEXT)")
+            .execute(&mut **connections.first_mut().unwrap())
+            .await
+            .unwrap();
+        sqlx::query("INSERT INTO permission_probe VALUES ('secret')")
+            .execute(&mut **connections.first_mut().unwrap())
+            .await
+            .unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            for protected_path in [
+                path.clone(),
+                std::path::PathBuf::from(format!("{}-wal", path.display())),
+                std::path::PathBuf::from(format!("{}-shm", path.display())),
+            ] {
+                assert_eq!(
+                    std::fs::metadata(&protected_path)
+                        .unwrap()
+                        .permissions()
+                        .mode()
+                        & 0o777,
+                    0o600,
+                    "{}",
+                    protected_path.display()
+                );
+            }
+        }
+        drop(connections);
+        pool.close().await;
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = tokio::fs::remove_file(format!("{}{suffix}", path.display())).await;
+        }
     }
 }

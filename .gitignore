@@ -22,6 +22,8 @@ gateway.local.yaml
 .env
 /data/
 /logs/
+/commercial/evidence/
+/commercial/*.env
 
 # Generated service configs (by `easybot --init`)
 easybot.service

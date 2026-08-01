@@ -7,6 +7,120 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.27] - 2026-08-01
+
+### Changed
+
+- **Pre-launch compatibility boundary** — Remove unversioned legacy database detection,
+  old message/config aliases, legacy Release metadata fallback, and implicit plugin ABI defaults.
+  Versioned databases continue to use automatic migrations and rollback safeguards.
+- **Automatic upgrade baseline** — Future automatic upgrades require EasyBot `0.0.26` or newer
+  and a release `easybot-version.json` manifest.
+
+### Fixed
+
+- **Release metadata generation** — Derive schema and plugin ABI versions from source and emit
+  valid expanded JSON for the updater manifest.
+
+## [0.0.26] - 2026-08-01
+
+### Fixed
+
+- **Environment test isolation** — 串行化读取部署密钥文件的配置测试，避免并发测试互相污染进程环境变量。
+
+## [0.0.25] - 2026-08-01
+
+### Fixed
+
+- **Production proxy reachability** — 生产 Compose 挂载容器内网监听 override，让 Caddy
+  可以访问 EasyBot 的 `/api/v1/live`，修复应用仅监听 `127.0.0.1` 导致反向代理 503 的问题。
+
+## [0.0.24] - 2026-08-01
+
+### Fixed
+
+- **Release asset upload** — 排除 release body 与版本元数据 artifact 的目录副本，避免
+  `easybot-version.json` 被重复上传导致 GitHub Release 创建阶段失败。
+
+## [0.0.23] - 2026-07-31
+
+### Fixed
+
+- **Production container smoke** — 生产 Compose 改用 release Alpine 运行时内置的 `wget`
+  执行 `/api/v1/live` 健康检查，并统一使用 `127.0.0.1` 避免 `localhost` 解析差异导致误判。
+- **Read-only production runtime** — 为生产 Compose 的只读根文件系统补齐
+  `/var/lib/easybot/logs`、`plugins`、`certs` 和 `secrets` tmpfs，修复真实部署启动时
+  初始化运行时目录触发 `Read-only file system` 的问题。
+
+## [0.0.22] - 2026-07-31
+
+### Fixed
+
+- **Release container runtime** — `Dockerfile.release` 切换到 pinned Alpine 运行时镜像，
+  保留固定 UID 与 `/api/v1/live` 容器健康检查，同时移除 Debian slim 运行时包面，修复
+  `v0.0.21` tag release workflow 在 Docker Trivy 高危/严重漏洞扫描阶段失败的问题。
+
+## [0.0.21] - 2026-07-30
+
+### Fixed
+
+- **Release signing fallback** — macOS/Windows 二进制构建在缺少签名/公证 secrets 时不再中断
+  release workflow，而是发布 unsigned 产物并输出 warning，修复 `v0.0.20` tag release
+  workflow 在桌面平台签名凭据检查阶段失败的问题。
+
+## [0.0.20] - 2026-07-30
+
+### Fixed
+
+- **Release preflight portability** — 统一生产脚本中的 `stat` 调用顺序为 GNU/Linux 优先、
+  BSD/macOS 兜底，修复 `v0.0.19` tag release workflow 在 backup retention
+  preflight 阶段因 Linux `stat -f` 输出进入算术表达式而中断的问题。
+
+## [0.0.19] - 2026-07-30
+
+### Fixed
+
+- **Release preflight portability** — 修复 `commercial-launch-gate.sh` 在 Linux CI runner
+  上读取 evidence 文件权限时误用 BSD `stat -f` 语义的问题，修复 `v0.0.18` tag release
+  workflow 在 Commercial release preflight 阶段中断的问题。
+
+## [0.0.18] - 2026-07-30
+
+### Fixed
+
+- **Release supply-chain policy** — 更新 `deny.toml` 的 `unmaintained` 配置以兼容
+  `cargo-deny 0.20.x`，修复 `v0.0.17` tag release workflow 在 Supply-chain policy 阶段
+  因配置反序列化失败而中断的问题。
+
+## [0.0.17] - 2026-07-30
+
+### Added
+
+- **G0 商用候选范围** — 新增 `docs/14 commercial-g0-scope.md`，冻结首个封闭付费试点的
+  Managed Pilot SKU、单客户独立实例边界、平台承诺前置条件和暂不支持清单，避免商用化目标继续发散。
+
+### Fixed
+
+- **SQLite 商用迁移可靠性** — SQLite v2 migration 改为事务化执行，避免部分语句成功后留下半迁移
+  schema；自动识别旧 v1 schema 后继续应用待执行迁移；程序遇到高于当前代码支持的 schema version
+  时拒绝启动。
+- **SQLite v2 rollback/reapply** — 补齐 v2 rollback，覆盖商用账本、审计、幂等、delivery journal
+  等新增表，并验证 rollback 后可重新应用迁移。
+- **auth schema version 口径不一致** — 生产 backup/restore、健康检查和 API Key 管理统一读取
+  `_schema_version`，不再混用旧的 `PRAGMA user_version`。
+- **usage export 分页断言** — 修正 `limit=1` 时 `page_requests` 的测试期望，使其等于当前页实际返回
+  记录的 request_count，同时保留 total_requests 和 key rotation 后 subject 归并验证。
+
+### Security
+
+- **GitHub Actions supply-chain hardening** — 发布、CI、labeler、platform matrix 和复合 Rust setup
+  action 中的第三方 action 统一 pin 到 commit SHA，并补齐最小 `permissions`。
+
+### Docs
+
+- **商用化路线收窄** — 更新 commercial readiness、roadmap、用户指南和架构文档，将当前工程推进目标
+  从“大商用平台”收窄为 `v0.0.17` G0 候选版本。
+
 ## [0.0.16] - 2026-07-20
 
 ### Fixed

@@ -16,6 +16,8 @@ use std::time::Instant;
 use tokio::sync::OwnedSemaphorePermit;
 use tracing::{info, warn};
 
+const MAX_FRAMES_PER_SEC: u32 = 10;
+
 /// WebSocket 实时事件流
 ///
 /// 通过 WebSocket 连接订阅网关事件的实时推送。连接后需要先发送认证帧。
@@ -65,10 +67,11 @@ async fn handle_ws(socket: WebSocket, state: AppState, _permit: OwnedSemaphorePe
     const MAX_AUTH_ATTEMPTS: u32 = 5;
     // SECURITY: Require auth within N seconds after connection
     let auth_deadline = Instant::now() + std::time::Duration::from_secs(10);
+    let auth_timeout = tokio::time::sleep_until(tokio::time::Instant::from_std(auth_deadline));
+    tokio::pin!(auth_timeout);
     // SECURITY: Per-connection frame rate limit (max 10 frames/sec)
     let mut frame_count: u32 = 0;
     let mut frame_window_start = Instant::now();
-    const MAX_FRAMES_PER_SEC: u32 = 10;
 
     // 心跳配置
     let heartbeat_secs = state.config.api.websocket.heartbeat_interval_secs.max(5);
@@ -134,6 +137,16 @@ async fn handle_ws(socket: WebSocket, state: AppState, _permit: OwnedSemaphorePe
                                 Some(ref key) => {
                                     match state.auth_manager.authenticate(key).await {
                                         Ok(auth_info) => {
+                                            if let Err(error) = state.auth_manager.record_usage(&auth_info.id, &auth_info.subject_id, 101).await {
+                                                tracing::error!(key_id = %auth_info.id, %error, "rejecting WebSocket because durable metering failed");
+                                                let _ = sender.send(Message::Text(
+                                                    r#"{"type":"service_unavailable","message":"Usage metering unavailable"}"#.into()
+                                                )).await;
+                                                break;
+                                            }
+                                            if let Some(ref metrics) = state.metrics {
+                                                metrics.record_api_key_request(&auth_info.id, 101);
+                                            }
                                             // 保存事件过滤器（共享广播器含所有事件，客户端自行过滤）
                                             event_filters = auth_info.event_filters.clone();
                                             event_rx = state.ws_event_tx.subscribe();
@@ -143,6 +156,9 @@ async fn handle_ws(socket: WebSocket, state: AppState, _permit: OwnedSemaphorePe
                                             )).await;
                                         }
                                         Err(_) => {
+                                            if let Some(ref metrics) = state.metrics {
+                                                metrics.record_auth_failure("invalid_key");
+                                            }
                                             // SECURITY: Add delay on failed auth to slow brute-force
                                             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
                                             let _ = sender.send(Message::Text(
@@ -171,6 +187,10 @@ async fn handle_ws(socket: WebSocket, state: AppState, _permit: OwnedSemaphorePe
                         }
                     }
                     Some(Ok(Message::Ping(data))) => {
+                        if frame_rate_exceeded(&mut frame_count, &mut frame_window_start) {
+                            warn!("WS client exceeded control frame rate limit");
+                            break;
+                        }
                         // RFC 6455: 回复 Pong（底层 tungstenite 通常自动处理，显式处理更安全）
                         if sender.send(Message::Pong(data)).await.is_err() {
                             break;
@@ -178,16 +198,31 @@ async fn handle_ws(socket: WebSocket, state: AppState, _permit: OwnedSemaphorePe
                         last_pong = Instant::now();
                     }
                     Some(Ok(Message::Pong(_))) => {
+                        if frame_rate_exceeded(&mut frame_count, &mut frame_window_start) {
+                            warn!("WS client exceeded control frame rate limit");
+                            break;
+                        }
                         // 浏览器自动回复的 Pong（控制帧级别），也更新心跳防超时
                         last_pong = Instant::now();
                     }
                     Some(Ok(Message::Close(_))) | None => break,
+                    Some(Ok(Message::Binary(_))) => {
+                        warn!("WS client sent unsupported binary frame");
+                        break;
+                    }
                     Some(Err(e)) => {
                         warn!("WebSocket protocol error: {}", e);
                         break;
                     }
-                    _ => {}
                 }
+            }
+
+            _ = &mut auth_timeout, if !authenticated => {
+                warn!("WS client auth deadline exceeded while idle");
+                let _ = sender.send(Message::Text(
+                    r#"{"type":"auth_failed","message":"Authentication timeout"}"#.into()
+                )).await;
+                break;
             }
 
             // 心跳定时器：定期发送 Ping，检测客户端存活
@@ -260,9 +295,36 @@ async fn handle_ws(socket: WebSocket, state: AppState, _permit: OwnedSemaphorePe
     info!("WebSocket client disconnected");
 }
 
+fn frame_rate_exceeded(frame_count: &mut u32, window_start: &mut Instant) -> bool {
+    if window_start.elapsed() >= std::time::Duration::from_secs(1) {
+        *frame_count = 1;
+        *window_start = Instant::now();
+        false
+    } else {
+        *frame_count = frame_count.saturating_add(1);
+        *frame_count > MAX_FRAMES_PER_SEC
+    }
+}
+
 /// 处理客户端发来的业务帧
 async fn handle_client_frame(text: &str, _state: &AppState) {
     // Phase 2: 支持客户端发送消息、订阅过滤等
     // SECURITY: Only log frame length, not content (may contain sensitive data)
     tracing::trace!("WS client frame received ({} bytes)", text.len());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::frame_rate_exceeded;
+    use std::time::Instant;
+
+    #[test]
+    fn all_frame_types_share_a_bounded_rate_budget() {
+        let mut count = 0;
+        let mut started = Instant::now();
+        for _ in 0..10 {
+            assert!(!frame_rate_exceeded(&mut count, &mut started));
+        }
+        assert!(frame_rate_exceeded(&mut count, &mut started));
+    }
 }

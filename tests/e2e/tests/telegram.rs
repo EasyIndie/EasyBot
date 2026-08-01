@@ -414,4 +414,19 @@ async fn test_e2e_batch_send() {
     assert_eq!(json["total"], 2);
     assert_eq!(json["results"]["telegram:12345"]["status"], "sent");
     assert_eq!(json["results"]["telegram:67890"]["status"], "sent");
+
+    let (history_status, history) =
+        auth_get(&router, "/api/v1/messages?platform=telegram&limit=10", &key).await;
+    assert_eq!(history_status, 200);
+    let messages = history["messages"].as_array().unwrap();
+    assert_eq!(
+        messages.len(),
+        2,
+        "each successful batch item must be persisted once"
+    );
+    assert!(
+        messages
+            .iter()
+            .all(|message| message["text"] == "Broadcast message")
+    );
 }

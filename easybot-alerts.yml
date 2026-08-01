@@ -1,0 +1,87 @@
+groups:
+  - name: easybot-commercial-service
+    rules:
+      - alert: EasyBotTargetDown
+        expr: up{job="easybot"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "EasyBot is unavailable"
+          description: "Prometheus has been unable to scrape EasyBot for 2 minutes."
+
+      - alert: EasyBotHighServerErrorRate
+        expr: |
+          sum(rate(http_requests_total{job="easybot",status=~"5.."}[5m]))
+          /
+          clamp_min(sum(rate(http_requests_total{job="easybot"}[5m])), 0.001)
+          > 0.05
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "EasyBot server error rate exceeds 5%"
+          description: "The 5xx response ratio has exceeded 5% for 10 minutes."
+
+      - alert: EasyBotAuthenticationFailureSpike
+        expr: sum(rate(api_auth_failures_total{job="easybot"}[5m])) > 0.2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "EasyBot authentication failures increased"
+          description: "More than one authentication failure every five seconds was observed."
+
+      - alert: EasyBotAdapterDisconnected
+        expr: adapter_status{job="easybot"} == 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "EasyBot adapter is disconnected"
+          description: "Adapter {{ $labels.platform }} has remained disconnected for 5 minutes."
+
+      - alert: EasyBotAuditChainInvalid
+        expr: audit_chain_integrity{job="easybot"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "EasyBot audit ledger integrity failed"
+          description: "The management audit hash chain is invalid; preserve evidence and investigate immediately."
+
+      - alert: EasyBotCommercialLedgerInvalid
+        expr: ledger_integrity{job="easybot"} == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "EasyBot commercial ledger integrity failed"
+          description: "The {{ $labels.ledger }} ledger is invalid; stop invoice generation, preserve evidence, and investigate immediately."
+
+      - alert: EasyBotKeyRotationStalled
+        expr: pending_key_rotation_transitions{job="easybot"} != 0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "EasyBot API key rotation requires reconciliation"
+          description: "At least one durable API key rotation transition has remained unfinished for five minutes. Inspect readiness and use the protected rotation reconciliation API."
+
+      - alert: EasyBotStaleOutboundDeliveries
+        expr: outbound_delivery_backlog{job="easybot",state="stale_pending"} > 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "EasyBot has indeterminate outbound deliveries"
+          description: "At least one outbound delivery has remained pending for over five minutes; reconcile it against the platform before retrying."
+
+      - alert: EasyBotOutboundEventBacklog
+        expr: outbound_delivery_backlog{job="easybot",state="unpublished_event"} > 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "EasyBot outbound event outbox is blocked"
+          description: "Committed delivery events have remained unpublished; inspect EventBus subscribers and message storage."

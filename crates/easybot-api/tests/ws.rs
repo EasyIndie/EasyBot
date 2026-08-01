@@ -16,6 +16,8 @@ use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 
 mod common;
 
+static WS_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 /// WebSocket 测试客户端封装
 struct WsClient {
     write: futures::stream::SplitSink<
@@ -73,7 +75,13 @@ impl WsClient {
 ///
 /// 绑定随机端口，启动 axum 服务，返回 (AppState, api_key, SocketAddr)。
 /// 启动后通过重试 TCP 连接确保服务器 Accept 循环已运行，避免并发下的竞态条件。
-async fn ws_server() -> (AppState, String, SocketAddr) {
+async fn ws_server() -> (
+    tokio::sync::MutexGuard<'static, ()>,
+    AppState,
+    String,
+    SocketAddr,
+) {
+    let guard = WS_TEST_LOCK.lock().await;
     let (state, key) = common::test_app_state().await;
     let router = easybot_api::server::create_router(state.clone());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -98,7 +106,7 @@ async fn ws_server() -> (AppState, String, SocketAddr) {
         );
     }
 
-    (state, key, addr)
+    (guard, state, key, addr)
 }
 
 /// 连接 WebSocket（需通过 HTTP-level Bearer 认证）
@@ -140,7 +148,8 @@ async fn auth_ws(client: &mut WsClient, api_key: &str) {
 
 #[tokio::test]
 async fn test_ws_auth_ok_with_valid_token() {
-    let (_state, key, addr) = ws_server().await;
+    let (_guard, state, key, addr) = ws_server().await;
+    let key_id = state.auth_manager.list_keys().await[0].id.clone();
     let mut client = connect_ws(addr, &key).await;
 
     // 发送有效 token → 应收到 auth_ok
@@ -150,12 +159,31 @@ async fn test_ws_auth_ok_with_valid_token() {
     let resp = resp.unwrap();
     assert_eq!(resp["type"], "auth_ok");
 
+    let now = chrono::Utc::now().timestamp_millis();
+    let usage = state
+        .auth_manager
+        .usage_records(
+            now - 3_600_000,
+            now + 3_600_000,
+            Some(&key_id),
+            None,
+            100,
+            0,
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        usage.iter().map(|record| record.request_count).sum::<i64>(),
+        1
+    );
+    assert_eq!(usage[0].status_class, 1);
+
     client.close().await;
 }
 
 #[tokio::test]
 async fn test_ws_auth_required_when_no_token() {
-    let (_state, key, addr) = ws_server().await;
+    let (_guard, _state, key, addr) = ws_server().await;
     let mut client = connect_ws(addr, &key).await;
 
     // 发送不带 token 的 JSON → 应收到 auth_required
@@ -174,7 +202,7 @@ async fn test_ws_auth_required_when_no_token() {
 
 #[tokio::test]
 async fn test_ws_auth_failed_with_invalid_token() {
-    let (_state, key, addr) = ws_server().await;
+    let (_guard, _state, key, addr) = ws_server().await;
     let mut client = connect_ws(addr, &key).await;
 
     // 发送无效 token → 应收到 auth_failed 后断开
@@ -194,7 +222,7 @@ async fn test_ws_auth_failed_with_invalid_token() {
 
 #[tokio::test]
 async fn test_ws_event_streaming_after_auth() {
-    let (state, key, addr) = ws_server().await;
+    let (_guard, state, key, addr) = ws_server().await;
     let mut client = connect_ws(addr, &key).await;
 
     // 认证
@@ -232,7 +260,7 @@ async fn test_ws_event_streaming_after_auth() {
 
 #[tokio::test]
 async fn test_ws_multiple_events_sequential() {
-    let (state, key, addr) = ws_server().await;
+    let (_guard, state, key, addr) = ws_server().await;
     let mut client = connect_ws(addr, &key).await;
     auth_ws(&mut client, &key).await;
 
@@ -292,7 +320,7 @@ async fn test_ws_multiple_events_sequential() {
 
 #[tokio::test]
 async fn test_ws_multiple_clients_receive_events() {
-    let (state, key, addr) = ws_server().await;
+    let (_guard, state, key, addr) = ws_server().await;
 
     // 两个独立客户端连接并认证
     let mut client1 = connect_ws(addr, &key).await;
@@ -329,7 +357,7 @@ async fn test_ws_multiple_clients_receive_events() {
 
 #[tokio::test]
 async fn test_ws_http_auth_failed() {
-    let (_state, _key, addr) = ws_server().await;
+    let (_guard, _state, _key, addr) = ws_server().await;
 
     // WS upgrade 不再在 HTTP 层鉴权（new WebSocket() 无法设自定义头）。
     // 不带 HTTP Authorization 头 → 连接应成功建立（旧行为会返回 401）
@@ -346,7 +374,7 @@ async fn test_ws_http_auth_failed() {
 
 #[tokio::test]
 async fn test_ws_client_clean_disconnect() {
-    let (state, key, addr) = ws_server().await;
+    let (_guard, state, key, addr) = ws_server().await;
     let mut client = connect_ws(addr, &key).await;
     auth_ws(&mut client, &key).await;
 

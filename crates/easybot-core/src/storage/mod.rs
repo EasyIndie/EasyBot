@@ -77,6 +77,98 @@ pub trait SessionStore: Send + Sync {
 /// 消息存储接口
 #[async_trait]
 pub trait MessageStore: Send + Sync {
+    /// Verify that the backing message database is reachable.
+    async fn storage_ready(&self) -> bool {
+        self.list_messages(&MessageFilter {
+            limit: Some(1),
+            ..MessageFilter::default()
+        })
+        .await
+        .is_ok()
+    }
+
+    /// Persist an outbound delivery intent before contacting the external platform.
+    async fn prepare_outbound_delivery(
+        &self,
+        _delivery: &OutboundDelivery,
+    ) -> Result<(), StoreError> {
+        Err(StoreError::Database(
+            "outbound delivery journal is not supported by this store".into(),
+        ))
+    }
+
+    /// Atomically store the final platform result and its message-history row.
+    async fn finalize_outbound_delivery(
+        &self,
+        _delivery_id: &str,
+        _state: OutboundDeliveryState,
+        _result: &serde_json::Value,
+        _message: Option<&StoredMessage>,
+    ) -> Result<(), StoreError> {
+        Err(StoreError::Database(
+            "outbound delivery journal is not supported by this store".into(),
+        ))
+    }
+
+    async fn unpublished_outbound_events(
+        &self,
+        _limit: usize,
+    ) -> Result<Vec<OutboundEvent>, StoreError> {
+        Ok(Vec::new())
+    }
+
+    async fn mark_outbound_event_published(&self, _delivery_id: &str) -> Result<(), StoreError> {
+        Ok(())
+    }
+
+    async fn list_outbound_deliveries(
+        &self,
+        _actor_id: &str,
+        _limit: usize,
+    ) -> Result<Vec<OutboundDeliveryRecord>, StoreError> {
+        Ok(Vec::new())
+    }
+
+    async fn reconcile_outbound_delivery(
+        &self,
+        _delivery_id: &str,
+        _actor_id: &str,
+        _state: OutboundDeliveryState,
+        _evidence: &str,
+        _reconciled_by: &str,
+    ) -> Result<bool, StoreError> {
+        Ok(false)
+    }
+
+    async fn list_outbound_deliveries_by_session(
+        &self,
+        _platform: &str,
+        _chat_id: &str,
+        _limit: usize,
+        _offset: usize,
+    ) -> Result<Vec<OutboundDeliveryRecord>, StoreError> {
+        Ok(Vec::new())
+    }
+
+    async fn delete_outbound_deliveries_by_session(
+        &self,
+        _platform: &str,
+        _chat_id: &str,
+    ) -> Result<u64, StoreError> {
+        Ok(0)
+    }
+
+    async fn delete_expired_outbound_deliveries(&self, _before: i64) -> Result<u64, StoreError> {
+        Ok(0)
+    }
+
+    async fn outbound_delivery_stats(
+        &self,
+        _stale_before: i64,
+    ) -> Result<OutboundDeliveryStats, StoreError> {
+        Ok(OutboundDeliveryStats::default())
+    }
+
     /// 存储一条消息
     async fn store_message(&self, msg: &StoredMessage) -> Result<(), StoreError>;
 
@@ -90,11 +182,65 @@ pub trait MessageStore: Send + Sync {
     /// 删除单条消息
     async fn delete_message(&self, id: &str) -> Result<bool, StoreError>;
 
+    /// Delete all message bodies and raw payloads belonging to one session.
+    async fn delete_messages_by_session(&self, session_key: &str) -> Result<u64, StoreError>;
+
     /// 删除 created_at 早于 before 的过期消息
     /// 返回删除的行数。默认实现返回 0（不执行清理）。
     async fn delete_expired_messages(&self, _before: i64) -> Result<u64, StoreError> {
         Ok(0)
     }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum OutboundDeliveryState {
+    Succeeded,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OutboundDelivery {
+    pub id: String,
+    pub actor_id: String,
+    pub idempotency_key: Option<String>,
+    pub platform: String,
+    pub chat_id: String,
+    pub request_json: serde_json::Value,
+    pub created_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OutboundEvent {
+    pub delivery_id: String,
+    pub platform: String,
+    pub chat_id: String,
+    pub state: OutboundDeliveryState,
+    pub result_json: serde_json::Value,
+    pub completed_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OutboundDeliveryRecord {
+    pub id: String,
+    pub actor_id: String,
+    pub idempotency_key: Option<String>,
+    pub platform: String,
+    pub chat_id: String,
+    pub request_json: serde_json::Value,
+    pub state: String,
+    pub result_json: Option<serde_json::Value>,
+    pub created_at: i64,
+    pub completed_at: Option<i64>,
+    pub reconciliation_evidence: Option<String>,
+    pub reconciled_by: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct OutboundDeliveryStats {
+    pub pending: u64,
+    pub stale_pending: u64,
+    pub unpublished_events: u64,
 }
 
 // ── StoredMessage ──
@@ -158,10 +304,6 @@ impl StoredMessage {
         result: &SendResult,
     ) -> Self {
         let session_key = Session::build_key(platform, chat_id, thread_id);
-        let msg_id = result
-            .message_id
-            .clone()
-            .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
         let raw = serde_json::json!({
             "text": text,
             "result": result,
@@ -169,7 +311,11 @@ impl StoredMessage {
             "chat_id": chat_id,
         });
         Self {
-            id: format!("outbound:{}", msg_id),
+            // Platform message IDs are not guaranteed to be globally unique
+            // (and mocks/legacy platforms may reuse them across chats). Keep
+            // them in raw_data.result, but always allocate an independent
+            // local record ID so one outbound send can never overwrite another.
+            id: format!("outbound:{}", uuid::Uuid::now_v7()),
             session_key,
             platform: platform.to_string(),
             chat_id: chat_id.to_string(),

@@ -270,7 +270,7 @@ MY_PLATFORM_TOKEN=your-actual-token
 | `display_name` | string | ❌ | 人类可读的名字，默认使用 `display_name()` |
 | `description` | string | ❌ | 功能描述 |
 | `version` | string | ❌ | 插件版本号 |
-| `sdk_version` | u32 | ❌ | SDK ABI 版本，默认当前版本（通常为 1） |
+| `sdk_version` | u32 | ✅ | SDK ABI 版本，必须与当前 EasyBot ABI 匹配 |
 | `author` | string | ❌ | 作者信息 |
 | `library` | string | ❌ | 动态库文件名。默认根据平台名推导 |
 

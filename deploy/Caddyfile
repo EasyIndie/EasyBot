@@ -1,0 +1,31 @@
+{
+	admin off
+}
+
+{$EASYBOT_DOMAIN} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+
+	reverse_proxy easybot:8080 {
+		health_uri /api/v1/live
+		health_interval 30s
+		health_timeout 5s
+	}
+
+	log {
+		output stdout
+		format filter {
+			request>uri delete
+			request>headers delete
+			request>remote_ip ip_mask 24 48
+			request>client_ip ip_mask 24 48
+			wrap json
+		}
+	}
+}

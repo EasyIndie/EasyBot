@@ -173,6 +173,30 @@ fn test_cli_unknown_flag() {
 }
 
 #[test]
+fn test_production_rejects_unsigned_dynamic_plugins() {
+    let dir = tempfile::tempdir().expect("failed to create temp dir");
+    let init = Command::new(easybot_bin())
+        .args(["--init", "--dir", dir.path().to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(init.status.success());
+    std::fs::write(
+        dir.path().join("plugins").join("untrusted.so"),
+        b"not-a-plugin",
+    )
+    .unwrap();
+    let output = Command::new(easybot_bin())
+        .args(["--production", "--dir", dir.path().to_str().unwrap()])
+        .env("EASYBOT_ADMIN_PASSWORD", "a-production-password")
+        .env("EASYBOT_ALLOW_PLAINTEXT", "true")
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("refuses dynamic plugins"), "{stderr}");
+}
+
+#[test]
 fn test_cli_short_flags() {
     let dir = tempfile::tempdir().expect("failed to create temp dir");
     let dir_path = dir.path().to_str().unwrap();

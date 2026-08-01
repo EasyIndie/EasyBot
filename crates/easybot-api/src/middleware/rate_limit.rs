@@ -256,42 +256,57 @@ pub async fn rate_limit_middleware(
         .get::<ConnectInfo<std::net::SocketAddr>>()
         .map(|addr| addr.0.ip());
 
-    // Determine client IP for rate limiting
-    let client_ip = match direct_ip {
-        Some(direct) => {
-            // Only trust X-Forwarded-For from known proxy IPs
-            let is_trusted_proxy = TRUSTED_PROXY_CIDRS.iter().any(|cidr| {
-                // Simple prefix match — covers common private ranges
-                ip_in_cidr(&direct, cidr)
-            });
-
-            if is_trusted_proxy {
-                if let Some(forwarded) = req
-                    .headers()
-                    .get("X-Forwarded-For")
-                    .and_then(|v| v.to_str().ok())
-                    .and_then(|v| v.split(',').next_back().map(|s| s.trim().to_string()))
-                {
-                    forwarded
-                } else {
-                    direct.to_string()
-                }
-            } else {
-                direct.to_string()
-            }
-        }
-        None => "unknown".to_string(),
-    };
+    let forwarded = req
+        .headers()
+        .get("X-Forwarded-For")
+        .and_then(|value| value.to_str().ok());
+    let client_ip = client_rate_limit_key(direct_ip, forwarded);
 
     if rate_limiter.check(&client_ip).await {
         next.run(req).await
     } else {
         warn!("Rate limit exceeded for IP: {}", client_ip);
-        ApiError(GatewayError::RateLimited {
-            retry_after_ms: 60000,
-        })
-        .into_response()
+        rate_limited_response(60)
     }
+}
+
+fn is_trusted_proxy(ip: &std::net::IpAddr) -> bool {
+    TRUSTED_PROXY_CIDRS.iter().any(|cidr| ip_in_cidr(ip, cidr))
+}
+
+fn client_rate_limit_key(direct: Option<std::net::IpAddr>, forwarded: Option<&str>) -> String {
+    let Some(direct) = direct else {
+        return "unknown".to_string();
+    };
+    if !is_trusted_proxy(&direct) {
+        return direct.to_string();
+    }
+    let parsed: Vec<std::net::IpAddr> = forwarded
+        .into_iter()
+        .flat_map(|value| value.split(','))
+        .filter_map(|value| value.trim().parse().ok())
+        .collect();
+    parsed
+        .iter()
+        .rev()
+        .find(|ip| !is_trusted_proxy(ip))
+        .or_else(|| parsed.first())
+        .copied()
+        .unwrap_or(direct)
+        .to_string()
+}
+
+fn rate_limited_response(retry_after_secs: u64) -> Response {
+    let mut response = ApiError(GatewayError::RateLimited {
+        retry_after_ms: retry_after_secs.saturating_mul(1_000),
+    })
+    .into_response();
+    response.headers_mut().insert(
+        axum::http::header::RETRY_AFTER,
+        axum::http::HeaderValue::from_str(&retry_after_secs.to_string())
+            .unwrap_or_else(|_| axum::http::HeaderValue::from_static("60")),
+    );
+    response
 }
 
 /// Simple IP-in-CIDR check for trusted proxy detection.
@@ -423,6 +438,31 @@ mod tests {
         assert!(
             window.timestamps.is_empty(),
             "Old timestamps should be pruned"
+        );
+    }
+
+    #[test]
+    fn rate_limit_response_includes_retry_after() {
+        let response = rate_limited_response(42);
+        assert_eq!(response.status(), axum::http::StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(response.headers()[axum::http::header::RETRY_AFTER], "42");
+    }
+
+    #[test]
+    fn trusted_proxy_chain_uses_rightmost_untrusted_client() {
+        let direct = "172.20.0.2".parse().unwrap();
+        assert_eq!(
+            client_rate_limit_key(Some(direct), Some("198.51.100.9, 10.0.0.4, 172.19.0.8")),
+            "198.51.100.9"
+        );
+    }
+
+    #[test]
+    fn untrusted_direct_peer_cannot_spoof_forwarded_client() {
+        let direct = "203.0.113.20".parse().unwrap();
+        assert_eq!(
+            client_rate_limit_key(Some(direct), Some("198.51.100.9")),
+            "203.0.113.20"
         );
     }
 }

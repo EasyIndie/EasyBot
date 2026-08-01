@@ -2,6 +2,7 @@
 
 pub mod adapters;
 pub mod admin;
+pub mod billing;
 pub mod chats;
 pub mod config;
 pub mod docs;

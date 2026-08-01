@@ -46,6 +46,9 @@ run_step "cargo clippy (workspace + plugin-system)" \
 run_step "cargo build -p mock-adapter" \
     $CARGO build -p mock-adapter --locked
 
+run_step "cargo build -p easybot-bin --bin easybot" \
+    $CARGO build -p easybot-bin --bin easybot --locked
+
 run_step "tests (workspace + plugin-system)" \
     $TEST_RUNNER --workspace --features "default,plugin-system" --locked
 

@@ -6,9 +6,12 @@
 use async_trait::async_trait;
 use sqlx::PgPool;
 
-use super::{MessageFilter, MessageRole, MessageStore, SessionStore, StoreError, StoredMessage};
+use super::{
+    MessageFilter, MessageRole, MessageStore, OutboundDelivery, OutboundDeliveryRecord,
+    OutboundDeliveryState, OutboundDeliveryStats, OutboundEvent, SessionStore, StoreError,
+    StoredMessage,
+};
 use crate::types::session::{ResetPolicy, Session, SessionFilter, SessionSource};
-
 // ── 连接与迁移 ──
 
 /// 创建 PostgreSQL 连接池
@@ -27,7 +30,7 @@ pub async fn create_pool(
 
 /// 运行数据库迁移（版本化，带 `pg_advisory_lock` 互斥）
 ///
-/// 从旧版幂等 CREATE TABLE 升级为版本化增量迁移。
+/// 对带版本记录的数据库执行版本化增量迁移。
 pub async fn run_migrations(pool: &PgPool) -> Result<(), StoreError> {
     crate::storage::migration::run_migrations_pg(pool).await
 }
@@ -302,6 +305,306 @@ impl PgMessageStore {
 
 #[async_trait]
 impl MessageStore for PgMessageStore {
+    async fn prepare_outbound_delivery(
+        &self,
+        delivery: &OutboundDelivery,
+    ) -> Result<(), StoreError> {
+        sqlx::query(
+            "INSERT INTO outbound_deliveries
+             (id, actor_id, idempotency_key, platform, chat_id, request_json, state, created_at)
+             VALUES ($1, $2, $3, $4, $5, $6, 'pending', $7)",
+        )
+        .bind(&delivery.id)
+        .bind(&delivery.actor_id)
+        .bind(&delivery.idempotency_key)
+        .bind(&delivery.platform)
+        .bind(&delivery.chat_id)
+        .bind(&delivery.request_json)
+        .bind(delivery.created_at)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    async fn finalize_outbound_delivery(
+        &self,
+        delivery_id: &str,
+        state: OutboundDeliveryState,
+        result: &serde_json::Value,
+        message: Option<&StoredMessage>,
+    ) -> Result<(), StoreError> {
+        let mut tx = self.pool.begin().await?;
+        if let Some(msg) = message {
+            let role = match msg.role {
+                MessageRole::User => "user",
+                MessageRole::Assistant => "assistant",
+            };
+            sqlx::query(
+                "INSERT INTO messages
+                 (id, session_key, platform, chat_id, role, text, raw_data, timestamp, created_at)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                 ON CONFLICT (id) DO NOTHING",
+            )
+            .bind(&msg.id)
+            .bind(&msg.session_key)
+            .bind(&msg.platform)
+            .bind(&msg.chat_id)
+            .bind(role)
+            .bind(&msg.text)
+            .bind(&msg.raw_data)
+            .bind(msg.timestamp)
+            .bind(msg.created_at)
+            .execute(&mut *tx)
+            .await?;
+        }
+        let state = match state {
+            OutboundDeliveryState::Succeeded => "succeeded",
+            OutboundDeliveryState::Failed => "failed",
+        };
+        let updated = sqlx::query(
+            "UPDATE outbound_deliveries SET state = $1, result_json = $2, completed_at = $3
+             WHERE id = $4 AND state = 'pending'",
+        )
+        .bind(state)
+        .bind(result)
+        .bind(chrono::Utc::now().timestamp_millis())
+        .bind(delivery_id)
+        .execute(&mut *tx)
+        .await?;
+        if updated.rows_affected() != 1 {
+            return Err(StoreError::Database(
+                "outbound delivery is missing or already finalized".into(),
+            ));
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
+    async fn unpublished_outbound_events(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<OutboundEvent>, StoreError> {
+        let rows: Vec<(String, String, String, String, serde_json::Value, i64)> = sqlx::query_as(
+            "SELECT id, platform, chat_id, state, result_json, completed_at
+             FROM outbound_deliveries WHERE state != 'pending' AND event_published = FALSE
+             ORDER BY completed_at, id LIMIT $1",
+        )
+        .bind(limit.min(1000) as i64)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(
+                |(delivery_id, platform, chat_id, state, result_json, completed_at)| {
+                    OutboundEvent {
+                        delivery_id,
+                        platform,
+                        chat_id,
+                        state: if state == "succeeded" {
+                            OutboundDeliveryState::Succeeded
+                        } else {
+                            OutboundDeliveryState::Failed
+                        },
+                        result_json,
+                        completed_at,
+                    }
+                },
+            )
+            .collect())
+    }
+
+    async fn mark_outbound_event_published(&self, delivery_id: &str) -> Result<(), StoreError> {
+        let updated = sqlx::query(
+            "UPDATE outbound_deliveries SET event_published = TRUE
+             WHERE id = $1 AND state != 'pending'",
+        )
+        .bind(delivery_id)
+        .execute(&self.pool)
+        .await?;
+        if updated.rows_affected() != 1 {
+            return Err(StoreError::NotFound(format!(
+                "completed outbound delivery {delivery_id}"
+            )));
+        }
+        Ok(())
+    }
+
+    async fn list_outbound_deliveries(
+        &self,
+        actor_id: &str,
+        limit: usize,
+    ) -> Result<Vec<OutboundDeliveryRecord>, StoreError> {
+        type Row = (
+            String,
+            String,
+            Option<String>,
+            String,
+            String,
+            serde_json::Value,
+            String,
+            Option<serde_json::Value>,
+            i64,
+            Option<i64>,
+            Option<String>,
+            Option<String>,
+        );
+        let rows: Vec<Row> = sqlx::query_as(
+            "SELECT id, actor_id, idempotency_key, platform, chat_id, request_json, state,
+                    result_json, created_at, completed_at, reconciliation_evidence, reconciled_by
+             FROM outbound_deliveries WHERE actor_id = $1
+             ORDER BY created_at DESC, id DESC LIMIT $2",
+        )
+        .bind(actor_id)
+        .bind(limit.clamp(1, 200) as i64)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|row| OutboundDeliveryRecord {
+                id: row.0,
+                actor_id: row.1,
+                idempotency_key: row.2,
+                platform: row.3,
+                chat_id: row.4,
+                request_json: row.5,
+                state: row.6,
+                result_json: row.7,
+                created_at: row.8,
+                completed_at: row.9,
+                reconciliation_evidence: row.10,
+                reconciled_by: row.11,
+            })
+            .collect())
+    }
+
+    async fn list_outbound_deliveries_by_session(
+        &self,
+        platform: &str,
+        chat_id: &str,
+        limit: usize,
+        offset: usize,
+    ) -> Result<Vec<OutboundDeliveryRecord>, StoreError> {
+        type Row = (
+            String,
+            String,
+            Option<String>,
+            String,
+            String,
+            serde_json::Value,
+            String,
+            Option<serde_json::Value>,
+            i64,
+            Option<i64>,
+            Option<String>,
+            Option<String>,
+        );
+        let rows: Vec<Row> = sqlx::query_as(
+            "SELECT id, actor_id, idempotency_key, platform, chat_id, request_json, state,
+                    result_json, created_at, completed_at, reconciliation_evidence, reconciled_by
+             FROM outbound_deliveries WHERE platform = $1 AND chat_id = $2
+             ORDER BY created_at DESC, id DESC LIMIT $3 OFFSET $4",
+        )
+        .bind(platform)
+        .bind(chat_id)
+        .bind(limit.clamp(1, 1001) as i64)
+        .bind(offset as i64)
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|row| OutboundDeliveryRecord {
+                id: row.0,
+                actor_id: row.1,
+                idempotency_key: row.2,
+                platform: row.3,
+                chat_id: row.4,
+                request_json: row.5,
+                state: row.6,
+                result_json: row.7,
+                created_at: row.8,
+                completed_at: row.9,
+                reconciliation_evidence: row.10,
+                reconciled_by: row.11,
+            })
+            .collect())
+    }
+
+    async fn delete_outbound_deliveries_by_session(
+        &self,
+        platform: &str,
+        chat_id: &str,
+    ) -> Result<u64, StoreError> {
+        Ok(
+            sqlx::query("DELETE FROM outbound_deliveries WHERE platform = $1 AND chat_id = $2")
+                .bind(platform)
+                .bind(chat_id)
+                .execute(&self.pool)
+                .await?
+                .rows_affected(),
+        )
+    }
+
+    async fn delete_expired_outbound_deliveries(&self, before: i64) -> Result<u64, StoreError> {
+        Ok(
+            sqlx::query("DELETE FROM outbound_deliveries WHERE created_at < $1")
+                .bind(before)
+                .execute(&self.pool)
+                .await?
+                .rows_affected(),
+        )
+    }
+
+    async fn outbound_delivery_stats(
+        &self,
+        stale_before: i64,
+    ) -> Result<OutboundDeliveryStats, StoreError> {
+        let (pending, stale_pending, unpublished): (i64, i64, i64) = sqlx::query_as(
+            "SELECT
+                COUNT(*) FILTER (WHERE state = 'pending'),
+                COUNT(*) FILTER (WHERE state = 'pending' AND created_at < $1),
+                COUNT(*) FILTER (WHERE state != 'pending' AND event_published = FALSE)
+             FROM outbound_deliveries",
+        )
+        .bind(stale_before)
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(OutboundDeliveryStats {
+            pending: pending as u64,
+            stale_pending: stale_pending as u64,
+            unpublished_events: unpublished as u64,
+        })
+    }
+
+    async fn reconcile_outbound_delivery(
+        &self,
+        delivery_id: &str,
+        actor_id: &str,
+        state: OutboundDeliveryState,
+        evidence: &str,
+        reconciled_by: &str,
+    ) -> Result<bool, StoreError> {
+        let state = match state {
+            OutboundDeliveryState::Succeeded => "succeeded",
+            OutboundDeliveryState::Failed => "failed",
+        };
+        let result = sqlx::query(
+            "UPDATE outbound_deliveries
+             SET state = $1, result_json = $2, completed_at = $3, reconciliation_evidence = $4,
+                 reconciled_by = $5, event_published = FALSE
+             WHERE id = $6 AND actor_id = $7 AND state = 'pending'",
+        )
+        .bind(state)
+        .bind(serde_json::json!({"manually_reconciled": true, "state": state}))
+        .bind(chrono::Utc::now().timestamp_millis())
+        .bind(evidence)
+        .bind(reconciled_by)
+        .bind(delivery_id)
+        .bind(actor_id)
+        .execute(&self.pool)
+        .await?;
+        Ok(result.rows_affected() == 1)
+    }
+
     async fn store_message(&self, msg: &StoredMessage) -> Result<(), StoreError> {
         let role_str = match msg.role {
             MessageRole::User => "user",
@@ -416,6 +719,14 @@ impl MessageStore for PgMessageStore {
             .execute(&self.pool)
             .await?;
         Ok(result.rows_affected() > 0)
+    }
+
+    async fn delete_messages_by_session(&self, session_key: &str) -> Result<u64, StoreError> {
+        let result = sqlx::query("DELETE FROM messages WHERE session_key = $1")
+            .bind(session_key)
+            .execute(&self.pool)
+            .await?;
+        Ok(result.rows_affected())
     }
 
     async fn delete_expired_messages(&self, before: i64) -> Result<u64, StoreError> {

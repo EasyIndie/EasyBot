@@ -265,7 +265,7 @@ impl Default for RetentionConfig {
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct StorageConfig {
-    #[serde(default = "default_storage_type", alias = "type")]
+    #[serde(default = "default_storage_type")]
     pub storage_type: String,
 
     #[serde(default)]

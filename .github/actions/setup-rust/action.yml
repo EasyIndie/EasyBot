@@ -47,7 +47,7 @@ inputs:
 runs:
   using: composite
   steps:
-    - uses: actions-rust-lang/setup-rust-toolchain@v1
+    - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1
       with:
         components: ${{ inputs.components }}
         target: ${{ inputs.target }}
@@ -67,7 +67,7 @@ runs:
     # ----- protoc (Windows) -----
     - name: Install protoc (Windows)
       if: ${{ runner.os == 'Windows' && (inputs.install-protoc == 'auto' || inputs.install-protoc == 'windows') }}
-      uses: arduino/setup-protoc@v3
+      uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3
       with:
         repo-token: ${{ github.token }}
 
@@ -79,7 +79,7 @@ runs:
 
     # ----- Smart Rust cache (replaces actions/cache + sccache) -----
     - name: Setup Rust cache
-      uses: Swatinem/rust-cache@v2
+      uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
       with:
         shared-key: ${{ inputs.cache-shared-key }}
         save-if: ${{ inputs.cache-save-if }}

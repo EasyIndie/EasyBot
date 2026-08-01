@@ -13,6 +13,9 @@ pub enum GatewayError {
     #[error("Invalid request: {0}")]
     InvalidRequest(String),
 
+    #[error("Conflict: {0}")]
+    Conflict(String),
+
     #[error("Platform '{0}' not found or not configured")]
     PlatformNotFound(String),
 
@@ -63,6 +66,7 @@ impl GatewayError {
     pub fn error_code(&self) -> &'static str {
         match self {
             GatewayError::InvalidRequest(_) => "INVALID_REQUEST",
+            GatewayError::Conflict(_) => "CONFLICT",
             GatewayError::PlatformNotFound(_) => "PLATFORM_NOT_FOUND",
             GatewayError::ChatNotFound(_) => "CHAT_NOT_FOUND",
             GatewayError::AdapterNotConnected(_) => "ADAPTER_NOT_CONNECTED",
@@ -88,6 +92,7 @@ impl GatewayError {
             GatewayError::AuthFailed(_) | GatewayError::Unauthorized(_) => 401,
             GatewayError::Forbidden(_) => 403,
             GatewayError::PlatformNotFound(_) | GatewayError::ChatNotFound(_) => 404,
+            GatewayError::Conflict(_) => 409,
             GatewayError::RateLimited { .. } => 429,
             GatewayError::AdapterNotConnected(_) => 503,
             GatewayError::ConfigError(_)
@@ -109,6 +114,7 @@ impl GatewayError {
             Self::ConfigError(_) => "Configuration error".to_string(),
             // 以下变体的消息是用户交互中产生的，可安全返回
             Self::InvalidRequest(msg) => format!("Invalid request: {}", msg),
+            Self::Conflict(msg) => format!("Conflict: {msg}"),
             Self::PlatformNotFound(msg) => format!("Platform '{}' not found", msg),
             Self::ChatNotFound(msg) => format!("Chat '{}' not found", msg),
             Self::AdapterNotConnected(msg) => format!("Adapter not connected: {}", msg),

@@ -1,11 +1,13 @@
 //! 适配器管理路由
 
 use crate::AppState;
+use crate::response::ApiError;
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::{Extension, Path, State},
     http::StatusCode,
 };
+use easybot_core::types::error::GatewayError;
 use serde::Serialize;
 use utoipa::ToSchema;
 
@@ -71,8 +73,19 @@ pub async fn list_adapters(State(state): State<AppState>) -> Json<AdapterListRes
 )]
 pub async fn start_adapter(
     State(state): State<AppState>,
+    Extension(actor): Extension<easybot_core::auth::AuthInfo>,
     Path(platform): Path<String>,
-) -> Json<serde_json::Value> {
+) -> Result<Json<serde_json::Value>, ApiError> {
+    state
+        .auth_manager
+        .record_audit(
+            &actor.id,
+            "adapter.start.requested",
+            &format!("adapter:{platform}"),
+            serde_json::json!({}),
+        )
+        .await
+        .map_err(|error| ApiError(GatewayError::Internal(error)))?;
     // 从当前配置中读取该平台的 AdapterConfig（包含 token 等凭证）
     let adapter_config = state
         .config
@@ -86,18 +99,37 @@ pub async fn start_adapter(
             base_url: None,
             extra: serde_json::json!({}),
         });
-    match state.adapter_manager.start(&platform, adapter_config).await {
-        Ok(result) => Json(serde_json::json!({
-            "ok": result.ok,
-            "pending": result.pending,
-            "platform": result.platform,
-            "error": result.error,
-        })),
-        Err(e) => Json(serde_json::json!({
-            "ok": false,
-            "error": e.to_string(),
-        })),
-    }
+    let response = match state.adapter_manager.start(&platform, adapter_config).await {
+        Ok(result) => {
+            if let Some(error) = result.error.as_deref() {
+                tracing::warn!(%platform, detail = %crate::log_collector::redact_sensitive_text(error), "adapter start failed");
+            }
+            serde_json::json!({
+                "ok": result.ok,
+                "pending": result.pending,
+                "platform": result.platform,
+                "error": result.error.as_ref().map(|_| "Adapter failed to start"),
+            })
+        }
+        Err(e) => {
+            tracing::warn!(%platform, detail = %crate::log_collector::redact_sensitive_text(&e.to_string()), "adapter start failed");
+            serde_json::json!({
+                "ok": false,
+                "error": "Adapter failed to start",
+            })
+        }
+    };
+    state
+        .auth_manager
+        .record_audit(
+            &actor.id,
+            "adapter.start.completed",
+            &format!("adapter:{platform}"),
+            serde_json::json!({"ok":response["ok"],"pending":response["pending"]}),
+        )
+        .await
+        .map_err(|error| ApiError(GatewayError::Internal(error)))?;
+    Ok(Json(response))
 }
 
 /// 停止适配器
@@ -114,12 +146,37 @@ pub async fn start_adapter(
 )]
 pub async fn stop_adapter(
     State(state): State<AppState>,
+    Extension(actor): Extension<easybot_core::auth::AuthInfo>,
     Path(platform): Path<String>,
-) -> Json<serde_json::Value> {
-    match state.adapter_manager.stop(&platform).await {
-        Ok(()) => Json(serde_json::json!({ "ok": true, "platform": platform })),
-        Err(e) => Json(serde_json::json!({ "ok": false, "error": e.to_string() })),
-    }
+) -> Result<Json<serde_json::Value>, ApiError> {
+    state
+        .auth_manager
+        .record_audit(
+            &actor.id,
+            "adapter.stop.requested",
+            &format!("adapter:{platform}"),
+            serde_json::json!({}),
+        )
+        .await
+        .map_err(|error| ApiError(GatewayError::Internal(error)))?;
+    let response = match state.adapter_manager.stop(&platform).await {
+        Ok(()) => serde_json::json!({ "ok": true, "platform": platform }),
+        Err(e) => {
+            tracing::warn!(%platform, detail = %crate::log_collector::redact_sensitive_text(&e.to_string()), "adapter stop failed");
+            serde_json::json!({ "ok": false, "error": "Adapter failed to stop" })
+        }
+    };
+    state
+        .auth_manager
+        .record_audit(
+            &actor.id,
+            "adapter.stop.completed",
+            &format!("adapter:{platform}"),
+            serde_json::json!({"ok":response["ok"]}),
+        )
+        .await
+        .map_err(|error| ApiError(GatewayError::Internal(error)))?;
+    Ok(Json(response))
 }
 
 /// 获取适配器详细状态

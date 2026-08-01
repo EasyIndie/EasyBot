@@ -11,31 +11,28 @@ on:
         required: true
         type: string
 
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
-  # ── Prepare release: extract version from tag, bump files, push to main ──
+  # ── Prepare immutable release: the tag must already contain final sources ──
   prepare-release:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: read
     outputs:
       version: ${{ steps.version.outputs.version }}
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
-          ref: main
+          ref: ${{ github.event_name == 'push' && github.ref || inputs.tag }}
           fetch-depth: 0
-          # PAT 提权以绕过分支保护 push 到 main
-          # Tag 由开发者本地创建推送，workflow 不创建 tag
-          # 需先在 https://github.com/settings/tokens 创建 classic PAT (repo 权限)
-          # 并添加到仓库 Secrets: GH_RELEASE_PAT
-          # 同时将该用户加入分支保护规则集的 bypass_actors
-          token: ${{ secrets.GH_RELEASE_PAT || github.token }}
 
       - name: Determine version from tag
         id: version
@@ -49,60 +46,21 @@ jobs:
             TAG="${{ inputs.tag }}"
             VERSION="${TAG#v}"
           fi
-          if ! echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+'; then
+          if ! echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$'; then
             echo "❌ Invalid tag format: v$VERSION (expected vX.Y.Z)"
             exit 1
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Extracted version: $VERSION from tag: v$VERSION"
 
-      # ── Idempotent version bump steps ──
-      # Each step checks if already applied so re-running a failed release is safe.
-
-      - name: Update Cargo.toml version (idempotent)
+      - name: Verify tag and release metadata are immutable and consistent
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           CURRENT=$(grep -E '^version\s*=' Cargo.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
-          if [ "$CURRENT" != "$VERSION" ]; then
-            sed -i "s/^version = \".*\"/version = \"$VERSION\"/" Cargo.toml
-            echo "Updated Cargo.toml: $CURRENT → $VERSION"
-          else
-            echo "Cargo.toml already at $VERSION — skipping"
-          fi
-
-      - name: Regenerate Cargo.lock after version bump
-        run: cargo generate-lockfile
-
-      - name: Update CHANGELOG.md — add version header (idempotent)
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          if grep -q "^## \[$VERSION\]" CHANGELOG.md; then
-            echo "CHANGELOG already has [$VERSION] header — skipping"
-          else
-            DATE=$(date +%Y-%m-%d)
-            sed -i "/^## \[Unreleased\]/a\\\n## [$VERSION] - $DATE" CHANGELOG.md
-            echo "Added [$VERSION] - $DATE header to CHANGELOG"
-          fi
-
-      - name: Update insta snapshots to match new version (idempotent)
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          SNAP="crates/easybot-api/tests/snapshots/routes__health_response.snap"
-          if [ -f "$SNAP" ]; then
-            CURRENT=$(grep -o '"version": "[^"]*"' "$SNAP" | head -1 | sed 's/"version": "\(.*\)"/\1/')
-            if [ "$CURRENT" != "$VERSION" ]; then
-              sed -i 's/"version": ".*"/"version": "'"$VERSION"'"/' "$SNAP"
-              echo "Updated snapshot: $CURRENT → $VERSION"
-            else
-              echo "Snapshot already at $VERSION — skipping"
-            fi
-          fi
-
-      # Downstream jobs apply the version bump directly via sed (no patch file),
-      # because the tag ref may differ from main by the time they run.
+          [ "$CURRENT" = "$VERSION" ] || { echo "Cargo.toml version $CURRENT does not match tag v$VERSION"; exit 1; }
+          grep -q "^## \[$VERSION\]" CHANGELOG.md || { echo "CHANGELOG entry [$VERSION] is missing"; exit 1; }
+          git diff --exit-code
 
       - name: Extract release body from CHANGELOG.md
         run: |
@@ -117,7 +75,7 @@ jobs:
           ' CHANGELOG.md > release_body.md
 
       - name: Upload release body
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: release-body
           path: release_body.md
@@ -127,68 +85,66 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          cat > easybot-version.json <<'EOF'
+          SCHEMA_VERSION=$(sed -nE 's/^pub const SCHEMA_VERSION: i64 = ([0-9]+);$/\1/p' crates/easybot-core/src/storage/migration.rs)
+          PLUGIN_ABI_VERSION=$(sed -nE 's/^pub const EASYBOT_PLUGIN_ABI_VERSION: u32 = ([0-9]+);$/\1/p' crates/easybot-plugin-sdk/src/ffi.rs)
+          test -n "$SCHEMA_VERSION"
+          test -n "$PLUGIN_ABI_VERSION"
+          cat > easybot-version.json <<EOF
           {
-            "version": "'"$VERSION"'",
-            "tag": "v'"$VERSION"'",
+            "version": "$VERSION",
+            "tag": "v$VERSION",
             "release_date": "$(date +%Y-%m-%d)",
-            "schema_version": 1,
+            "schema_version": $SCHEMA_VERSION,
             "requires_db_migration": false,
             "migrations": [],
             "requires_config_migration": false,
             "config_changes": [],
             "breaking_changes": [],
-            "plugin_abi_version": 1,
-            "min_upgradable_from": "0.0.10"
+            "plugin_abi_version": $PLUGIN_ABI_VERSION,
+            "min_upgradable_from": "0.0.26"
           }
           EOF
           echo "Generated easybot-version.json for v$VERSION"
 
       - name: Upload easybot-version.json
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: easybot-version
           path: easybot-version.json
-
-      # Commit version bump and push to main (skipped if no changes — re-run safe)
-      - name: Commit version bump and push to main
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Cargo.toml CHANGELOG.md Cargo.lock \
-            crates/easybot-api/tests/snapshots/routes__health_response.snap
-          if git diff --cached --quiet; then
-            echo "No changes to commit — version already at v$VERSION"
-          else
-            git commit -m "chore: bump version to v$VERSION"
-            git fetch origin main
-            git rebase origin/main || {
-              echo "❌ Rebase conflict — someone modified Cargo.toml/CHANGELOG simultaneously"
-              echo "   Please resolve manually and re-run the release"
-              exit 1
-            }
-            git push origin main
-          fi
 
   # ── Verify: run full CI checks before releasing ────
   verify:
     needs: prepare-release
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
-          ref: ${{ github.ref }}
+          ref: ${{ github.event_name == 'push' && github.ref || inputs.tag }}
           fetch-depth: 0
-
-      - uses: ./.github/actions/apply-version-bump
-        with:
-          version: ${{ needs.prepare-release.outputs.version }}
 
       - uses: ./.github/actions/setup-rust
         with:
           components: clippy, rustfmt
+
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@43aecc8d72668fbcfe75c31400bc4f890f1c5853 # v2
+        with:
+          tool: cargo-deny
+
+      - name: Supply-chain policy
+        run: cargo deny check advisories bans licenses sources
+
+      - name: Commercial release preflight
+        run: bash scripts/release-preflight.sh "${{ needs.prepare-release.outputs.version }}"
+
+      - name: Validate production Caddy configuration
+        run: >-
+          docker run --rm
+          -e EASYBOT_DOMAIN=gateway.example.test
+          -v "$PWD/deploy/Caddyfile:/etc/caddy/Caddyfile:ro"
+          --entrypoint caddy
+          caddy:2-alpine@sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648
+          validate --config /etc/caddy/Caddyfile --adapter caddyfile
 
       - name: Format
         run: cargo fmt --all --check
@@ -205,55 +161,245 @@ jobs:
       - name: Test
         run: cargo test --workspace --features "default,plugin-system" --locked
 
+      - name: Disaster recovery drill
+        run: bash scripts/test-backup.sh
+
   # ── Cross-compile release binaries ─────────────────
   build-binaries:
-    needs: prepare-release
-    uses: ./.github/workflows/platform-matrix.yml
-    with:
-      operation: build
-      version: ${{ needs.prepare-release.outputs.version }}
-    secrets: inherit
+    needs: [prepare-release, verify]
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            suffix: ""
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-musl
+            suffix: ""
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            suffix: ""
+            macos-deployment-target: "10.15"
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            suffix: ""
+            macos-deployment-target: "11.0"
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            suffix: ".exe"
+          - os: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            suffix: ".exe"
+      fail-fast: false
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          ref: ${{ github.event_name == 'push' && github.ref || inputs.tag }}
+
+      - uses: ./.github/actions/setup-rust
+        with:
+          target: ${{ matrix.target }}
+          install-zigbuild: ${{ contains(matrix.target, 'musl') }}
+
+      - name: Build release binary (musl — static linking)
+        if: contains(matrix.target, 'musl')
+        run: cargo zigbuild --bin easybot --release --features "default,plugin-system" --target ${{ matrix.target }} --locked
+
+      - name: Build release binary (native)
+        if: ${{ !contains(matrix.target, 'musl') }}
+        env:
+          MACOSX_DEPLOYMENT_TARGET: ${{ matrix.macos-deployment-target || '' }}
+        run: cargo build --release --features "default,plugin-system" --target ${{ matrix.target }} --locked
+
+      # ── macOS 签名 + 公证（可选，凭据存在时自动执行） ──
+      - name: Check macOS signing credentials
+        if: contains(matrix.target, 'apple-darwin')
+        id: check-macos-cert
+        env:
+          CERT: ${{ secrets.APPLE_DEVELOPER_ID_CERT_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_CERT_PASSWORD }}
+          NOTARY_API_KEY: ${{ secrets.APPLE_NOTARY_API_KEY_BASE64 }}
+          NOTARY_API_KEY_ID: ${{ secrets.APPLE_NOTARY_API_KEY_ID }}
+          NOTARY_ISSUER: ${{ secrets.APPLE_NOTARY_API_ISSUER }}
+        run: |
+          if [ -n "$CERT" ] && [ -n "$CERT_PASSWORD" ] && [ -n "$NOTARY_API_KEY" ] && [ -n "$NOTARY_API_KEY_ID" ] && [ -n "$NOTARY_ISSUER" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Apple signing/notarization secrets are incomplete; publishing an unsigned macOS binary."
+          fi
+
+      - name: Sign and notarize macOS binary
+        if: steps.check-macos-cert.outputs.available == 'true'
+        env:
+          CERT_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_CERT_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_CERT_PASSWORD }}
+          NOTARY_API_KEY: ${{ secrets.APPLE_NOTARY_API_KEY_BASE64 }}
+          NOTARY_API_KEY_ID: ${{ secrets.APPLE_NOTARY_API_KEY_ID }}
+          NOTARY_ISSUER: ${{ secrets.APPLE_NOTARY_API_ISSUER }}
+        run: |
+          BINARY="target/${{ matrix.target }}/release/easybot${{ matrix.suffix }}"
+
+          # 1. 导入证书到临时 keychain
+          echo "$CERT_BASE64" | base64 --decode > certificate.p12
+          security create-keychain -p temp temp.keychain
+          security default-keychain -s temp.keychain
+          security unlock-keychain -p temp temp.keychain
+          security import certificate.p12 -k temp.keychain \
+            -P "$CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list \
+            -S apple-tool:,apple: -s -k temp temp.keychain
+
+          # 2. 签名（启用 Hardened Runtime）
+          DEVELOPER_ID=$(security find-identity -v -p basic |
+            grep "Developer ID Application" | head -1 | sed 's/.*"\(.*\)"/\1/')
+          codesign --force --sign "$DEVELOPER_ID" \
+            --timestamp --options runtime "$BINARY"
+
+          # 3. 公证
+          echo "$NOTARY_API_KEY" | base64 --decode > auth_key.p8
+          zip -r "$BINARY.zip" "$BINARY"
+          xcrun notarytool submit "$BINARY.zip" \
+            --key auth_key.p8 --key-id "$NOTARY_API_KEY_ID" \
+            --issuer "$NOTARY_ISSUER" --wait
+          # Raw Mach-O executables do not support stapling. The accepted
+          # notarization ticket remains available to Gatekeeper online.
+          rm -f "$BINARY.zip" auth_key.p8
+
+          # 清理证书
+          rm -f certificate.p12
+          security delete-keychain temp.keychain
+
+      - name: Check Windows signing credentials
+        if: contains(matrix.target, 'windows-msvc')
+        id: check-windows-cert
+        shell: pwsh
+        env:
+          CERT: ${{ secrets.WINDOWS_CODE_SIGNING_CERT_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.WINDOWS_CODE_SIGNING_CERT_PASSWORD }}
+        run: |
+          if ($env:CERT -and $env:CERT_PASSWORD) { "available=true" >> $env:GITHUB_OUTPUT }
+          else {
+            "available=false" >> $env:GITHUB_OUTPUT
+            Write-Warning "Windows code-signing secrets are incomplete; publishing an unsigned Windows binary."
+          }
+
+      - name: Sign Windows binary
+        if: steps.check-windows-cert.outputs.available == 'true'
+        shell: pwsh
+        env:
+          CERT_BASE64: ${{ secrets.WINDOWS_CODE_SIGNING_CERT_BASE64 }}
+          CERT_PASSWORD: ${{ secrets.WINDOWS_CODE_SIGNING_CERT_PASSWORD }}
+        run: |
+          $binary = "target/${{ matrix.target }}/release/easybot${{ matrix.suffix }}"
+          [IO.File]::WriteAllBytes("certificate.pfx", [Convert]::FromBase64String($env:CERT_BASE64))
+          $password = ConvertTo-SecureString $env:CERT_PASSWORD -AsPlainText -Force
+          $cert = Import-PfxCertificate -FilePath certificate.pfx -CertStoreLocation Cert:\CurrentUser\My -Password $password
+          $signature = Set-AuthenticodeSignature -FilePath $binary -Certificate $cert -HashAlgorithm SHA256 -TimestampServer "http://timestamp.digicert.com"
+          if ($signature.Status -ne "Valid") { throw "Authenticode signing failed: $($signature.StatusMessage)" }
+          Remove-Item "Cert:\CurrentUser\My\$($cert.Thumbprint)" -Force
+          Remove-Item certificate.pfx -Force
+
+      - name: Prepare artifact
+        shell: bash
+        run: |
+          BINARY="target/${{ matrix.target }}/release/easybot${{ matrix.suffix }}"
+          ARCHIVE="easybot-${{ matrix.target }}${{ matrix.suffix }}"
+          cp "$BINARY" "$ARCHIVE"
+          echo "archive=$ARCHIVE" >> "$GITHUB_ENV"
+
+      - name: Generate SPDX SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          path: .
+          format: spdx-json
+          output-file: easybot-${{ matrix.target }}.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Attest binary build provenance
+        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4
+        with:
+          subject-path: ${{ env.archive }}
+
+      - name: Attest binary SBOM
+        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4
+        with:
+          subject-path: ${{ env.archive }}
+          sbom-path: easybot-${{ matrix.target }}.spdx.json
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: easybot-${{ matrix.target }}
+          path: |
+            easybot-${{ matrix.target }}${{ matrix.suffix }}
+            easybot-${{ matrix.target }}.spdx.json
+          if-no-files-found: error
+
+  # ── Human approval before any public publishing ──
+  approve-commercial-release:
+    needs: [build-binaries, prepare-release, verify]
+    runs-on: ubuntu-latest
+    environment: commercial-release
+    permissions:
+      contents: read
+    steps:
+      - name: Record protected environment approval
+        run: echo "Commercial release approved for v${{ needs.prepare-release.outputs.version }}"
 
   # ── Create GitHub Release ─────────────────────────
   create-release:
-    needs: [build-binaries, prepare-release]
+    needs: [build-binaries, prepare-release, verify, approve-commercial-release]
     runs-on: ubuntu-latest
     permissions:
       contents: write
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
-          ref: ${{ github.ref }}
-          token: ${{ secrets.GH_RELEASE_PAT || github.token }}
+          ref: ${{ github.event_name == 'push' && github.ref || inputs.tag }}
 
-      - uses: ./.github/actions/apply-version-bump
-        with:
-          version: ${{ needs.prepare-release.outputs.version }}
-
-      - name: Clean up any previous failed release for this tag
+      - name: Refuse to overwrite an existing release
         env:
           VERSION: ${{ needs.prepare-release.outputs.version }}
           GH_TOKEN: ${{ github.token }}
         run: |
-          # 如果之前有失败的 release（tag 已存在但 release 不完整），先清理
-          gh release view "v$VERSION" --json id 2>/dev/null && \
-            gh release delete "v$VERSION" --yes && \
-            echo "Cleaned up stale release for v$VERSION" || \
-            echo "No stale release found for v$VERSION"
-          git push origin --delete "v$VERSION" 2>/dev/null || true
+          if gh release view "v$VERSION" --json id >/dev/null 2>&1; then
+            echo "Release v$VERSION already exists; published releases are immutable"
+            exit 1
+          fi
 
-      - name: Download all binary artifacts
-        uses: actions/download-artifact@v8
+      - name: Download binary artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: easybot-*-*
 
       - name: Generate checksums
         run: |
           # Collect sha256 for all platform binaries
+          : > checksums.txt
           for dir in easybot-*-*; do
             if [ -d "$dir" ]; then
               cd "$dir" && sha256sum easybot-*-* >> ../checksums.txt && cd ..
             fi
           done
+          sort -k2 -o checksums.txt checksums.txt
+          [ "$(wc -l < checksums.txt)" -eq 12 ] || {
+            echo "Expected 6 binaries and 6 SBOMs in checksum manifest"
+            cat checksums.txt
+            exit 1
+          }
+          [ "$(awk '{print $2}' checksums.txt | sort -u | wc -l)" -eq 12 ] || {
+            echo "Duplicate release asset names detected"
+            exit 1
+          }
 
       - name: Verify release asset matrix
         shell: bash
@@ -281,19 +427,19 @@ jobs:
           done
 
       - name: Download release body
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: release-body
           path: .release-body
 
       - name: Download easybot-version.json
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: easybot-version
           path: .
 
       - name: Create Release
-        uses: softprops/action-gh-release@v3
+        uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b # v3
         with:
           tag_name: v${{ needs.prepare-release.outputs.version }}
           name: EasyBot v${{ needs.prepare-release.outputs.version }}
@@ -307,28 +453,26 @@ jobs:
 
   # ── Build and push Docker image ────────────────────
   docker:
-    needs: [prepare-release, build-binaries]
+    needs: [prepare-release, build-binaries, verify, approve-commercial-release]
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
+      id-token: write
+      attestations: write
 
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
         with:
-          ref: ${{ github.ref }}
-
-      - uses: ./.github/actions/apply-version-bump
-        with:
-          version: ${{ needs.prepare-release.outputs.version }}
+          ref: ${{ github.event_name == 'push' && github.ref || inputs.tag }}
 
       - name: Download linux x86_64 binary
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: easybot-x86_64-unknown-linux-musl
 
       - name: Download linux aarch64 binary
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: easybot-aarch64-unknown-linux-musl
 
@@ -348,7 +492,8 @@ jobs:
             type=raw,value=latest,enable=${{ github.ref_type == 'tag' }}
 
       - name: Build and push Docker image
-        uses: docker/build-push-action@v7
+        id: build
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
           context: .
           file: Dockerfile.release
@@ -356,3 +501,37 @@ jobs:
           platforms: linux/amd64,linux/arm64
           tags: ${{ steps.docker-prep.outputs.meta-tags }}
           labels: ${{ steps.docker-prep.outputs.meta-labels }}
+
+      - name: Block critical and high container vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ env.REGISTRY }}/${{ steps.docker-prep.outputs.lower-repo }}@${{ steps.build.outputs.digest }}
+          format: table
+          vuln-type: os,library
+          severity: CRITICAL,HIGH
+          ignore-unfixed: false
+          exit-code: 1
+
+      - name: Generate container SPDX SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          image: ${{ env.REGISTRY }}/${{ steps.docker-prep.outputs.lower-repo }}@${{ steps.build.outputs.digest }}
+          format: spdx-json
+          output-file: easybot-container.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Attest container build provenance
+        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ steps.docker-prep.outputs.lower-repo }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+
+      - name: Attest container SBOM
+        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ steps.docker-prep.outputs.lower-repo }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          sbom-path: easybot-container.spdx.json
+          push-to-registry: true

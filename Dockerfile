@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 # EasyBot — Multi-stage Docker Build
-FROM rust:slim-bookworm AS builder
+FROM rust:slim-bookworm@sha256:cfbb0e0ef7a73e736386bfa346f1cb0503c6d162969dc9426fb37834f3f64c25 AS builder
 
 # Cargo retry settings for transient network errors (e.g. crates.io HTTP/2 resets)
 ENV CARGO_NET_RETRY=5 \
@@ -30,17 +30,17 @@ RUN --mount=type=cache,target=/app/target \
     cargo build --locked --release --features "default,plugin-system" --bin easybot && \
     cp target/release/easybot /easybot
 
-FROM debian:bookworm-slim
+FROM debian:bookworm-slim@sha256:60eac759739651111db372c07be67863818726f754804b8707c90979bda511df
 RUN apt-get update && apt-get install -y \
     ca-certificates \
     curl \
     && rm -rf /var/lib/apt/lists/*
-RUN useradd -r -m -s /bin/bash easybot \
+RUN useradd -r -u 10001 --user-group -m -s /bin/bash easybot \
     && mkdir -p /var/lib/easybot/data /var/lib/easybot/logs /var/lib/easybot/plugins /etc/easybot \
     && chown -R easybot:easybot /var/lib/easybot /etc/easybot
 COPY --from=builder --chown=easybot:easybot /easybot /usr/local/bin/easybot
 USER easybot
 EXPOSE 8080
-HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD ["curl", "-f", "http://localhost:8080/health"]
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD ["curl", "-f", "http://127.0.0.1:8080/api/v1/live"]
 ENTRYPOINT ["easybot"]
 CMD ["--config", "/etc/easybot/gateway.yaml"]

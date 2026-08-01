@@ -16,8 +16,6 @@ pub use easybot_core::types::adapter::{
     PlatformAdapter,
 };
 
-#[allow(deprecated)]
-pub use easybot_core::types::message::MessageAuthor;
 pub use easybot_core::types::message::{
     CallbackEvent, ChatFilter, ChatInfo, ChatType, DeleteResult, EditMessageParams, EditResult,
     InboundMessage, MediaAttachment, MediaType, MentionInfo, MessageSender, MessageType,

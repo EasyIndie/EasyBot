@@ -80,6 +80,22 @@ impl RetentionWorker {
                             tracing::warn!("TTL cleanup (messages) error: {}", e);
                         }
                     }
+                    match message_store
+                        .delete_expired_outbound_deliveries(cutoff)
+                        .await
+                    {
+                        Ok(count) => {
+                            if count > 0 {
+                                tracing::info!(
+                                    "TTL cleanup: deleted {} expired outbound deliveries",
+                                    count
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!("TTL cleanup (outbound deliveries) failed: {}", e);
+                        }
+                    }
                 }
 
                 // 清理过期会话
@@ -114,7 +130,9 @@ mod tests {
     use crate::storage::sqlite::{
         SqliteMessageStore, SqliteSessionStore, create_pool, run_migrations,
     };
-    use crate::storage::{MessageFilter, MessageRole, MessageStore, SessionStore, StoredMessage};
+    use crate::storage::{
+        MessageFilter, MessageRole, MessageStore, OutboundDelivery, SessionStore, StoredMessage,
+    };
     use crate::types::message::ChatType;
     use crate::types::session::{ResetPolicy, Session, SessionSource};
     use std::sync::Arc;
@@ -211,6 +229,44 @@ mod tests {
             .unwrap();
         assert_eq!(remaining.len(), 1, "should keep 1 recent message");
         assert_eq!(remaining[0].id, "recent1");
+    }
+
+    #[tokio::test]
+    async fn test_delete_expired_outbound_deliveries() {
+        let (store, _) = create_test_stores().await;
+        let now = chrono::Utc::now().timestamp_millis();
+        for (id, created_at) in [
+            ("old-delivery", now - 100 * 86_400_000),
+            ("recent-delivery", now),
+        ] {
+            store
+                .prepare_outbound_delivery(&OutboundDelivery {
+                    id: id.into(),
+                    actor_id: "customer".into(),
+                    idempotency_key: None,
+                    platform: "test".into(),
+                    chat_id: "1".into(),
+                    request_json: serde_json::json!({"text": id}),
+                    created_at,
+                })
+                .await
+                .unwrap();
+        }
+
+        let cutoff = now - 50 * 86_400_000;
+        assert_eq!(
+            store
+                .delete_expired_outbound_deliveries(cutoff)
+                .await
+                .unwrap(),
+            1
+        );
+        let remaining = store
+            .list_outbound_deliveries_by_session("test", "1", 10, 0)
+            .await
+            .unwrap();
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].id, "recent-delivery");
     }
 
     #[tokio::test]

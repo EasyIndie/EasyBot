@@ -2,6 +2,7 @@
 name = "easybot-api"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
 
 [dependencies]
 easybot-core = { path = "../easybot-core" }
@@ -18,6 +19,10 @@ tracing-subscriber.workspace = true
 dashmap.workspace = true
 futures.workspace = true
 prometheus.workspace = true
+regex.workspace = true
+reqwest.workspace = true
+uuid.workspace = true
+sha2.workspace = true
 utoipa = { workspace = true, features = ["axum_extras"] }
 utoipa-swagger-ui = { workspace = true, features = ["axum"] }
 
@@ -29,7 +34,6 @@ base64.workspace = true
 [dev-dependencies]
 tower.workspace = true
 sqlx = { workspace = true }
-reqwest = { workspace = true }
 http-body-util = "0.1"
 tokio-tungstenite = { workspace = true, features = ["connect"] }
 insta = { version = "1", features = ["json"] }
