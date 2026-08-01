@@ -36,7 +36,7 @@ pub const SCHEMA_VERSION: i64 = 2;
 const VERSION_TABLE_SQL: &str = "
 CREATE TABLE IF NOT EXISTS _schema_version (
     version     INTEGER NOT NULL,
-    applied_at  INTEGER NOT NULL,
+    applied_at  BIGINT NOT NULL,
     description TEXT NOT NULL
 );
 ";
@@ -814,6 +814,12 @@ pub async fn run_migrations_pg(pool: &PgPool) -> Result<(), StoreError> {
 async fn run_migrations_pg_inner(pool: &PgPool) -> Result<(), StoreError> {
     // 1. 确保版本追踪表存在
     sqlx::query(VERSION_TABLE_SQL).execute(pool).await?;
+    // v0.0.26 mistakenly created this column as PostgreSQL INTEGER while
+    // storing millisecond Unix timestamps. Widen it before recording any
+    // migration so existing databases recover without manual SQL.
+    sqlx::query("ALTER TABLE _schema_version ALTER COLUMN applied_at TYPE BIGINT")
+        .execute(pool)
+        .await?;
 
     // 2. 检查是否已有数据表但无版本记录
     let mut current = get_current_version_pg(pool).await?;
@@ -948,6 +954,11 @@ mod tests {
             .await
             .unwrap_or(0);
         assert_eq!(count, 9, "All commercial schema tables should exist");
+    }
+
+    #[test]
+    fn version_table_timestamp_is_64_bit() {
+        assert!(VERSION_TABLE_SQL.contains("applied_at  BIGINT NOT NULL"));
     }
 
     #[tokio::test]
