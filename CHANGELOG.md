@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.24] - 2026-08-01
+
+### Fixed
+
+- **Release asset upload** — 排除 release body 与版本元数据 artifact 的目录副本，避免
+  `easybot-version.json` 被重复上传导致 GitHub Release 创建阶段失败。
+
 ## [0.0.23] - 2026-07-31
 
 ### Fixed
