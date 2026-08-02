@@ -508,63 +508,6 @@ async fn main() -> anyhow::Result<()> {
     // 加载并注册插件适配器
     load_plugin_adapters(&adapter_manager, &paths, event_bus.clone()).await;
 
-    // 创建默认 API Key
-    let mut dev_api_key: Option<String> = None;
-
-    // Development convenience key. Production login issues short-lived,
-    // in-memory session keys and must never expose a wildcard key on disk.
-    let key_file_path = paths.home.join("data").join(".dev_api_key");
-    if !production_mode && let Ok(stored_key) = std::fs::read_to_string(&key_file_path) {
-        let trimmed = stored_key.trim().to_string();
-        if !trimmed.is_empty() {
-            match auth_manager.authenticate(&trimmed).await {
-                Ok(_) => {
-                    tracing::info!("Reusing existing dev API key from {:?}", key_file_path);
-                    dev_api_key = Some(trimmed);
-                }
-                Err(_) => {
-                    tracing::info!("Stored dev API key is invalid, creating new one");
-                }
-            }
-        }
-    }
-
-    if !production_mode && dev_api_key.is_none() {
-        match auth_manager
-            .create_key("dev", vec!["*".to_string()], None, vec![])
-            .await
-        {
-            Ok((_id, key)) => {
-                // SECURITY: Never print API keys to stdout. Write to a file
-                // with restricted permissions for reuse on subsequent starts.
-                if let Some(parent) = key_file_path.parent() {
-                    let _ = std::fs::create_dir_all(parent);
-                }
-                match std::fs::write(&key_file_path, &key) {
-                    Ok(()) => {
-                        #[cfg(unix)]
-                        {
-                            use std::os::unix::fs::PermissionsExt;
-                            let _ = std::fs::set_permissions(
-                                &key_file_path,
-                                std::fs::Permissions::from_mode(0o600),
-                            );
-                        }
-                        tracing::info!(
-                            "Dev API key written to {} (permissions 0600)",
-                            key_file_path.display()
-                        );
-                    }
-                    Err(e) => {
-                        tracing::warn!("Failed to write dev API key to file: {}", e);
-                    }
-                }
-                dev_api_key = Some(key);
-            }
-            Err(e) => tracing::warn!("Failed to create dev API key: {}", e),
-        }
-    }
-
     // 解析管理后台密码（优先级：EASYBOT_ADMIN_PASSWORD > gateway.yaml > 默认值）
     // ConfigManager.new() 内部也会应用此覆盖，确保热重载路径一致。
     let admin_password = std::env::var("EASYBOT_ADMIN_PASSWORD")
@@ -631,7 +574,6 @@ async fn main() -> anyhow::Result<()> {
         config_manager,
         metrics_registry,
         log_collector,
-        dev_api_key.clone(),
         admin_password,
     );
 

@@ -193,13 +193,13 @@ phase1_build_and_start() {
     fi
 
     info "启动 easybot --debug （日志: ${LOG_FILE}）..."
-    # stderr → 日志文件（tracing），stdout → 文件（println! 如 QR 码 / API Key）
+    # stderr → 日志文件（tracing），stdout → 文件（println! 如 QR 码）
     cargo run -- --debug >"$STDOUT_FILE" 2>"$LOG_FILE" &
     E2E_PID=$!
-    # 后台过滤 stdout：只显示关键行（QR 码、API Key、初始化消息），其余写入文件供按需查看。
+    # 后台过滤 stdout：只显示关键行（QR 码、初始化消息），其余写入文件供按需查看。
     # 这样避免 WeChat QR 码渲染、服务端调试输出等大量内容刷屏终端。
     tail -f "$STDOUT_FILE" | grep -E --line-buffered \
-        '扫[码碼]|qrcode|QR|E2E_API_KEY|EasyBot|个人微信|已连|已启|初始|错误|Error|error|http' \
+        '扫[码碼]|qrcode|QR|EasyBot|个人微信|已连|已启|初始|错误|Error|error|http' \
         &
     TAIL_PID=$!
 
@@ -229,11 +229,12 @@ phase1_build_and_start() {
     done
     pass "服务已启动 (PID=$E2E_PID, ${_elapsed:-?}s)"
 
-    # 通过管理后台登录接口获取 API Key
+    # 通过管理后台登录接口获取短期、内存态管理 Session。
+    # Session 不进入 API Key 库存，但具有本次真实 E2E 所需的管理权限。
     E2E_API_KEY=""
     local _wait=0
     while [ $_wait -lt 30 ]; do
-        E2E_API_KEY=$(curl -sf -X POST http://localhost:8080/admin/login \
+        E2E_API_KEY=$(curl -sf -X POST "$BASE_URL/admin/login" \
             -H 'Content-Type: application/json' \
             -d "{\"password\":\"${ADMIN_PASSWORD}\"}" 2>/dev/null | grep -o '"key":"eb_[^"]*"' | cut -d'"' -f4 || true)
         if [ -n "$E2E_API_KEY" ]; then
@@ -242,17 +243,13 @@ phase1_build_and_start() {
         sleep 1
         _wait=$((_wait + 1))
     done
-    # Fallback: 从 stdout 提取 API Key
     if [ -z "$E2E_API_KEY" ]; then
-        E2E_API_KEY=$(grep -o 'E2E_API_KEY=eb_[a-f0-9]*' "$STDOUT_FILE" 2>/dev/null | head -1 | cut -d= -f2)
-    fi
-    if [ -z "$E2E_API_KEY" ]; then
-        fail "未能获取 API Key（/admin/login 和 stdout 均未找到）"
+        fail "未能通过 /admin/login 获取管理 Session"
         info "日志最后 10 行:"
         tail -10 "$LOG_FILE" | sed 's/^/    /'
         exit 1
     fi
-    pass "API Key: eb_${E2E_API_KEY:3:8}...（已通过 /admin/login 获取）"
+    pass "管理 Session: eb_${E2E_API_KEY:3:8}...（仅本次进程内有效）"
 
     phase_timer_end
 }

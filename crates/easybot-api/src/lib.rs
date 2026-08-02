@@ -18,7 +18,6 @@ use std::sync::Arc;
 use tokio::sync::{Semaphore, broadcast};
 
 pub mod config_manager;
-pub mod deprecation;
 pub mod log_collector;
 pub mod metrics;
 pub mod middleware;
@@ -70,6 +69,8 @@ pub struct WsSerializedEvent {
     pub event_type: String,
     pub data: Arc<String>, // pre-serialized JSON data
     pub timestamp: i64,
+    pub platform: Option<String>,
+    pub chat_id: Option<String>,
 }
 
 /// 应用共享状态
@@ -93,16 +94,12 @@ pub struct AppState {
     pub started_at: std::time::Instant,
     /// 内存日志收集器（供管理后台日志查看使用）
     pub log_collector: Arc<log_collector::LogCollector>,
-    /// 原始 API Key（供管理后台登录后返回给前端）
-    pub dev_api_key: Option<String>,
     /// 管理后台登录密码
     pub admin_password: String,
 }
 
 impl AppState {
     /// 创建新的应用状态
-    #[allow(clippy::too_many_arguments)]
-    #[allow(clippy::too_many_arguments)]
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         event_bus: Arc<EventBus>,
@@ -114,7 +111,6 @@ impl AppState {
         config_manager: ConfigManager,
         metrics: Option<Arc<metrics::MetricsRegistry>>,
         log_collector: Arc<log_collector::LogCollector>,
-        dev_api_key: Option<String>,
         admin_password: String,
     ) -> Self {
         let max_clients = config.api.websocket.max_clients.max(1);
@@ -142,11 +138,21 @@ impl AppState {
                     obj["metadata"] = parsed;
                 }
                 // 序列化 data 部分一次，广播给所有 WS 客户端
+                let platform = event_data
+                    .get("platform")
+                    .and_then(|value| value.as_str())
+                    .map(str::to_ascii_lowercase);
+                let chat_id = event_data
+                    .get("chat_id")
+                    .and_then(|value| value.as_str())
+                    .map(str::to_owned);
                 let data_json = serde_json::to_string(&event_data).unwrap_or_default();
                 let serialized = WsSerializedEvent {
                     event_type: event.event_type,
                     data: Arc::new(data_json),
                     timestamp: event.timestamp,
+                    platform,
+                    chat_id,
                 };
                 let _ = ws_tx.send(serialized);
             }
@@ -179,7 +185,6 @@ impl AppState {
             ws_event_tx,
             started_at: std::time::Instant::now(),
             log_collector,
-            dev_api_key,
             admin_password,
         }
     }

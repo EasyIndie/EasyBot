@@ -193,6 +193,7 @@ impl Server {
             (&Method::GET, _) if route_path == "/ws" => Permission::WebSocketConnect,
             // API Key management
             (_, _) if route_path.starts_with("/api-keys") => Permission::ApiKeysManage,
+            (_, _) if route_path.starts_with("/subjects/") => Permission::ApiKeysManage,
             (&Method::GET, _)
                 if route_path == "/system" || route_path == "/system/update-check" =>
             {
@@ -447,6 +448,7 @@ pub fn create_router(state: AppState) -> Router {
             delete(routes::messages::delete_message).layer(RequestBodyLimitLayer::new(8 * 1024)),
         )
         .route("/messages", get(routes::messages::message_history))
+        .route("/admin/logout", post(routes::admin::admin_logout))
         // 会话
         .route("/sessions", get(routes::sessions::list_sessions))
         .route("/sessions/{key}", get(routes::sessions::get_session))
@@ -488,6 +490,17 @@ pub fn create_router(state: AppState) -> Router {
             post(routes::admin::rotate_api_key).layer(RequestBodyLimitLayer::new(4 * 1024)),
         )
         .route("/api-keys/{id}/purge", delete(routes::admin::purge_api_key));
+    let protected_routes = protected_routes
+        .route(
+            "/subjects/{subject_id}/target-grants",
+            get(routes::admin::list_target_grants)
+                .post(routes::admin::create_target_grant)
+                .layer(RequestBodyLimitLayer::new(16 * 1024)),
+        )
+        .route(
+            "/subjects/{subject_id}/target-grants/{grant_id}",
+            delete(routes::admin::delete_target_grant),
+        );
     let protected_routes =
         protected_routes.route("/audit-events", get(routes::admin::list_audit_events));
     let protected_routes = protected_routes.route("/usage", get(routes::admin::list_usage));
@@ -594,9 +607,6 @@ pub fn create_router(state: AppState) -> Router {
                 header::HeaderName::from_static("x-ratelimit-limit"),
                 header::HeaderName::from_static("x-ratelimit-remaining"),
                 header::HeaderName::from_static("x-ratelimit-reset"),
-                header::HeaderName::from_static("deprecation"),
-                header::HeaderName::from_static("sunset"),
-                header::LINK,
                 header::RETRY_AFTER,
             ])
     };
@@ -648,9 +658,6 @@ pub fn create_router(state: AppState) -> Router {
         .layer(trace_layer)
         .layer(RequestBodyLimitLayer::new(10 * 1024 * 1024)) // 10MB
         .layer(cors)
-        .layer(middleware::from_fn(
-            crate::deprecation::deprecation_middleware,
-        ))
         .route_layer(metrics_middleware)
         .layer(middleware::from_fn(security_headers_middleware))
         .with_state(state.clone())

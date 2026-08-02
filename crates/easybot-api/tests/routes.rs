@@ -240,7 +240,12 @@ async fn test_send_message_with_invalid_target() {
 #[tokio::test]
 async fn test_message_history_empty() {
     let (state, key) = common::test_app_state().await;
-    let (status, json) = get(state, "/api/v1/messages", Some(&key)).await;
+    let (status, json) = get(
+        state,
+        "/api/v1/messages?platform=telegram&chat_id=empty",
+        Some(&key),
+    )
+    .await;
     assert_eq!(status, StatusCode::OK);
     assert!(json["messages"].is_array() || json.is_array());
 }

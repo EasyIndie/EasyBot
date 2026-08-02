@@ -136,8 +136,7 @@ FEISHU_APP_ID="cli_xxx" FEISHU_APP_SECRET="xxx" cargo run -- --debug
 ### 验证适配器状态
 
 ```bash
-# 获取 API Key（从启动日志中）
-# Dev API Key created: ... key=eb_xxx
+# 通过管理后台创建专用测试 Key，或通过 /admin/login 获取短期管理 Session
 
 API_KEY="eb_xxx"
 

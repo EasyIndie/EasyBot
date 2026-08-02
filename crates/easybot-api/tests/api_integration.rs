@@ -72,6 +72,75 @@ fn client() -> reqwest::Client {
 }
 
 #[tokio::test]
+async fn test_target_grants_are_managed_by_subject_and_enforced_on_send() {
+    let (state, admin_key, addr) = test_server().await;
+    let (_, customer_key) = state
+        .auth_manager
+        .create_key(
+            "isolated-customer",
+            vec![
+                "messagessend".into(),
+                "messagesread".into(),
+                "sessionsread".into(),
+                "adaptersread".into(),
+            ],
+            None,
+        )
+        .await
+        .unwrap();
+    let customer = state
+        .auth_manager
+        .authenticate(&customer_key)
+        .await
+        .unwrap();
+    let admin = authed_client(&admin_key);
+    let created = admin
+        .post(url(
+            &addr,
+            &format!("/api/v1/subjects/{}/target-grants", customer.subject_id),
+        ))
+        .json(&serde_json::json!({
+            "platform":"qq",
+            "chat_id":"group-a",
+            "actions":["messages:send", "messages:read", "sessions:read"]
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(created.status(), 200);
+
+    let allowed_target_without_adapter = authed_client(&customer_key)
+        .post(url(&addr, "/api/v1/messages/send"))
+        .json(&serde_json::json!({"target":"qq:group-a","text":"allowed"}))
+        .send()
+        .await
+        .unwrap();
+    assert_ne!(allowed_target_without_adapter.status(), 403);
+
+    let forbidden = authed_client(&customer_key)
+        .post(url(&addr, "/api/v1/messages/send"))
+        .json(&serde_json::json!({"target":"qq:group-b","text":"secret"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(forbidden.status(), 403);
+
+    let forbidden_history = authed_client(&customer_key)
+        .get(url(&addr, "/api/v1/messages?platform=qq&chat_id=group-b"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(forbidden_history.status(), 403);
+
+    let forbidden_chat = authed_client(&customer_key)
+        .get(url(&addr, "/api/v1/chats/qq/group-b"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(forbidden_chat.status(), 403);
+}
+
+#[tokio::test]
 async fn test_delivery_journal_query_and_manual_reconciliation_are_audited() {
     let (state, key, addr) = test_server().await;
     let actor = state.auth_manager.authenticate(&key).await.unwrap();
@@ -265,7 +334,7 @@ async fn test_nested_api_routes_enforce_fine_grained_permissions() {
     let (state, _admin_key, addr) = test_server().await;
     let (_, restricted_key) = state
         .auth_manager
-        .create_key("adapter-viewer", vec!["adaptersread".into()], None, vec![])
+        .create_key("adapter-viewer", vec!["adaptersread".into()], None)
         .await
         .unwrap();
     let client = authed_client(&restricted_key);
@@ -313,7 +382,6 @@ async fn test_api_key_rotation_revokes_old_key_and_preserves_policy() {
         .json(&serde_json::json!({
             "name": "rotating-customer",
             "permissions": ["adaptersread", "messagesread", "messagessend"],
-            "event_filters": [],
             "requests_per_minute": 4,
             "expires_at": expires_at
         }))
@@ -453,9 +521,8 @@ async fn test_api_key_rotation_revokes_old_key_and_preserves_policy() {
 }
 
 #[tokio::test]
-async fn test_production_admin_login_issues_expiring_memory_session() {
-    let (mut state, _dev_key) = common::test_app_state().await;
-    state.dev_api_key = None;
+async fn test_admin_login_issues_expiring_memory_session() {
+    let (state, _dev_key) = common::test_app_state().await;
     let router = easybot_api::server::create_router(state.clone());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -474,15 +541,48 @@ async fn test_production_admin_login_issues_expiring_memory_session() {
         .authenticate(body["key"].as_str().unwrap())
         .await
         .unwrap();
-    let session = state
-        .auth_manager
-        .list_keys()
+    assert!(easybot_core::auth::permissions::has_global_target_access(
+        &auth
+    ));
+    let history = authed_client(body["key"].as_str().unwrap())
+        .get(url(&addr, "/api/v1/messages?limit=1"))
+        .send()
         .await
-        .into_iter()
-        .find(|key| key.id == auth.id)
         .unwrap();
-    let remaining = session.expires_at.unwrap() - chrono::Utc::now().timestamp_millis();
-    assert!(remaining > 50 * 60 * 1_000 && remaining <= 60 * 60 * 1_000);
+    assert_eq!(history.status(), 200);
+    assert!(
+        state
+            .auth_manager
+            .list_keys()
+            .await
+            .iter()
+            .all(|key| key.id != auth.id && key.name != "admin-session")
+    );
+    let second_login: Value = client()
+        .post(url(&addr, "/admin/login"))
+        .json(&serde_json::json!({"password":"easybot"}))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_ne!(second_login["key"], body["key"]);
+    let inventory: Value = authed_client(second_login["key"].as_str().unwrap())
+        .get(url(&addr, "/api/v1/api-keys?limit=100&offset=0"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(
+        inventory
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|key| key["name"] != "admin-session")
+    );
     assert!(
         state
             .auth_manager
@@ -490,6 +590,20 @@ async fn test_production_admin_login_issues_expiring_memory_session() {
             .await
             .iter()
             .any(|event| event.action == "admin.session.issued")
+    );
+    let second_session = second_login["key"].as_str().unwrap();
+    let logout = authed_client(second_session)
+        .post(url(&addr, "/api/v1/admin/logout"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(logout.status(), 200);
+    assert!(
+        state
+            .auth_manager
+            .authenticate(second_session)
+            .await
+            .is_err()
     );
 }
 
@@ -534,7 +648,7 @@ async fn test_authenticated_requests_are_metered_by_key_id() {
 
     let (_, metrics_key) = state
         .auth_manager
-        .create_key("prometheus", vec!["metricsread".into()], None, vec![])
+        .create_key("prometheus", vec!["metricsread".into()], None)
         .await
         .unwrap();
     let metrics_response = authed_client(&metrics_key)
@@ -546,7 +660,7 @@ async fn test_authenticated_requests_are_metered_by_key_id() {
 
     let (_, unprivileged_key) = state
         .auth_manager
-        .create_key("unprivileged", vec!["adaptersread".into()], None, vec![])
+        .create_key("unprivileged", vec!["adaptersread".into()], None)
         .await
         .unwrap();
     let forbidden = authed_client(&unprivileged_key)
@@ -562,12 +676,12 @@ async fn test_durable_usage_export_is_reconciled_and_permission_scoped() {
     let (state, admin_key, addr) = test_server().await;
     let (customer_id, customer_key) = state
         .auth_manager
-        .create_key("billed-customer", vec!["adaptersread".into()], None, vec![])
+        .create_key("billed-customer", vec!["adaptersread".into()], None)
         .await
         .unwrap();
     let (_, billing_key) = state
         .auth_manager
-        .create_key("billing-export", vec!["billingread".into()], None, vec![])
+        .create_key("billing-export", vec!["billingread".into()], None)
         .await
         .unwrap();
 
@@ -696,12 +810,12 @@ async fn test_financial_event_ledger_is_idempotent_conflict_safe_and_scoped() {
     let (state, _admin_key, addr) = test_server().await;
     let (_, writer) = state
         .auth_manager
-        .create_key("payment-bridge", vec!["billingwrite".into()], None, vec![])
+        .create_key("payment-bridge", vec!["billingwrite".into()], None)
         .await
         .unwrap();
     let (_, reader) = state
         .auth_manager
-        .create_key("finance-reader", vec!["billingread".into()], None, vec![])
+        .create_key("finance-reader", vec!["billingread".into()], None)
         .await
         .unwrap();
     let now = chrono::Utc::now().timestamp_millis();
@@ -799,13 +913,7 @@ async fn test_per_key_quota_returns_headers_and_429() {
     let (state, _key, addr) = test_server().await;
     let (_, quota_key) = state
         .auth_manager
-        .create_key_with_quota(
-            "starter-plan",
-            vec!["adaptersread".into()],
-            None,
-            vec![],
-            Some(2),
-        )
+        .create_key_with_quota("starter-plan", vec!["adaptersread".into()], None, Some(2))
         .await
         .unwrap();
     let client = authed_client(&quota_key);
@@ -845,7 +953,6 @@ async fn test_audit_ledger_records_management_actions_and_enforces_permission() 
         .json(&serde_json::json!({
             "name": "audited-customer",
             "permissions": ["messagesread"],
-            "event_filters": [],
             "requests_per_minute": 100
         }))
         .send()
@@ -900,7 +1007,7 @@ async fn test_audit_ledger_records_management_actions_and_enforces_permission() 
 
     let (_, restricted) = state
         .auth_manager
-        .create_key("no-audit", vec!["adaptersread".into()], None, vec![])
+        .create_key("no-audit", vec!["adaptersread".into()], None)
         .await
         .unwrap();
     let forbidden = authed_client(&restricted)
@@ -1414,7 +1521,10 @@ async fn test_message_history_empty() {
     let client = authed_client(&key);
 
     let resp = client
-        .get(url(&addr, "/api/v1/messages"))
+        .get(url(
+            &addr,
+            "/api/v1/messages?platform=telegram&chat_id=empty",
+        ))
         .send()
         .await
         .expect("Request failed");
@@ -1435,7 +1545,10 @@ async fn test_message_history_with_filter_params() {
     let client = authed_client(&key);
 
     let resp = client
-        .get(url(&addr, "/api/v1/messages?platform=telegram&limit=10"))
+        .get(url(
+            &addr,
+            "/api/v1/messages?platform=telegram&chat_id=empty&limit=10",
+        ))
         .send()
         .await
         .expect("Request failed");
@@ -1563,4 +1676,16 @@ async fn test_list_api_keys() {
         !body.as_array().unwrap().is_empty(),
         "Should have at least the test key"
     );
+}
+
+#[tokio::test]
+async fn test_internal_management_credential_names_are_reserved() {
+    let (_state, admin_key, addr) = test_server().await;
+    let response = authed_client(&admin_key)
+        .post(url(&addr, "/api/v1/api-keys"))
+        .json(&serde_json::json!({"name":"admin-session","permissions":["messagesread"]}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 400);
 }

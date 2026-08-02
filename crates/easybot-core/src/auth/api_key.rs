@@ -5,7 +5,6 @@
 //! Phase 4: 从 SHA-256 升级到 argon2id (PHC 格式)
 //! Phase 4: 接入 SQLite 持久化，重启不丢失
 
-use crate::types::event::event_types;
 use argon2::password_hash::SaltString;
 use argon2::password_hash::rand_core::OsRng;
 use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
@@ -32,9 +31,6 @@ pub struct ApiKeyInfo {
     pub last_used_at: Option<i64>,
     pub revoked: bool,
     pub permissions: Vec<String>,
-    /// 允许接收的 WebSocket 事件类型列表。
-    /// 空列表表示接收所有事件（向后兼容）。
-    pub event_filters: Vec<String>,
     /// Per-subject request quota. Rotated credentials inherit the same window.
     pub requests_per_minute: Option<u32>,
 }
@@ -46,10 +42,35 @@ pub struct AuthInfo {
     pub subject_id: String,
     pub name: String,
     pub permissions: Vec<String>,
-    /// 允许接收的 WebSocket 事件类型列表。
-    /// 空列表表示接收所有事件（向后兼容）。
-    pub event_filters: Vec<String>,
     pub requests_per_minute: Option<u32>,
+}
+
+/// A server-owned authorization grant for one stable caller subject.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+pub struct TargetGrant {
+    pub id: String,
+    pub subject_id: String,
+    pub platform: String,
+    pub chat_id: String,
+    pub actions: Vec<String>,
+    pub created_at: i64,
+    pub created_by: String,
+}
+
+pub mod target_actions {
+    pub const INBOUND_READ: &str = "inbound:read";
+    pub const MESSAGES_READ: &str = "messages:read";
+    pub const MESSAGES_SEND: &str = "messages:send";
+    pub const SESSIONS_READ: &str = "sessions:read";
+    pub const SESSIONS_MANAGE: &str = "sessions:manage";
+
+    pub const ALL: &[&str] = &[
+        INBOUND_READ,
+        MESSAGES_READ,
+        MESSAGES_SEND,
+        SESSIONS_READ,
+        SESSIONS_MANAGE,
+    ];
 }
 
 /// Immutable management audit event. Hashes form an ordered chain so deletion
@@ -163,6 +184,9 @@ struct StoredKey {
     info: ApiKeyInfo,
     /// Argon2 PHC 格式哈希字符串 (e.g. $argon2id$v=19$m=65536,t=3,p=4$...)
     hash: String,
+    /// Whether this credential belongs to the manageable API Key inventory.
+    /// Ephemeral admin sessions authenticate normally but never appear there.
+    manageable: bool,
 }
 
 impl ApiKeyManager {
@@ -193,7 +217,7 @@ impl ApiKeyManager {
         };
         let now = chrono::Utc::now().timestamp_millis();
         let rows = sqlx::query(
-                "SELECT id, subject_id, name, prefix, created_at, expires_at, last_used_at, revoked, permissions, event_filters, requests_per_minute, hash FROM api_keys WHERE revoked = 0 AND (expires_at IS NULL OR expires_at > ?1)"
+                "SELECT id, subject_id, name, prefix, created_at, expires_at, last_used_at, revoked, permissions, requests_per_minute, hash FROM api_keys WHERE revoked = 0 AND (expires_at IS NULL OR expires_at > ?1)"
             )
             .bind(now)
             .fetch_all(pool)
@@ -212,12 +236,9 @@ impl ApiKeyManager {
         loaded.clear();
         for row in &rows {
             let permissions_str: String = row.get("permissions");
-            let event_filters_str: String = row.get("event_filters");
             let revoked_int: i64 = row.get("revoked");
             let permissions: Vec<String> =
                 serde_json::from_str(&permissions_str).unwrap_or_default();
-            let event_filters: Vec<String> =
-                serde_json::from_str(&event_filters_str).unwrap_or_default();
             loaded.push(StoredKey {
                 info: ApiKeyInfo {
                     id: row.get("id"),
@@ -229,12 +250,12 @@ impl ApiKeyManager {
                     last_used_at: row.get("last_used_at"),
                     revoked: revoked_int != 0,
                     permissions,
-                    event_filters,
                     requests_per_minute: row
                         .get::<Option<i64>, _>("requests_per_minute")
                         .map(|v| v as u32),
                 },
                 hash: row.get("hash"),
+                manageable: true,
             });
         }
         tracing::info!("Loaded {} API keys from database", loaded.len());
@@ -255,17 +276,15 @@ impl ApiKeyManager {
     ///
     /// 返回 (key_id, raw_key)。raw_key 仅在创建时返回，不再持久化存储。
     ///
-    /// `event_filters` 指定该 Key 允许接收的 WebSocket 事件类型。
-    /// 传入空数组表示接收全部事件。
-    /// name == "dev" 的 Key 不持久化（每次启动重建）。
+    /// Keys created through this method are durable when a storage pool is configured.
+    /// Short-lived, memory-only credentials must use `create_ephemeral_key` explicitly.
     pub async fn create_key(
         &self,
         name: &str,
         permissions: Vec<String>,
         expires_at: Option<i64>,
-        event_filters: Vec<String>,
     ) -> Result<(String, String), String> {
-        self.create_key_with_quota(name, permissions, expires_at, event_filters, None)
+        self.create_key_with_quota(name, permissions, expires_at, None)
             .await
     }
 
@@ -275,14 +294,12 @@ impl ApiKeyManager {
         name: &str,
         permissions: Vec<String>,
         expires_at: Option<i64>,
-        event_filters: Vec<String>,
         requests_per_minute: Option<u32>,
     ) -> Result<(String, String), String> {
         self.create_key_internal(
             name,
             permissions,
             expires_at,
-            event_filters,
             requests_per_minute,
             true,
             None,
@@ -301,7 +318,6 @@ impl ApiKeyManager {
             &source.name,
             source.permissions.clone(),
             Some(expires_at),
-            source.event_filters.clone(),
             source.requests_per_minute,
             true,
             Some(source.subject_id.clone()),
@@ -317,23 +333,37 @@ impl ApiKeyManager {
         permissions: Vec<String>,
         expires_at: i64,
     ) -> Result<(String, String), String> {
+        const MAX_ACTIVE_PER_EPHEMERAL_NAME: usize = 8;
         // Remove expired ephemeral/session keys while issuing a replacement.
         let now = chrono::Utc::now().timestamp_millis();
         self.keys
             .write()
             .await
             .retain(|_, stored| stored.info.expires_at.is_none_or(|expires| expires > now));
-        self.create_key_internal(
-            name,
-            permissions,
-            Some(expires_at),
-            vec![],
-            None,
-            false,
-            None,
-            None,
-        )
-        .await
+        let created = self
+            .create_key_internal(name, permissions, Some(expires_at), None, false, None, None)
+            .await?;
+        let created_index = sha256_index(&created.1);
+        // Browser reloads and repeated logins must not create an unbounded set of
+        // simultaneously valid management credentials. Keep a small bounded set
+        // so multiple tabs/operators still work, evicting the oldest sessions.
+        let mut keys = self.keys.write().await;
+        let mut same_name = keys
+            .iter()
+            .filter(|(_, stored)| !stored.manageable && stored.info.name == name)
+            .map(|(index, stored)| {
+                (
+                    index.clone(),
+                    index == &created_index,
+                    stored.info.created_at,
+                )
+            })
+            .collect::<Vec<_>>();
+        same_name.sort_by(|left, right| right.1.cmp(&left.1).then_with(|| right.2.cmp(&left.2)));
+        for (index, _, _) in same_name.into_iter().skip(MAX_ACTIVE_PER_EPHEMERAL_NAME) {
+            keys.remove(&index);
+        }
+        Ok(created)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -342,29 +372,18 @@ impl ApiKeyManager {
         name: &str,
         permissions: Vec<String>,
         expires_at: Option<i64>,
-        event_filters: Vec<String>,
         requests_per_minute: Option<u32>,
         persist: bool,
         subject_id: Option<String>,
         rotation_source_id: Option<String>,
     ) -> Result<(String, String), String> {
         let is_rotation = rotation_source_id.is_some();
-        if permissions.len() > 32 || event_filters.len() > 64 {
-            return Err("permissions/event_filters exceed policy limits".into());
+        if permissions.len() > 32 {
+            return Err("permissions exceed policy limits".into());
         }
         let unique_permissions: std::collections::HashSet<_> = permissions.iter().collect();
-        let unique_filters: std::collections::HashSet<_> = event_filters.iter().collect();
-        if unique_permissions.len() != permissions.len()
-            || unique_filters.len() != event_filters.len()
-        {
-            return Err("permissions/event_filters must not contain duplicates".into());
-        }
-        // 校验 event_filters
-        let known_events = event_types::all();
-        for ef in &event_filters {
-            if !known_events.contains(&ef.as_str()) {
-                return Err(format!("Unknown event type: '{}'", ef));
-            }
+        if unique_permissions.len() != permissions.len() {
+            return Err("permissions must not contain duplicates".into());
         }
         let key_id = Uuid::new_v4().to_string();
         let subject_id = subject_id.unwrap_or_else(|| key_id.clone());
@@ -395,26 +414,23 @@ impl ApiKeyManager {
             last_used_at: None,
             revoked: false,
             permissions: permissions.clone(),
-            event_filters: event_filters.clone(),
             requests_per_minute,
         };
 
         let stored = StoredKey {
             info,
             hash: phc_hash.clone(),
+            manageable: persist,
         };
 
         // 内存索引（SHA-256 快速查找）
         let index_hash = sha256_index(&raw_key);
         self.keys.write().await.insert(index_hash.clone(), stored);
 
-        // 持久化到 SQLite（dev key 不持久化）
-        if persist
-            && name != "dev"
-            && let Some(pool) = &self.pool
-        {
+        // Persist every durable user-managed API key. Ephemeral management
+        // sessions authenticate from memory and are deliberately excluded.
+        if persist && let Some(pool) = &self.pool {
             let perms_json = serde_json::to_string(&permissions).map_err(|e| e.to_string())?;
-            let filters_json = serde_json::to_string(&event_filters).map_err(|e| e.to_string())?;
             let mut connection = match pool.acquire().await {
                 Ok(connection) => connection,
                 Err(error) => {
@@ -453,9 +469,9 @@ impl ApiKeyManager {
                 Ok(_) => {}
             }
             if let Err(error) = sqlx::query(
-                    "INSERT INTO api_keys (id, subject_id, name, prefix, created_at, expires_at, last_used_at, revoked, permissions, event_filters, requests_per_minute, hash) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)"
+                    "INSERT INTO api_keys (id, subject_id, name, prefix, created_at, expires_at, last_used_at, revoked, permissions, requests_per_minute, hash) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)"
                 )
-                .bind(&key_id).bind(&subject_id).bind(name).bind(&prefix).bind(now).bind(expires_at).bind(None::<i64>).bind(0).bind(&perms_json).bind(&filters_json).bind(requests_per_minute.map(i64::from)).bind(&phc_hash)
+                .bind(&key_id).bind(&subject_id).bind(name).bind(&prefix).bind(now).bind(expires_at).bind(None::<i64>).bind(0).bind(&perms_json).bind(requests_per_minute.map(i64::from)).bind(&phc_hash)
                 .execute(&mut *connection)
                 .await
             {
@@ -745,7 +761,6 @@ impl ApiKeyManager {
             subject_id: current.info.subject_id.clone(),
             name: current.info.name.clone(),
             permissions: current.info.permissions.clone(),
-            event_filters: current.info.event_filters.clone(),
             requests_per_minute: current.info.requests_per_minute,
         };
         self.keys.write().await.insert(index_hash, current);
@@ -914,7 +929,6 @@ impl ApiKeyManager {
             subject_id: stored.info.subject_id.clone(),
             name: stored.info.name.clone(),
             permissions: stored.info.permissions.clone(),
-            event_filters: stored.info.event_filters.clone(),
             requests_per_minute: stored.info.requests_per_minute,
         };
         let phc_hash = stored.hash.clone();
@@ -987,6 +1001,14 @@ impl ApiKeyManager {
             }
         }
         Ok(true)
+    }
+
+    /// Revoke a memory-only session without consulting the durable API Key table.
+    pub async fn revoke_ephemeral_key(&self, key_id: &str) -> bool {
+        let mut keys = self.keys.write().await;
+        let before = keys.len();
+        keys.retain(|_, stored| stored.manageable || stored.info.id != key_id);
+        keys.len() != before
     }
 
     /// 永久删除已吊销的 API Key
@@ -1064,7 +1086,7 @@ impl ApiKeyManager {
         if let Some(pool) = &self.pool {
             use sqlx::Row as _;
             let rows = sqlx::query(
-                "SELECT id, subject_id, name, prefix, created_at, expires_at, last_used_at, revoked, permissions, event_filters, requests_per_minute FROM api_keys ORDER BY created_at DESC, id LIMIT ?1 OFFSET ?2",
+                "SELECT id, subject_id, name, prefix, created_at, expires_at, last_used_at, revoked, permissions, requests_per_minute FROM api_keys ORDER BY created_at DESC, id LIMIT ?1 OFFSET ?2",
             )
             .bind(limit.min(10_000) as i64)
             .bind(offset as i64)
@@ -1085,8 +1107,6 @@ impl ApiKeyManager {
                         revoked: row.get::<i64, _>("revoked") != 0,
                         permissions: serde_json::from_str(&row.get::<String, _>("permissions"))
                             .map_err(|error| error.to_string())?,
-                        event_filters: serde_json::from_str(&row.get::<String, _>("event_filters"))
-                            .map_err(|error| error.to_string())?,
                         requests_per_minute: row
                             .get::<Option<i64>, _>("requests_per_minute")
                             .map(|value| value as u32),
@@ -1100,7 +1120,7 @@ impl ApiKeyManager {
             let keys = self.keys.read().await;
             all.extend(
                 keys.values()
-                    .filter(|stored| !persisted.contains(&stored.info.id))
+                    .filter(|stored| stored.manageable && !persisted.contains(&stored.info.id))
                     .map(|stored| stored.info.clone()),
             );
             return Ok(all);
@@ -1108,10 +1128,14 @@ impl ApiKeyManager {
         let keys = self.keys.read().await;
         let loaded = self.loaded.read().await;
 
-        let mut all: Vec<ApiKeyInfo> = keys.values().map(|s| s.info.clone()).collect();
+        let mut all: Vec<ApiKeyInfo> = keys
+            .values()
+            .filter(|stored| stored.manageable)
+            .map(|stored| stored.info.clone())
+            .collect();
         // 追加 DB 加载的 Key（去重：以 id 为准）
         let seen: std::collections::HashSet<String> = all.iter().map(|k| k.id.clone()).collect();
-        for s in loaded.iter() {
+        for s in loaded.iter().filter(|stored| stored.manageable) {
             if !seen.contains(&s.info.id) {
                 all.push(s.info.clone());
             }
@@ -1123,7 +1147,7 @@ impl ApiKeyManager {
         if let Some(pool) = &self.pool {
             use sqlx::Row as _;
             let row = sqlx::query(
-                "SELECT id, subject_id, name, prefix, created_at, expires_at, last_used_at, revoked, permissions, event_filters, requests_per_minute FROM api_keys WHERE id = ?1",
+                "SELECT id, subject_id, name, prefix, created_at, expires_at, last_used_at, revoked, permissions, requests_per_minute FROM api_keys WHERE id = ?1",
             )
             .bind(key_id)
             .fetch_optional(pool)
@@ -1141,8 +1165,6 @@ impl ApiKeyManager {
                         last_used_at: row.get("last_used_at"),
                         revoked: row.get::<i64, _>("revoked") != 0,
                         permissions: serde_json::from_str(&row.get::<String, _>("permissions"))
-                            .map_err(|error| error.to_string())?,
-                        event_filters: serde_json::from_str(&row.get::<String, _>("event_filters"))
                             .map_err(|error| error.to_string())?,
                         requests_per_minute: row
                             .get::<Option<i64>, _>("requests_per_minute")
@@ -1869,6 +1891,151 @@ impl ApiKeyManager {
         self.metering_healthy.store(result, Ordering::Release);
         result
     }
+
+    pub async fn create_target_grant(
+        &self,
+        subject_id: &str,
+        platform: &str,
+        chat_id: &str,
+        actions: Vec<String>,
+        created_by: &str,
+    ) -> Result<TargetGrant, String> {
+        let pool = self
+            .pool
+            .as_ref()
+            .ok_or_else(|| "target authorization requires durable storage".to_string())?;
+        let platform = platform.trim().to_ascii_lowercase();
+        let chat_id = chat_id.trim();
+        if subject_id.trim().is_empty() || platform.is_empty() || chat_id.is_empty() {
+            return Err("subject_id, platform and chat_id are required".into());
+        }
+        if platform.len() > 64 || chat_id.len() > 255 {
+            return Err("platform or chat_id exceeds policy limits".into());
+        }
+        if actions.is_empty() || actions.len() > target_actions::ALL.len() {
+            return Err("at least one target action is required".into());
+        }
+        let unique: std::collections::HashSet<_> = actions.iter().collect();
+        if unique.len() != actions.len()
+            || actions
+                .iter()
+                .any(|action| !target_actions::ALL.contains(&action.as_str()))
+        {
+            return Err("target actions are invalid or duplicated".into());
+        }
+        let subject_exists =
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM api_keys WHERE subject_id = ?1")
+                .bind(subject_id)
+                .fetch_one(pool)
+                .await
+                .map_err(|error| error.to_string())?;
+        if subject_exists == 0 {
+            return Err("subject does not exist".into());
+        }
+        let grant = TargetGrant {
+            id: Uuid::now_v7().to_string(),
+            subject_id: subject_id.to_string(),
+            platform,
+            chat_id: chat_id.to_string(),
+            actions,
+            created_at: chrono::Utc::now().timestamp_millis(),
+            created_by: created_by.to_string(),
+        };
+        let actions_json = serde_json::to_string(&grant.actions).map_err(|e| e.to_string())?;
+        sqlx::query(
+            "INSERT INTO target_grants(id,subject_id,platform,chat_id,actions,created_at,created_by) \
+             VALUES (?1,?2,?3,?4,?5,?6,?7)",
+        )
+        .bind(&grant.id)
+        .bind(&grant.subject_id)
+        .bind(&grant.platform)
+        .bind(&grant.chat_id)
+        .bind(actions_json)
+        .bind(grant.created_at)
+        .bind(&grant.created_by)
+        .execute(pool)
+        .await
+        .map_err(|error| error.to_string())?;
+        Ok(grant)
+    }
+
+    pub async fn list_target_grants(&self, subject_id: &str) -> Result<Vec<TargetGrant>, String> {
+        let pool = self
+            .pool
+            .as_ref()
+            .ok_or_else(|| "target authorization requires durable storage".to_string())?;
+        use sqlx::Row as _;
+        let rows = sqlx::query(
+            "SELECT id,subject_id,platform,chat_id,actions,created_at,created_by \
+             FROM target_grants WHERE subject_id = ?1 ORDER BY platform,chat_id,id",
+        )
+        .bind(subject_id)
+        .fetch_all(pool)
+        .await
+        .map_err(|error| error.to_string())?;
+        rows.into_iter()
+            .map(|row| {
+                let actions_json: String = row.try_get("actions").map_err(|e| e.to_string())?;
+                Ok(TargetGrant {
+                    id: row.try_get("id").map_err(|e| e.to_string())?,
+                    subject_id: row.try_get("subject_id").map_err(|e| e.to_string())?,
+                    platform: row.try_get("platform").map_err(|e| e.to_string())?,
+                    chat_id: row.try_get("chat_id").map_err(|e| e.to_string())?,
+                    actions: serde_json::from_str(&actions_json).map_err(|e| e.to_string())?,
+                    created_at: row.try_get("created_at").map_err(|e| e.to_string())?,
+                    created_by: row.try_get("created_by").map_err(|e| e.to_string())?,
+                })
+            })
+            .collect()
+    }
+
+    pub async fn delete_target_grant(
+        &self,
+        subject_id: &str,
+        grant_id: &str,
+    ) -> Result<bool, String> {
+        let pool = self
+            .pool
+            .as_ref()
+            .ok_or_else(|| "target authorization requires durable storage".to_string())?;
+        sqlx::query("DELETE FROM target_grants WHERE id = ?1 AND subject_id = ?2")
+            .bind(grant_id)
+            .bind(subject_id)
+            .execute(pool)
+            .await
+            .map(|result| result.rows_affected() == 1)
+            .map_err(|error| error.to_string())
+    }
+
+    pub async fn target_authorized(
+        &self,
+        subject_id: &str,
+        platform: &str,
+        chat_id: &str,
+        action: &str,
+    ) -> Result<bool, String> {
+        if !target_actions::ALL.contains(&action) {
+            return Err("unknown target action".into());
+        }
+        let pool = self
+            .pool
+            .as_ref()
+            .ok_or_else(|| "target authorization requires durable storage".to_string())?;
+        let rows: Vec<String> = sqlx::query_scalar(
+            "SELECT actions FROM target_grants WHERE subject_id = ?1 \
+             AND (platform = ?2 OR platform = '*') AND (chat_id = ?3 OR chat_id = '*')",
+        )
+        .bind(subject_id)
+        .bind(platform.trim().to_ascii_lowercase())
+        .bind(chat_id.trim())
+        .fetch_all(pool)
+        .await
+        .map_err(|error| error.to_string())?;
+        Ok(rows.into_iter().any(|json| {
+            serde_json::from_str::<Vec<String>>(&json)
+                .is_ok_and(|actions| actions.iter().any(|candidate| candidate == action))
+        }))
+    }
 }
 
 impl Default for ApiKeyManager {
@@ -1989,7 +2156,7 @@ mod tests {
     async fn test_create_and_authenticate() {
         let mgr = ApiKeyManager::new(None);
         let (id, key) = mgr
-            .create_key("test", vec!["message:send".to_string()], None, vec![])
+            .create_key("test", vec!["message:send".to_string()], None)
             .await
             .unwrap();
 
@@ -1999,9 +2166,34 @@ mod tests {
         let auth = mgr.authenticate(&key).await.unwrap();
         assert_eq!(auth.name, "test");
         assert_eq!(auth.permissions, vec!["message:send"]);
-        assert!(auth.event_filters.is_empty());
         let keys = mgr.list_keys().await;
         assert!(keys[0].last_used_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn ephemeral_sessions_are_authenticatable_hidden_and_bounded() {
+        let manager = ApiKeyManager::new(None);
+        let expires_at = chrono::Utc::now().timestamp_millis() + 60 * 60 * 1_000;
+        let mut sessions = Vec::new();
+        for _ in 0..10 {
+            sessions.push(
+                manager
+                    .create_ephemeral_key("admin-session", vec!["*".into()], expires_at)
+                    .await
+                    .unwrap()
+                    .1,
+            );
+        }
+
+        assert!(manager.list_keys().await.is_empty());
+        assert!(manager.authenticate(sessions.last().unwrap()).await.is_ok());
+        let valid_count =
+            futures::future::join_all(sessions.iter().map(|session| manager.authenticate(session)))
+                .await
+                .into_iter()
+                .filter(Result::is_ok)
+                .count();
+        assert_eq!(valid_count, 8);
     }
 
     #[test]
@@ -2026,13 +2218,7 @@ mod tests {
         crate::storage::sqlite::run_migrations(&pool).await.unwrap();
         let mgr = ApiKeyManager::new(Some(pool.clone()));
         let (id, key) = mgr
-            .create_key_with_quota(
-                "customer",
-                vec!["messagesread".into()],
-                None,
-                vec![],
-                Some(250),
-            )
+            .create_key_with_quota("customer", vec!["messagesread".into()], None, Some(250))
             .await
             .unwrap();
 
@@ -2061,10 +2247,7 @@ mod tests {
         let pool = SqlitePool::connect(":memory:").await.unwrap();
         crate::storage::sqlite::run_migrations(&pool).await.unwrap();
         let issuer = ApiKeyManager::new(Some(pool.clone()));
-        let (key_id, raw_key) = issuer
-            .create_key("customer", vec![], None, vec![])
-            .await
-            .unwrap();
+        let (key_id, raw_key) = issuer.create_key("customer", vec![], None).await.unwrap();
         let reloaded = ApiKeyManager::new(Some(pool));
         reloaded.load_from_db().await;
 
@@ -2082,15 +2265,9 @@ mod tests {
         let pool = SqlitePool::connect(":memory:").await.unwrap();
         crate::storage::sqlite::run_migrations(&pool).await.unwrap();
         let issuer = ApiKeyManager::new(Some(pool.clone()));
-        let (revoked_id, _) = issuer
-            .create_key("revoked", vec![], None, vec![])
-            .await
-            .unwrap();
+        let (revoked_id, _) = issuer.create_key("revoked", vec![], None).await.unwrap();
         issuer.revoke_key(&revoked_id).await.unwrap();
-        issuer
-            .create_key("expired", vec![], Some(1), vec![])
-            .await
-            .unwrap();
+        issuer.create_key("expired", vec![], Some(1)).await.unwrap();
 
         let reloaded = ApiKeyManager::new(Some(pool));
         reloaded.load_from_db().await;
@@ -2112,8 +2289,8 @@ mod tests {
         crate::storage::sqlite::run_migrations(&pool).await.unwrap();
         sqlx::query(
             "WITH RECURSIVE n(value) AS (SELECT 1 UNION ALL SELECT value + 1 FROM n WHERE value < 99)
-             INSERT INTO api_keys(id,subject_id,name,prefix,created_at,revoked,permissions,event_filters,hash)
-             SELECT 'seed-' || value, 'subject-' || value, 'seed', 'eb_seed', 1, 0, '[]', '[]', 'unused' FROM n",
+             INSERT INTO api_keys(id,subject_id,name,prefix,created_at,revoked,permissions,hash)
+             SELECT 'seed-' || value, 'subject-' || value, 'seed', 'eb_seed', 1, 0, '[]', 'unused' FROM n",
         )
         .execute(&pool)
         .await
@@ -2121,8 +2298,8 @@ mod tests {
         let first = ApiKeyManager::new(Some(pool.clone()));
         let second = ApiKeyManager::new(Some(pool.clone()));
         let (a, b) = tokio::join!(
-            first.create_key("concurrent-a", vec![], None, vec![]),
-            second.create_key("concurrent-b", vec![], None, vec![]),
+            first.create_key("concurrent-a", vec![], None),
+            second.create_key("concurrent-b", vec![], None),
         );
         assert_eq!(usize::from(a.is_ok()) + usize::from(b.is_ok()), 1);
         assert_eq!(
@@ -2143,17 +2320,14 @@ mod tests {
         crate::storage::sqlite::run_migrations(&pool).await.unwrap();
         sqlx::query(
             "WITH RECURSIVE n(value) AS (SELECT 1 UNION ALL SELECT value + 1 FROM n WHERE value < 99)
-             INSERT INTO api_keys(id,subject_id,name,prefix,created_at,revoked,permissions,event_filters,hash)
-             SELECT 'seed-' || value, 'subject-' || value, 'seed', 'eb_seed', 1, 0, '[]', '[]', 'unused' FROM n",
+             INSERT INTO api_keys(id,subject_id,name,prefix,created_at,revoked,permissions,hash)
+             SELECT 'seed-' || value, 'subject-' || value, 'seed', 'eb_seed', 1, 0, '[]', 'unused' FROM n",
         )
         .execute(&pool)
         .await
         .unwrap();
         let manager = ApiKeyManager::new(Some(pool.clone()));
-        let (source_id, _) = manager
-            .create_key("source", vec![], None, vec![])
-            .await
-            .unwrap();
+        let (source_id, _) = manager.create_key("source", vec![], None).await.unwrap();
         let source = manager.find_key_info(&source_id).await.unwrap().unwrap();
         let (replacement_id, _) = manager
             .create_rotated_key(&source, chrono::Utc::now().timestamp_millis() + 86_400_000)
@@ -2174,7 +2348,7 @@ mod tests {
 
         assert!(
             manager
-                .create_key("normal-overflow", vec![], None, vec![])
+                .create_key("normal-overflow", vec![], None)
                 .await
                 .is_err()
         );
@@ -2226,10 +2400,7 @@ mod tests {
         let pool = SqlitePool::connect(":memory:").await.unwrap();
         crate::storage::sqlite::run_migrations(&pool).await.unwrap();
         let manager = ApiKeyManager::new(Some(pool));
-        let (source_id, _) = manager
-            .create_key("source", vec![], None, vec![])
-            .await
-            .unwrap();
+        let (source_id, _) = manager.create_key("source", vec![], None).await.unwrap();
         let source = manager.find_key_info(&source_id).await.unwrap().unwrap();
 
         let (cancelled_id, _) = manager
@@ -2350,7 +2521,7 @@ mod tests {
     #[tokio::test]
     async fn test_revoke_key() {
         let mgr = ApiKeyManager::new(None);
-        let (id, key) = mgr.create_key("test", vec![], None, vec![]).await.unwrap();
+        let (id, key) = mgr.create_key("test", vec![], None).await.unwrap();
 
         assert!(mgr.revoke_key(&id).await.unwrap());
         assert!(mgr.authenticate(&key).await.is_err());
@@ -2359,7 +2530,7 @@ mod tests {
     #[tokio::test]
     async fn test_delete_revoked_key() {
         let mgr = ApiKeyManager::new(None);
-        let (id, _key) = mgr.create_key("test", vec![], None, vec![]).await.unwrap();
+        let (id, _key) = mgr.create_key("test", vec![], None).await.unwrap();
 
         // 未吊销不能删除
         assert!(!mgr.delete_key(&id).await.unwrap());
@@ -2381,40 +2552,9 @@ mod tests {
     #[tokio::test]
     async fn test_expired_key() {
         let mgr = ApiKeyManager::new(None);
-        let (_id, key) = mgr
-            .create_key("expired", vec![], Some(1), vec![])
-            .await
-            .unwrap();
+        let (_id, key) = mgr.create_key("expired", vec![], Some(1)).await.unwrap();
         // expires_at is 1ms after epoch — definitely expired
         assert!(mgr.authenticate(&key).await.is_err());
-    }
-
-    #[tokio::test]
-    async fn test_create_key_with_event_filters() {
-        let mgr = ApiKeyManager::new(None);
-        let filters = vec!["message.inbound".to_string(), "message.sent".to_string()];
-        let (_id, key) = mgr
-            .create_key(
-                "filtered",
-                vec!["messagesread".to_string()],
-                None,
-                filters.clone(),
-            )
-            .await
-            .unwrap();
-
-        let auth = mgr.authenticate(&key).await.unwrap();
-        assert_eq!(auth.event_filters, filters);
-    }
-
-    #[tokio::test]
-    async fn test_create_key_with_invalid_event_filters() {
-        let mgr = ApiKeyManager::new(None);
-        let result = mgr
-            .create_key("bad", vec![], None, vec!["nonexistent.event".to_string()])
-            .await;
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Unknown event type"));
     }
 
     #[tokio::test]
@@ -2425,32 +2565,9 @@ mod tests {
                 "duplicate-permissions",
                 vec!["messagesread".to_string(), "messagesread".to_string()],
                 None,
-                vec![],
             )
             .await;
         assert!(duplicate_permissions.is_err());
-        let duplicate_filters = mgr
-            .create_key(
-                "duplicate-filters",
-                vec![],
-                None,
-                vec!["message.inbound".to_string(), "message.inbound".to_string()],
-            )
-            .await;
-        assert!(duplicate_filters.is_err());
-    }
-
-    #[tokio::test]
-    async fn test_create_key_empty_event_filters_all_events() {
-        let mgr = ApiKeyManager::new(None);
-        let (_id, key) = mgr
-            .create_key("all", vec!["*".to_string()], None, vec![])
-            .await
-            .unwrap();
-
-        let auth = mgr.authenticate(&key).await.unwrap();
-        // Empty event_filters = receive all events (backward compatible)
-        assert!(auth.event_filters.is_empty());
     }
 
     #[tokio::test]
@@ -2677,7 +2794,7 @@ mod tests {
         crate::storage::sqlite::run_migrations(&pool).await.unwrap();
         let manager = ApiKeyManager::new(Some(pool));
         let (key_id, raw_key) = manager
-            .create_key("purged-customer", vec![], None, vec![])
+            .create_key("purged-customer", vec![], None)
             .await
             .unwrap();
         let subject_id = manager.authenticate(&raw_key).await.unwrap().subject_id;
@@ -2993,5 +3110,59 @@ mod tests {
                 .unwrap(),
             IdempotencyReservation::Replay { .. }
         ));
+    }
+
+    #[tokio::test]
+    async fn target_grants_are_subject_scoped_action_scoped_and_fail_closed() {
+        let pool = SqlitePool::connect(":memory:").await.unwrap();
+        crate::storage::sqlite::run_migrations(&pool).await.unwrap();
+        let manager = ApiKeyManager::new(Some(pool));
+        let (_, raw_key) = manager
+            .create_key("target-owner", vec!["websocketconnect".into()], None)
+            .await
+            .unwrap();
+        let subject = manager.authenticate(&raw_key).await.unwrap().subject_id;
+        let grant = manager
+            .create_target_grant(
+                &subject,
+                "QQ",
+                "group-a",
+                vec![target_actions::INBOUND_READ.into()],
+                "admin",
+            )
+            .await
+            .unwrap();
+
+        assert!(
+            manager
+                .target_authorized(&subject, "qq", "group-a", target_actions::INBOUND_READ,)
+                .await
+                .unwrap()
+        );
+        assert!(
+            !manager
+                .target_authorized(&subject, "qq", "group-a", target_actions::MESSAGES_READ,)
+                .await
+                .unwrap()
+        );
+        assert!(
+            !manager
+                .target_authorized(&subject, "qq", "group-b", target_actions::INBOUND_READ,)
+                .await
+                .unwrap()
+        );
+        assert_eq!(manager.list_target_grants(&subject).await.unwrap().len(), 1);
+        assert!(
+            manager
+                .delete_target_grant(&subject, &grant.id)
+                .await
+                .unwrap()
+        );
+        assert!(
+            !manager
+                .target_authorized(&subject, "qq", "group-a", target_actions::INBOUND_READ,)
+                .await
+                .unwrap()
+        );
     }
 }

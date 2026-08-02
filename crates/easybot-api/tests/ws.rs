@@ -109,19 +109,12 @@ async fn ws_server() -> (
     (guard, state, key, addr)
 }
 
-/// 连接 WebSocket（需通过 HTTP-level Bearer 认证）
-///
-/// 通过 IntoClientRequest 从 URL 字符串构建请求（自动添加 WebSocket 升级头），
-/// 再注入 Authorization 头以通过中间件认证。
-async fn connect_ws(addr: SocketAddr, http_key: &str) -> WsClient {
+/// 连接 WebSocket。认证只通过连接后的 auth 文本帧完成。
+async fn connect_ws(addr: SocketAddr, _http_key: &str) -> WsClient {
     let uri_str = format!("ws://{}/api/v1/ws", addr);
-    let mut request: http::Request<()> = uri_str
+    let request: http::Request<()> = uri_str
         .into_client_request()
         .expect("Failed to build WS upgrade request");
-    request.headers_mut().insert(
-        http::header::AUTHORIZATION,
-        format!("Bearer {}", http_key).parse().unwrap(),
-    );
     let (ws_stream, _) = connect_async(request)
         .await
         .expect("WebSocket connect failed — HTTP-level auth may have failed");
@@ -178,6 +171,45 @@ async fn test_ws_auth_ok_with_valid_token() {
     );
     assert_eq!(usage[0].status_class, 1);
 
+    client.close().await;
+}
+
+#[tokio::test]
+async fn test_ws_global_admin_key_receives_targets_without_grants() {
+    let (_guard, state, _default_key, addr) = ws_server().await;
+    let (_, admin_key) = state
+        .auth_manager
+        .create_key("admin-session", vec!["*".into()], None)
+        .await
+        .unwrap();
+    let auth = state.auth_manager.authenticate(&admin_key).await.unwrap();
+    assert!(
+        state
+            .auth_manager
+            .list_target_grants(&auth.subject_id)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+
+    let mut client = connect_ws(addr, &admin_key).await;
+    auth_ws(&mut client, &admin_key).await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    state
+        .event_bus
+        .publish(easybot_core::types::event::GatewayEvent {
+            event_type: "message.inbound".into(),
+            source: "qq".into(),
+            timestamp: 43,
+            data: json!({"platform":"qq","chat_id":"unlisted-group","text":"admin-visible"}),
+            metadata: None,
+        });
+
+    let event = client
+        .recv_json()
+        .await
+        .expect("global admin receives target event without a grant");
+    assert_eq!(event["data"]["text"], "admin-visible");
     client.close().await;
 }
 
@@ -273,7 +305,7 @@ async fn test_ws_multiple_events_sequential() {
             event_type: "message.inbound".to_string(),
             source: "test".to_string(),
             timestamp: 1000,
-            data: json!({"text": "first"}),
+            data: json!({"platform":"telegram","chat_id":"42","text": "first"}),
             metadata: None,
         });
 
@@ -338,7 +370,7 @@ async fn test_ws_multiple_clients_receive_events() {
             event_type: "message.inbound".to_string(),
             source: "test".to_string(),
             timestamp: 9999,
-            data: json!({"text": "broadcast test"}),
+            data: json!({"platform":"telegram","chat_id":"42","text": "broadcast test"}),
             metadata: None,
         });
 
@@ -353,6 +385,73 @@ async fn test_ws_multiple_clients_receive_events() {
 
     client1.close().await;
     client2.close().await;
+}
+
+#[tokio::test]
+async fn test_ws_subjects_are_isolated_by_target_grants() {
+    let (_guard, state, _admin_key, addr) = ws_server().await;
+    let (_, key_a) = state
+        .auth_manager
+        .create_key("subject-a", vec!["websocketconnect".into()], None)
+        .await
+        .unwrap();
+    let (_, key_b) = state
+        .auth_manager
+        .create_key("subject-b", vec!["websocketconnect".into()], None)
+        .await
+        .unwrap();
+    let auth_a = state.auth_manager.authenticate(&key_a).await.unwrap();
+    let auth_b = state.auth_manager.authenticate(&key_b).await.unwrap();
+    state
+        .auth_manager
+        .create_target_grant(
+            &auth_a.subject_id,
+            "qq",
+            "group-a",
+            vec![easybot_core::auth::target_actions::INBOUND_READ.into()],
+            "test",
+        )
+        .await
+        .unwrap();
+    state
+        .auth_manager
+        .create_target_grant(
+            &auth_b.subject_id,
+            "qq",
+            "group-b",
+            vec![easybot_core::auth::target_actions::INBOUND_READ.into()],
+            "test",
+        )
+        .await
+        .unwrap();
+
+    let mut client_a = connect_ws(addr, &key_a).await;
+    auth_ws(&mut client_a, &key_a).await;
+    let mut client_b = connect_ws(addr, &key_b).await;
+    auth_ws(&mut client_b, &key_b).await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    state
+        .event_bus
+        .publish(easybot_core::types::event::GatewayEvent {
+            event_type: "message.inbound".into(),
+            source: "qq".into(),
+            timestamp: 42,
+            data: json!({"platform":"qq","chat_id":"group-a","text":"secret-a"}),
+            metadata: None,
+        });
+
+    let event_a = client_a
+        .recv_json()
+        .await
+        .expect("subject A receives group A");
+    assert_eq!(event_a["data"]["text"], "secret-a");
+    assert!(
+        client_b.recv_json().await.is_none(),
+        "subject B must not receive group A"
+    );
+    client_a.close().await;
+    client_b.close().await;
 }
 
 #[tokio::test]
@@ -397,7 +496,7 @@ async fn test_ws_client_clean_disconnect() {
             event_type: "message.inbound".to_string(),
             source: "test".to_string(),
             timestamp: 12345,
-            data: json!({"text": "after disconnect"}),
+            data: json!({"platform":"telegram","chat_id":"42","text": "after disconnect"}),
             metadata: None,
         });
 

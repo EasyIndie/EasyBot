@@ -1,6 +1,5 @@
 ---
 source: crates/easybot-api/src/openapi.rs
-assertion_line: 356
 expression: "ApiDoc::openapi()"
 ---
 {
@@ -25,7 +24,7 @@ expression: "ApiDoc::openapi()"
         "tags": [
           "Admin"
         ],
-        "summary": "POST /admin/login — 密码登录，返回 API Key",
+        "summary": "POST /admin/login — 密码登录，返回短期管理 Session",
         "description": "SECURITY: Uses constant-time comparison to prevent timing side-channel attacks.\nRate limiting is handled by the dedicated admin login rate limiter in server.rs.",
         "operationId": "admin_login",
         "requestBody": {
@@ -40,7 +39,7 @@ expression: "ApiDoc::openapi()"
         },
         "responses": {
           "200": {
-            "description": "登录成功，返回 API Key",
+            "description": "登录成功，返回短期管理 Session",
             "content": {
               "application/json": {
                 "schema": {
@@ -332,6 +331,80 @@ expression: "ApiDoc::openapi()"
                 "schema": {}
               }
             }
+          },
+          "401": {
+            "description": "Missing, invalid, expired, or revoked API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "API key lacks the required permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Global, IP, or subject quota exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal operation failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Durable metering, quota, storage, or adapter unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/admin/logout": {
+      "post": {
+        "tags": [
+          "Admin"
+        ],
+        "summary": "POST /api/v1/admin/logout — revoke the current memory-only management Session.",
+        "operationId": "admin_logout",
+        "responses": {
+          "200": {
+            "description": "管理 Session 已注销",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RevokeResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "当前凭据不是管理 Session"
           },
           "401": {
             "description": "Missing, invalid, expired, or revoked API key",
@@ -984,7 +1057,7 @@ expression: "ApiDoc::openapi()"
         "tags": [
           "API Keys"
         ],
-        "summary": "Replace a key while preserving its permissions, filters and quota.",
+        "summary": "Replace a key while preserving its subject, permissions and quota.",
         "operationId": "rotate_api_key",
         "parameters": [
           {
@@ -2916,6 +2989,265 @@ expression: "ApiDoc::openapi()"
         }
       }
     },
+    "/api/v1/subjects/{subject_id}/target-grants": {
+      "get": {
+        "tags": [
+          "Target Grants"
+        ],
+        "operationId": "list_target_grants",
+        "parameters": [
+          {
+            "name": "subject_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/TargetGrant"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, expired, or revoked API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "API key lacks the required permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Global, IP, or subject quota exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal operation failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Durable metering, quota, storage, or adapter unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Target Grants"
+        ],
+        "operationId": "create_target_grant",
+        "parameters": [
+          {
+            "name": "subject_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateTargetGrantRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TargetGrant"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, expired, or revoked API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "API key lacks the required permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Global, IP, or subject quota exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal operation failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Durable metering, quota, storage, or adapter unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/subjects/{subject_id}/target-grants/{grant_id}": {
+      "delete": {
+        "tags": [
+          "Target Grants"
+        ],
+        "operationId": "delete_target_grant",
+        "parameters": [
+          {
+            "name": "subject_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "grant_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeleteTargetGrantResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Missing, invalid, expired, or revoked API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "API key lacks the required permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Global, IP, or subject quota exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal operation failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Durable metering, quota, storage, or adapter unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/system": {
       "get": {
         "tags": [
@@ -3465,19 +3797,12 @@ expression: "ApiDoc::openapi()"
           "prefix",
           "created_at",
           "revoked",
-          "permissions",
-          "event_filters"
+          "permissions"
         ],
         "properties": {
           "created_at": {
             "type": "integer",
             "format": "int64"
-          },
-          "event_filters": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
           },
           "expires_at": {
             "type": [
@@ -4075,12 +4400,6 @@ expression: "ApiDoc::openapi()"
           "permissions"
         ],
         "properties": {
-          "event_filters": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
           "expires_at": {
             "type": [
               "integer",
@@ -4118,19 +4437,12 @@ expression: "ApiDoc::openapi()"
           "key",
           "name",
           "permissions",
-          "event_filters",
           "created_at"
         ],
         "properties": {
           "created_at": {
             "type": "integer",
             "format": "int64"
-          },
-          "event_filters": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
           },
           "expires_at": {
             "type": [
@@ -4208,6 +4520,28 @@ expression: "ApiDoc::openapi()"
           }
         }
       },
+      "CreateTargetGrantRequest": {
+        "type": "object",
+        "required": [
+          "platform",
+          "chat_id",
+          "actions"
+        ],
+        "properties": {
+          "actions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "chat_id": {
+            "type": "string"
+          },
+          "platform": {
+            "type": "string"
+          }
+        }
+      },
       "DeleteMessageRequest": {
         "type": "object",
         "description": "删除消息请求",
@@ -4236,6 +4570,17 @@ expression: "ApiDoc::openapi()"
             ]
           },
           "success": {
+            "type": "boolean"
+          }
+        }
+      },
+      "DeleteTargetGrantResponse": {
+        "type": "object",
+        "required": [
+          "deleted"
+        ],
+        "properties": {
+          "deleted": {
             "type": "boolean"
           }
         }
@@ -5738,6 +6083,46 @@ expression: "ApiDoc::openapi()"
             "description": "PostgreSQL SSL 模式（仅 postgres 类型有效）"
           },
           "storageType": {
+            "type": "string"
+          }
+        }
+      },
+      "TargetGrant": {
+        "type": "object",
+        "description": "A server-owned authorization grant for one stable caller subject.",
+        "required": [
+          "id",
+          "subject_id",
+          "platform",
+          "chat_id",
+          "actions",
+          "created_at",
+          "created_by"
+        ],
+        "properties": {
+          "actions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "chat_id": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "created_by": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "platform": {
+            "type": "string"
+          },
+          "subject_id": {
             "type": "string"
           }
         }

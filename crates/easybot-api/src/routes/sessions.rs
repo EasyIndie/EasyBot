@@ -7,10 +7,34 @@ use axum::{
     extract::{Extension, Path, Query, State},
     http::StatusCode,
 };
+use easybot_core::auth::target_actions;
 use easybot_core::storage::MessageFilter;
 use easybot_core::types::error::GatewayError;
 use easybot_core::types::session::SessionFilter;
 use serde::Deserialize;
+
+async fn require_session_target(
+    state: &AppState,
+    actor: &easybot_core::auth::AuthInfo,
+    platform: &str,
+    chat_id: &str,
+    action: &str,
+) -> Result<(), ApiError> {
+    if easybot_core::auth::permissions::has_global_target_access(actor) {
+        return Ok(());
+    }
+    match state
+        .auth_manager
+        .target_authorized(&actor.subject_id, platform, chat_id, action)
+        .await
+    {
+        Ok(true) => Ok(()),
+        Ok(false) => Err(ApiError(GatewayError::Forbidden(format!(
+            "subject is not authorized for {platform}:{chat_id}"
+        )))),
+        Err(error) => Err(ApiError(GatewayError::StorageError(error))),
+    }
+}
 
 /// 获取会话列表
 #[utoipa::path(
@@ -21,18 +45,43 @@ use serde::Deserialize;
         (status = 200, description = "List of active sessions", body = serde_json::Value),
     )
 )]
-pub async fn list_sessions(State(state): State<AppState>) -> Json<serde_json::Value> {
+pub async fn list_sessions(
+    State(state): State<AppState>,
+    Extension(actor): Extension<easybot_core::auth::AuthInfo>,
+) -> Result<Json<serde_json::Value>, ApiError> {
     let sessions = state.session_manager.list(Some(SessionFilter {
         platform: None,
         active_within_minutes: None,
         limit: Some(100),
         offset: None,
     }));
+    let sessions: Vec<_> = if easybot_core::auth::permissions::has_global_target_access(&actor) {
+        sessions
+    } else {
+        let grants = state
+            .auth_manager
+            .list_target_grants(&actor.subject_id)
+            .await
+            .map_err(|error| ApiError(GatewayError::StorageError(error)))?;
+        sessions
+            .into_iter()
+            .filter(|session| {
+                grants.iter().any(|grant| {
+                    (grant.platform == "*" || grant.platform == session.platform)
+                        && (grant.chat_id == "*" || grant.chat_id == session.chat_id)
+                        && grant
+                            .actions
+                            .iter()
+                            .any(|action| action == target_actions::SESSIONS_READ)
+                })
+            })
+            .collect()
+    };
 
-    Json(serde_json::json!({
+    Ok(Json(serde_json::json!({
         "sessions": sessions,
         "total": sessions.len(),
-    }))
+    })))
 }
 
 /// 获取会话详情
@@ -50,20 +99,31 @@ pub async fn list_sessions(State(state): State<AppState>) -> Json<serde_json::Va
 )]
 pub async fn get_session(
     State(state): State<AppState>,
+    Extension(actor): Extension<easybot_core::auth::AuthInfo>,
     Path(key): Path<String>,
-) -> (StatusCode, Json<serde_json::Value>) {
+) -> Result<(StatusCode, Json<serde_json::Value>), ApiError> {
     match state.session_manager.get(&key) {
-        Some(session) => (
-            StatusCode::OK,
-            Json(serde_json::to_value(session).unwrap_or_default()),
-        ),
-        None => (
+        Some(session) => {
+            require_session_target(
+                &state,
+                &actor,
+                &session.platform,
+                &session.chat_id,
+                target_actions::SESSIONS_READ,
+            )
+            .await?;
+            Ok((
+                StatusCode::OK,
+                Json(serde_json::to_value(session).unwrap_or_default()),
+            ))
+        }
+        None => Ok((
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({
                 "error": "NOT_FOUND",
                 "message": format!("Session '{}' not found", key),
             })),
-        ),
+        )),
     }
 }
 
@@ -86,6 +146,30 @@ pub async fn delete_session(
     Path(key): Path<String>,
 ) -> Result<(StatusCode, Json<serde_json::Value>), ApiError> {
     let existing_session = state.session_manager.get(&key);
+    if let Some(session) = existing_session.as_ref() {
+        require_session_target(
+            &state,
+            &actor,
+            &session.platform,
+            &session.chat_id,
+            target_actions::SESSIONS_MANAGE,
+        )
+        .await?;
+    } else if let Some((platform, rest)) = key.split_once(':') {
+        let chat_id = rest.split(':').next().unwrap_or_default();
+        require_session_target(
+            &state,
+            &actor,
+            platform,
+            chat_id,
+            target_actions::SESSIONS_MANAGE,
+        )
+        .await?;
+    } else {
+        return Err(ApiError(GatewayError::InvalidRequest(
+            "invalid session key".into(),
+        )));
+    }
     let session_existed = existing_session.is_some();
     state
         .auth_manager
@@ -196,6 +280,14 @@ pub async fn export_session_data(
         .session_manager
         .get(&key)
         .ok_or_else(|| ApiError(GatewayError::ChatNotFound(key.clone())))?;
+    require_session_target(
+        &state,
+        &actor,
+        &session.platform,
+        &session.chat_id,
+        target_actions::SESSIONS_READ,
+    )
+    .await?;
     let limit = query.limit.unwrap_or(500).clamp(1, 1_000);
     let messages = state
         .message_store

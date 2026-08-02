@@ -11,6 +11,7 @@ use axum::{
     },
     response::{IntoResponse, Response},
 };
+use easybot_core::auth::target_actions;
 use futures::{SinkExt, StreamExt};
 use std::time::Instant;
 use tokio::sync::OwnedSemaphorePermit;
@@ -57,7 +58,8 @@ async fn handle_ws(socket: WebSocket, state: AppState, _permit: OwnedSemaphorePe
     let (_dummy_tx, mut event_rx) = tokio::sync::broadcast::channel::<WsSerializedEvent>(1);
 
     let mut authenticated = false;
-    let mut event_filters: Vec<String> = Vec::new();
+    let mut subject_id: Option<String> = None;
+    let mut global_target_access = false;
     let mut event_seq: u64 = 0;
     let mut dropped_events: u32 = 0;
     const MAX_DROPPED_EVENTS: u32 = 50; // 连续丢弃超过 N 个事件则断开
@@ -137,6 +139,17 @@ async fn handle_ws(socket: WebSocket, state: AppState, _permit: OwnedSemaphorePe
                                 Some(ref key) => {
                                     match state.auth_manager.authenticate(key).await {
                                         Ok(auth_info) => {
+                                            if easybot_core::auth::permissions::require_permission(
+                                                &auth_info,
+                                                easybot_core::auth::permissions::Permission::WebSocketConnect,
+                                            )
+                                            .is_err()
+                                            {
+                                                let _ = sender.send(Message::Text(
+                                                    r#"{"type":"auth_failed","message":"WebSocket permission required"}"#.into()
+                                                )).await;
+                                                break;
+                                            }
                                             if let Err(error) = state.auth_manager.record_usage(&auth_info.id, &auth_info.subject_id, 101).await {
                                                 tracing::error!(key_id = %auth_info.id, %error, "rejecting WebSocket because durable metering failed");
                                                 let _ = sender.send(Message::Text(
@@ -147,8 +160,8 @@ async fn handle_ws(socket: WebSocket, state: AppState, _permit: OwnedSemaphorePe
                                             if let Some(ref metrics) = state.metrics {
                                                 metrics.record_api_key_request(&auth_info.id, 101);
                                             }
-                                            // 保存事件过滤器（共享广播器含所有事件，客户端自行过滤）
-                                            event_filters = auth_info.event_filters.clone();
+                                            subject_id = Some(auth_info.subject_id.clone());
+                                            global_target_access = easybot_core::auth::permissions::has_global_target_access(&auth_info);
                                             event_rx = state.ws_event_tx.subscribe();
                                             authenticated = true;
                                             let _ = sender.send(Message::Text(
@@ -243,11 +256,48 @@ async fn handle_ws(socket: WebSocket, state: AppState, _permit: OwnedSemaphorePe
             event = event_rx.recv() => {
                 match event {
                     Ok(serialized) => {
-                        // 检查客户端是否订阅了此事件类型（按 API Key 的 event_filters 过滤）
-                        if !event_filters.is_empty()
-                            && !event_filters.iter().any(|f| f == &serialized.event_type)
-                        {
-                            continue;
+                        let target_action = match serialized.event_type.as_str() {
+                            easybot_core::types::event::event_types::MESSAGE_INBOUND
+                            | easybot_core::types::event::event_types::CALLBACK_RECEIVED => {
+                                Some(target_actions::INBOUND_READ)
+                            }
+                            easybot_core::types::event::event_types::MESSAGE_SENT
+                            | easybot_core::types::event::event_types::MESSAGE_FAILED => {
+                                Some(target_actions::MESSAGES_READ)
+                            }
+                            _ => None,
+                        };
+                        if let Some(target_action) = target_action {
+                            if global_target_access {
+                                // Management principals with the explicit `*`
+                                // permission are authorized for every target.
+                            } else {
+                            let (Some(subject_id), Some(platform), Some(chat_id)) = (
+                                subject_id.as_deref(),
+                                serialized.platform.as_deref(),
+                                serialized.chat_id.as_deref(),
+                            ) else {
+                                warn!(event_type = %serialized.event_type, "dropping target event without authorization scope");
+                                continue;
+                            };
+                            match state
+                                .auth_manager
+                                .target_authorized(
+                                    subject_id,
+                                    platform,
+                                    chat_id,
+                                    target_action,
+                                )
+                                .await
+                            {
+                                Ok(true) => {}
+                                Ok(false) => continue,
+                                Err(error) => {
+                                    tracing::error!(%error, "target authorization unavailable; closing WebSocket");
+                                    break;
+                                }
+                            }
+                            }
                         }
 
                         event_seq += 1;

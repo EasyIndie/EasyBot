@@ -1415,7 +1415,7 @@ mod tests {
                 id TEXT PRIMARY KEY, name TEXT NOT NULL, prefix TEXT NOT NULL,
                 created_at INTEGER NOT NULL, expires_at INTEGER, last_used_at INTEGER,
                 revoked INTEGER NOT NULL DEFAULT 0, permissions TEXT NOT NULL DEFAULT '[]',
-                event_filters TEXT NOT NULL DEFAULT '[]', hash TEXT NOT NULL
+                hash TEXT NOT NULL
             )",
         )
         .execute(&pool)
@@ -1440,8 +1440,8 @@ mod tests {
         .unwrap();
         sqlx::query(
             "INSERT INTO api_keys
-             (id, name, prefix, created_at, revoked, permissions, event_filters, hash)
-             VALUES ('legacy-key', 'legacy', 'eb_old', 1, 0, '[]', '[]', 'hash')",
+             (id, name, prefix, created_at, revoked, permissions, hash)
+             VALUES ('legacy-key', 'legacy', 'eb_old', 1, 0, '[]', 'hash')",
         )
         .execute(&pool)
         .await
@@ -1521,7 +1521,7 @@ mod tests {
                 id TEXT PRIMARY KEY, name TEXT NOT NULL, prefix TEXT NOT NULL,
                 created_at INTEGER NOT NULL, expires_at INTEGER, last_used_at INTEGER,
                 revoked INTEGER NOT NULL DEFAULT 0, permissions TEXT NOT NULL DEFAULT '[]',
-                event_filters TEXT NOT NULL DEFAULT '[]', hash TEXT NOT NULL
+                hash TEXT NOT NULL
             )",
         )
         .execute(&pool)

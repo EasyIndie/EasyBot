@@ -64,3 +64,13 @@ pub fn require_permission(
         Err(GatewayError::Forbidden(format!("需要权限 {perm_name}")))
     }
 }
+
+/// Whether this principal is an explicitly global administrator.
+///
+/// Target grants constrain ordinary caller subjects. A principal carrying the
+/// existing all-permissions wildcard is the management plane itself and may
+/// inspect or operate on every target without one grant row per ephemeral
+/// admin-session key.
+pub fn has_global_target_access(auth: &crate::auth::AuthInfo) -> bool {
+    auth.permissions.iter().any(|permission| permission == "*")
+}
