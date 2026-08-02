@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.28] - 2026-08-02
+
+### Changed
+
+- **First online baseline** — Freeze `v0.0.28` as the first version eligible to
+  become the online production baseline after G1 acceptance. There is no
+  compatibility commitment to pre-production data from earlier candidates;
+  versioned schema bootstrap, migrations, backups, and safety rollback remain
+  required.
+- **Verified local capacity boundary** — On the G0 Docker baseline (2 CPUs,
+  512 MiB application limit), 500 requests at concurrency 10 completed with
+  zero errors and p95 480.52 ms. Concurrency 20 completed without errors but
+  p95 was 1446 ms, so a one-second p95 is not promised at that concurrency.
+
+### Fixed
+
+- **Read-only Compose runtime** — Provide bounded writable tmpfs mounts for
+  EasyBot and Caddy, omit unset plaintext secrets instead of injecting empty
+  values alongside `*_FILE`, and make production Compose overrides merge
+  cleanly with the base resource and security policies.
+- **Portable PostgreSQL image pin** — Pin PostgreSQL 16.14 Alpine to its
+  multi-architecture OCI index for both amd64 and arm64 hosts.
+
 ## [0.0.27] - 2026-08-01
 
 ### Changed
