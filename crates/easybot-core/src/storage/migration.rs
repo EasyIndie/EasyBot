@@ -74,7 +74,7 @@ pub static MIGRATIONS: &[Migration] = &[
     },
     Migration {
         version: 2,
-        description: "Commercial readiness: delivery, audit, usage, billing and idempotency ledgers",
+        description: "Commercial readiness and subject target authorization",
         sql_sqlite: V2_SQLITE,
         sql_postgres: V2_POSTGRES,
         rollback_sqlite: Some(V2_ROLLBACK_SQLITE),
@@ -131,7 +131,6 @@ CREATE TABLE IF NOT EXISTS api_keys (
     last_used_at  INTEGER,
     revoked       INTEGER NOT NULL DEFAULT 0,
     permissions   TEXT NOT NULL DEFAULT '[]',
-    event_filters TEXT NOT NULL DEFAULT '[]',
     hash          TEXT NOT NULL
 );
 
@@ -181,7 +180,6 @@ CREATE TABLE IF NOT EXISTS api_keys (
     last_used_at  BIGINT,
     revoked       BOOLEAN NOT NULL DEFAULT FALSE,
     permissions   JSONB NOT NULL DEFAULT '[]',
-    event_filters JSONB NOT NULL DEFAULT '[]',
     hash          TEXT NOT NULL
 );
 
@@ -339,6 +337,18 @@ CREATE TABLE IF NOT EXISTS api_idempotency (
 );
 
 CREATE INDEX IF NOT EXISTS idx_api_idempotency_expiry ON api_idempotency(expires_at);
+
+CREATE TABLE target_grants (
+    id         TEXT PRIMARY KEY,
+    subject_id TEXT NOT NULL,
+    platform   TEXT NOT NULL,
+    chat_id    TEXT NOT NULL,
+    actions    TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    created_by TEXT NOT NULL,
+    UNIQUE(subject_id, platform, chat_id)
+);
+CREATE INDEX idx_target_grants_subject ON target_grants(subject_id);
 ";
 
 const V2_POSTGRES: &str = "
@@ -486,9 +496,22 @@ CREATE TABLE IF NOT EXISTS api_idempotency (
 );
 
 CREATE INDEX IF NOT EXISTS idx_api_idempotency_expiry ON api_idempotency(expires_at);
+
+CREATE TABLE target_grants (
+    id         VARCHAR(255) PRIMARY KEY,
+    subject_id VARCHAR(255) NOT NULL,
+    platform   VARCHAR(64) NOT NULL,
+    chat_id    VARCHAR(255) NOT NULL,
+    actions    JSONB NOT NULL,
+    created_at BIGINT NOT NULL,
+    created_by VARCHAR(255) NOT NULL,
+    UNIQUE(subject_id, platform, chat_id)
+);
+CREATE INDEX idx_target_grants_subject ON target_grants(subject_id);
 ";
 
 const V2_ROLLBACK_SQLITE: &str = "
+DROP TABLE IF EXISTS target_grants;
 DROP TABLE IF EXISTS api_idempotency;
 DROP TABLE IF EXISTS billing_ledger_state;
 DROP TABLE IF EXISTS billing_events;
@@ -503,6 +526,7 @@ DROP TABLE IF EXISTS api_key_rotation_transitions;
 ";
 
 const V2_ROLLBACK_POSTGRES: &str = "
+DROP TABLE IF EXISTS target_grants;
 DROP TABLE IF EXISTS api_idempotency;
 DROP TABLE IF EXISTS billing_ledger_state;
 DROP TABLE IF EXISTS billing_events;
@@ -807,13 +831,6 @@ pub async fn run_migrations_pg(pool: &PgPool) -> Result<(), StoreError> {
 async fn run_migrations_pg_inner(pool: &PgPool) -> Result<(), StoreError> {
     // 1. 确保版本追踪表存在
     sqlx::query(VERSION_TABLE_SQL).execute(pool).await?;
-    // v0.0.26 mistakenly created this column as PostgreSQL INTEGER while
-    // storing millisecond Unix timestamps. Widen it before recording any
-    // migration so existing databases recover without manual SQL.
-    sqlx::query("ALTER TABLE _schema_version ALTER COLUMN applied_at TYPE BIGINT")
-        .execute(pool)
-        .await?;
-
     // 2. 未版本化的旧数据库不在上线前兼容范围内。
     let current = get_current_version_pg(pool).await?;
     if current > SCHEMA_VERSION {
@@ -936,11 +953,11 @@ mod tests {
         );
 
         // 验证表存在
-        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('sessions', 'messages', 'api_keys', 'outbound_deliveries', 'audit_events', 'api_usage_hourly', 'billing_events', 'api_idempotency', '_schema_version')")
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('sessions', 'messages', 'api_keys', 'outbound_deliveries', 'audit_events', 'api_usage_hourly', 'billing_events', 'api_idempotency', 'target_grants', '_schema_version')")
             .fetch_one(&pool)
             .await
             .unwrap_or(0);
-        assert_eq!(count, 9, "All commercial schema tables should exist");
+        assert_eq!(count, 10, "All current schema tables should exist");
     }
 
     #[test]

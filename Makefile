@@ -44,8 +44,8 @@ test:  ## 运行所有测试
 
 DEBUG_FLAG ?= --debug
 
-run:  ## 编译并启动（默认 --debug，make run DEBUG= 可去掉）
-	$(CARGO) run -- $(DEBUG_FLAG)
+run:  ## 编译并启动（默认 --debug，make run DEBUG_FLAG= 可去掉）
+	$(CARGO) run --features "$(FEATURES)" -- $(DEBUG_FLAG)
 
 clean:  ## 清理编译产物
 	$(CARGO) clean

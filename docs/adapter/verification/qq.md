@@ -132,7 +132,7 @@ cargo run -- --debug
 启动服务后，在 QQ 群里 @机器人 发消息，然后：
 
 ```bash
-API_KEY=$(grep "Dev API Key" <服务日志文件> | grep -oP 'key=\K\S+')
+API_KEY="eb_xxx" # 从管理后台创建专用测试 Key，或通过 /admin/login 获取短期管理 Session
 curl -s -H "Authorization: Bearer $API_KEY" \
   "http://localhost:8080/api/v1/messages?platform=qq" | jq '.messages[0].chat_id'
 ```

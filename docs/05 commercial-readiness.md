@@ -210,7 +210,6 @@ POST /api/v1/api-keys
 {
   "name": "starter-customer",
   "permissions": ["messagesread", "messagessend"],
-  "event_filters": [],
   "requests_per_minute": 600
 }
 ```
@@ -223,7 +222,15 @@ POST /api/v1/api-keys
 
 超额返回 HTTP 429、`Retry-After` 及同一组配额响应头。省略或传入 `null` 表示不设置主体级配额，但仍受全局/IP 限流约束。配额配置和最近 60 秒消费事件均持久化在 `auth.db`；每次判断使用 `BEGIN IMMEDIATE` 事务完成过期清理、计数和写入，因此并发请求不会超卖，Key 轮换和服务重启也不会清空当前窗口。配额存储失败时请求以 503 失败关闭，不能绕过额度继续进入业务处理器。
 
-客户 Key 应设置 `expires_at`（UTC Unix 毫秒），允许范围为签发后 5 分钟至 366 天。到期前使用管理 Key 轮换；轮换会复制权限、事件过滤器和分钟配额，持久化新 Key 后立即吊销旧 Key，原始新 token 同样只返回一次。持久化 Key 的 Argon2 可能与吊销并发执行；验证结果进入快速缓存前会在生命周期锁内重新读取当前状态，已吊销或已删除的凭据不能被旧验证结果重新激活：
+客户 Key 应设置 `expires_at`（UTC Unix 毫秒），允许范围为签发后 5 分钟至 366 天。到期前使用管理 Key 轮换；轮换会复制权限和分钟配额，持久化新 Key 后立即吊销旧 Key，原始新 token 同样只返回一次。Target 授权属于稳定 `subject_id`，不会随 Key 轮换。持久化 Key 的 Argon2 可能与吊销并发执行；验证结果进入快速缓存前会在生命周期锁内重新读取当前状态，已吊销或已删除的凭据不能被旧验证结果重新激活。
+
+Target 授权由管理员在服务端配置，生产环境默认拒绝未授权的会话。授权键为 `subject_id + platform + chat_id`，支持 `inbound:read`、`messages:read`、`messages:send`、`sessions:read` 和 `sessions:manage`。WebSocket 入站事件、消息发送/历史及会话读写共用同一授权边界。仅持有显式 `*` 管理权限的管理主体可全局访问目标；生产管理后台的动态会话属于该类主体，不为每次登录创建临时 Grant。管理接口为：
+
+```text
+GET    /api/v1/subjects/{subject_id}/target-grants
+POST   /api/v1/subjects/{subject_id}/target-grants
+DELETE /api/v1/subjects/{subject_id}/target-grants/{grant_id}
+```
 
 ```http
 POST /api/v1/api-keys/<old-key-id>/rotate
@@ -233,7 +240,7 @@ Content-Type: application/json
 {"expires_at":1817078400000}
 ```
 
-禁止用某个 Key 自己轮换自己，避免响应传输失败时锁死管理面。轮换先持久化新 Key，再写入 `api_key.rotation.prepared` 审计门禁，之后才吊销旧 Key；准备审计失败时旧 Key 保持有效并清理新 Key。旧 Key 吊销后会补写 `api_key.rotated`，该完成事件写入失败时仍返回新 Key，因为 prepared 事件与数据库中的两代 Key 状态足以重建结果，不能在旧 Key 已失效后再吊销唯一可用的新 Key。值班系统必须对 completion 审计错误日志告警并补充事件说明。客户端应先安全保存新 token，再验证一次最小权限请求，最后删除旧 token。生产管理后台不再读取或写入 `.dev_api_key`：每次密码登录签发一小时、仅存在内存的管理会话 Key；升级自旧版本后应人工删除遗留文件。
+禁止用某个 Key 自己轮换自己，避免响应传输失败时锁死管理面。管理后台在开发和生产环境都通过密码登录签发一小时、仅存在内存且不进入 API Key库存的管理 Session，因此不依赖任何待轮换的持久化 Key，也不创建 `.dev_api_key`。轮换先持久化新 Key，再写入 `api_key.rotation.prepared` 审计门禁，之后才吊销旧 Key；准备审计失败时旧 Key保持有效并清理新 Key。旧 Key吊销后会补写 `api_key.rotated`，该完成事件写入失败时仍返回新 Key，因为 prepared 事件与数据库中的两代 Key状态足以重建结果。值班系统必须对 completion 审计错误日志告警并补充事件说明。客户端应先安全保存新 token，再验证一次最小权限请求，最后删除旧 token。
 
 每个首次签发的 Key 同时获得服务端稳定的调用方主体 ID；轮换只更换凭据 ID 和密钥，主体 ID 保持不变。调用方配额、投递日志归属和消息发送幂等命名空间使用主体 ID，因此替换 Key 不能重置分钟额度，仍可查询、结案轮换前的不确定投递，并且相同 `Idempotency-Key` 不会因轮换而失去保护。用量账本和管理审计仍记录实际凭据 ID，以便追踪是哪一代 Key 发起调用。旧数据库升级时，现有 Key 的主体 ID 回填为其当前 Key ID。
 

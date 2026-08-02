@@ -100,8 +100,8 @@ curl http://localhost:8080/api/v1/health
 ### 2.4 发送第一条消息
 
 ```bash
-# 获取 API Key（首次运行自动生成）
-API_KEY=$(cat ~/.easybot/data/.dev_api_key)
+# 先登录管理后台创建业务 API Key，并将只显示一次的明文放入环境变量
+API_KEY='eb_...'
 
 # 发送消息
 curl -X POST http://localhost:8080/api/v1/messages/send \
@@ -224,7 +224,6 @@ vim ~/.easybot/.env
 ├── .env                        # 令牌文件（chmod 600）
 ├── data/
 │   ├── gateway.db              # SQLite 数据库（自动创建）
-│   ├── .dev_api_key            # 开发 API Key（自动生成）
 │   └── media_cache/            # 媒体文件缓存
 ├── logs/                       # 日志文件
 ├── plugins/                    # 第三方适配器动态库
@@ -560,7 +559,15 @@ curl http://localhost:8080/api/v1/adapters/telegram/status \
 
 ### 7.1 获取 API Key
 
-首次启动时自动生成开发用 API Key，保存在 `~/.easybot/data/.dev_api_key`。所有 API 请求需携带 `Authorization: Bearer <api-key>` 请求头。
+管理后台密码登录会签发独立的一小时内存 Session，不创建长期 dev API Key。临时 Session可用于后台认证，但不会进入持久化 API Key列表或数量配额；同名 Session最多同时保留 8 个，重复登录时自动淘汰最旧项。外部客户端使用的 API Key必须由管理员在后台明确创建并配置 Target Grant，其明文只在创建或轮换时显示一次。
+
+API Key 只负责认证凭据和接口权限，不直接绑定群或会话。消息与会话的数据范围由服务端按稳定 `subject_id` 配置 Target Grant；同一 Subject 轮换 API Key 后继续沿用原授权。生产调用方没有匹配 Grant 时默认拒绝访问。
+
+实际访问权限取两层授权的交集：API Key 必须拥有对应接口权限（例如 `messagesread`），Subject 对目标也必须拥有对应 Target action（例如 `messages:read`）。管理后台调试工具会分别标出缺少的是哪一层，避免把接口权限不足误判为 Target 授权失败。
+
+在管理后台创建 API Key 后，创建成功页会引导配置 Target Grant。授权弹窗从现有活跃会话中提供可搜索的多选 Target 列表；至少选择一个已展示的 `platform + chat_id` 和所需 action 后，该调用方才可以访问对应业务数据。也可以稍后在 API Key 列表中打开“Target 授权”进行调整。
+
+API Key 列表中的“调试”按钮可选择活跃 Target，并使用待测 Key 验证 `sessions:read`、`messages:read` 和 `messages:send` 的实际授权结果。当前页面新创建的 Key 会自动填入调试面板；历史 Key 的明文只在创建时返回，刷新页面后需要重新粘贴。发送权限使用超长文本探针验证，只会返回参数校验错误，不会向平台发送真实消息；WebSocket 的 `inbound:read` 则可通过同一调试面板的事件日志观察实际事件。
 
 ### 7.2 REST API 完整参考
 
@@ -589,6 +596,8 @@ curl http://localhost:8080/api/v1/adapters/telegram/status \
 | `/api-keys/types` | GET | 查看 API Key 类型 |
 | `/api-keys/{id}` | DELETE | 吊销 API Key |
 | `/api-keys/{id}/purge` | DELETE | 彻底删除 API Key |
+| `/subjects/{subject_id}/target-grants` | GET/POST | 查询/创建 Subject 的目标授权 |
+| `/subjects/{subject_id}/target-grants/{grant_id}` | DELETE | 删除目标授权 |
 | `/metrics` | GET | Prometheus 指标 |
 | `/logs` | GET | 实时日志流（环形缓冲 5000 条） |
 | `/swagger` | GET | Swagger UI |
@@ -713,6 +722,8 @@ ws.onmessage = (event) => {
 };
 ```
 
+连接凭据需要 `websocketconnect` 接口权限。普通调用方只会收到该 Subject 获得 Target Grant 的目标事件：`message.inbound` 与 `callback.received` 需要 `inbound:read`，`message.sent` 与 `message.failed` 需要 `messages:read`。管理后台动态会话使用显式 `*` 管理权限，可查看所有目标，不需要为每次登录创建 Grant。普通目标事件缺少结构化 `platform` 或 `chat_id` 时会直接丢弃，不会退化为全局广播。
+
 认证成功后客户端需回复心跳 Ping：
 ```javascript
 // 收到服务器 Ping 后回复 Pong
@@ -810,7 +821,7 @@ easybot --debug
 ### 9.3 功能
 
 - **适配器概览** — 所有平台适配器的实时状态
-- **API Key 管理** — 创建、吊销、管理密钥
+- **API Key 与 Target Grant 管理** — 创建、轮换、吊销凭据，并按 Subject 管理平台/会话授权
 - **实时日志** — 最近 5000 条运行日志（环形缓冲）
 - **系统信息** — CPU、内存、运行时间
 - **配置查看** — 当前生效的配置
@@ -931,7 +942,7 @@ deploy:
 | 错误 | 原因 | 解决 |
 |------|------|------|
 | `token invalid or expired (11244)` | QQ Token 过期 | 自动刷新（超过 1 次需到 QQ 开放平台重新生成） |
-| `401 Unauthorized` | API Key 无效 | 检查 `~/.easybot/data/.dev_api_key` |
+| `401 Unauthorized` | API Key 无效或已过期 | 在管理后台检查对应业务 Key状态并按需轮换 |
 | `PrivilegedGatewayIntent` | Discord 未启用 Gateway Intents | 开发者后台开启 MESSAGE CONTENT INTENT |
 | 适配器启动失败 | 平台凭据无效 | 检查 `.env` 中的令牌 |
 | 生产环境 TLS 检查失败 | Release build 未配置 TLS | 设置 `EASYBOT_ALLOW_PLAINTEXT=true` 或配置反向代理 |
@@ -964,7 +975,7 @@ easybot --debug                     # 开发模式
 docker compose up -d                # Docker 部署
 
 # 消息发送
-API_KEY=$(cat ~/.easybot/data/.dev_api_key)
+API_KEY='eb_...' # 管理后台创建并安全保存的业务 Key
 curl -X POST http://localhost:8080/api/v1/messages/send \
   -H "Authorization: Bearer $API_KEY" \
   -H "Content-Type: application/json" \

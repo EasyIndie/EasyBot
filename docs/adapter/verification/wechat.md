@@ -142,7 +142,7 @@ INFO  个人微信适配器已连接                 # 直接连接
 #### 2.3 适配器管理
 
 ```bash
-API_KEY="eb_xxx"  # 从启动日志中获取
+API_KEY="eb_xxx"  # 从管理后台创建专用测试 Key，或通过 /admin/login 获取短期管理 Session
 
 # 查看适配器
 curl -s -H "Authorization: Bearer $API_KEY" http://127.0.0.1:8080/api/v1/adapters

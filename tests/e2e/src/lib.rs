@@ -175,7 +175,7 @@ pub async fn build_router(
 ) -> (Router, String) {
     let auth_manager = Arc::new(ApiKeyManager::new(None));
     let (_, raw_key) = auth_manager
-        .create_key("e2e", vec!["*".to_string()], None, vec![])
+        .create_key("e2e", vec!["*".to_string()], None)
         .await
         .unwrap();
 
@@ -192,7 +192,6 @@ pub async fn build_router(
         config_manager,
         None,
         Arc::new(easybot_api::log_collector::LogCollector::new(5000)),
-        Some(raw_key.clone()),
         "easybot".to_string(),
     );
     let router = easybot_api::server::create_router(state);

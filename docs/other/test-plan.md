@@ -59,7 +59,7 @@ EasyBot 是一个 **IM Gateway** 服务，连接多个 IM 平台并对外提供�
 
 ## T3: API 端点验证
 
-> 以下测试依赖 `--debug` 模式启动（自动创建 dev API key）。使用 `curl` 或 `httpie` 测试。
+> 以下测试依赖服务启动后通过 `/admin/login` 获取短期管理 Session，或在管理后台创建专用测试 API Key。使用 `curl` 或 `httpie` 测试。
 
 ### T3.1 公共端点
 
@@ -76,7 +76,7 @@ EasyBot 是一个 **IM Gateway** 服务，连接多个 IM 平台并对外提供�
 |---|--------|------|------|
 | T3.2.1 | 无 token | `GET /api/v1/adapters` | ✅ 401 |
 | T3.2.2 | 错误 token | `Authorization: Bearer fake_key` | ✅ 401 |
-| T3.2.3 | 有效 token | 使用 dev key | ✅ 200 |
+| T3.2.3 | 有效 token | 使用管理 Session 或专用测试 Key | ✅ 200 |
 | T3.2.4 | 吊销后 | 创建 → 吊销 → 使用 | ✅ 401 |
 
 ### T3.3 速率限制

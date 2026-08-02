@@ -1,7 +1,7 @@
 const LS_KEY = 'easybot_api_key';
 // Privileged credentials remain in memory only. Reload requires a new login.
 let apiKey = '';
-// key display removed — dev key changes on restart, use API Key tab for permanent keys
+// Admin authentication uses a short-lived, memory-only session returned by password login.
 
 function setKey(k) { apiKey = k; }
 function clearKey() { apiKey = ''; sessionStorage.removeItem(LS_KEY); }
@@ -56,6 +56,45 @@ function cachedApi(path, opts = {}, ttlMs = 30000) {
     return data;
   });
   return promise;
+}
+
+// 统一防重复提交与动态弹窗管理。
+// 读操作可以并发，写操作和弹窗创建必须按业务键串行。
+const pendingActions = new Set();
+const openingModals = new Set();
+
+function beginAction(key, button, busyText) {
+  if (pendingActions.has(key)) return false;
+  pendingActions.add(key);
+  if (button) {
+    button.disabled = true;
+    if (busyText) {
+      button.dataset.actionOriginalText = button.textContent;
+      button.textContent = busyText;
+    }
+  }
+  return true;
+}
+
+function endAction(key, button) {
+  pendingActions.delete(key);
+  if (button) {
+    button.disabled = false;
+    if (button.dataset.actionOriginalText) {
+      button.textContent = button.dataset.actionOriginalText;
+      delete button.dataset.actionOriginalText;
+    }
+  }
+}
+
+function beginModal(key) {
+  if (openingModals.has(key) || document.querySelector(`[data-modal-key="${CSS.escape(key)}"]`)) return false;
+  openingModals.add(key);
+  return true;
+}
+
+function finishModal(key) {
+  openingModals.delete(key);
 }
 
 // ─── 公共渲染工具 ──────────────────────────────
@@ -744,6 +783,8 @@ document.getElementById('config-cancel-btn').addEventListener('click', () => {
   document.getElementById('config-view').style.display = 'block';
 });
 document.getElementById('config-save-btn').addEventListener('click', async () => {
+  const saveButton = document.getElementById('config-save-btn');
+  if (!beginAction('config-save', saveButton, '保存中...')) return;
   const msg = document.getElementById('config-msg');
   const editor = document.getElementById('config-editor');
   const raw = editor.value;
@@ -765,6 +806,7 @@ document.getElementById('config-save-btn').addEventListener('click', async () =>
       editor.scrollTop = editor.scrollHeight * (line / (raw.split('\n').length || 1));
     }
     msg.innerHTML = '<span class="error-msg" style="display:inline-block;background:#471a1a;border:1px solid #f851494d;border-radius:6px;padding:6px 10px">❌ JSON 格式错误' + escapeHtml(hint) + '<br><span style="font-size:11px;color:#f85149cc">' + escapeHtml(e.message) + '</span></span>';
+    endAction('config-save', saveButton);
     return;
   }
   editor.style.borderColor = '';
@@ -780,6 +822,8 @@ document.getElementById('config-save-btn').addEventListener('click', async () =>
     loadConfig();
   } catch (e) {
     msg.innerHTML = '<span class="error-msg">❌ 保存失败: ' + escapeHtml(e.message) + '</span>';
+  } finally {
+    endAction('config-save', saveButton);
   }
 });
 
@@ -824,7 +868,7 @@ function renderSessionRow(s) {
     <td style="font-size:12px;color:var(--text-muted)">${new Date(s.created_at).toLocaleString()}</td>
     <td><button class="btn btn-sm btn-danger session-delete">删除</button></td>`;
   tr.querySelector('.session-key-copy').addEventListener('click', event => copyKey(event.currentTarget, s.key));
-  tr.querySelector('.session-delete').addEventListener('click', () => deleteSession(s.key));
+  tr.querySelector('.session-delete').addEventListener('click', event => deleteSession(s.key, event.currentTarget));
   return tr;
 }
 
@@ -898,8 +942,13 @@ async function loadSessions(isRefresh) {
   }
 }
 
-async function deleteSession(key) {
-  if (!confirm('确定删除会话 ' + key + ' ？')) return;
+async function deleteSession(key, button) {
+  const actionKey = `session-delete:${key}`;
+  if (!beginAction(actionKey, button, '删除中...')) return;
+  if (!confirm('确定删除会话 ' + key + ' ？')) {
+    endAction(actionKey, button);
+    return;
+  }
   try {
     await api('/api/v1/sessions/' + encodeURIComponent(key), { method: 'DELETE' });
     // 直接从 DOM 移除对应行，无需全量刷新
@@ -912,6 +961,8 @@ async function deleteSession(key) {
     }
   } catch (e) {
     showToast('删除失败: ' + e.message, 'error');
+  } finally {
+    endAction(actionKey, button);
   }
 }
 
@@ -970,9 +1021,7 @@ document.getElementById('msg-send-btn').addEventListener('click', async () => {
   const parseMode = document.getElementById('msg-parse-mode').value;
   const result = document.getElementById('msg-send-result');
   if (!target || !text) { result.innerHTML = '<span class="error-msg">请输入 Target 和 Text</span>'; return; }
-  // 防连点：禁用按钮并显示加载状态
-  btn.disabled = true;
-  btn.textContent = '发送中...';
+  if (!beginAction('message-send', btn, '发送中...')) return;
   result.innerHTML = '<span style="color:var(--text-muted)">⏳ 正在发送...</span>';
   try {
     const data = await api('/api/v1/messages/send', { method: 'POST', body: { target, text, parseMode: parseMode || null } });
@@ -984,8 +1033,7 @@ document.getElementById('msg-send-btn').addEventListener('click', async () => {
     result.innerHTML = '<span class="error-msg">❌ 发送失败: ' + escapeHtml(e.message) + '</span>';
     showToast('发送失败: ' + e.message, 'error');
   } finally {
-    btn.disabled = false;
-    btn.textContent = '发送';
+    endAction('message-send', btn);
   }
 });
 // Ctrl+Enter to send
@@ -1039,44 +1087,6 @@ async function loadMessages(append = false) {
 
 // ─── API Key 管理 Tab ──────────────────────────
 
-// 所有可用事件类型（与后端 event_types::all() 一致）
-// 按类别分组展示
-const EVENT_TYPE_GROUPS = [
-  {
-    title: "消息事件",
-    items: ["message.inbound", "message.sent", "message.failed"],
-  },
-  {
-    title: "适配器事件",
-    items: [
-      "adapter.connected",
-      "adapter.disconnected",
-      "adapter.error",
-      "adapter.reconnecting",
-      "adapter.reconnected",
-      "adapter.reconnect_failed",
-    ],
-  },
-  {
-    title: "回调事件",
-    items: ["callback.received"],
-  },
-  {
-    title: "系统事件",
-    items: ["gateway.started", "gateway.stopping", "config.changed"],
-  },
-];
-
-// 扁平列表，供模板预设和程序逻辑使用
-const ALL_EVENT_TYPES = EVENT_TYPE_GROUPS.flatMap(g => g.items);
-
-// 类别颜色映射（用于 checkbox-grid 分组标题圆点）
-const EVENT_GROUP_COLORS = {
-  "消息事件": "#58a6ff",
-  "适配器事件": "#3fb950",
-  "回调事件": "#d29922",
-  "系统事件": "#bc8cff",
-};
 const PERM_GROUP_COLORS = {
   "全部权限": "#d29922",
   "消息": "#58a6ff",
@@ -1099,43 +1109,37 @@ const KEY_TEMPLATES = [
     name: "客服机器人",
     icon: "📨",
     desc: "自动回复机器人，只接收用户消息",
-    permissions: ["messagessend"],
-    event_filters: ["message.inbound"],
+    permissions: ["messagessend", "websocketconnect"],
   },
   {
     name: "监控告警",
     icon: "🔔",
     desc: "监控连接状态，异常时告警",
     permissions: ["adaptersread"],
-    event_filters: ["adapter.disconnected", "adapter.error", "adapter.reconnecting"],
   },
   {
     name: "消息日志",
     icon: "📋",
     desc: "消息发送记录归档",
     permissions: ["messagesread"],
-    event_filters: ["message.sent", "message.failed"],
   },
   {
     name: "会话跟踪",
     icon: "👤",
     desc: "追踪完整对话流程",
     permissions: ["messagesread", "messagessend", "sessionsread"],
-    event_filters: ["message.inbound", "message.sent", "callback.received"],
   },
   {
     name: "全功能",
     icon: "🚀",
-    desc: "管理后台、开发调试（同 dev key）",
+    desc: "业务 API 的全权限开发调试",
     permissions: ["*"],
-    event_filters: [],
   },
   {
     name: "自定义",
     icon: "✏️",
-    desc: "自由组合需要的事件类型和权限",
+    desc: "自由组合需要的权限",
     permissions: [],
-    event_filters: [],
   },
 ];
 
@@ -1143,6 +1147,92 @@ const KEY_TEMPLATES = [
 let debugWs = null;
 let debugLog = [];
 const MAX_DEBUG_LOG = 200;
+const TARGET_ACTIONS = ['inbound:read', 'messages:read', 'messages:send', 'sessions:read', 'sessions:manage'];
+// Raw keys are only available when created and remain memory-only for this page lifecycle.
+const sessionRawApiKeys = new Map();
+
+function targetGrantActions(grants, platform, chatId) {
+  return [...new Set((grants || [])
+    .filter(grant => (grant.platform === '*' || grant.platform === platform)
+      && (grant.chat_id === '*' || grant.chat_id === chatId))
+    .flatMap(grant => Array.isArray(grant.actions) ? grant.actions : []))];
+}
+
+async function loadTargetCatalog(subjectId) {
+  const [sessionResponse, grants] = await Promise.all([
+    api('/api/v1/sessions'),
+    subjectId
+      ? api(`/api/v1/subjects/${encodeURIComponent(subjectId)}/target-grants`)
+      : Promise.resolve([]),
+  ]);
+  const sessions = Array.isArray(sessionResponse.sessions) ? sessionResponse.sessions : [];
+  const targets = [...new Map(sessions
+    .filter(session => session.platform && session.chat_id)
+    .map(session => [`${session.platform}:${session.chat_id}`, session]))
+    .values()]
+    .map(session => {
+      const key = `${session.platform}:${session.chat_id}`;
+      const sessionName = session.source?.chat_name ? String(session.source.chat_name) : '';
+      const actions = targetGrantActions(grants, session.platform, session.chat_id);
+      return {
+        key,
+        platform: session.platform,
+        chatId: session.chat_id,
+        sessionName,
+        label: sessionName ? `${key} · ${sessionName}` : key,
+        searchText: `${key} ${sessionName} ${actions.join(' ')}`.toLowerCase(),
+        actions,
+        granted: actions.length > 0,
+      };
+    })
+    .sort((left, right) => left.key.localeCompare(right.key));
+  return { targets, grants };
+}
+
+function renderTargetPickerOptions(targets, options = {}) {
+  const {
+    inputType = 'checkbox',
+    inputClass = 'target-picker-input',
+    inputName = '',
+    disableGranted = false,
+    showGrantActions = false,
+    emptyText = '当前没有可用的活跃 Target',
+  } = options;
+  if (!targets.length) return `<div class="target-picker-empty">${escapeHtml(emptyText)}</div>`;
+  return targets.map(target => {
+    const disabled = disableGranted && target.granted;
+    const status = target.granted
+      ? (showGrantActions ? `已配置 ${target.actions.join(', ')}` : '已授权')
+      : (showGrantActions ? '未配置授权' : '');
+    return `<label class="target-picker-option${disabled ? ' is-disabled' : ''}" data-search="${escapeHtml(target.searchText)}">
+      <input type="${inputType}" class="${escapeHtml(inputClass)}"${inputName ? ` name="${escapeHtml(inputName)}"` : ''} data-platform="${escapeHtml(target.platform)}" data-chat-id="${escapeHtml(target.chatId)}" data-grant-actions="${escapeHtml(target.actions.join(','))}"${disabled ? ' disabled' : ''}>
+      <span class="target-picker-copy">
+        <span class="target-picker-label">${escapeHtml(target.label)}</span>
+        ${status ? `<span class="target-picker-status">${escapeHtml(status)}</span>` : ''}
+      </span>
+    </label>`;
+  }).join('');
+}
+
+function bindTargetPicker(searchInput, list, onSelectionChange) {
+  if (!searchInput || !list) return;
+  searchInput.oninput = () => {
+    const query = searchInput.value.trim().toLowerCase();
+    list.querySelectorAll('.target-picker-option').forEach(option => {
+      option.hidden = Boolean(query) && !option.dataset.search.includes(query);
+    });
+  };
+  if (onSelectionChange) list.onchange = onSelectionChange;
+}
+
+function selectedTargetPickerValues(list, inputClass) {
+  if (!list) return [];
+  return [...list.querySelectorAll(`.${inputClass}:checked`)].map(input => ({
+    platform: input.dataset.platform,
+    chat_id: input.dataset.chatId,
+    actions: input.dataset.grantActions ? input.dataset.grantActions.split(',') : [],
+  }));
+}
 
 async function loadApiKeys() {
   const loading = document.getElementById('apikeys-loading');
@@ -1164,9 +1254,9 @@ async function loadApiKeys() {
       html += '<div class="card"><p style="color:var(--text-muted)">暂无 API Key</p></div>';
     } else {
       html += '<div class="table-wrapper"><table><thead><tr>' +
-        '<th>名称</th><th>Key</th><th>权限</th><th>事件过滤</th><th>分钟配额</th><th>状态</th><th>创建时间</th><th>操作</th>' +
+        '<th>名称</th><th>Key</th><th>权限</th><th>分钟配额</th><th>状态</th><th>创建时间</th><th>操作</th>' +
         '</tr></thead><tbody>';
-      for (const k of keys.filter(k => k.name !== 'dev')) {
+      for (const k of keys) {
         const masked = String(k.prefix ? k.prefix + '****' : '****');
         const keyId = escapeHtml(String(k.id || ''));
         const keyName = escapeHtml(String(k.name || ''));
@@ -1176,25 +1266,25 @@ async function loadApiKeys() {
         const permHtml = k.permissions.includes('*')
           ? '<span class="badge badge-blue">全部</span>'
           : k.permissions.map(p => '<span class="badge badge-gray" style="margin:1px">' + escapeHtml(String(p)) + '</span>').join('');
-        const filterHtml = !k.event_filters || !k.event_filters.length
-          ? '<span class="badge badge-blue">全部事件</span>'
-          : k.event_filters.map(ef => '<span class="badge badge-gray" style="margin:1px">' + escapeHtml(String(ef)) + '</span>').join('');
         const created = new Date(k.created_at).toLocaleString();
         const debugBtn = k.revoked
           ? '<button class="btn btn-sm" disabled>调试</button>'
           : `<button class="btn btn-sm api-key-action" data-action="debug" data-key-id="${keyId}">🔍 调试</button>`;
+        const rotateBtn = k.revoked
+          ? '<button class="btn btn-sm" disabled>轮换</button>'
+          : `<button class="btn btn-sm api-key-action" data-action="rotate" data-key-id="${keyId}">🔄 轮换</button>`;
         const revokeBtn = k.revoked
           ? `<button class="btn btn-sm btn-danger api-key-action" data-action="delete" data-key-id="${keyId}">删除</button>`
           : `<button class="btn btn-sm btn-danger api-key-action" data-action="revoke" data-key-id="${keyId}">吊销</button>`;
+        const grantsBtn = `<button class="btn btn-sm api-key-action" data-action="grants" data-key-id="${keyId}">🛡️ Target 授权</button>`;
         html += `<tr>
           <td style="white-space:nowrap"><strong>${keyName}</strong></td>
           <td style="font-family:monospace;font-size:12px">${escapeHtml(masked)}</td>
           <td style="font-size:12px">${permHtml}</td>
-          <td style="font-size:12px">${filterHtml}</td>
           <td style="font-size:12px">${k.requests_per_minute ?? '无限制'}</td>
           <td>${statusHtml}</td>
           <td style="font-size:12px;color:var(--text-muted)">${created}</td>
-          <td style="white-space:nowrap">${debugBtn} ${revokeBtn}</td>
+          <td style="white-space:nowrap">${grantsBtn} ${debugBtn} ${rotateBtn} ${revokeBtn}</td>
         </tr>`;
       }
       html += '</tbody></table></div>';
@@ -1208,12 +1298,16 @@ async function loadApiKeys() {
       button.addEventListener('click', () => {
         const key = keys.find(item => String(item.id) === button.dataset.keyId);
         if (!key) return;
-        if (button.dataset.action === 'debug') {
-          openDebugPanel(key.id, key.name, key.prefix ? key.prefix + '****' : '****', (key.event_filters || []).join(','));
+        if (button.dataset.action === 'grants') {
+          showTargetGrantsDialog(key.subject_id, key.name);
+        } else if (button.dataset.action === 'debug') {
+          openDebugPanel(key.id, key.name, key.prefix ? key.prefix + '****' : '****', key.subject_id, key.permissions);
+        } else if (button.dataset.action === 'rotate') {
+          showRotateKeyDialog(key);
         } else if (button.dataset.action === 'delete') {
-          deleteApiKey(key.id, key.name);
+          deleteApiKey(key.id, key.name, button);
         } else {
-          revokeApiKey(key.id, key.name);
+          revokeApiKey(key.id, key.name, button);
         }
       });
     });
@@ -1232,20 +1326,192 @@ async function loadApiKeys() {
   }
 }
 
-// ─── 创建对话框（单页布局，模板 + 配置同一页面） ──
-
-function buildEventFilterHtml() {
-  let html = '<div class="cg-all"><label><input type="checkbox" id="ef-all" onchange="toggleAllEventFilters()"><span>📡 全部事件</span></label></div>';
-  for (const group of EVENT_TYPE_GROUPS) {
-    const dotColor = EVENT_GROUP_COLORS[group.title] || '#6e7681';
-    let itemsHtml = '';
-    for (const et of group.items) {
-      itemsHtml += `<label><input type="checkbox" class="ef-item" value="${et}" onchange="onEventFilterChange()"><span>${et}</span></label>`;
+function showRotateKeyDialog(key) {
+  const modalKey = `rotate-api-key:${key.id}`;
+  if (!beginModal(modalKey)) return;
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.dataset.modalKey = modalKey;
+  overlay.style.display = 'flex';
+  const defaultExpiry = new Date(Date.now() + 365 * 24 * 60 * 60 * 1000);
+  defaultExpiry.setMinutes(defaultExpiry.getMinutes() - defaultExpiry.getTimezoneOffset());
+  overlay.innerHTML = `
+    <div class="modal-card" style="max-width:520px">
+      <div class="modal-header"><h3>🔄 轮换 API Key</h3><button class="modal-close">&times;</button></div>
+      <div style="padding:16px">
+        <p>将轮换 <strong>${escapeHtml(key.name)}</strong>（${escapeHtml(key.prefix || '')}****）。新 Key 继承相同 Subject、接口权限、配额和 Target 授权。</p>
+        <label for="rotate-key-expiry">新 Key 过期时间</label>
+        <input id="rotate-key-expiry" type="datetime-local" value="${defaultExpiry.toISOString().slice(0, 16)}" style="width:100%;margin:6px 0 12px">
+        <button class="btn btn-primary" id="rotate-key-submit">确认轮换</button>
+        <div id="rotate-key-result" style="margin-top:12px"></div>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  const close = () => { overlay.remove(); finishModal(modalKey); };
+  overlay.querySelector('.modal-close').onclick = close;
+  overlay.querySelector('#rotate-key-submit').onclick = async event => {
+    const button = event.currentTarget;
+    const actionKey = `api-key-rotate:${key.id}`;
+    if (!beginAction(actionKey, button, '轮换中...')) return;
+    try {
+      const value = overlay.querySelector('#rotate-key-expiry').value;
+      const expiresAt = new Date(value).getTime();
+      if (!Number.isFinite(expiresAt)) throw new Error('请选择有效的过期时间');
+      const replacement = await api(`/api/v1/api-keys/${encodeURIComponent(key.id)}/rotate`, {
+        method: 'POST',
+        body: { expires_at: expiresAt },
+      });
+      if (replacement.id && replacement.key) sessionRawApiKeys.set(String(replacement.id), replacement.key);
+      overlay.querySelector('#rotate-key-result').innerHTML = `
+        <div class="success-msg">✅ 轮换完成。旧 Key 已吊销，新 Key 仅显示一次：</div>
+        <code style="display:block;word-break:break-all;padding:10px;margin:8px 0;background:var(--bg-tertiary);border-radius:6px">${escapeHtml(replacement.key)}</code>
+        <button class="btn btn-sm" id="rotate-key-copy">复制新 Key</button>`;
+      overlay.querySelector('#rotate-key-copy').onclick = () => {
+        navigator.clipboard.writeText(replacement.key).catch(() => {});
+        showToast('新 Key 已复制', 'success');
+      };
+      button.style.display = 'none';
+      overlay.querySelector('#rotate-key-expiry').disabled = true;
+      await loadApiKeys();
+    } catch (error) {
+      overlay.querySelector('#rotate-key-result').innerHTML = `<div class="error-msg">❌ ${escapeHtml(error.message)}</div>`;
+      endAction(actionKey, button);
     }
-    html += `<div class="cg-group"><div class="cg-group-title"><span class="cg-dot" style="background:${dotColor}"></span>${group.title}</div><div class="cg-items">${itemsHtml}</div></div>`;
-  }
-  return html;
+  };
 }
+
+async function showTargetGrantsDialog(subjectId, keyName) {
+  const modalKey = `target-grants:${subjectId}`;
+  if (!beginModal(modalKey)) return;
+  try {
+    const { targets: availableTargets, grants } = await loadTargetCatalog(subjectId);
+    const grantedTargets = new Set(availableTargets.filter(target => target.granted).map(target => target.key));
+    const targetOptions = renderTargetPickerOptions(availableTargets, {
+      inputClass: 'grant-target-checkbox',
+      disableGranted: true,
+      emptyText: '当前没有可选的活跃 Target，请先建立会话。',
+    });
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay target-grants-modal';
+    overlay.dataset.modalKey = modalKey;
+    overlay.style.display = 'flex';
+    const rows = renderTargetGrantRows(grants);
+    overlay.innerHTML = `
+      <div class="modal-card target-grants-card">
+        <div class="modal-header"><h3>🛡️ Target 授权</h3><button class="modal-close">&times;</button></div>
+        <div class="target-grants-body">
+          <p style="color:var(--text-muted);font-size:13px">授权属于 Subject <code>${escapeHtml(subjectId)}</code>，不属于 API Key；轮换 Key 不会改变这些授权。</p>
+          <section class="target-grants-section">
+            <h4>已授权 Target</h4>
+            <div class="table-wrapper target-grants-current"><table><thead><tr><th>Platform</th><th>Chat ID</th><th>Actions</th><th>操作</th></tr></thead><tbody>${rows}</tbody></table></div>
+          </section>
+          <section class="target-grants-section">
+            <h4>添加授权</h4>
+            <label for="grant-target-search">从现有活跃 Target 中选择（可多选）</label>
+            <input id="grant-target-search" type="search" placeholder="搜索平台、Chat ID 或会话名称...">
+            <div id="grant-target-options" class="target-picker-list">
+            ${targetOptions}
+            </div>
+            <div class="target-picker-help">仅展示当前已建立的活跃会话；已授权 Target 会被标记并禁用。</div>
+            <div class="target-action-list">
+              ${TARGET_ACTIONS.map(action => `<label><input type="checkbox" class="target-action" value="${action}" checked> ${action}</label>`).join('')}
+            </div>
+            <button class="btn btn-primary" id="target-grant-create">添加授权</button>
+          </section>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+    overlay.querySelector('.modal-close').onclick = () => overlay.remove();
+    bindTargetPicker(
+      overlay.querySelector('#grant-target-search'),
+      overlay.querySelector('#grant-target-options'),
+    );
+    overlay.querySelector('#target-grant-create').onclick = async event => {
+      const button = event.currentTarget;
+      const actionKey = `target-grant-create:${subjectId}`;
+      if (!beginAction(actionKey, button, '添加中...')) return;
+      try {
+        const targets = selectedTargetPickerValues(
+          overlay.querySelector('#grant-target-options'),
+          'grant-target-checkbox',
+        );
+        const actions = [...overlay.querySelectorAll('.target-action:checked')].map(input => input.value);
+        const uniqueTargets = [...new Map(targets
+          .filter(target => target.platform && target.chat_id)
+          .map(target => [`${target.platform}:${target.chat_id}`, target]))
+          .values()];
+        const newTargets = uniqueTargets.filter(target => !grantedTargets.has(`${target.platform}:${target.chat_id}`));
+        if (!newTargets.length || !actions.length) {
+          endAction(actionKey, button);
+          return showToast('请选择至少一个新 Target，并选择 action', 'error');
+        }
+        for (const target of newTargets) {
+          await api(`/api/v1/subjects/${encodeURIComponent(subjectId)}/target-grants`, {method:'POST', body:{...target, actions}});
+        }
+        endAction(actionKey, button);
+        showToast(`${keyName} 已添加 ${newTargets.length} 个 Target 授权`, 'success');
+        await refreshTargetGrantsDialog(overlay, subjectId, keyName);
+      } catch (e) {
+        endAction(actionKey, button);
+        showToast('创建授权失败: ' + e.message, 'error');
+      }
+    };
+    bindTargetGrantDeleteButtons(overlay, subjectId, keyName);
+  } catch (e) {
+    showToast('加载 Target 授权失败: ' + e.message, 'error');
+  } finally {
+    finishModal(modalKey);
+  }
+}
+
+function renderTargetGrantRows(grants) {
+  return grants.length ? grants.map(grant => `
+    <tr>
+      <td>${escapeHtml(grant.platform)}</td>
+      <td><code>${escapeHtml(grant.chat_id)}</code></td>
+      <td>${grant.actions.map(action => `<span class="badge badge-gray">${escapeHtml(action)}</span>`).join(' ')}</td>
+      <td><button class="btn btn-sm btn-danger target-grant-delete" data-id="${escapeHtml(grant.id)}">删除</button></td>
+    </tr>`).join('') : '<tr><td colspan="4" style="color:var(--text-muted)">当前 Subject 没有 Target 授权，不会接收或访问任何会话数据。</td></tr>';
+}
+
+function bindTargetGrantDeleteButtons(overlay, subjectId, keyName) {
+  overlay.querySelectorAll('.target-grant-delete').forEach(button => button.onclick = async () => {
+    const actionKey = `target-grant-delete:${subjectId}:${button.dataset.id}`;
+    if (!beginAction(actionKey, button, '删除中...')) return;
+    if (!confirm('删除后对应客户端将立即失去访问权限，确认继续？')) {
+      endAction(actionKey, button);
+      return;
+    }
+    try {
+      await api(`/api/v1/subjects/${encodeURIComponent(subjectId)}/target-grants/${encodeURIComponent(button.dataset.id)}`, {method:'DELETE'});
+      endAction(actionKey, button);
+      await refreshTargetGrantsDialog(overlay, subjectId, keyName);
+    } catch (e) {
+      endAction(actionKey, button);
+      showToast('删除授权失败: ' + e.message, 'error');
+    }
+  });
+}
+
+async function refreshTargetGrantsDialog(overlay, subjectId, keyName) {
+  if (!overlay?.isConnected) return;
+  const { targets, grants } = await loadTargetCatalog(subjectId);
+  const tbody = overlay.querySelector('.target-grants-current tbody');
+  const list = overlay.querySelector('#grant-target-options');
+  const search = overlay.querySelector('#grant-target-search');
+  if (!tbody || !list || !search) return;
+  tbody.innerHTML = renderTargetGrantRows(grants);
+  list.innerHTML = renderTargetPickerOptions(targets, {
+    inputClass: 'grant-target-checkbox',
+    disableGranted: true,
+    emptyText: '当前没有可选的活跃 Target，请先建立会话。',
+  });
+  search.value = '';
+  bindTargetPicker(search, list);
+  bindTargetGrantDeleteButtons(overlay, subjectId, keyName);
+}
+
+// ─── 创建对话框（单页布局，模板 + 配置同一页面） ──
 
 function buildPermHtml() {
   const permGroups = [
@@ -1270,8 +1536,11 @@ function buildPermHtml() {
 }
 
 function showCreateDialog() {
+  const modalKey = 'create-api-key';
+  if (!beginModal(modalKey)) return;
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
+  overlay.dataset.modalKey = modalKey;
   overlay.style.display = 'flex';
 
   let templateCards = KEY_TEMPLATES.map((t, i) => `
@@ -1303,14 +1572,8 @@ function showCreateDialog() {
         </div>
 
         <div class="form-group">
-          <div class="filter-perm-labels">
-            <label>事件类型过滤（不选=全部）</label>
-            <label>权限（选 <code>*</code> = 全部）</label>
-          </div>
-          <div class="filter-perm-row">
-            <div id="create-event-filters" class="checkbox-grid">${buildEventFilterHtml()}</div>
-            <div id="create-permissions" class="checkbox-grid">${buildPermHtml()}</div>
-          </div>
+          <label>权限（选 <code>*</code> = 全部）</label>
+          <div id="create-permissions" class="checkbox-grid">${buildPermHtml()}</div>
         </div>
 
         <button class="btn btn-primary" id="create-key-submit" onclick="submitCreateKey()" style="width:100%;margin-top:4px">✅ 创建 API Key</button>
@@ -1329,6 +1592,11 @@ function showCreateDialog() {
             <button class="btn" onclick="openDebugWithNewKey()">🔍 调试验证</button>
           </div>
         </div>
+        <div style="margin-top:12px;padding:12px;border:1px solid var(--border-muted);border-radius:8px;background:var(--bg-subtle)">
+          <div style="font-size:13px;font-weight:600;margin-bottom:4px">下一步：配置 Target 授权</div>
+          <div style="color:var(--text-muted);font-size:12px;margin-bottom:10px">API Key 只负责身份认证。当前 Subject 尚未授权任何平台或群组，客户端默认无法读取或发送业务数据。</div>
+          <button class="btn btn-primary" onclick="openTargetGrantsForCreatedKey()">🛡️ 配置 Target 授权</button>
+        </div>
         <div style="display:flex;gap:8px;margin-top:8px">
           <button class="btn" onclick="resetCreateForm()" style="flex:1">🔄 再创建一个</button>
           <button class="btn" onclick="closeCreateDialogAndRefresh()" style="flex:1">完成</button>
@@ -1342,6 +1610,7 @@ function showCreateDialog() {
 
   // 默认选中"自定义"模板（索引 5）
   selectTemplate(5);
+  finishModal(modalKey);
 }
 
 // 当前选中的模板索引（-1 = 未选中）
@@ -1366,18 +1635,6 @@ function selectTemplate(idx) {
   const nameInput = document.getElementById('create-key-name');
   if (nameInput) nameInput.value = tpl.name !== '自定义' ? tpl.name : '';
 
-  // 应用事件过滤预设
-  const efAll = document.getElementById('ef-all');
-  if (tpl.event_filters.length === 0) {
-    if (efAll) efAll.checked = true;
-    document.querySelectorAll('.ef-item').forEach(cb => cb.checked = false);
-  } else {
-    if (efAll) efAll.checked = false;
-    document.querySelectorAll('.ef-item').forEach(cb => {
-      cb.checked = tpl.event_filters.includes(cb.value);
-    });
-  }
-
   // 应用权限预设
   document.querySelectorAll('.perm-item').forEach(cb => {
     cb.checked = tpl.permissions.includes(cb.value);
@@ -1395,16 +1652,6 @@ function resetCreateForm() {
   selectTemplate(5); // 重置为"自定义"
 }
 
-function toggleAllEventFilters() {
-  const allChecked = document.getElementById('ef-all').checked;
-  document.querySelectorAll('.ef-item').forEach(cb => cb.checked = false);
-}
-
-function onEventFilterChange() {
-  const anyChecked = document.querySelectorAll('.ef-item:checked').length > 0;
-  document.getElementById('ef-all').checked = !anyChecked;
-}
-
 function onStarPermissionChange() {
   const starChecked = document.querySelector('.perm-item[value="*"]')?.checked;
   document.querySelectorAll('.perm-item').forEach(cb => {
@@ -1415,18 +1662,22 @@ function onStarPermissionChange() {
   });
 }
 
-function openDebugWithNewKey() {
-  closeCreateDialog();
-  // 切换到 API Key tab 并自动打开调试面板
-  if (currentTab !== 'apikeys') {
-    switchTab('apikeys');
-  } else {
-    loadApiKeys();
+async function openDebugWithNewKey() {
+  if (!lastCreatedKeyId || !lastCreatedKey) {
+    showToast('当前没有可调试的新 API Key', 'error');
+    return;
   }
-  showToast('Key 已保存，在调试面板中粘贴使用', 'info');
+  closeCreateDialog(false);
+  if (currentTab !== 'apikeys') switchTab('apikeys');
+  await loadApiKeys();
+  openDebugPanel(lastCreatedKeyId, lastCreatedKeyName, lastCreatedKey.slice(0, 8) + '****', lastCreatedSubjectId, lastCreatedPermissions);
 }
 
+let lastCreatedKeyId = '';
 let lastCreatedKey = '';
+let lastCreatedSubjectId = '';
+let lastCreatedKeyName = '';
+let lastCreatedPermissions = [];
 
 async function submitCreateKey() {
   const name = document.getElementById('create-key-name').value.trim();
@@ -1436,14 +1687,6 @@ async function submitCreateKey() {
     return;
   }
   document.getElementById('create-key-name').style.borderColor = '';
-
-  const allChecked = document.getElementById('ef-all').checked;
-  let event_filters;
-  if (allChecked) {
-    event_filters = [];
-  } else {
-    event_filters = [...document.querySelectorAll('.ef-item:checked')].map(cb => cb.value);
-  }
 
   const permissions = [...document.querySelectorAll('.perm-item:checked')].map(cb => cb.value);
   if (!permissions.length) {
@@ -1458,23 +1701,35 @@ async function submitCreateKey() {
   }
 
   const btn = document.getElementById('create-key-submit');
-  btn.disabled = true;
-  btn.textContent = '创建中...';
+  if (!beginAction('api-key-create', btn, '创建中...')) return;
 
   try {
     const result = await api('/api/v1/api-keys', {
       method: 'POST',
-      body: { name, permissions, event_filters, requests_per_minute },
+      body: { name, permissions, requests_per_minute },
     });
+    lastCreatedKeyId = result.id || '';
     lastCreatedKey = result.key || '';
+    lastCreatedSubjectId = result.subject_id || '';
+    lastCreatedKeyName = name;
+    lastCreatedPermissions = Array.isArray(result.permissions) ? result.permissions : permissions;
+    if (lastCreatedKeyId && lastCreatedKey) sessionRawApiKeys.set(lastCreatedKeyId, lastCreatedKey);
     document.getElementById('create-form-area').style.display = 'none';
     document.getElementById('create-result').style.display = 'block';
     document.getElementById('create-result-key').textContent = lastCreatedKey;
+    endAction('api-key-create', btn);
   } catch (e) {
     showToast('创建失败: ' + e.message, 'error');
-    btn.disabled = false;
-    btn.textContent = '✅ 创建';
+    endAction('api-key-create', btn);
   }
+}
+
+function openTargetGrantsForCreatedKey() {
+  if (!lastCreatedSubjectId) {
+    showToast('创建响应缺少 subject_id，无法配置 Target 授权', 'error');
+    return;
+  }
+  showTargetGrantsDialog(lastCreatedSubjectId, lastCreatedKeyName || '新 API Key');
 }
 
 function copyResultKey() {
@@ -1483,12 +1738,12 @@ function copyResultKey() {
   showToast('密钥已复制到剪贴板', 'success');
 }
 
-function closeCreateDialog() {
-  const overlay = document.querySelector('.modal-overlay:not(#detail-modal)');
+function closeCreateDialog(refresh = true) {
+  const overlay = document.querySelector('[data-modal-key="create-api-key"]');
   if (!overlay) return;
   overlay.remove();
   document.body.style.overflow = '';
-  loadApiKeys(); // 退出时自动刷新列表
+  if (refresh) loadApiKeys(); // 退出时自动刷新列表
 }
 
 function closeCreateDialogAndRefresh() {
@@ -1497,56 +1752,88 @@ function closeCreateDialogAndRefresh() {
 
 // ─── 吊销 Key ──────────────────────────────────
 
-async function revokeApiKey(id, name) {
+async function revokeApiKey(id, name, button) {
+  const actionKey = `api-key-revoke:${id}`;
+  if (!beginAction(actionKey, button, '处理中...')) return;
   const isDev = name === 'dev';
   const msg = isDev
     ? `⚠️ 这是主管理 Key（${name}），确认吊销？此操作不可撤销！`
     : `确定吊销 Key [${name}]？此操作不可撤销！`;
-  if (!confirm(msg)) return;
   try {
+    if (!confirm(msg)) return;
     await api(`/api/v1/api-keys/${id}`, { method: 'DELETE' });
+    sessionRawApiKeys.delete(String(id));
     showToast(`Key [${name}] 已吊销`, 'success');
     loadApiKeys();
   } catch (e) {
     showToast('吊销失败: ' + e.message, 'error');
+  } finally {
+    endAction(actionKey, button);
   }
 }
 
-async function deleteApiKey(id, name) {
-  if (!confirm(`确定永久删除 Key [${name}]？此操作不可撤销！`)) return;
+async function deleteApiKey(id, name, button) {
+  const actionKey = `api-key-purge:${id}`;
+  if (!beginAction(actionKey, button, '处理中...')) return;
   try {
+    if (!confirm(`确定永久删除 Key [${name}]？此操作不可撤销！`)) return;
     await api(`/api/v1/api-keys/${id}/purge`, { method: 'DELETE' });
+    sessionRawApiKeys.delete(String(id));
     showToast(`Key [${name}] 已永久删除`, 'success');
     loadApiKeys();
   } catch (e) {
     showToast('删除失败: ' + e.message, 'error');
+  } finally {
+    endAction(actionKey, button);
   }
 }
 
 // ─── 调试面板 ──────────────────────────────────
 
-function openDebugPanel(id, name, masked, eventFiltersStr) {
+function openDebugPanel(id, name, masked, subjectId, permissions = []) {
   const panel = document.getElementById('debug-panel');
   if (!panel) return;
 
-  const eventFilters = eventFiltersStr ? eventFiltersStr.split(',') : [];
-
-  // 尝试从之前创建 Key 的结果中填充 Key（仅本次会话有效），
-  // 如果没有则自动填入当前主页面的 API Key
-  const savedTestKey = lastCreatedKey || apiKey || '';
+  // Raw values are available for keys created in this page lifecycle and for
+  // the credential currently authenticating the management page when prefixes match.
+  const rememberedKey = sessionRawApiKeys.get(String(id)) || '';
+  const selectedPrefix = String(masked || '').replace(/\*+$/, '');
+  const currentPageKey = apiKey && selectedPrefix && apiKey.startsWith(selectedPrefix) ? apiKey : '';
+  const savedTestKey = rememberedKey || currentPageKey;
+  const normalizedPermissions = Array.isArray(permissions) ? permissions : [];
+  const permissionLabel = normalizedPermissions.includes('*')
+    ? '全部接口权限'
+    : (normalizedPermissions.join(', ') || '无接口权限');
+  const keyInputHint = rememberedKey
+    ? '已自动填入本次页面会话中创建的 Key。'
+    : (currentPageKey
+      ? '已自动填入当前管理页面正在使用的 Key。'
+      : '历史 Key 的明文不会由服务端返回，请粘贴该 Key 的完整值。');
 
   panel.style.display = 'block';
   panel.innerHTML = `
     <div class="dbg-header">
       <div>
-        <h3>🔍 调试: ${name}</h3>
-        <div class="dbg-meta">${eventFilters.length ? '事件过滤: ' + eventFilters.join(', ') : '全部事件'}</div>
+        <h3>🔍 调试: ${escapeHtml(name)}</h3>
+        <div class="dbg-meta">${escapeHtml(masked)} · API Key 接口权限：${escapeHtml(permissionLabel)}</div>
       </div>
       <button class="modal-close" onclick="closeDebugPanel()">&times;</button>
     </div>
     <div style="padding:8px 16px;border-bottom:1px solid var(--border-muted)">
       <label class="dbg-key-label">输入要测试的 API Key（独立连接，不影响主页面）</label>
-      <input type="text" class="dbg-key-input" id="debug-key-input" value="${savedTestKey}" placeholder="粘贴 API Key 进行测试...">
+      <input type="password" class="dbg-key-input" id="debug-key-input" value="${escapeHtml(savedTestKey)}" autocomplete="off" placeholder="粘贴完整 API Key 进行测试...">
+      <div class="target-picker-help">${keyInputHint}</div>
+    </div>
+    <div style="padding:12px 16px;border-bottom:1px solid var(--border-muted)">
+      <div style="font-size:13px;font-weight:600;margin-bottom:6px">🛡️ Target 授权验证</div>
+      <div style="color:var(--text-muted);font-size:12px;margin-bottom:8px">有效权限 = API Key 接口权限 ∩ Subject Target action。验证会分别指出缺失的授权层；不会发送实际消息。</div>
+      <input type="search" id="debug-target-search" placeholder="搜索平台、Chat ID 或会话名称..." style="width:100%;font-size:12px;margin-bottom:8px">
+      <div id="debug-target-options" class="target-picker-list debug-target-picker">
+        <div class="target-picker-empty">正在加载可用 Target...</div>
+      </div>
+      <div id="debug-target-grant-hint" style="color:var(--text-muted);font-size:12px;margin-top:6px">仅展示管理后台当前可见的活跃会话。</div>
+      <button class="btn btn-sm btn-primary" id="debug-target-verify-btn" onclick="debugVerifyTarget()" style="margin-top:8px">🧪 验证所选 Target</button>
+      <div id="debug-target-results" style="margin-top:8px"></div>
     </div>
     <div class="dbg-toolbar">
       <button class="btn btn-sm btn-primary" id="debug-connect-btn" onclick="debugConnect()">🔗 连接</button>
@@ -1563,16 +1850,190 @@ function openDebugPanel(id, name, masked, eventFiltersStr) {
   // 存储当前调试的 key id 和 info
   panel.dataset.keyId = id;
   panel.dataset.keyName = name;
+  panel.dataset.subjectId = subjectId || '';
+  panel.dataset.permissions = JSON.stringify(normalizedPermissions);
 
   // 重置调试状态
   debugLog = [];
   debugWs = null;
+  loadDebugTargets(subjectId);
 }
 
 function closeDebugPanel() {
   debugDisconnect();
   const panel = document.getElementById('debug-panel');
   if (panel) panel.style.display = 'none';
+}
+
+async function debugRequest(path, testKey, opts = {}) {
+  const { method = 'GET', body } = opts;
+  try {
+    const headers = { 'Authorization': `Bearer ${testKey}` };
+    if (body !== undefined) headers['Content-Type'] = 'application/json';
+    const response = await fetch(path, {
+      method,
+      headers,
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    const text = await response.text();
+    let data = null;
+    try {
+      data = text ? JSON.parse(text) : null;
+    } catch (_) {
+      data = { message: text };
+    }
+    return { ok: response.ok, status: response.status, data };
+  } catch (error) {
+    return { ok: false, status: 0, data: { message: error.message } };
+  }
+}
+
+function debugResponseMessage(response) {
+  return response?.data?.error?.message
+    || response?.data?.message
+    || response?.data?.error
+    || (response?.status ? `HTTP ${response.status}` : '请求失败');
+}
+
+function updateDebugTargetHint() {
+  const list = document.getElementById('debug-target-options');
+  const hint = document.getElementById('debug-target-grant-hint');
+  if (!list || !hint) return;
+  const target = selectedTargetPickerValues(list, 'debug-target-radio')[0];
+  if (!target) {
+    hint.textContent = '仅展示管理后台当前可见的活跃会话。';
+    return;
+  }
+  hint.textContent = target.actions.length
+    ? `后台配置的 Target action：${target.actions.join(', ')}；验证结果仍以该 API Key 的实际请求为准。`
+    : '该 Subject 当前没有匹配的 Target Grant；验证请求应被服务端拒绝。';
+}
+
+async function loadDebugTargets(subjectId) {
+  const panel = document.getElementById('debug-panel');
+  const list = document.getElementById('debug-target-options');
+  const search = document.getElementById('debug-target-search');
+  if (!panel || !list || !search) return;
+  const loadId = String(Date.now());
+  panel.dataset.targetLoadId = loadId;
+  list.innerHTML = '<div class="target-picker-empty">正在加载可用 Target...</div>';
+  try {
+    const { targets } = await loadTargetCatalog(subjectId);
+    if (panel.dataset.targetLoadId !== loadId) return;
+    list.innerHTML = renderTargetPickerOptions(targets, {
+      inputType: 'radio',
+      inputClass: 'debug-target-radio',
+      inputName: 'debug-target',
+      showGrantActions: true,
+    });
+    const firstTarget = list.querySelector('.debug-target-radio');
+    if (firstTarget) firstTarget.checked = true;
+    updateDebugTargetHint();
+    bindTargetPicker(search, list, updateDebugTargetHint);
+  } catch (error) {
+    if (panel.dataset.targetLoadId !== loadId) return;
+    list.innerHTML = '<div class="target-picker-empty">加载 Target 失败</div>';
+    const hint = document.getElementById('debug-target-grant-hint');
+    if (hint) hint.textContent = `无法加载活跃会话：${error.message}`;
+  }
+}
+
+function debugResultRow(label, endpoint, state, response, detail) {
+  const states = {
+    passed: { color: 'var(--success)', icon: '✅', label: '通过' },
+    permission: { color: 'var(--warning)', icon: '⚠️', label: '接口权限不足' },
+    grant: { color: 'var(--warning)', icon: '⚠️', label: 'Target action 不足' },
+    failed: { color: 'var(--danger)', icon: '❌', label: '请求失败' },
+  };
+  const display = states[state] || states.failed;
+  const status = response.status ? `HTTP ${response.status}` : '网络错误';
+  return `<div style="display:grid;grid-template-columns:120px 1fr auto;gap:8px;align-items:start;padding:6px 8px;border-bottom:1px solid var(--border-muted);font-size:12px">
+    <strong style="color:${display.color}">${display.icon} ${escapeHtml(label)}</strong>
+    <span><code>${escapeHtml(endpoint)}</code><br><span style="color:var(--text-muted)">${escapeHtml(detail)}</span></span>
+    <span style="color:${display.color};white-space:nowrap">${escapeHtml(display.label)} · ${escapeHtml(status)}</span>
+  </div>`;
+}
+
+function debugAuthorizationState(permissions, targetActions, requiredPermission, requiredAction, passed) {
+  const globalAccess = permissions.includes('*');
+  if (!globalAccess && !permissions.includes(requiredPermission)) return 'permission';
+  if (!globalAccess && !targetActions.includes(requiredAction)) return 'grant';
+  return passed ? 'passed' : 'failed';
+}
+
+function debugAuthorizationDetail(permissions, targetActions, requiredPermission, requiredAction, passedDetail, failureDetail) {
+  const globalAccess = permissions.includes('*');
+  if (!globalAccess && !permissions.includes(requiredPermission)) {
+    return `API Key 缺少接口权限 ${requiredPermission}；Target Grant 即使包含 ${requiredAction} 也无法访问。`;
+  }
+  if (!globalAccess && !targetActions.includes(requiredAction)) {
+    return `Subject 对该 Target 缺少 action ${requiredAction}。`;
+  }
+  return failureDetail || passedDetail;
+}
+
+async function debugVerifyTarget() {
+  const button = document.getElementById('debug-target-verify-btn');
+  const list = document.getElementById('debug-target-options');
+  const keyInput = document.getElementById('debug-key-input');
+  const results = document.getElementById('debug-target-results');
+  if (!button || !list || !keyInput || !results) return;
+  if (!beginAction('debug-target-verify', button, '验证中...')) return;
+  try {
+    const panel = document.getElementById('debug-panel');
+    const testKey = keyInput.value.trim();
+    const selectedTarget = selectedTargetPickerValues(list, 'debug-target-radio')[0];
+    if (!testKey) {
+      results.innerHTML = '<div class="error-msg">请先填入要测试的 API Key。</div>';
+      return;
+    }
+    if (!selectedTarget) {
+      results.innerHTML = '<div class="error-msg">请选择一个活跃 Target。</div>';
+      return;
+    }
+    const platform = selectedTarget.platform;
+    const chatId = selectedTarget.chat_id;
+    const target = `${platform}:${chatId}`;
+    let permissions = [];
+    try {
+      permissions = JSON.parse(panel?.dataset.permissions || '[]');
+    } catch (_) { /* invalid metadata is treated as no declared permissions */ }
+    if (!Array.isArray(permissions)) permissions = [];
+    const targetActions = Array.isArray(selectedTarget.actions) ? selectedTarget.actions : [];
+    const historyQuery = new URLSearchParams({ platform, chat_id: chatId, limit: '1' });
+    const [sessionsResponse, historyResponse, sendProbeResponse] = await Promise.all([
+      debugRequest('/api/v1/sessions', testKey),
+      debugRequest(`/api/v1/messages?${historyQuery.toString()}`, testKey),
+      // send_message 先执行 Target 授权，再校验文本长度；超长文本会在授权成功后以 400 返回，绝不会触达适配器。
+      debugRequest('/api/v1/messages/send', testKey, {
+        method: 'POST',
+        body: { target, text: 'x'.repeat(16385), parse_mode: null },
+      }),
+    ]);
+    const visibleSessions = Array.isArray(sessionsResponse.data?.sessions)
+      && sessionsResponse.data.sessions.some(session => session.platform === platform && session.chat_id === chatId);
+    const historyPassed = historyResponse.ok;
+    const sendMessage = debugResponseMessage(sendProbeResponse);
+    const sendPassed = sendProbeResponse.status === 400
+      && (sendProbeResponse.data?.error?.code === 'MESSAGE_TOO_LONG' || /message too long/i.test(sendMessage));
+    const sessionPassed = sessionsResponse.ok && visibleSessions;
+    const sessionActualDetail = sessionsResponse.ok
+      ? (visibleSessions ? 'Target 出现在该 Key 可见的会话列表中。' : '请求成功，但返回列表不包含该 Target。')
+      : debugResponseMessage(sessionsResponse);
+    const sessionDetail = debugAuthorizationDetail(permissions, targetActions, 'sessionsread', 'sessions:read', sessionActualDetail, sessionPassed ? '' : sessionActualDetail);
+    const historyDetail = debugAuthorizationDetail(permissions, targetActions, 'messagesread', 'messages:read', '消息历史接口允许按该 Target 查询（即使当前没有消息也算通过）。', historyPassed ? '' : debugResponseMessage(historyResponse));
+    const sendDetail = debugAuthorizationDetail(permissions, targetActions, 'messagessend', 'messages:send', '服务端先通过 Target 授权，再命中超长文本校验；未发送真实消息。', sendPassed ? '' : sendMessage);
+    results.innerHTML = `
+      <div style="border:1px solid var(--border-muted);border-radius:6px;overflow:hidden">
+        <div style="padding:8px;background:var(--bg-tertiary);font-size:12px">验证 Target：<code>${escapeHtml(target)}</code></div>
+        ${debugResultRow('sessions:read', 'GET /api/v1/sessions', debugAuthorizationState(permissions, targetActions, 'sessionsread', 'sessions:read', sessionPassed), sessionsResponse, sessionDetail)}
+        ${debugResultRow('messages:read', 'GET /api/v1/messages', debugAuthorizationState(permissions, targetActions, 'messagesread', 'messages:read', historyPassed), historyResponse, historyDetail)}
+        ${debugResultRow('messages:send', 'POST /api/v1/messages/send', debugAuthorizationState(permissions, targetActions, 'messagessend', 'messages:send', sendPassed), sendProbeResponse, sendDetail)}
+      </div>`;
+    debugAddLog('system', `Target 验证完成：${target}`);
+  } finally {
+    endAction('debug-target-verify', button);
+  }
 }
 
 function debugConnect() {
@@ -1620,6 +2081,10 @@ function debugConnect() {
           statusEl.style.color = 'var(--danger)';
           debugAddLog('error', '认证失败: API Key 无效');
           debugDisconnect();
+          return;
+        }
+        if (msg.type === 'ping') {
+          debugWs.send(JSON.stringify({ type: 'pong' }));
           return;
         }
         // 业务事件
@@ -1966,7 +2431,8 @@ document.getElementById('login-form').addEventListener('submit', async (e) => {
   }
 });
 
-document.getElementById('logout-btn').addEventListener('click', () => {
+document.getElementById('logout-btn').addEventListener('click', async () => {
+  try { await api('/api/v1/admin/logout', { method: 'POST' }); } catch (_) { /* local logout still proceeds */ }
   clearKey();
   // Reset tab contents
   document.querySelectorAll('#ov-stats, #adapters-content, #sessions-content').forEach(e => e.innerHTML = '');

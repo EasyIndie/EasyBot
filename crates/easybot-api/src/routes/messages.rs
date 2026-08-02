@@ -10,6 +10,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use easybot_core::auth::IdempotencyReservation;
+use easybot_core::auth::target_actions;
 use easybot_core::storage::{
     MessageFilter, OutboundDelivery, OutboundDeliveryState, StoredMessage,
 };
@@ -31,6 +32,29 @@ const MAX_TARGET_LENGTH: usize = 320;
 const MAX_PLATFORM_LENGTH: usize = 32;
 const MAX_CHAT_ID_LENGTH: usize = 256;
 const MAX_REPLY_ID_LENGTH: usize = 256;
+
+async fn require_target_action(
+    state: &AppState,
+    actor: &easybot_core::auth::AuthInfo,
+    platform: &str,
+    chat_id: &str,
+    action: &str,
+) -> Result<(), ApiError> {
+    if easybot_core::auth::permissions::has_global_target_access(actor) {
+        return Ok(());
+    }
+    match state
+        .auth_manager
+        .target_authorized(&actor.subject_id, platform, chat_id, action)
+        .await
+    {
+        Ok(true) => Ok(()),
+        Ok(false) => Err(api_error(GatewayError::Forbidden(format!(
+            "subject is not authorized for {platform}:{chat_id}"
+        )))),
+        Err(error) => Err(api_error(GatewayError::StorageError(error))),
+    }
+}
 
 /// 发送消息请求
 #[derive(Deserialize, Serialize, ToSchema)]
@@ -231,6 +255,14 @@ pub async fn send_message(
             "Invalid target format. Expected 'platform:chatId'".to_string(),
         ))
     })?;
+    require_target_action(
+        &state,
+        &actor,
+        &platform,
+        &chat_id,
+        target_actions::MESSAGES_SEND,
+    )
+    .await?;
 
     // SECURITY: Validate message length
     if req.text.len() > MAX_MESSAGE_LENGTH {
@@ -518,16 +550,24 @@ pub async fn batch_send(
     }
     let mut unique_targets = std::collections::HashSet::with_capacity(req.targets.len());
     for target in &req.targets {
-        if parse_target(target).is_none() {
+        let Some((platform, chat_id)) = parse_target(target) else {
             return Err(api_error(GatewayError::InvalidRequest(
                 "Invalid target; expected bounded platform:chatId".into(),
             )));
-        }
+        };
         if !unique_targets.insert(target) {
             return Err(api_error(GatewayError::InvalidRequest(format!(
                 "duplicate target: {target}"
             ))));
         }
+        require_target_action(
+            &state,
+            &actor,
+            &platform,
+            &chat_id,
+            target_actions::MESSAGES_SEND,
+        )
+        .await?;
     }
 
     let idempotency_key = headers
@@ -844,6 +884,7 @@ pub struct DeleteMessageRequest {
 )]
 pub async fn edit_message(
     State(state): State<AppState>,
+    Extension(actor): Extension<easybot_core::auth::AuthInfo>,
     Path(message_id): Path<String>,
     Json(req): Json<EditMessageRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
@@ -852,9 +893,17 @@ pub async fn edit_message(
             "Invalid target format. Expected 'platform:chatId'".to_string(),
         ))
     })?;
+    require_target_action(
+        &state,
+        &actor,
+        &platform,
+        &chat_id,
+        target_actions::MESSAGES_SEND,
+    )
+    .await?;
 
     let params = EditMessageParams {
-        chat_id,
+        chat_id: chat_id.clone(),
         message_id: message_id.clone(),
         message: OutboundMessage {
             text: req.text,
@@ -875,6 +924,8 @@ pub async fn edit_message(
         "api",
         serde_json::json!({
             "action": "edit",
+            "platform": platform,
+            "chat_id": chat_id,
             "message_id": message_id,
             "result": {
                 "success": result.success,
@@ -911,6 +962,7 @@ pub async fn edit_message(
 )]
 pub async fn delete_message(
     State(state): State<AppState>,
+    Extension(actor): Extension<easybot_core::auth::AuthInfo>,
     Path(message_id): Path<String>,
     Json(req): Json<DeleteMessageRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
@@ -919,6 +971,14 @@ pub async fn delete_message(
             "Invalid target format. Expected 'platform:chatId'".to_string(),
         ))
     })?;
+    require_target_action(
+        &state,
+        &actor,
+        &platform,
+        &chat_id,
+        target_actions::MESSAGES_SEND,
+    )
+    .await?;
 
     let result = state
         .adapter_manager
@@ -932,6 +992,8 @@ pub async fn delete_message(
         "api",
         serde_json::json!({
             "action": "delete",
+            "platform": platform,
+            "chat_id": chat_id,
             "message_id": message_id,
             "result": {
                 "success": result.success,
@@ -970,12 +1032,38 @@ pub struct MessageHistoryResponse {
 )]
 pub async fn message_history(
     State(state): State<AppState>,
+    Extension(actor): Extension<easybot_core::auth::AuthInfo>,
     Query(params): Query<MessageHistoryParams>,
 ) -> Result<Json<MessageHistoryResponse>, ApiError> {
     let limit = params.limit.unwrap_or(50);
     if !(1..=200).contains(&limit) {
         return Err(api_error(GatewayError::InvalidRequest(
             "limit must be between 1 and 200".into(),
+        )));
+    }
+
+    let target = match (&params.platform, &params.chat_id, &params.session_key) {
+        (Some(platform), Some(chat_id), _) => Some((platform.clone(), chat_id.clone())),
+        (_, _, Some(key)) => key.split_once(':').map(|(platform, rest)| {
+            (
+                platform.to_string(),
+                rest.split(':').next().unwrap_or_default().to_string(),
+            )
+        }),
+        _ => None,
+    };
+    if let Some((platform, chat_id)) = target {
+        require_target_action(
+            &state,
+            &actor,
+            &platform,
+            &chat_id,
+            target_actions::MESSAGES_READ,
+        )
+        .await?;
+    } else if !easybot_core::auth::permissions::has_global_target_access(&actor) {
+        return Err(api_error(GatewayError::InvalidRequest(
+            "message history requires platform+chat_id or session_key".into(),
         )));
     }
 
@@ -992,7 +1080,7 @@ pub async fn message_history(
         .message_store
         .list_messages(&filter)
         .await
-        .unwrap_or_default();
+        .map_err(|error| api_error(GatewayError::StorageError(error.to_string())))?;
 
     let has_more = messages.len() > limit;
     let raw_payload_enabled = state.config.api.raw_payload_enabled;

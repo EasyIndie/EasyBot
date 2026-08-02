@@ -31,7 +31,7 @@ pub struct LoginResponse {
     pub key: String,
 }
 
-/// POST /admin/login — 密码登录，返回 API Key
+/// POST /admin/login — 密码登录，返回短期管理 Session
 ///
 /// SECURITY: Uses constant-time comparison to prevent timing side-channel attacks.
 /// Rate limiting is handled by the dedicated admin login rate limiter in server.rs.
@@ -41,7 +41,7 @@ pub struct LoginResponse {
     tag = "Admin",
     request_body = LoginRequest,
     responses(
-        (status = 200, description = "登录成功，返回 API Key", body = LoginResponse),
+        (status = 200, description = "登录成功，返回短期管理 Session", body = LoginResponse),
         (status = 400, description = "密码字段为空或超过 1024 字节", body = easybot_core::types::error::ApiErrorResponse),
         (status = 401, description = "密码错误或未配置"),
         (status = 413, description = "请求体超过 4 KiB"),
@@ -95,12 +95,8 @@ pub async fn admin_login(
             "failed to audit admin login: {error}"
         ))));
     }
-    if let Some(key) = &state.dev_api_key {
-        return Ok(Json(LoginResponse { key: key.clone() }));
-    }
-
-    // Production mode deliberately has no long-lived plaintext dev key.
-    // Issue a one-hour, memory-only session after every successful login.
+    // Management sessions are deliberately independent from every durable API
+    // key. This keeps the admin panel available while a bootstrap key rotates.
     let expires_at = chrono::Utc::now().timestamp_millis() + 60 * 60 * 1_000;
     let (session_id, key) = state
         .auth_manager
@@ -123,6 +119,41 @@ pub async fn admin_login(
         ))));
     }
     Ok(Json(LoginResponse { key }))
+}
+
+/// POST /api/v1/admin/logout — revoke the current memory-only management Session.
+#[utoipa::path(
+    post,
+    path = "/api/v1/admin/logout",
+    tag = "Admin",
+    responses(
+        (status = 200, description = "管理 Session 已注销", body = RevokeResponse),
+        (status = 400, description = "当前凭据不是管理 Session")
+    )
+)]
+pub async fn admin_logout(
+    State(state): State<AppState>,
+    Extension(actor): Extension<easybot_core::auth::AuthInfo>,
+) -> Result<Json<RevokeResponse>, ApiError> {
+    state
+        .auth_manager
+        .record_audit(
+            &actor.id,
+            "admin.session.revoked",
+            &format!("api_key:{}", actor.id),
+            serde_json::json!({}),
+        )
+        .await
+        .map_err(|error| ApiError(GatewayError::Internal(error)))?;
+    if !state.auth_manager.revoke_ephemeral_key(&actor.id).await {
+        return Err(ApiError(GatewayError::InvalidRequest(
+            "current credential is not an ephemeral management session".into(),
+        )));
+    }
+    Ok(Json(RevokeResponse {
+        success: true,
+        message: "管理 Session 已注销".into(),
+    }))
 }
 
 /// Constant-time byte comparison to prevent timing side-channel attacks.
@@ -152,7 +183,6 @@ pub struct ApiKeyResponse {
     pub last_used_at: Option<i64>,
     pub revoked: bool,
     pub permissions: Vec<String>,
-    pub event_filters: Vec<String>,
     pub requests_per_minute: Option<u32>,
 }
 
@@ -167,8 +197,6 @@ pub struct ApiKeyListQuery {
 pub struct CreateApiKeyRequest {
     pub name: String,
     pub permissions: Vec<String>,
-    #[serde(default)]
-    pub event_filters: Vec<String>,
     /// Optional per-subject quota. Rotated credentials share the same window.
     pub requests_per_minute: Option<u32>,
     /// UTC Unix timestamp in milliseconds. Commercial keys should expire.
@@ -183,10 +211,115 @@ pub struct CreateApiKeyResponse {
     pub key: String,
     pub name: String,
     pub permissions: Vec<String>,
-    pub event_filters: Vec<String>,
     pub requests_per_minute: Option<u32>,
     pub created_at: i64,
     pub expires_at: Option<i64>,
+}
+
+#[derive(Deserialize, ToSchema)]
+pub struct CreateTargetGrantRequest {
+    pub platform: String,
+    pub chat_id: String,
+    pub actions: Vec<String>,
+}
+
+#[derive(Serialize, ToSchema)]
+pub struct DeleteTargetGrantResponse {
+    pub deleted: bool,
+}
+
+#[utoipa::path(
+    get,
+    path = "/api/v1/subjects/{subject_id}/target-grants",
+    tag = "Target Grants",
+    params(("subject_id" = String, Path)),
+    responses((status = 200, body = [easybot_core::auth::TargetGrant]))
+)]
+pub async fn list_target_grants(
+    State(state): State<AppState>,
+    Path(subject_id): Path<String>,
+) -> Result<Json<Vec<easybot_core::auth::TargetGrant>>, ApiError> {
+    state
+        .auth_manager
+        .list_target_grants(&subject_id)
+        .await
+        .map(Json)
+        .map_err(|error| ApiError(GatewayError::StorageError(error)))
+}
+
+#[utoipa::path(
+    post,
+    path = "/api/v1/subjects/{subject_id}/target-grants",
+    tag = "Target Grants",
+    params(("subject_id" = String, Path)),
+    request_body = CreateTargetGrantRequest,
+    responses((status = 200, body = easybot_core::auth::TargetGrant))
+)]
+pub async fn create_target_grant(
+    State(state): State<AppState>,
+    Extension(actor): Extension<easybot_core::auth::AuthInfo>,
+    Path(subject_id): Path<String>,
+    Json(body): Json<CreateTargetGrantRequest>,
+) -> Result<Json<easybot_core::auth::TargetGrant>, ApiError> {
+    let grant = state
+        .auth_manager
+        .create_target_grant(
+            &subject_id,
+            &body.platform,
+            &body.chat_id,
+            body.actions,
+            &actor.subject_id,
+        )
+        .await
+        .map_err(|error| ApiError(GatewayError::InvalidRequest(error)))?;
+    state
+        .auth_manager
+        .record_audit(
+            &actor.id,
+            "target_grant.created",
+            &format!("target_grant:{}", grant.id),
+            serde_json::json!({
+                "subject_id": grant.subject_id,
+                "platform": grant.platform,
+                "chat_id": grant.chat_id,
+                "actions": grant.actions,
+            }),
+        )
+        .await
+        .map_err(|error| ApiError(GatewayError::Internal(error)))?;
+    Ok(Json(grant))
+}
+
+#[utoipa::path(
+    delete,
+    path = "/api/v1/subjects/{subject_id}/target-grants/{grant_id}",
+    tag = "Target Grants",
+    params(("subject_id" = String, Path), ("grant_id" = String, Path)),
+    responses((status = 200, body = DeleteTargetGrantResponse))
+)]
+pub async fn delete_target_grant(
+    State(state): State<AppState>,
+    Extension(actor): Extension<easybot_core::auth::AuthInfo>,
+    Path((subject_id, grant_id)): Path<(String, String)>,
+) -> Result<Json<DeleteTargetGrantResponse>, ApiError> {
+    let deleted = state
+        .auth_manager
+        .delete_target_grant(&subject_id, &grant_id)
+        .await
+        .map_err(|error| ApiError(GatewayError::StorageError(error)))?;
+    if deleted {
+        state
+            .auth_manager
+            .record_audit(
+                &actor.id,
+                "target_grant.deleted",
+                &format!("target_grant:{grant_id}"),
+                serde_json::json!({"subject_id": subject_id}),
+            )
+            .await
+            .map_err(|error| ApiError(GatewayError::Internal(error)))?;
+    }
+    Ok(Json(DeleteTargetGrantResponse { deleted }))
 }
 
 #[derive(Deserialize, ToSchema)]
@@ -417,7 +550,6 @@ pub async fn list_api_keys(
                 last_used_at: k.last_used_at,
                 revoked: k.revoked,
                 permissions: k.permissions,
-                event_filters: k.event_filters,
                 requests_per_minute: k.requests_per_minute,
             })
             .collect(),
@@ -452,6 +584,11 @@ pub async fn create_api_key(
             "name 不能超过 128 个字符".into(),
         )));
     }
+    if name == "admin-session" {
+        return Err(ApiError(GatewayError::InvalidRequest(
+            "API Key name is reserved for the internal management session".into(),
+        )));
+    }
     // Only allow alphanumeric, hyphens, underscores, and spaces
     if !name
         .chars()
@@ -463,18 +600,15 @@ pub async fn create_api_key(
     }
 
     // SECURITY: Validate permissions against allowlist
-    if body.permissions.len() > 32 || body.event_filters.len() > 64 {
+    if body.permissions.len() > 32 {
         return Err(ApiError(GatewayError::InvalidRequest(
-            "permissions/event_filters 数量超过上限".into(),
+            "permissions 数量超过上限".into(),
         )));
     }
     let unique_permissions: std::collections::HashSet<_> = body.permissions.iter().collect();
-    let unique_filters: std::collections::HashSet<_> = body.event_filters.iter().collect();
-    if unique_permissions.len() != body.permissions.len()
-        || unique_filters.len() != body.event_filters.len()
-    {
+    if unique_permissions.len() != body.permissions.len() {
         return Err(ApiError(GatewayError::InvalidRequest(
-            "permissions/event_filters 不得包含重复项".into(),
+            "permissions 不得包含重复项".into(),
         )));
     }
     let valid_permissions: Vec<&str> = vec![
@@ -533,13 +667,7 @@ pub async fn create_api_key(
     let expires_at = body.expires_at;
     let (id, raw_key) = state
         .auth_manager
-        .create_key_with_quota(
-            &name,
-            body.permissions,
-            expires_at,
-            body.event_filters,
-            quota,
-        )
+        .create_key_with_quota(&name, body.permissions, expires_at, quota)
         .await
         .map_err(|e| ApiError(GatewayError::InvalidRequest(e)))?;
 
@@ -572,7 +700,6 @@ pub async fn create_api_key(
         key: raw_key,
         name: info.name,
         permissions: info.permissions,
-        event_filters: info.event_filters,
         requests_per_minute: info.requests_per_minute,
         created_at: info.created_at,
         expires_at: info.expires_at,
@@ -594,7 +721,7 @@ fn validate_key_expiry(expires_at: Option<i64>) -> Result<(), ApiError> {
     Ok(())
 }
 
-/// Replace a key while preserving its permissions, filters and quota.
+/// Replace a key while preserving its subject, permissions and quota.
 #[utoipa::path(
     post,
     path = "/api/v1/api-keys/{id}/rotate",
@@ -687,12 +814,11 @@ pub async fn rotate_api_key(
                 .clear_rotation_transition(&id, &replacement_id)
                 .await;
             return Err(ApiError(GatewayError::Internal(format!(
-                "failed to revoke original API Key; replacement was revoked: {error}"
+                "failed to revoke original API Key; rotation requires reconciliation: {error}"
             ))));
         }
     };
     if !original_revoked {
-        // Do not return an active replacement when the old key could not be revoked.
         let _ = state.auth_manager.revoke_key(&replacement_id).await;
         let _ = state
             .auth_manager
@@ -739,7 +865,6 @@ pub async fn rotate_api_key(
         key: raw_key,
         name: replacement.name,
         permissions: replacement.permissions,
-        event_filters: replacement.event_filters,
         requests_per_minute: replacement.requests_per_minute,
         created_at: replacement.created_at,
         expires_at: replacement.expires_at,

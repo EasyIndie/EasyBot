@@ -163,9 +163,13 @@ impl Modify for SecurityAddon {
         routes::admin::list_api_key_types,
         routes::admin::list_audit_events,
         routes::admin::list_usage,
+        routes::admin::list_target_grants,
+        routes::admin::create_target_grant,
+        routes::admin::delete_target_grant,
         routes::billing::create_billing_event,
         routes::billing::list_billing_events,
         routes::admin::admin_login,
+        routes::admin::admin_logout,
         // System
         routes::system::system_info,
         // Version update check
@@ -190,6 +194,9 @@ impl Modify for SecurityAddon {
             routes::admin::UsageQuery,
             routes::admin::UsageResponse,
             easybot_core::auth::UsageRecord,
+            easybot_core::auth::TargetGrant,
+            routes::admin::CreateTargetGrantRequest,
+            routes::admin::DeleteTargetGrantResponse,
             routes::billing::CreateBillingEventRequest,
             routes::billing::BillingEventWriteResponse,
             routes::billing::BillingEventQuery,

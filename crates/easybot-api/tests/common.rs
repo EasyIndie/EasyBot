@@ -42,7 +42,21 @@ pub async fn test_app_state() -> (AppState, String) {
     // API Key 管理
     let auth_manager = Arc::new(ApiKeyManager::new(Some(pool)));
     let (_, raw_key) = auth_manager
-        .create_key("test-key", vec!["*".to_string()], None, vec![])
+        .create_key("test-key", vec!["*".to_string()], None)
+        .await
+        .unwrap();
+    let auth = auth_manager.authenticate(&raw_key).await.unwrap();
+    auth_manager
+        .create_target_grant(
+            &auth.subject_id,
+            "*",
+            "*",
+            easybot_core::auth::target_actions::ALL
+                .iter()
+                .map(|action| (*action).to_string())
+                .collect(),
+            "test",
+        )
         .await
         .unwrap();
 
@@ -83,7 +97,6 @@ pub async fn test_app_state() -> (AppState, String) {
         config_manager,
         None, // 无 metrics
         Arc::new(easybot_api::log_collector::LogCollector::new(5000)),
-        Some(raw_key.clone()),
         "easybot".to_string(),
     );
 
