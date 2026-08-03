@@ -324,12 +324,12 @@ jobs:
           upload-release-assets: false
 
       - name: Attest binary build provenance
-        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4
         with:
           subject-path: ${{ env.archive }}
 
       - name: Attest binary SBOM
-        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4
         with:
           subject-path: ${{ env.archive }}
           sbom-path: easybot-${{ matrix.target }}.spdx.json
@@ -522,14 +522,14 @@ jobs:
           upload-release-assets: false
 
       - name: Attest container build provenance
-        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4
         with:
           subject-name: ${{ env.REGISTRY }}/${{ steps.docker-prep.outputs.lower-repo }}
           subject-digest: ${{ steps.build.outputs.digest }}
           push-to-registry: true
 
       - name: Attest container SBOM
-        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4
         with:
           subject-name: ${{ env.REGISTRY }}/${{ steps.docker-prep.outputs.lower-repo }}
           subject-digest: ${{ steps.build.outputs.digest }}
