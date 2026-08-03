@@ -1824,9 +1824,9 @@ dependencies = [
 
 [[package]]
 name = "larksuite-oapi-sdk-rs"
-version = "0.3.1"
+version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4917aface001cc71478d7f3629f5ec4e0da9fbbaa4de9515d414fb20729a81a3"
+checksum = "4722055ba1186dce6bb67ec3e28457463fab77b55e3b5e21db7857f70bbe209b"
 dependencies = [
  "aes",
  "aioduct",
