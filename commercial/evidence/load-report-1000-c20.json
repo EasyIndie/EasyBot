@@ -1,0 +1,1 @@
+{"timestamp":"2026-08-03T14:21:34Z","url":"http://127.0.0.1:8080/api/v1/adapters","requests":1000,"concurrency":20,"success":1000,"errors":0,"error_rate_percent":0.0000,"p95_ms":977.267,"rps":33.33,"elapsed_seconds":30,"passed":true}

@@ -1,0 +1,68 @@
+G1 ROLLBACK DRILL REPORT
+========================
+Date: 2026-08-03
+Candidate: v0.0.28 (current image: ghcr.io/easyindie/easybot@sha256:05b6a5e0...b068)
+Rollback target: v0.0.27 (previous release, sha256:4d6579ab...452e5)
+
+SCENARIO
+--------
+Swap the production container image from v0.0.28 back to the previous release
+v0.0.27 against the CURRENT database (schema v2 on both PostgreSQL and the
+SQLite auth.db) and verify the rolled-back binary starts and reads the data.
+
+RESULT: ROLLBACK TO PRE-G0 VERSION IS INTENTIONALLY UNSUPPORTED
+--------------------------------------------------------------
+v0.0.27 refuses to start against the v0.0.28 schema:
+
+  Error: PostgreSQL migration failed: Database error: Unversioned existing
+  PostgreSQL schema is not supported; reset the database before starting
+
+ROOT CAUSE (confirmed)
+----------------------
+v0.0.28 removed backward compatibility by design (service not yet publicly
+launched; no compatibility commitment to pre-G0 candidates). Concretely:
+
+- _schema_version.version column is INTEGER.
+- v0.0.27 read query:  SELECT COALESCE(MAX(version), 0)      -> type integer
+- v0.0.28 read query:  SELECT COALESCE(MAX(version), 0)::BIGINT -> type bigint
+
+v0.0.27's query returns integer; its decoder cannot map it, so
+get_current_version_pg() silently falls back to 0, and the migration runner
+treats the versioned schema as an unversioned legacy schema and refuses to
+start. The fix (::BIGINT) landed in commit 71af2e0 on the v0.0.28 line.
+
+This matches the documented G0 decision: "0.0.28 是首个计划进入线上验收的
+基线；此前候选从未作为正式线上版本，不承诺兼容其本地或测试数据；
+G1 从 0.0.28 的干净 schema bootstrap 开始。"
+
+SUPPORTED ROLLBACK PATHS FOR v0.0.28
+------------------------------------
+1. Paired backup restore (VALIDATED in the backup/restore drill): restore the
+   last good paired batch (PostgreSQL dump + auth.db archive) to return to a
+   known state.
+2. Versioned migration rollback within v0.0.28 (rollback_to / rollback_to_pg):
+   roll the schema back to an earlier versioned migration and re-apply.
+
+NOTES
+-----
+- A binary rollback to any pre-G0 release (v0.0.27 and older) is not a
+  supported path. The rollback boundary for G1 operations is: "current
+  v0.0.28 state <-> paired-backup restore", plus in-version schema rollback.
+- G1 exit evidence item "上一镜像回滚" should be interpreted as: demonstrate
+  recovery from a bad deploy via paired-backup restore (already validated),
+  not as binary rollback to a pre-G0 release.
+
+DECISION (2026-08-03) — ROLLBACK BOUNDARY
+-----------------------------------------
+Binary rollback verification is DEFERRED to the next release (v0.0.29). The
+first online baseline (v0.0.28) has no released post-G0 "previous version",
+so the meaningful binary-rollback test is between two consecutive post-G0
+releases. v0.0.29 MUST verify: rollback from the newer release to v0.0.28
+(and v0.0.28 -> v0.0.29) against the versioned migration engine, proving the
+database stays compatible with both binaries.
+
+Until then, the rollback boundary for v0.0.28 operations is:
+  1. Paired backup restore (validated) — return to a known good state.
+  2. Versioned migration rollback (rollback_to / rollback_to_pg) — roll the
+     schema within v0.0.28's own migrations.
+No binary rollback to pre-G0 releases (v0.0.27 and older).
