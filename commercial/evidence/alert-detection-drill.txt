@@ -1,0 +1,61 @@
+G1 ALERT DETECTION DRILL REPORT
+===============================
+Date: 2026-08-03
+Candidate: v0.0.28 production stack (easybot-g1)
+
+SCOPE
+-----
+Validate that Prometheus actually scrapes the production app, exposes the
+commercial integrity metrics, and that the alert rules in easybot-alerts.yml
+fire when a fault is injected. Human delivery (email/paging) is out of scope
+locally (needs Alertmanager + receiver) — recorded as a G1 blocker.
+
+SETUP
+-----
+- Standalone Prometheus (pinned prom/prometheus:v2.55.0@sha256:378f4e03...)
+  on the compose frontend network, scraping
+  http://easybot-g1-easybot-1:8080/api/v1/metrics with a metricsread-only
+  API key (Bearer). evaluation_interval 15s. Rules from easybot-alerts.yml.
+
+BASELINE (before fault)
+-----------------------
+- Target health: up, lastError empty.
+- audit_chain_integrity = 1, ledger_integrity{ledger="usage"} = 1,
+  ledger_integrity{ledger="billing_events"} = 1.
+- All rules inactive, 0 active alerts.
+
+FAULT INJECTION: AUDIT CHAIN TAMPERING
+--------------------------------------
+Method (supported-path): stop the app, edit one audit_events row's action in
+the SQLite auth.db, restart the app. (See "finding" below for why the app must
+be stopped before an external DB write.)
+
+Detection result:
+- audit_chain_integrity dropped to 0 (recomputed hash chain no longer matches
+  the anchor head_hash in audit_chain_state).
+- Prometheus rule "EasyBotAuditChainInvalid" (expr:
+  audit_chain_integrity{job="easybot"} == 0, for: 1m, severity: critical)
+  transitioned to FIRING at 2026-08-03T15:32:31Z.
+- Other ledgers remained intact (ledger_integrity still 1) — targeted fault,
+  only the audit chain was detected as invalid.
+
+RECOVERY
+--------
+Reverted the tampered row (app stopped), restarted, integrity returned to 1,
+the alert cleared.
+
+RESULT: PASS (detection + alert firing validated end-to-end)
+
+FINDING (operational)
+---------------------
+Writing to a live database file from outside the running app breaks the app's
+open connection pool ("file is not a database", SQLITE_NOTADB) because the
+WAL/lock state is not coordinated across the host/container boundary on Docker
+Desktop. Production guidance: never write to the DB directly; use the app or
+the paired backup/restore tooling. This drill uses stop -> edit -> start.
+
+BLOCKER (delivery)
+------------------
+Alert FIRING was validated in Prometheus. Delivery to a human operator
+(Alertmanager -> email/webhook/paging) requires an Alertmanager + receiver
+configuration, which is a G1 infrastructure task not executable from the repo.
