@@ -40,7 +40,7 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: ./.github/actions/setup-rust
         with:
           components: clippy, rustfmt
@@ -58,7 +58,7 @@ jobs:
         run: cargo build -p mock-adapter --locked
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@43aecc8d72668fbcfe75c31400bc4f890f1c5853 # v2
+        uses: taiki-e/install-action@6a1bd70eaac3c8bdf093356838d7ee09fda951cf # v2
         with:
           tool: cargo-nextest
 
@@ -79,7 +79,7 @@ jobs:
             protoc: "auto"
       fail-fast: false
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: ./.github/actions/setup-rust
         with:
           install-protoc: ${{ matrix.protoc }}
@@ -93,7 +93,7 @@ jobs:
   disaster-recovery:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: SQLite backup, tamper detection and restore
         run: bash scripts/test-backup.sh
 
@@ -108,13 +108,13 @@ jobs:
     runs-on: ubuntu-latest
     continue-on-error: true
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: ./.github/actions/setup-rust
         with:
           install-protoc: auto
 
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@43aecc8d72668fbcfe75c31400bc4f890f1c5853 # v2
+        uses: taiki-e/install-action@6a1bd70eaac3c8bdf093356838d7ee09fda951cf # v2
         with:
           tool: cargo-llvm-cov
 

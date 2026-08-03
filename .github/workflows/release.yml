@@ -29,7 +29,7 @@ jobs:
       version: ${{ steps.version.outputs.version }}
 
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.event_name == 'push' && github.ref || inputs.tag }}
           fetch-depth: 0
@@ -117,7 +117,7 @@ jobs:
     needs: prepare-release
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.event_name == 'push' && github.ref || inputs.tag }}
           fetch-depth: 0
@@ -127,7 +127,7 @@ jobs:
           components: clippy, rustfmt
 
       - name: Install cargo-deny
-        uses: taiki-e/install-action@43aecc8d72668fbcfe75c31400bc4f890f1c5853 # v2
+        uses: taiki-e/install-action@6a1bd70eaac3c8bdf093356838d7ee09fda951cf # v2
         with:
           tool: cargo-deny
 
@@ -198,7 +198,7 @@ jobs:
       attestations: write
 
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.event_name == 'push' && github.ref || inputs.tag }}
 
@@ -324,12 +324,12 @@ jobs:
           upload-release-assets: false
 
       - name: Attest binary build provenance
-        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4
         with:
           subject-path: ${{ env.archive }}
 
       - name: Attest binary SBOM
-        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4
         with:
           subject-path: ${{ env.archive }}
           sbom-path: easybot-${{ matrix.target }}.spdx.json
@@ -362,7 +362,7 @@ jobs:
       contents: write
 
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.event_name == 'push' && github.ref || inputs.tag }}
 
@@ -439,7 +439,7 @@ jobs:
           path: .
 
       - name: Create Release
-        uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b # v3
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3
         with:
           tag_name: v${{ needs.prepare-release.outputs.version }}
           name: EasyBot v${{ needs.prepare-release.outputs.version }}
@@ -462,7 +462,7 @@ jobs:
       attestations: write
 
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.event_name == 'push' && github.ref || inputs.tag }}
 
@@ -522,14 +522,14 @@ jobs:
           upload-release-assets: false
 
       - name: Attest container build provenance
-        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4
         with:
           subject-name: ${{ env.REGISTRY }}/${{ steps.docker-prep.outputs.lower-repo }}
           subject-digest: ${{ steps.build.outputs.digest }}
           push-to-registry: true
 
       - name: Attest container SBOM
-        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4
         with:
           subject-name: ${{ env.REGISTRY }}/${{ steps.docker-prep.outputs.lower-repo }}
           subject-digest: ${{ steps.build.outputs.digest }}
