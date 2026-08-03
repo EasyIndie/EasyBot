@@ -41,10 +41,16 @@ grep -Fq 'wget, -q, -O, /dev/null, http://127.0.0.1:8080/api/v1/live' deploy/doc
 
 for variable in EASYBOT_ADMIN_PASSWORD DATABASE_URL TELEGRAM_BOT_TOKEN \
   DISCORD_BOT_TOKEN FEISHU_APP_ID FEISHU_APP_SECRET QQ_APP_ID QQ_CLIENT_SECRET; do
-  grep -Fq "${variable}_FILE=" docker-compose.yml || {
-    echo "docker-compose.yml does not expose ${variable}_FILE" >&2
-    exit 1
-  }
+  for optional_secret in "$variable" "${variable}_FILE"; do
+    grep -Eq "^[[:space:]]+- ${optional_secret}$" docker-compose.yml || {
+      echo "docker-compose.yml must pass through ${optional_secret} only when set" >&2
+      exit 1
+    }
+    if grep -Eq "^[[:space:]]+- ${optional_secret}=" docker-compose.yml; then
+      echo "docker-compose.yml must not inject an empty ${optional_secret}" >&2
+      exit 1
+    fi
+  done
 done
 
 while IFS= read -r image; do
@@ -70,10 +76,24 @@ for expected_proxy_setting in \
 done
 grep -Fq 'production-tls' docker-compose.yml
 grep -Fq 'EASYBOT_DOMAIN=' docker-compose.yml
+grep -Fq 'pids: 512' docker-compose.yml || {
+  echo "docker-compose.yml must align the inherited PID limit with production" >&2
+  exit 1
+}
+for compose_file in docker-compose.yml deploy/docker-compose.production.yml; do
+  grep -Fq '/tmp:size=16M' "$compose_file" || {
+    echo "$compose_file must provide writable tmpfs for Caddy temporary files" >&2
+    exit 1
+  }
+done
 grep -Fq 'image: ${EASYBOT_IMAGE:?' deploy/docker-compose.production.yml
 grep -Fq '${EASYBOT_DATA_DIR:?' deploy/docker-compose.production.yml
 grep -Fq './gateway.production.local.yaml:/var/lib/easybot/gateway.local.yaml:ro' deploy/docker-compose.production.yml
 grep -Fq 'host: "0.0.0.0"' deploy/gateway.production.local.yaml
+[ "$(grep -Fc 'security_opt: !override [no-new-privileges:true]' deploy/docker-compose.production.yml)" = 2 ] || {
+  echo "production compose must replace inherited security_opt lists" >&2
+  exit 1
+}
 if grep -Fq 'build:' deploy/docker-compose.production.yml; then
   echo "production compose must never build an unverified local image" >&2
   exit 1
@@ -89,10 +109,12 @@ for writable_runtime_dir in \
   '/var/lib/easybot/plugins:size=16M' \
   '/var/lib/easybot/certs:size=16M' \
   '/var/lib/easybot/secrets:size=16M'; do
-  grep -Fq "$writable_runtime_dir" deploy/docker-compose.production.yml || {
-    echo "production compose must provide writable tmpfs for: $writable_runtime_dir" >&2
-    exit 1
-  }
+  for compose_file in docker-compose.yml deploy/docker-compose.production.yml; do
+    grep -Fq "$writable_runtime_dir" "$compose_file" || {
+      echo "$compose_file must provide writable tmpfs for: $writable_runtime_dir" >&2
+      exit 1
+    }
+  done
 done
 
 echo "Container healthcheck contract passed"

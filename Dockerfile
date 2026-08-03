@@ -2,17 +2,17 @@
 # EasyBot — Multi-stage Docker Build
 FROM rust:slim-bookworm@sha256:cfbb0e0ef7a73e736386bfa346f1cb0503c6d162969dc9426fb37834f3f64c25 AS builder
 
-# Cargo retry settings for transient network errors (e.g. crates.io HTTP/2 resets)
-ENV CARGO_NET_RETRY=5 \
-    CARGO_HTTP_TIMEOUT=120 \
-    CARGO_HTTP_MULTIPLEXING=false
-
 WORKDIR /app
-RUN apt-get update && apt-get install -y \
+RUN apt-get -o Acquire::Retries=5 update && apt-get -o Acquire::Retries=5 install -y \
     pkg-config \
     curl \
     protobuf-compiler \
     && rm -rf /var/lib/apt/lists/*
+
+# Cargo retry settings for transient network errors (e.g. crates.io HTTP/2 resets).
+ENV CARGO_NET_RETRY=5 \
+    CARGO_HTTP_TIMEOUT=120 \
+    CARGO_HTTP_MULTIPLEXING=false
 COPY Cargo.toml Cargo.lock ./
 COPY crates/ ./crates/
 COPY bin/ ./bin/

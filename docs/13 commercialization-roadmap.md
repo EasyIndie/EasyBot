@@ -1,6 +1,6 @@
 # EasyBot 后续商用化推进路线图
 
-> 基线：`codex/opt`，2026-07-30
+> 基线：`codex/opt`，2026-08-02
 
 ## 1. 当前判断
 
@@ -32,7 +32,7 @@ EasyBot 的主要商用工程底座已经存在：
 
    ```bash
    bash scripts/verify.sh --locked
-   scripts/release-preflight.sh 0.0.27
+   scripts/release-preflight.sh 0.0.28
    git diff --check
    ```
 

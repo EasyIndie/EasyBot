@@ -1,6 +1,5 @@
 ---
 source: crates/easybot-api/tests/routes.rs
-assertion_line: 86
 expression: json
 ---
 {
@@ -14,5 +13,5 @@ expression: json
   },
   "status": "degraded",
   "uptime": 0,
-  "version": "0.0.27"
+  "version": "0.0.28"
 }
