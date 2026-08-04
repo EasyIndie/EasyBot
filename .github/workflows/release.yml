@@ -438,6 +438,9 @@ jobs:
           name: easybot-version
           path: .
 
+      - name: Build deploy kit archive
+        run: bash scripts/build-deploy-kit.sh "${{ needs.prepare-release.outputs.version }}"
+
       - name: Create Release
         uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3
         with:
@@ -450,6 +453,7 @@ jobs:
             easybot-*/easybot-*
             checksums.txt
             easybot-version.json
+            easybot-deploy-kit-*.tar.gz
 
   # ── Build and push Docker image ────────────────────
   docker:

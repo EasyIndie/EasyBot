@@ -49,7 +49,9 @@ done
 [[ "$postgres_name" == *.dump ]] || { echo "manifest PostgreSQL archive has wrong extension" >&2; exit 65; }
 [[ "$auth_name" == *.sqlite3 ]] || { echo "manifest auth archive has wrong extension" >&2; exit 65; }
 
-ROOT=$(git rev-parse --show-toplevel)
+# Resolve the repo/kit root relative to this script so the tooling also works
+# from the standalone deploy kit (which has no git checkout).
+ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 POSTGRES_ARCHIVE="$BATCH/$postgres_name"
 AUTH_ARCHIVE="$BATCH/$auth_name"
 "$ROOT/scripts/easybot-backup.sh" verify "$POSTGRES_ARCHIVE" >/dev/null

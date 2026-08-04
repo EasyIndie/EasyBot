@@ -20,7 +20,9 @@ sha256_file() {
   fi
 }
 
-ROOT=$(git rev-parse --show-toplevel)
+# Resolve the repo/kit root relative to this script so the tooling also works
+# from the standalone deploy kit (which has no git checkout).
+ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 mkdir -p "$BACKUP_ROOT"
 timestamp=$(date -u '+%Y%m%dT%H%M%SZ')
 partial="$BACKUP_ROOT/.easybot-$timestamp.partial"

@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **部署工具包 Release 资产** — 新增 `easybot-deploy-kit-<version>.tar.gz` 随 Release 发布，
+  下载解压即可部署，无需克隆源码。内含部署总说明（`deploy-kit/README.md`）、一键部署脚本
+  （`deploy.sh`）、Docker 快速开始 / 生产加固 Compose、配置模板（`gateway.yaml` / `.env.example`）
+  与生产运维脚本（`production-up/backup/restore/retention`、`verify-container-image`、
+  `easybot-backup`）。组装脚本 `scripts/build-deploy-kit.sh` 在 release 工作流 `create-release`
+  job 中生成并上传。
+- **生产脚本独立部署** — `production-up.sh` / `production-backup.sh` / `production-restore.sh`
+  的根路径解析从 `git rev-parse` 改为脚本目录相对解析（`BASH_SOURCE`），使部署工具包在无 git
+  检出时也能独立运行，同时保持仓库内行为不变。
+
 ## [0.0.29] - 2026-08-04
 
 ### Fixed

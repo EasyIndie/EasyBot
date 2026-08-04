@@ -34,7 +34,9 @@ validate_owner_only_path "$EASYBOT_SECRETS_DIR/admin_password" secret
 validate_owner_only_path "$EASYBOT_SECRETS_DIR/database_url" secret
 validate_owner_only_path "$EASYBOT_DATA_DIR" directory
 
-ROOT=$(git rev-parse --show-toplevel)
+# Resolve the repo/kit root relative to this script so the tooling also works
+# from the standalone deploy kit (which has no git checkout).
+ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 "$ROOT/scripts/verify-container-image.sh" "$EASYBOT_IMAGE" "$GITHUB_REPOSITORY"
 docker compose -f "$ROOT/deploy/docker-compose.production.yml" config --quiet
 [ "$MODE" = --check ] && { echo "Production deployment preflight passed"; exit 0; }
