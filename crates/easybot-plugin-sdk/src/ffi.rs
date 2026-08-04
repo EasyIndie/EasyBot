@@ -101,11 +101,7 @@ mod tests {
 
         async fn connect(&mut self) -> Result<ConnectResult, GatewayError> {
             self.state = AdapterState::Connected;
-            Ok(ConnectResult {
-                ok: true,
-                error: None,
-                bot_info: None,
-            })
+            Ok(ConnectResult::ok(None))
         }
 
         async fn disconnect(&mut self) -> Result<(), GatewayError> {

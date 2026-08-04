@@ -84,12 +84,50 @@ pub struct HealthReport {
     pub uptime: Option<u64>,
 }
 
+/// 连接失败分类：适配器在 `connect()` 内已能判断时填写，
+/// 穿透重连路径以避免字符串启发式把网络层失败误判为永久凭据错误。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConnectErrorKind {
+    /// 网络/临时性失败——重连应重试（退避），不得停用适配器。
+    Transient,
+    /// 凭据被拒（401/403/业务拒绝）——不应重试。
+    Permanent,
+}
+
 /// 连接结果
 #[derive(Debug)]
 pub struct ConnectResult {
     pub ok: bool,
     pub error: Option<String>,
     pub bot_info: Option<BotInfo>,
+    /// 连接失败的分类信号（仅当适配器能确定时填写；`None` = 未知，回退启发式）。
+    pub error_kind: Option<ConnectErrorKind>,
+}
+
+impl ConnectResult {
+    /// 构造成功结果。
+    pub fn ok(bot_info: Option<BotInfo>) -> Self {
+        Self {
+            ok: true,
+            error: None,
+            bot_info,
+            error_kind: None,
+        }
+    }
+
+    /// 构造失败结果，并显式标记失败分类。
+    ///
+    /// - `Some(ConnectErrorKind::Transient)`：网络/临时失败，健康监控会退避重试。
+    /// - `Some(ConnectErrorKind::Permanent)`：凭据被拒，健康监控会停用适配器（不再重试）。
+    /// - `None`：无法确定，回退到 `classify_error` 启发式。
+    pub fn failed(error: String, error_kind: Option<ConnectErrorKind>) -> Self {
+        Self {
+            ok: false,
+            error: Some(error),
+            bot_info: None,
+            error_kind,
+        }
+    }
 }
 
 /// 初始化结果
@@ -373,6 +411,15 @@ pub trait PlatformAdapter: Send + Sync {
     /// - `Err(e)`：尝试重启但失败，健康监测器应根据错误类型决定下一步
     ///
     /// 默认返回 `Ok(false)`——有内置重试循环且心跳在错误时也更新的适配器无需覆盖。
+    ///
+    /// # 新适配器错误分类约定
+    /// 健康监测器按 [`GatewayError`] 变体结构化分类（`AuthFailed/Unauthorized/Forbidden`
+    /// → 永久，`Transient/RequestTimeout/RateLimited` → 瞬态），启发式只兜底。因此：
+    /// - **reqwest `send()` / 连接层失败必须用 [`GatewayError::Transient`] 包裹**，
+    ///   不要压成 `Internal(String)`——否则瞬态网络错误可能被启发式误判为永久，
+    ///   导致适配器被永久停用。
+    /// - `connect()` 失败用 [`ConnectResult::failed`] 标记分类（网络 → `Transient`，
+    ///   凭据被拒 → `Permanent`，未知 → `None` 回退启发式）。
     async fn retry_transport(&mut self) -> Result<bool, GatewayError> {
         Ok(false)
     }

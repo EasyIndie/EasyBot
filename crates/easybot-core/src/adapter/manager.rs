@@ -37,6 +37,11 @@ pub struct AdapterManager {
     /// successful `start()` call so the health monitor can reconnect without
     /// external input.  Configs contain tokens — kept in memory only.
     configs: RwLock<HashMap<String, AdapterConfig>>,
+    /// Last connect-failure classification per platform, written by the
+    /// background connect task before the status cache is updated.  Read by
+    /// `reconnect_adapter` so a transient connect failure is not misclassified
+    /// as permanent from the flattened status string.  Cleared on success/stop.
+    last_connect_error_kind: RwLock<HashMap<String, ConnectErrorKind>>,
     /// Cancel sender for the health monitor background task.
     monitor_cancel_tx: RwLock<Option<broadcast::Sender<()>>>,
     /// Weak self-reference for background tasks.  Initialised by calling
@@ -80,10 +85,73 @@ enum ReconnectFailure {
     Permanent(String),
 }
 
-/// Classify a [`GatewayError`] into [`ReconnectFailure`] based on error message heuristics.
+/// Classify a [`GatewayError`] into [`ReconnectFailure`] to decide the retry strategy.
+///
+/// Structured-first: the `GatewayError` variant itself carries the classification
+/// (auth rejections are permanent; transient/network/timeout/rate-limit are retryable).
+/// Only errors without a structured signal fall back to message heuristics.
 fn classify_error(error: &GatewayError) -> ReconnectFailure {
+    match error {
+        // Structured permanent signals: credentials are bad, retrying won't help.
+        GatewayError::AuthFailed(msg)
+        | GatewayError::Unauthorized(msg)
+        | GatewayError::Forbidden(msg) => {
+            return ReconnectFailure::Permanent(msg.clone());
+        }
+        // Structured transient signals: network/temporary — safe to retry.
+        GatewayError::Transient(msg) | GatewayError::RequestTimeout(msg) => {
+            return ReconnectFailure::Transient(msg.clone());
+        }
+        GatewayError::RateLimited { .. } => {
+            return ReconnectFailure::Transient(error.to_string());
+        }
+        _ => {}
+    }
+    classify_error_heuristic(error)
+}
+
+/// Fallback classification from the error message text.
+///
+/// Network/transient signals are checked FIRST so a transient failure wins over
+/// permanent-looking keywords — e.g. the QQ connect error
+/// `"QQ auth failed (getAppAccessToken): ... connection timed out"` contains both
+/// `"auth failed"` and `"timeout"`; the underlying cause is a network outage, so it
+/// must be classified Transient.
+fn classify_error_heuristic(error: &GatewayError) -> ReconnectFailure {
     let msg = error.to_string().to_lowercase();
-    // Auth-related errors → permanent (credentials are bad, retrying won't help)
+
+    // Network-related errors → transient (will recover when network is back).
+    // Covers reqwest/hyper error vocabulary and rate-limit indicators.
+    if msg.contains("dns")
+        || msg.contains("resolve")
+        || msg.contains("timeout")
+        || msg.contains("timed out")
+        || msg.contains("connection refused")
+        || msg.contains("connection reset")
+        || msg.contains("reset by peer")
+        || msg.contains("error sending request")
+        || msg.contains("io error")
+        || msg.contains("send failed")
+        || msg.contains("request failed")
+        || msg.contains("read failed")
+        || msg.contains("write failed")
+        || msg.contains("tcp")
+        || msg.contains("connect")
+        || msg.contains("unreachable")
+        || msg.contains("route")
+        || msg.contains("peer")
+        || msg.contains("closed")
+        || msg.contains("network")
+        || msg.contains("refused")
+        || msg.contains("rate limit")
+        || msg.contains("rate limited")
+        || msg.contains("429")
+        || msg.contains("too many requests")
+    {
+        return ReconnectFailure::Transient(error.to_string());
+    }
+
+    // Auth-related errors → permanent (credentials are bad, retrying won't help).
     if msg.contains("unauthorized")
         || msg.contains(" 401 ")
         || msg.contains(" 403 ")
@@ -96,24 +164,22 @@ fn classify_error(error: &GatewayError) -> ReconnectFailure {
     {
         return ReconnectFailure::Permanent(error.to_string());
     }
-    // Network-related errors → transient (will recover when network is back)
-    if msg.contains("dns")
-        || msg.contains("connection refused")
-        || msg.contains("timeout")
-        || msg.contains("network")
-        || msg.contains("tcp connect")
-        || msg.contains("resolve")
-        || msg.contains("unreachable")
-        || msg.contains("poll request failed")
-        || msg.contains("connect failed")
-        || msg.contains("fail to connect")
-        || msg.contains("failed to connect")
-    {
-        return ReconnectFailure::Transient(error.to_string());
-    }
+
     // Default: treat unknown errors as transient to avoid permanently
     // disabling an adapter from a one-off unexpected error.
     ReconnectFailure::Transient(error.to_string())
+}
+
+/// Whether a [`GatewayError`] carries a structured transient signal
+/// (network/temporary/timeout/rate-limit). Used to preserve the classification
+/// across the connect() failure path without relying on message wording.
+pub(crate) fn is_transient_error(error: &GatewayError) -> bool {
+    matches!(
+        error,
+        GatewayError::Transient(_)
+            | GatewayError::RequestTimeout(_)
+            | GatewayError::RateLimited { .. }
+    )
 }
 
 /// Exponential backoff: 5s → 10s → 30s → 60s → 120s, capped at 300s.
@@ -139,6 +205,7 @@ impl AdapterManager {
             statuses: RwLock::new(HashMap::new()),
             event_bus: None,
             configs: RwLock::new(HashMap::new()),
+            last_connect_error_kind: RwLock::new(HashMap::new()),
             monitor_cancel_tx: RwLock::new(None),
             self_weak: RwLock::new(None),
         }
@@ -302,6 +369,13 @@ impl AdapterManager {
 
             match connect_result {
                 Ok(cr) if cr.ok => {
+                    // 清除旧的失败分类（连接成功，重连路径不应再读到它）
+                    self_arc
+                        .last_connect_error_kind
+                        .write()
+                        .await
+                        .remove(&pname);
+
                     // 存入 adapters map
                     let health_status = adapter.health_status();
                     self_arc
@@ -345,6 +419,23 @@ impl AdapterManager {
                         Err(e) => e.to_string(),
                     };
 
+                    // 记录失败分类（先写 kind 再写 status，保证 reconnect_adapter 能读到）：
+                    // - Ok(cr)：适配器显式标记（Transient/Permanent）或 None（回退启发式）。
+                    // - Err(e)：仅当带结构化瞬态信号（Transient/RequestTimeout/RateLimited）时记为
+                    //   Transient，其余不记（None → 启发式），避免把未知错误错杀为永久。
+                    let kind = match &connect_result {
+                        Ok(cr) => cr.error_kind,
+                        Err(e) if is_transient_error(e) => Some(ConnectErrorKind::Transient),
+                        Err(_) => None,
+                    };
+                    if let Some(kind) = kind {
+                        self_arc
+                            .last_connect_error_kind
+                            .write()
+                            .await
+                            .insert(pname.clone(), kind);
+                    }
+
                     let mut statuses = self_arc.statuses.write().await;
                     if let Some(status) = statuses.get_mut(&pname) {
                         status.state = AdapterState::Failed;
@@ -377,6 +468,9 @@ impl AdapterManager {
     /// 对于 pending 连接：从 pending_connections 移除，后台任务检测到后自动丢弃。
     /// 对于已连接适配器：从 HashMap 移除后执行断开操作。
     pub async fn stop(&self, platform: &str) -> Result<(), GatewayError> {
+        // 清除 connect 失败分类（显式停止后不应再影响重连判定）
+        self.last_connect_error_kind.write().await.remove(platform);
+
         // 先检查 pending connection
         let was_pending = {
             let mut pending = self.pending_connections.write().await;
@@ -1129,7 +1223,25 @@ impl AdapterManager {
                                 event_types::ADAPTER_RECONNECT_FAILED,
                                 serde_json::json!({"platform": platform, "error": &err}),
                             );
-                            return Err(GatewayError::Internal(err));
+                            // 透传结构化分类：瞬态失败返回 Transient 变体，
+                            // 使 classify_error 结构化命中 → 退避重试（而非永久停用）。
+                            return Err(
+                                match self
+                                    .last_connect_error_kind
+                                    .read()
+                                    .await
+                                    .get(platform)
+                                    .copied()
+                                {
+                                    Some(ConnectErrorKind::Transient) => {
+                                        GatewayError::Transient(err)
+                                    }
+                                    Some(ConnectErrorKind::Permanent) => {
+                                        GatewayError::AuthFailed(err)
+                                    }
+                                    None => GatewayError::Internal(err),
+                                },
+                            );
                         }
                     }
                     tokio::time::sleep(poll_delay).await;
@@ -1281,6 +1393,26 @@ mod tests {
             .await;
     }
 
+    /// 注册一个 connect 会失败的 mock 适配器（用于测试健康监控的重连分类）。
+    async fn register_failing_mock_adapter(manager: &AdapterManager, failure: MockConnectFailure) {
+        let registry = manager.registry();
+        let factory: AdapterFactory = Arc::new(move |config| {
+            let failure = failure.clone();
+            Box::pin(async move {
+                let mut adapter = MockTestAdapter::new().failing(failure);
+                let result = adapter.init(config).await.map_err(|e| e.to_string())?;
+                if !result.ok {
+                    return Err(result.error.unwrap_or_default());
+                }
+                let boxed: Box<dyn PlatformAdapter> = Box::new(adapter);
+                Ok(boxed)
+            })
+        });
+        registry
+            .register("test-mock", "Test Mock", factory, &[])
+            .await;
+    }
+
     /// 等待适配器从 Connecting 变为 Connected（最长 2 秒）
     async fn wait_connected(manager: &AdapterManager, platform: &str) {
         for _ in 0..100 {
@@ -1294,12 +1426,40 @@ mod tests {
         panic!("Adapter '{}' did not connect within timeout", platform);
     }
 
+    /// 等待适配器进入 Failed 状态（最长 2 秒）
+    async fn wait_failed(manager: &AdapterManager, platform: &str) {
+        for _ in 0..100 {
+            if let Some(status) = manager.get_status(platform).await
+                && status.state == AdapterState::Failed
+            {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        panic!("Adapter '{}' did not fail within timeout", platform);
+    }
+
     // ── Mock 适配器 ──────────────────────────────────────────
+
+    /// 可配置的 connect 失败模式（用于测试健康监控的重连分类）。
+    #[derive(Clone)]
+    enum MockConnectFailure {
+        /// connect() 返回 `Ok(ConnectResult{ok:false, ...})`，带显式分类（或 None 回退启发式）。
+        Result {
+            error: &'static str,
+            kind: Option<ConnectErrorKind>,
+        },
+        /// connect() 返回 `Err(GatewayError::Transient(...))`。
+        Transient,
+        /// connect() 返回 `Err(GatewayError::Unauthorized(...))`。
+        Unauthorized,
+    }
 
     struct MockTestAdapter {
         platform: String,
         display: String,
         state: AdapterState,
+        connect_failure: Option<MockConnectFailure>,
     }
 
     impl MockTestAdapter {
@@ -1308,7 +1468,13 @@ mod tests {
                 platform: "test-mock".into(),
                 display: "Test Mock".into(),
                 state: AdapterState::Created,
+                connect_failure: None,
             }
+        }
+
+        fn failing(mut self, failure: MockConnectFailure) -> Self {
+            self.connect_failure = Some(failure);
+            self
         }
     }
 
@@ -1334,12 +1500,22 @@ mod tests {
         }
 
         async fn connect(&mut self) -> Result<ConnectResult, GatewayError> {
+            if let Some(failure) = &self.connect_failure {
+                self.state = AdapterState::Failed;
+                return match failure {
+                    MockConnectFailure::Result { error, kind } => {
+                        Ok(ConnectResult::failed((*error).to_string(), *kind))
+                    }
+                    MockConnectFailure::Transient => Err(GatewayError::Transient(
+                        "mock transient network failure".into(),
+                    )),
+                    MockConnectFailure::Unauthorized => Err(GatewayError::Unauthorized(
+                        "mock invalid credentials".into(),
+                    )),
+                };
+            }
             self.state = AdapterState::Connected;
-            Ok(ConnectResult {
-                ok: true,
-                error: None,
-                bot_info: None,
-            })
+            Ok(ConnectResult::ok(None))
         }
 
         async fn disconnect(&mut self) -> Result<(), GatewayError> {
@@ -2030,6 +2206,173 @@ mod tests {
         assert!(s.connected);
         // For the mock adapter (no heartbeat mechanism), Connected → Healthy
         assert_eq!(s.health, Some(HealthStatus::Healthy));
+    }
+
+    // ── classify_error 分类测试 ──────────────────────────────
+
+    #[test]
+    fn classify_error_transient_for_qq_network_auth_failure() {
+        // 回归：QQ connect 网络失败被 "auth failed" 前缀误判为永久。
+        let e = GatewayError::Internal(
+            "QQ auth failed (getAppAccessToken): QQ getAppAccessToken request failed: \
+             error sending request for url (https://...): connection timed out"
+                .into(),
+        );
+        assert!(
+            matches!(classify_error(&e), ReconnectFailure::Transient(_)),
+            "network failure during auth must be Transient, got {:?}",
+            classify_error(&e)
+        );
+    }
+
+    #[test]
+    fn classify_error_transient_for_connection_reset() {
+        let e = GatewayError::Internal(
+            "QQ auth failed: QQ GET /users/@me failed: \
+             error sending request: connection reset by peer"
+                .into(),
+        );
+        assert!(matches!(classify_error(&e), ReconnectFailure::Transient(_)));
+    }
+
+    #[test]
+    fn classify_error_transient_for_rate_limit() {
+        // 回归：Discord 限流被 "auth failed" 前缀误判为永久。
+        let e = GatewayError::Internal(
+            "Discord auth failed: Discord API rate limited on /users/@me after retry".into(),
+        );
+        assert!(matches!(classify_error(&e), ReconnectFailure::Transient(_)));
+    }
+
+    #[test]
+    fn classify_error_permanent_for_genuine_auth_rejection() {
+        let e = GatewayError::Internal("Telegram auth failed: Unauthorized".into());
+        assert!(matches!(classify_error(&e), ReconnectFailure::Permanent(_)));
+    }
+
+    #[test]
+    fn classify_error_permanent_for_discord_401() {
+        let e = GatewayError::Internal(
+            "Discord auth failed: Discord API 401 /users/@me: Unauthorized".into(),
+        );
+        assert!(matches!(classify_error(&e), ReconnectFailure::Permanent(_)));
+    }
+
+    #[test]
+    fn classify_error_structured_variants() {
+        assert!(matches!(
+            classify_error(&GatewayError::Unauthorized("x".into())),
+            ReconnectFailure::Permanent(_)
+        ));
+        assert!(matches!(
+            classify_error(&GatewayError::AuthFailed("x".into())),
+            ReconnectFailure::Permanent(_)
+        ));
+        assert!(matches!(
+            classify_error(&GatewayError::Forbidden("x".into())),
+            ReconnectFailure::Permanent(_)
+        ));
+        assert!(matches!(
+            classify_error(&GatewayError::Transient("x".into())),
+            ReconnectFailure::Transient(_)
+        ));
+        assert!(matches!(
+            classify_error(&GatewayError::RequestTimeout("x".into())),
+            ReconnectFailure::Transient(_)
+        ));
+        assert!(matches!(
+            classify_error(&GatewayError::RateLimited { retry_after_ms: 1 }),
+            ReconnectFailure::Transient(_)
+        ));
+    }
+
+    #[test]
+    fn classify_error_unknown_defaults_to_transient() {
+        let e = GatewayError::Internal("some unexpected internal condition".into());
+        assert!(matches!(classify_error(&e), ReconnectFailure::Transient(_)));
+    }
+
+    // ── 健康监控重连分类测试 ─────────────────────────────────
+
+    #[tokio::test]
+    async fn health_monitor_retries_transient_connect_failure() {
+        // 瞬态 connect 失败不得触发永久禁用 → 健康监控继续退避重试。
+        let manager = new_manager().await;
+        register_failing_mock_adapter(&manager, MockConnectFailure::Transient).await;
+
+        manager
+            .start("test-mock", AdapterConfig::with_enabled(true))
+            .await
+            .unwrap();
+        wait_failed(&manager, "test-mock").await;
+
+        let mut reconnect_state = HashMap::new();
+        manager.run_health_check(&mut reconnect_state).await;
+
+        let state = reconnect_state.get("test-mock").expect("reconnect state");
+        assert!(
+            !state.permanent_failure,
+            "transient connect failure must not disable the adapter"
+        );
+        assert_eq!(
+            state.total_failures, 1,
+            "should count one retryable failure"
+        );
+        assert!(
+            state.backoff_until.is_some(),
+            "should schedule a retry backoff"
+        );
+    }
+
+    #[tokio::test]
+    async fn health_monitor_disables_on_permanent_connect_failure() {
+        // 显式标记 Permanent 的 connect 失败 → 适配器被永久停用（不重试）。
+        let manager = new_manager().await;
+        register_failing_mock_adapter(
+            &manager,
+            MockConnectFailure::Result {
+                error: "mock invalid credentials",
+                kind: Some(ConnectErrorKind::Permanent),
+            },
+        )
+        .await;
+
+        manager
+            .start("test-mock", AdapterConfig::with_enabled(true))
+            .await
+            .unwrap();
+        wait_failed(&manager, "test-mock").await;
+
+        let mut reconnect_state = HashMap::new();
+        manager.run_health_check(&mut reconnect_state).await;
+
+        let state = reconnect_state.get("test-mock").expect("reconnect state");
+        assert!(
+            state.permanent_failure,
+            "permanent connect failure must disable the adapter"
+        );
+    }
+
+    #[tokio::test]
+    async fn health_monitor_disables_on_unauthorized_connect_error() {
+        // Err(GatewayError::Unauthorized) 路径（无 error_kind，走启发式）→ 永久。
+        let manager = new_manager().await;
+        register_failing_mock_adapter(&manager, MockConnectFailure::Unauthorized).await;
+
+        manager
+            .start("test-mock", AdapterConfig::with_enabled(true))
+            .await
+            .unwrap();
+        wait_failed(&manager, "test-mock").await;
+
+        let mut reconnect_state = HashMap::new();
+        manager.run_health_check(&mut reconnect_state).await;
+
+        let state = reconnect_state.get("test-mock").expect("reconnect state");
+        assert!(
+            state.permanent_failure,
+            "Unauthorized connect error must disable the adapter"
+        );
     }
 }
 

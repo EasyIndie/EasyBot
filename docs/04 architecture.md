@@ -692,7 +692,7 @@ interface AdapterManager {
 - 自动检测凭据环境变量启用适配器（`enabled: None` = auto）
 - 健康监控每 30 秒检查所有适配器心跳（120s 过期阈值 → Degraded）
 - **分级响应**：传输重试 `retry_transport()`（不鉴权，5 次/30s）→ 完整重连 `reconnect_adapter()`（含鉴权，指数退避 5s→300s）→ 慢重试（20 次后 30min 间隔）
-- **错误分类**：永久错误（鉴权 401/403）→ 立即 Failed；瞬态错误（网络超时）→ 分级重试
+- **错误分类**（结构化优先）：`AuthFailed/Unauthorized/Forbidden` → 永久（立即 Failed）；`Transient/RequestTimeout/RateLimited` → 瞬态（分级重试）。启发式兜底且网络信号优先——网络层失败（如 `"QQ auth failed: ... connection timed out"`）判瞬态，凭据被拒才判永久。适配器网络层错误用 `GatewayError::Transient` 标记，connect 失败用 `ConnectResult::failed(_, kind)` 透传分类。
 
 ---
 

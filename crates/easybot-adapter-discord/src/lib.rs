@@ -184,7 +184,8 @@ impl DiscordAdapter {
             }
 
             let resp = req.send().await.map_err(|e| {
-                GatewayError::Internal(format!("Discord API request failed: {}", e))
+                // 网络层失败（DNS/超时/拒连）是瞬态错误——健康监控应退避重试，不得永久停用。
+                GatewayError::Transient(format!("Discord API request failed: {}", e))
             })?;
 
             let status = resp.status();
@@ -221,7 +222,8 @@ impl DiscordAdapter {
             )));
         }
 
-        Err(GatewayError::Internal(format!(
+        // 429 重试耗尽后仍被限流 —— 瞬态，健康监控应退避重试。
+        Err(GatewayError::Transient(format!(
             "Discord API rate limited on {} after retry",
             endpoint,
         )))
@@ -656,10 +658,16 @@ impl PlatformAdapter for DiscordAdapter {
         {
             Ok(u) => u,
             Err(e) => {
-                return Ok(ConnectResult {
-                    ok: false,
-                    error: Some(format!("Discord auth failed: {}", e)),
-                    bot_info: None,
+                // 网络层失败（Transient）→ 重连应重试；401/403 等凭据问题 → 永久停用。
+                return Ok(match &e {
+                    GatewayError::Transient(_) => ConnectResult::failed(
+                        format!("Discord API request failed: {}", e),
+                        Some(ConnectErrorKind::Transient),
+                    ),
+                    _ => ConnectResult::failed(
+                        format!("Discord auth failed: {}", e),
+                        Some(ConnectErrorKind::Permanent),
+                    ),
                 });
             }
         };
@@ -684,11 +692,7 @@ impl PlatformAdapter for DiscordAdapter {
         // Step 2: 启动 Gateway WebSocket 连接（如果配置了 EventBus）
         self.spawn_gateway_task();
 
-        Ok(ConnectResult {
-            ok: true,
-            error: None,
-            bot_info: Some(bot_info),
-        })
+        Ok(ConnectResult::ok(Some(bot_info)))
     }
 
     async fn disconnect(&mut self) -> Result<(), GatewayError> {

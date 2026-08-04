@@ -47,16 +47,19 @@ impl QqTokenStore {
             .json(&body)
             .send()
             .await
+            // 网络层失败（DNS/超时/拒连）是瞬态错误——健康监控应退避重试，不得永久停用。
             .map_err(|e| {
-                GatewayError::Internal(format!("QQ getAppAccessToken request failed: {}", e))
+                GatewayError::Transient(format!("QQ getAppAccessToken request failed: {}", e))
             })?;
 
         let data: serde_json::Value = resp.json().await.map_err(|e| {
-            GatewayError::Internal(format!("QQ getAppAccessToken parse failed: {}", e))
+            // 解析失败通常是代理/网络产物，同样按瞬态处理（重试安全）。
+            GatewayError::Transient(format!("QQ getAppAccessToken parse failed: {}", e))
         })?;
 
         let access_token = data["access_token"].as_str().ok_or_else(|| {
-            GatewayError::Internal("QQ getAppAccessToken: missing access_token".to_string())
+            // 鉴权端点返回了响应但缺少 access_token —— 凭据问题，永久。
+            GatewayError::AuthFailed("QQ getAppAccessToken: missing access_token".to_string())
         })?;
 
         let expires_in = data["expires_in"].as_u64().unwrap_or(7200);

@@ -386,7 +386,8 @@ impl TelegramAdapter {
         let resp = req
             .send()
             .await
-            .map_err(|e| GatewayError::Internal(format!("HTTP request failed: {}", e)))?;
+            // 网络层失败（DNS/超时/拒连）是瞬态错误——健康监控应退避重试，不得永久停用。
+            .map_err(|e| GatewayError::Transient(format!("HTTP request failed: {}", e)))?;
 
         let api_resp: TelegramApiResponse<T> = resp
             .json()
@@ -754,22 +755,22 @@ impl PlatformAdapter for TelegramAdapter {
         let resp = match client.get(&url).send().await {
             Ok(r) => r,
             Err(e) => {
-                return Ok(ConnectResult {
-                    ok: false,
-                    error: Some(format!("Failed to connect to Telegram: {}", e)),
-                    bot_info: None,
-                });
+                // 网络层失败 → 瞬态（重连重试）。
+                return Ok(ConnectResult::failed(
+                    format!("Failed to connect to Telegram: {}", e),
+                    Some(ConnectErrorKind::Transient),
+                ));
             }
         };
 
         let api_resp: TelegramApiResponse<TelegramBotInfo> = match resp.json().await {
             Ok(r) => r,
             Err(e) => {
-                return Ok(ConnectResult {
-                    ok: false,
-                    error: Some(format!("Failed to parse getMe response: {}", e)),
-                    bot_info: None,
-                });
+                // 解析失败 → 无法确定分类，回退启发式（默认瞬态）。
+                return Ok(ConnectResult::failed(
+                    format!("Failed to parse getMe response: {}", e),
+                    None,
+                ));
             }
         };
 
@@ -777,11 +778,11 @@ impl PlatformAdapter for TelegramAdapter {
             let desc = api_resp
                 .description
                 .unwrap_or_else(|| "Invalid token".to_string());
-            return Ok(ConnectResult {
-                ok: false,
-                error: Some(format!("Telegram auth failed: {}", desc)),
-                bot_info: None,
-            });
+            // API 明确拒绝（HTTP 已成功）→ 凭据问题，永久。
+            return Ok(ConnectResult::failed(
+                format!("Telegram auth failed: {}", desc),
+                Some(ConnectErrorKind::Permanent),
+            ));
         }
 
         let bot = api_resp
@@ -805,11 +806,7 @@ impl PlatformAdapter for TelegramAdapter {
         // 启动长轮询（如果配置了 EventBus）
         self.spawn_polling_task();
 
-        Ok(ConnectResult {
-            ok: true,
-            error: None,
-            bot_info: self.bot_info.clone(),
-        })
+        Ok(ConnectResult::ok(self.bot_info.clone()))
     }
 
     async fn disconnect(&mut self) -> Result<(), GatewayError> {
