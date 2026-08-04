@@ -2,12 +2,14 @@
 # EasyBot 一键部署（基于已发布 GHCR 镜像，无需构建）
 #
 # 用法:
-#   ./deploy.sh                        # 用默认值部署 latest
-#   EASYBOT_IMAGE=ghcr.io/easyindie/easybot:0.0.30 ./deploy.sh   # 指定版本
+#   ./deploy.sh                        # 部署与工具包同版本的镜像（VERSION 由发版生成）
+#   EASYBOT_IMAGE=ghcr.io/easyindie/easybot:0.0.31 ./deploy.sh   # 显式指定其他版本
 #   EASYBOT_BIND_ADDRESS=0.0.0.0 ./deploy.sh                     # 绑定到非回环地址
 #
+# 版本锁定：工具包随发版打包，默认拉取与工具包同版本的镜像 tag（读 VERSION 文件），
+# 避免 latest 漂移导致部署版本与工具包不一致。EASYBOT_IMAGE 可显式覆盖。
 # 可覆盖环境变量:
-#   EASYBOT_IMAGE        镜像引用（默认 ghcr.io/easyindie/easybot:latest）
+#   EASYBOT_IMAGE        镜像引用（默认 ghcr.io/easyindie/easybot:<VERSION>）
 #   EASYBOT_CONTAINER_NAME  容器名（默认 easybot）
 #   EASYBOT_PORT        宿主端口（默认 8080）
 #   EASYBOT_BIND_ADDRESS 宿主绑定地址（默认 127.0.0.1，仅本机可访问）
@@ -16,7 +18,11 @@
 # 令牌通过 .env 或环境变量传入（未设令牌的平台自动跳过）。
 set -euo pipefail
 
-IMAGE="${EASYBOT_IMAGE:-ghcr.io/easyindie/easybot:latest}"
+# 默认镜像 = 工具包 VERSION 对应的版本 tag（VERSION 由 build-deploy-kit.sh 生成）。
+# 仓库内开发环境无 VERSION 文件时回退 latest；发布工具包内则为固定版本。
+KIT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+KIT_VERSION="$(cat "$KIT_ROOT/VERSION" 2>/dev/null || true)"
+IMAGE="${EASYBOT_IMAGE:-ghcr.io/easyindie/easybot:${KIT_VERSION:-latest}}"
 NAME="${EASYBOT_CONTAINER_NAME:-easybot}"
 PORT="${EASYBOT_PORT:-8080}"
 BIND="${EASYBOT_BIND_ADDRESS:-127.0.0.1}"

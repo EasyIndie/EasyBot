@@ -31,11 +31,16 @@ easybot-deploy-kit/
 
 ## 方式一：Docker 一键部署（最快）
 
+> 🔒 **版本锁定**：本工具包随 EasyBot `<VERSION>` 一起发布，`deploy.sh` 与
+> `deploy/compose.quickstart.yml` 默认拉取 **`ghcr.io/easyindie/easybot:<VERSION>`** 同版本
+> 镜像（不跟随 `latest` 漂移），保证部署的镜像与工具包说明/脚本一致。如需其他版本，
+> 用 `EASYBOT_IMAGE=ghcr.io/easyindie/easybot:<其他版本>` 显式覆盖。
+
 ```bash
 # 1. 从环境变量模板填入令牌（对应适配器自动启用，未设令牌的平台自动跳过）
-cp config/.env.example .env && vim .env
+cp .env.example .env && vim .env
 
-# 2. 一键部署（基于已发布 GHCR 镜像，无需构建）
+# 2. 一键部署（基于已发布 GHCR 镜像，无需构建；默认部署与工具包同版本镜像）
 ./deploy.sh
 
 # 3. 验证
@@ -43,31 +48,41 @@ curl http://127.0.0.1:8080/api/v1/live   # → 200 OK
 # 管理后台: http://127.0.0.1:8080/admin
 ```
 
-`deploy.sh` 等价于：
+`deploy.sh` 等价于（`<VERSION>` 见工具包内 `VERSION` 文件）：
 
 ```bash
-docker pull ghcr.io/easyindie/easybot:latest
+docker pull ghcr.io/easyindie/easybot:<VERSION>
 docker run -d --name easybot \
   -p 127.0.0.1:8080:8080 \
   -v easybot-data:/var/lib/easybot \
   -e EASYBOT_HOME=/var/lib/easybot \
   -e EASYBOT_ALLOW_PLAINTEXT=true \
   -e EASYBOT_ADMIN_PASSWORD='更换为强密码' \
-  ghcr.io/easyindie/easybot:latest
+  ghcr.io/easyindie/easybot:<VERSION>
 ```
 
 > ⚠️ `EASYBOT_ALLOW_PLAINTEXT=true` 是发布镜像的硬性启动要求：应用监听器仅支持 HTTP，
 > 必须置于可信 TLS 反向代理后或受信主机上。宿主机侧默认映射 `127.0.0.1`。
 
+**自定义访问端点**：默认 `127.0.0.1:8080`，需改端口/绑定地址时：
+
+```bash
+EASYBOT_PORT=9090 EASYBOT_BIND_ADDRESS=0.0.0.0 ./deploy.sh   # → http://0.0.0.0:9090/admin
+# compose 方式同理：
+EASYBOT_PORT=9090 docker compose -f deploy/compose.quickstart.yml up -d
+```
+
 ## 方式二：Docker Compose 部署
 
 ```bash
-cp config/.env.example .env && vim .env
+cp .env.example .env && vim .env
 docker compose -f deploy/compose.quickstart.yml up -d
 ```
 
-`compose.quickstart.yml` 使用 `ghcr.io/easyindie/easybot:latest`，挂载命名卷持久化
-`EASYBOT_HOME`，支持通过环境变量或 `*_FILE` 注入令牌。
+工具包内的 `compose.quickstart.yml` 默认镜像已锁定为 **`ghcr.io/easyindie/easybot:<VERSION>`**
+（与工具包同版本），挂载命名卷持久化 `EASYBOT_HOME`，支持通过环境变量或 `*_FILE` 注入令牌。
+需覆盖镜像时：
+`EASYBOT_IMAGE=ghcr.io/easyindie/easybot:<其他版本> docker compose -f deploy/compose.quickstart.yml up -d`。
 
 ## 方式三：生产加固部署（推荐线上）
 
@@ -115,6 +130,8 @@ secrets/data 目录属主 `UID 10001` 且仅属主可读。
 | `EASYBOT_HOME` | 配置目录（默认 `~/.easybot`） |
 | `EASYBOT_ADMIN_PASSWORD` | 管理后台密码（必填；生产用 `_FILE` 注入） |
 | `EASYBOT_ALLOW_PLAINTEXT` | 发布镜像启动必须 `true`（仅 HTTP） |
+| `EASYBOT_PORT` | 宿主端口（默认 `8080`；`deploy.sh` / `compose.quickstart.yml`） |
+| `EASYBOT_BIND_ADDRESS` | 宿主绑定地址（默认 `127.0.0.1` 仅本机；公网访问改 `0.0.0.0` 或置于 TLS 反代后） |
 | `TELEGRAM_BOT_TOKEN` / `DISCORD_BOT_TOKEN` / `FEISHU_APP_ID`+`FEISHU_APP_SECRET` / `QQ_APP_ID`+`QQ_CLIENT_SECRET` | 平台令牌，设置即自动启用对应适配器 |
 | `DATABASE_URL` | PostgreSQL 连接串（storageType=postgres 时） |
 

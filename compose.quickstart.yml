@@ -14,11 +14,16 @@
 
 services:
   easybot:
-    image: ghcr.io/easyindie/easybot:latest
+    # 默认 latest；发布工具包内此默认值由 build-deploy-kit.sh 锁定为同版本 tag，
+    # 仓库内/其他版本可用 EASYBOT_IMAGE 覆盖，例如：
+    #   EASYBOT_IMAGE=ghcr.io/easyindie/easybot:0.0.30 docker compose -f compose.quickstart.yml up -d
+    image: ${EASYBOT_IMAGE:-ghcr.io/easyindie/easybot:latest}
     pull_policy: always
     restart: unless-stopped
+    # 宿主访问端点可自定义：EASYBOT_BIND_ADDRESS（绑定地址，默认 127.0.0.1）
+    # + EASYBOT_PORT（宿主端口，默认 8080），容器内部固定 8080。
     ports:
-      - "${EASYBOT_BIND_ADDRESS:-127.0.0.1}:8080:8080"
+      - "${EASYBOT_BIND_ADDRESS:-127.0.0.1}:${EASYBOT_PORT:-8080}:8080"
     volumes:
       - easybot_data:/var/lib/easybot
       # 可选：挂载自定义配置覆盖镜像内置默认配置
