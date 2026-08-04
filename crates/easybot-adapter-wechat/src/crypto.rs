@@ -2,12 +2,13 @@
 //!
 //! 提供凭据持久化、AES-128-ECB 媒体加密、CDN URL 构建、文件下载等工具函数。
 
+use easybot_core::config::resolve_home;
 use easybot_core::types::error::GatewayError;
 use easybot_core::types::message::MediaAttachment;
 use std::time::Duration;
 
-/// 凭据文件路径（相对于 home 目录的 .easybot/）
-const CREDENTIALS_FILE: &str = ".easybot/.wechat-credentials.json";
+/// 凭据文件路径（位于 EasyBot 配置根目录下）
+const CREDENTIALS_FILE: &str = ".wechat-credentials.json";
 
 /// 微信凭据（持久化到磁盘）
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -18,9 +19,18 @@ pub(crate) struct WeChatCredentials {
     pub(crate) baseurl: String,
 }
 
+/// EasyBot 配置根目录（与全局解析一致：EASYBOT_HOME > ~/.easybot）
+///
+/// 容器部署中 easybot 用户无 home 目录（HOME=/home/easybot 不存在），
+/// 若直接用 `dirs::home_dir()` 会写不进凭据。必须优先 EASYBOT_HOME
+/// （容器内为 /var/lib/easybot 挂载卷），才能持久化凭据/数据。
+pub(crate) fn config_root() -> std::path::PathBuf {
+    resolve_home(None)
+}
+
 /// 获取凭据文件路径
 pub(crate) fn credential_path() -> Option<std::path::PathBuf> {
-    dirs::home_dir().map(|h| h.join(CREDENTIALS_FILE))
+    Some(config_root().join(CREDENTIALS_FILE))
 }
 
 /// 从磁盘加载凭据
@@ -102,9 +112,9 @@ pub(crate) fn atomic_write_json<T: serde::Serialize>(
     Ok(())
 }
 
-/// 微信数据目录
+/// 微信数据目录（上下文令牌 / 长轮询游标等，位于配置根目录下）
 fn wechat_data_dir() -> Option<std::path::PathBuf> {
-    dirs::home_dir().map(|h| h.join(".easybot").join("wechat"))
+    Some(config_root().join("wechat"))
 }
 
 /// 每条聊天的上下文令牌存储路径
@@ -310,5 +320,25 @@ pub(crate) async fn resolve_media_data(
         Err(GatewayError::Internal(
             "Media attachment has neither url nor data".to_string(),
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 凭据/数据路径必须位于配置根目录（EASYBOT_HOME > ~/.easybot）。
+    /// EASYBOT_HOME 优先级本身在 easybot-core config::home 测试覆盖，
+    /// 这里仅验证路径由 config_root() 推导（容器部署可写入 /var/lib/easybot）。
+    #[test]
+    fn test_paths_derive_from_config_root() {
+        let root = config_root();
+        assert_eq!(
+            credential_path(),
+            Some(root.join(".wechat-credentials.json"))
+        );
+        assert_eq!(wechat_data_dir(), Some(root.join("wechat")));
+        // 与全局解析完全一致（resolve_home 是唯一事实来源）
+        assert_eq!(root, resolve_home(None));
     }
 }
