@@ -5,6 +5,29 @@ All notable changes to EasyBot will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [0.0.31] - 2026-08-04
+
+### Fixed
+
+- **微信适配器凭据/数据路径（容器部署）** — `crypto.rs` 原用 `dirs::home_dir()` 解析凭据与数据
+  路径；容器内 easybot 用户无 home 目录（`HOME=/home/easybot` 不存在），扫码登录成功后
+  `保存凭据失败: No such file or directory (os error 2)`，容器重启需重新扫码。修复：凭据/数据
+  路径改用全局一致的配置根目录解析（`EASYBOT_HOME` > `~/.easybot`，复用 `resolve_home`），
+  容器内落到 `/var/lib/easybot` 挂载卷。
+- **deploy.sh 忽略 .env 中的管理密码** — `EASYBOT_ADMIN_PASSWORD` 只在解析变量时读 shell 环境，
+  `.env` 在其后加载且仅透传平台令牌，导致 .env 配置的密码被忽略、容器使用默认
+  `strong-admin-password`，用户无法用自设密码登录管理后台。修复：`.env` 提前加载
+  （`$KIT_ROOT/.env`），管理密码与平台令牌均生效。
+- **quickstart compose 目录导致 .env 不加载** — compose 默认 project-directory 取 compose 文件
+  所在目录，工具包把 `compose.quickstart.yml` 放 `deploy/` 子目录导致根目录 `.env`（端口/令牌/
+  密码）不生效。修复：quickstart compose 移至工具包根目录（与仓库布局一致）。
+- **工具包版本锁定 + 端口自定义 + bash 3.2 兼容** — `deploy.sh` 与 kit 内 compose 默认拉取与
+  工具包同版本的镜像 tag（读 `VERSION`），不再跟随 `latest` 漂移；`EASYBOT_IMAGE` /
+  `EASYBOT_PORT` / `EASYBOT_BIND_ADDRESS` 可覆盖；`$NAME` 紧跟中文全角括号时 macOS bash 3.2
+  `unbound variable` 缺陷以 `${NAME}` 花括号规避。
+
 ## [0.0.30] - 2026-08-04
 
 ### Added
@@ -18,8 +41,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **生产脚本独立部署** — `production-up.sh` / `production-backup.sh` / `production-restore.sh`
   的根路径解析从 `git rev-parse` 改为脚本目录相对解析（`BASH_SOURCE`），使部署工具包在无 git
   检出时也能独立运行，同时保持仓库内行为不变。
-
-## [Unreleased]
 
 ## [0.0.29] - 2026-08-04
 
