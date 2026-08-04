@@ -9,11 +9,11 @@
 easybot-deploy-kit/
 ├── README.md                 # 本说明（部署总入口）
 ├── deploy.sh                 # 一键部署脚本（Docker，最简路径）
+├── compose.quickstart.yml    # 单容器快速部署（已发布镜像；与 .env 同目录）
 ├── VERSION                   # 对应 EasyBot 版本
 ├── gateway.yaml              # 基础配置（生产 compose 以 ../gateway.yaml 挂载）
 ├── .env.example              # 环境变量模板（适配器令牌）
 ├── deploy/
-│   ├── compose.quickstart.yml          # 单容器快速部署（已发布镜像）
 │   ├── docker-compose.production.yml   # 生产加固栈（Caddy TLS + 只读容器）
 │   ├── Caddyfile                       # Caddy 反向代理配置（HTTPS/HSTS/WS）
 │   ├── gateway.container.yaml          # 容器内置默认配置（可挂载覆盖）
@@ -32,7 +32,7 @@ easybot-deploy-kit/
 ## 方式一：Docker 一键部署（最快）
 
 > 🔒 **版本锁定**：本工具包随 EasyBot `<VERSION>` 一起发布，`deploy.sh` 与
-> `deploy/compose.quickstart.yml` 默认拉取 **`ghcr.io/easyindie/easybot:<VERSION>`** 同版本
+> `compose.quickstart.yml` 默认拉取 **`ghcr.io/easyindie/easybot:<VERSION>`** 同版本
 > 镜像（不跟随 `latest` 漂移），保证部署的镜像与工具包说明/脚本一致。如需其他版本，
 > 用 `EASYBOT_IMAGE=ghcr.io/easyindie/easybot:<其他版本>` 显式覆盖。
 
@@ -69,20 +69,20 @@ docker run -d --name easybot \
 ```bash
 EASYBOT_PORT=9090 EASYBOT_BIND_ADDRESS=0.0.0.0 ./deploy.sh   # → http://0.0.0.0:9090/admin
 # compose 方式同理：
-EASYBOT_PORT=9090 docker compose -f deploy/compose.quickstart.yml up -d
+EASYBOT_PORT=9090 docker compose -f compose.quickstart.yml up -d
 ```
 
 ## 方式二：Docker Compose 部署
 
 ```bash
 cp .env.example .env && vim .env
-docker compose -f deploy/compose.quickstart.yml up -d
+docker compose -f compose.quickstart.yml up -d
 ```
 
 工具包内的 `compose.quickstart.yml` 默认镜像已锁定为 **`ghcr.io/easyindie/easybot:<VERSION>`**
 （与工具包同版本），挂载命名卷持久化 `EASYBOT_HOME`，支持通过环境变量或 `*_FILE` 注入令牌。
 需覆盖镜像时：
-`EASYBOT_IMAGE=ghcr.io/easyindie/easybot:<其他版本> docker compose -f deploy/compose.quickstart.yml up -d`。
+`EASYBOT_IMAGE=ghcr.io/easyindie/easybot:<其他版本> docker compose -f compose.quickstart.yml up -d`。
 
 ## 方式三：生产加固部署（推荐线上）
 

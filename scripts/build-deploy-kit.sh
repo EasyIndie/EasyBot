@@ -38,11 +38,13 @@ printf '%s\n' "$VERSION" > "$OUT_DIR/VERSION"
 cp gateway.yaml "$OUT_DIR/gateway.yaml"
 cp .env.example "$OUT_DIR/.env.example"
 
-# ── Docker 部署资产（快速开始 + 生产栈，镜像仓库 deploy/ 布局）──
-# quickstart 默认镜像锁定为工具包同版本 tag（保留 ${EASYBOT_IMAGE:-...} 覆盖），
+# ── Docker 部署资产（快速开始 + 生产栈）──
+# quickstart compose 放在工具包根目录（与仓库根布局一致），使其与 .env 同目录，
+# compose 默认 project-directory=compose 文件目录，`.env` 从工具包根目录加载生效。
+# 默认镜像锁定为工具包同版本 tag（保留 ${EASYBOT_IMAGE:-...} 覆盖），
 # 避免 latest 漂移导致 kit 内 compose 部署的版本与工具包不一致。
 sed "s|ghcr.io/easyindie/easybot:latest}|ghcr.io/easyindie/easybot:${VERSION}}|" \
-  compose.quickstart.yml > "$OUT_DIR/deploy/compose.quickstart.yml"
+  compose.quickstart.yml > "$OUT_DIR/compose.quickstart.yml"
 cp deploy/docker-compose.production.yml "$OUT_DIR/deploy/"
 cp deploy/Caddyfile "$OUT_DIR/deploy/"
 cp deploy/gateway.container.yaml "$OUT_DIR/deploy/"
