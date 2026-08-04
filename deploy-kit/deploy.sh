@@ -13,14 +13,23 @@
 #   EASYBOT_CONTAINER_NAME  容器名（默认 easybot）
 #   EASYBOT_PORT        宿主端口（默认 8080）
 #   EASYBOT_BIND_ADDRESS 宿主绑定地址（默认 127.0.0.1，仅本机可访问）
-#   EASYBOT_ADMIN_PASSWORD 管理后台密码（默认 strong-admin-password，务必覆盖！）
+#   EASYBOT_ADMIN_PASSWORD 管理后台密码（默认 strong-admin-password，务必覆盖！
+#                         也可写在工具包根目录 .env 中，脚本会读取）
 #
 # 令牌通过 .env 或环境变量传入（未设令牌的平台自动跳过）。
 set -euo pipefail
 
+KIT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# 读取工具包同目录的 .env（若存在）：可配置管理密码与平台令牌。
+# 必须在解析变量之前加载，否则 .env 里的 EASYBOT_ADMIN_PASSWORD 不会生效。
+if [ -f "$KIT_ROOT/.env" ]; then
+  set -a; # shellcheck disable=SC1091
+  . "$KIT_ROOT/.env"; set +a
+fi
+
 # 默认镜像 = 工具包 VERSION 对应的版本 tag（VERSION 由 build-deploy-kit.sh 生成）。
 # 仓库内开发环境无 VERSION 文件时回退 latest；发布工具包内则为固定版本。
-KIT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 KIT_VERSION="$(cat "$KIT_ROOT/VERSION" 2>/dev/null || true)"
 IMAGE="${EASYBOT_IMAGE:-ghcr.io/easyindie/easybot:${KIT_VERSION:-latest}}"
 NAME="${EASYBOT_CONTAINER_NAME:-easybot}"
@@ -49,10 +58,6 @@ ARGS=(
   -e EASYBOT_ADMIN_PASSWORD="$ADMIN_PASSWORD"
 )
 # 透传 .env 中已定义的平台令牌（存在才传，避免空值注入）
-if [ -f .env ]; then
-  set -a; # shellcheck disable=SC1091
-  . ./.env; set +a
-fi
 for var in TELEGRAM_BOT_TOKEN DISCORD_BOT_TOKEN FEISHU_APP_ID FEISHU_APP_SECRET \
            QQ_APP_ID QQ_CLIENT_SECRET; do
   if [ -n "${!var:-}" ]; then ARGS+=(-e "$var=${!var}"); fi
