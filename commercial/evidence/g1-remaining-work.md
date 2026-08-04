@@ -6,6 +6,7 @@
 - 生产 Compose 部署（PostgreSQL + auth.db 配对结构）✅
 - 备份/恢复演练（配对备份 + 全量丢失恢复 + 全链路验证）✅
 - 回滚边界定义（二进制回滚验证推迟 v0.0.29）✅
+- **二进制回滚演练（v0.0.28↔v0.0.29，本地 Docker 生产等价栈）✅** — 双向回滚通过，PostgreSQL + SQLite auth.db 均保持 schema v2，跨版本数据（含对方版本写入的 API key/消息/会话）可读可鉴权。报告：`rollback-drill-0029.txt`
 - 容量测试（500@c10 p95 397ms / 1000@c20 p95 977ms，0 错误）✅
 - 告警检测演练（审计链篡改 → 规则 FIRING）✅
 
@@ -18,7 +19,7 @@
 | 3 | HTTPS/HSTS 端到端验证 | 部署验收 | 需要真实域名 + DNS + 证书 | 生产主机 + 域名 A/AAAA 指向 + Caddy ACME |
 | 4 | 告警送达真人 | ALERT_DELIVERY_REPORT | 需要 Alertmanager + 接收端 | 决定告警接收渠道（webhook/邮箱/工单）并部署 |
 | 5 | 数据库迁移演练 | DATABASE_MIGRATION_REPORT | v0.0.28 是首个基线，无存量生产数据可迁移 | 真实预生产部署时从干净 bootstrap 演练，生成符合门禁 schema 的迁移 JSON |
-| 6 | 二进制回滚验证 | ROLLBACK_DRILL_REPORT | v0.0.28 有意移除向后兼容 | **v0.0.29 发布时**验证 v0.0.28↔v0.0.29 二进制回滚 |
+| 6 | 二进制回滚验证 | ROLLBACK_DRILL_REPORT | ~~v0.0.28 有意移除向后兼容~~ → 已完成 | **✅ 2026-08-04 v0.0.29 本地 Docker 演练通过**（`rollback-drill-0029.txt`）：v0.0.28↔v0.0.29 双向二进制回滚，PostgreSQL + SQLite auth.db 均保持 schema v2，跨版本数据（含对方版本写入的 API key/消息/会话）可读可鉴权 |
 | 7 | 生产主机部署门禁 | production-up.sh 全量预检 | 开发机无 UID 10001 宿主属主 | 生产 Linux 主机上执行完整 `production-up.sh` |
 
 ## 备注

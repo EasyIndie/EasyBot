@@ -1,0 +1,71 @@
+G1 ROLLBACK DRILL REPORT — v0.0.28 <-> v0.0.29
+=============================================
+Date: 2026-08-04
+Candidate: v0.0.29 (ghcr.io/easyindie/easybot@sha256:0c2e459c19851cf7e92d7fcec3906b930c133d08c5a1e2a800866e837a7a23e8)
+Rollback target: v0.0.28 (ghcr.io/easyindie/easybot@sha256:05b6a5e02b193cd7139bbcf640a835b7c49d99ac79610f7170083b72aa97b068)
+Host: local macOS dev (Docker Desktop 29.6.2)
+
+CONTEXT
+-------
+This drill resolves the deferred item #6 in g1-remaining-work.md: binary
+rollback verification between the two consecutive post-G0 releases
+(v0.0.28 <-> v0.0.29), proving the database stays compatible with both
+binaries. Both versions embed SCHEMA_VERSION=2 with the same 4 migrations,
+so the drill validates schema compatibility + data readability across the
+binary swap, not a schema migration (none exists between these two).
+
+SCENARIO
+--------
+Production-equivalent stack: PostgreSQL 16.14 durable store + separate
+SQLite auth.db, read-only container, tmpfs, file secrets, UID 10001 image.
+No Caddy (local drill). Same data volumes persisted across all image swaps.
+
+Phase 1 — v0.0.28 boot + baseline writes:
+  - Healthy, API listening on 0.0.0.0:8080
+  - current_version=0.0.28, schema_version=2 (update-check)
+  - Admin login -> audit events (hash chain)
+  - Created 2 durable API keys in auth.db (drill-key-1, drill-key-2)
+  - Customer key authenticated (HTTP 200)
+  - Seeded 2 messages + 1 session directly into PostgreSQL
+  - Verified messages readable via /api/v1/messages
+
+Phase 2 — upgrade v0.0.28 -> v0.0.29 (same data, db service unchanged):
+  - Healthy, current_version=0.0.29, schema_version=2, update_available=false
+  - "Loaded 1 sessions from database"  <- v0.0.28-seeded session read by v0.0.29
+  - 2 v0.0.28 messages readable
+  - 2 v0.0.28 API keys present and authenticating
+  - Wrote new data under v0.0.29: API key drill-key-3 + message v029-msg-1
+
+Phase 3 — rollback v0.0.29 -> v0.0.28 (same data):
+  - Healthy, current_version=0.0.28, schema_version=2, update_available=true
+  - "Loaded 1 sessions from database"  <- session loaded by older binary too
+  - ALL 3 messages readable incl. v029-msg-1 (written by v0.0.29)
+  - ALL 3 API keys listed incl. drill-key-3 (written by v0.0.29)
+  - drill-key-3 authenticates under v0.0.28 (HTTP 200)
+  - Audit chain intact: integrity_valid=true, 22 events
+  - PostgreSQL _schema_version = 2; SQLite auth.db _schema_version = 2
+
+RESULT: PASS
+------------
+The database remains compatible with both binaries in both directions:
+  1. v0.0.28 -> v0.0.29 (upgrade): data written under v0.0.28 is read and
+     loaded by v0.0.29 at startup (session load, message read, auth.db keys).
+  2. v0.0.29 -> v0.0.28 (rollback): data written under v0.0.29 (API key
+     drill-key-3, message v029-msg-1) is read and authenticated by v0.0.28.
+Both PostgreSQL (schema v2) and SQLite auth.db (schema v2) stayed intact.
+
+NOTES / DEVIATIONS (dev-host only)
+----------------------------------
+- v0.0.28 binds to 127.0.0.1 by default (server.host in base config); the
+  drill override set server.host: 0.0.0.0 (same as gateway.production.local.yaml)
+  so the published port is reachable from the host. v0.0.29 bakes
+  gateway.container.yaml (server.host: 0.0.0.0), so it listens correctly
+  out of the box.
+- A hand-seeded session used lowercase enum strings ("dm", "member") in
+  source_json, which failed deserialization on app load. Corrected to the
+  serde enum variants ("Dm", "Member"). This is a seed-data quality issue,
+  identical to the one documented in backup-restore-drill.txt, not a
+  rollback defect.
+- production-up.sh host-ownership gate (UID 10001) was bypassed as on macOS
+  Docker Desktop the container UID maps host bind mounts transparently;
+  the stack was brought up directly with docker compose.
