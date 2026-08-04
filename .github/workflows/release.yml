@@ -501,6 +501,7 @@ jobs:
           platforms: linux/amd64,linux/arm64
           tags: ${{ steps.docker-prep.outputs.meta-tags }}
           labels: ${{ steps.docker-prep.outputs.meta-labels }}
+          annotations: ${{ steps.docker-prep.outputs.meta-annotations }}
 
       - name: Block critical and high container vulnerabilities
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0

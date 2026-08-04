@@ -53,7 +53,9 @@ services:
       # remove this mapping entirely. Never bind 0.0.0.0 without a firewall.
       - "${EASYBOT_BIND_ADDRESS:-127.0.0.1}:8080:8080"
     volumes:
-      - ./gateway.yaml:/etc/easybot/gateway.yaml:ro
+      # 容器化配置（server.host: 0.0.0.0），保证 -p 端口发布在宿主机可达；
+      # 不使用根目录 gateway.yaml（其 host 为 127.0.0.1，容器内回环绑定对外不可达）。
+      - ./deploy/gateway.container.yaml:/etc/easybot/gateway.yaml:ro
       - easybot_data:/var/lib/easybot/data
     environment:
       - EASYBOT_HOME=/var/lib/easybot
