@@ -5,7 +5,7 @@ All notable changes to EasyBot will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.0.30] - 2026-08-04
 
 ### Added
 
@@ -18,6 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **生产脚本独立部署** — `production-up.sh` / `production-backup.sh` / `production-restore.sh`
   的根路径解析从 `git rev-parse` 改为脚本目录相对解析（`BASH_SOURCE`），使部署工具包在无 git
   检出时也能独立运行，同时保持仓库内行为不变。
+
+## [Unreleased]
 
 ## [0.0.29] - 2026-08-04
 

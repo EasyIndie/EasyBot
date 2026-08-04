@@ -3,7 +3,7 @@
 #
 # 用法:
 #   ./deploy.sh                        # 用默认值部署 latest
-#   EASYBOT_IMAGE=ghcr.io/easyindie/easybot:0.0.29 ./deploy.sh   # 指定版本
+#   EASYBOT_IMAGE=ghcr.io/easyindie/easybot:0.0.30 ./deploy.sh   # 指定版本
 #   EASYBOT_BIND_ADDRESS=0.0.0.0 ./deploy.sh                     # 绑定到非回环地址
 #
 # 可覆盖环境变量:
