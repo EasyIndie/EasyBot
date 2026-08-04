@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.29] - 2026-08-04
+
+### Fixed
+
+- **适配器重连失败结构化分类（瞬态 vs 永久）** — QQ/Discord 的 `connect()` 把网络层鉴权失败统一
+  套上 `"X auth failed:"` 前缀，`classify_error()` 的永久关键词先于瞬态关键词检查，导致瞬态网络
+  故障（超时/拒连/DNS/限流）被误判为永久凭据错误 → 适配器被永久禁用。修复：新增
+  `GatewayError::Transient` 结构化变体，网络层 reqwest `send()` 失败在各适配器源头打上该标记；
+  `classify_error()` 改为结构化优先（`AuthFailed/Unauthorized/Forbidden` → 永久，
+  `Transient/RequestTimeout/RateLimited` → 瞬态），启发式兜底且网络信号优先于永久关键词；
+  connect 失败分类通过 `ConnectResult.error_kind` 穿透重连路径，`reconnect_adapter()` 按 kind
+  返回 typed error。
+
+### Added
+
+- **适配器重连状态透出 API 与管理后台** — 重连分类修复后，适配器 `Failed` 状态语义改变：瞬态
+  失败会自动退避重试而非永久禁用。新增 `ReconnectInfo { permanent_failure, retry_attempt,
+  next_retry_in_ms }`，由健康监测器同步到 manager 侧 map，`get_reconnect_info()` 暴露；
+  `/api/v1/adapters` 列表返回 `last_error` + `permanent_failure` + `retry_attempt` +
+  `next_retry_in_ms`。管理后台 Failed 徽章区分永久（红色，停用）与瞬态自动重试（黄色），卡片
+  显示重试次数 + 下次重试实时倒计时 + 最近错误，适配器 WS 事件刷新列表以获取富化字段。
+- **batch-send 按目标授权** — `POST /api/v1/messages/batch-send` 逐目标鉴权：无权限的目标记录为
+  失败但不阻塞有权限目标；仅当所有目标均无权限时返回 403。同步更新 OpenAPI 403 描述与测试。
+- **GHCR 镜像描述 + 发布镜像快速部署** — 设置 index 级 OCI `org.opencontainers.image.description`
+  注解，GHCR 包页展示使用简介；`gateway.container.yaml`（`server.host: 0.0.0.0`）内置进
+  Dockerfile，`docker run -p` 开箱即可从宿主访问；新增 `compose.quickstart.yml` 一行命令从发布
+  镜像部署；README/docs Docker 快速上手改为引导拉取 GHCR 镜像，记录
+  `EASYBOT_ALLOW_PLAINTEXT` 并使用真实 liveness 端点（`/api/v1/live`）。
+
+### Docs
+
+- **G1 本地验证证据入档** — `verify.sh --locked` 全量验收 12/12 通过日志
+  （`commercial/evidence/verify-sh-pass.log`）；G1 本地演练报告（配对备份/恢复、回滚边界、
+  容量测试 500@c10 p95 397ms / 1000@c20 p95 977ms 零错误、告警检测）与剩余推进项记录
+  （`commercial/evidence/g1-remaining-work.md`）。
+
 ## [0.0.28] - 2026-08-02
 
 ### Changed
