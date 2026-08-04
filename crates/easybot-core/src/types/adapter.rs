@@ -359,6 +359,21 @@ pub struct AdapterStatusSummary {
     pub messages_out: u64,
 }
 
+/// 重连/重试状态（由健康监测器维护，供 API/前端区分"自动恢复中"与"永久停用"）
+///
+/// 与 [`AdapterStatusSummary`] 分离：状态摘要由适配器自身报告，而重连进度属于
+/// 健康监测器的编排状态。瞬态失败后适配器会按退避自动重试（`permanent_failure=false`），
+/// 凭据拒绝等永久失败则停止重试（`permanent_failure=true`），两者对前端含义完全不同。
+#[derive(Debug, Clone, Default, serde::Serialize, ToSchema)]
+pub struct ReconnectInfo {
+    /// 是否永久停用（凭据拒绝等，健康监测器不再自动重试，需人工介入）
+    pub permanent_failure: bool,
+    /// 连续失败重试次数（恢复后清零）
+    pub retry_attempt: u32,
+    /// 距下次自动重试的毫秒数；`None` 表示当前无排定的重试
+    pub next_retry_in_ms: Option<u64>,
+}
+
 /// 平台适配器 Trait
 ///
 /// 所有 IM 平台连接器必须实现此 trait。

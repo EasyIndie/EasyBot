@@ -2058,7 +2058,7 @@ expression: "ApiDoc::openapi()"
           "Messages"
         ],
         "summary": "批量发送消息",
-        "description": "向多个目标发送相同的文本消息。每个目标格式为 \"platform:chatId\"。\n使用并发限制（最大 5 个并发）和整体 30 秒超时。",
+        "description": "向多个目标发送相同的文本消息。每个目标格式为 \"platform:chatId\"。\n权限按 target 独立校验：无权限的目标以 `results` 中 `failed` 记录，不阻断有权限目标投递；\n仅当全部目标都无权限时整体返回 403。使用并发限制（最大 5 个并发）和整体 30 秒超时。",
         "operationId": "batch_send",
         "parameters": [
           {
@@ -2107,14 +2107,7 @@ expression: "ApiDoc::openapi()"
             }
           },
           "403": {
-            "description": "API key lacks the required permission",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ApiErrorResponse"
-                }
-              }
-            }
+            "description": "No target in the batch is authorized for the caller"
           },
           "429": {
             "description": "Global, IP, or subject quota exceeded",
@@ -3584,7 +3577,9 @@ expression: "ApiDoc::openapi()"
           "platform",
           "display_name",
           "status",
-          "connected"
+          "connected",
+          "permanent_failure",
+          "retry_attempt"
         ],
         "properties": {
           "connected": {
@@ -3602,9 +3597,35 @@ expression: "ApiDoc::openapi()"
             "description": "传输层健康状态：Healthy, Degraded, Down\n用于区分\"适配器在运行\"和\"消息流是否正常\"",
             "example": "Healthy"
           },
+          "last_error": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "最近一次错误（连接/重连失败原因）；None 表示无错误"
+          },
+          "next_retry_in_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64",
+            "description": "距下次自动重试的毫秒数；None 表示当前无排定的重试",
+            "minimum": 0
+          },
+          "permanent_failure": {
+            "type": "boolean",
+            "description": "是否永久停用（凭据拒绝等，不再自动重试，需人工介入）"
+          },
           "platform": {
             "type": "string",
             "example": "telegram"
+          },
+          "retry_attempt": {
+            "type": "integer",
+            "format": "int32",
+            "description": "连续失败重试次数（瞬时失败自动重试中会递增）",
+            "minimum": 0
           },
           "status": {
             "type": "string",

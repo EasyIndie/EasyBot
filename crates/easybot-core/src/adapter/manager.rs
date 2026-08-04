@@ -42,6 +42,10 @@ pub struct AdapterManager {
     /// `reconnect_adapter` so a transient connect failure is not misclassified
     /// as permanent from the flattened status string.  Cleared on success/stop.
     last_connect_error_kind: RwLock<HashMap<String, ConnectErrorKind>>,
+    /// Reconnect/retry state per platform, synced by the health monitor for
+    /// API/frontend display (transient vs permanent, retry count, next retry).
+    /// Cleared on successful connect and on stop().
+    reconnect_info: RwLock<HashMap<String, ReconnectInfo>>,
     /// Cancel sender for the health monitor background task.
     monitor_cancel_tx: RwLock<Option<broadcast::Sender<()>>>,
     /// Weak self-reference for background tasks.  Initialised by calling
@@ -206,6 +210,7 @@ impl AdapterManager {
             event_bus: None,
             configs: RwLock::new(HashMap::new()),
             last_connect_error_kind: RwLock::new(HashMap::new()),
+            reconnect_info: RwLock::new(HashMap::new()),
             monitor_cancel_tx: RwLock::new(None),
             self_weak: RwLock::new(None),
         }
@@ -375,6 +380,8 @@ impl AdapterManager {
                         .write()
                         .await
                         .remove(&pname);
+                    // 连接成功 → 清除重连/重试状态（前端不再显示重试信息）
+                    self_arc.reconnect_info.write().await.remove(&pname);
 
                     // 存入 adapters map
                     let health_status = adapter.health_status();
@@ -470,6 +477,8 @@ impl AdapterManager {
     pub async fn stop(&self, platform: &str) -> Result<(), GatewayError> {
         // 清除 connect 失败分类（显式停止后不应再影响重连判定）
         self.last_connect_error_kind.write().await.remove(platform);
+        // 清除重连/重试状态（显式停止后不再显示重试信息）
+        self.reconnect_info.write().await.remove(platform);
 
         // 先检查 pending connection
         let was_pending = {
@@ -901,6 +910,10 @@ impl AdapterManager {
         for platform in &platforms {
             let state = reconnect_state.entry(platform.clone()).or_default();
 
+            // Sync retry state to the API-visible layer each tick (covers the
+            // backoff/cooldown countdown refresh even when the loop `continue`s).
+            self.sync_reconnect_info(platform, state).await;
+
             // Respect backoff window
             if let Some(until) = state.backoff_until
                 && Instant::now() < until
@@ -1028,6 +1041,7 @@ impl AdapterManager {
                                 "Transport retry succeeded for '{}' (attempt {}/{})",
                                 platform, state.transport_retries, MAX_TRANSPORT_RETRIES
                             );
+                            self.sync_reconnect_info(platform, state).await;
                             continue;
                         }
                         Ok(false) => {
@@ -1067,6 +1081,7 @@ impl AdapterManager {
                                             "error": &msg,
                                         }),
                                     );
+                                    self.sync_reconnect_info(platform, state).await;
                                     continue;
                                 }
                                 ReconnectFailure::Transient(msg) => {
@@ -1082,6 +1097,7 @@ impl AdapterManager {
                                         msg,
                                         TRANSPORT_RETRY_BACKOFF,
                                     );
+                                    self.sync_reconnect_info(platform, state).await;
                                     continue;
                                 }
                             }
@@ -1168,6 +1184,11 @@ impl AdapterManager {
                 }
                 state.was_healthy = true;
             }
+
+            // Sync retry state after any mutation this tick (Tier 2 permanent /
+            // transient / success, or healthy-reset) so the API reflects it
+            // immediately rather than waiting for the next tick.
+            self.sync_reconnect_info(platform, state).await;
         }
     }
 
@@ -1332,6 +1353,35 @@ impl AdapterManager {
             );
         }
         self.publish_adapter_error(platform, error_msg);
+    }
+
+    /// Snapshot the reconnect/retry state for a platform (defaults when unknown).
+    pub async fn get_reconnect_info(&self, platform: &str) -> ReconnectInfo {
+        self.reconnect_info
+            .read()
+            .await
+            .get(platform)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Sync the health monitor's per-platform reconnect state into the API-visible
+    /// layer so the frontend can distinguish auto-recovering from permanent
+    /// failures and show retry progress.
+    async fn sync_reconnect_info(&self, platform: &str, state: &ReconnectState) {
+        self.reconnect_info.write().await.insert(
+            platform.to_string(),
+            ReconnectInfo {
+                permanent_failure: state.permanent_failure,
+                retry_attempt: state.consecutive_failures,
+                next_retry_in_ms: state.backoff_until.map(|until| {
+                    until
+                        .saturating_duration_since(Instant::now())
+                        .as_millis()
+                        .min(u64::MAX as u128) as u64
+                }),
+            },
+        );
     }
 
     /// 发布事件到 EventBus
@@ -2322,6 +2372,15 @@ mod tests {
             state.backoff_until.is_some(),
             "should schedule a retry backoff"
         );
+
+        // 同步到 API 可见层：非永久 + 重试次数 + 下次重试已排定
+        let info = manager.get_reconnect_info("test-mock").await;
+        assert!(!info.permanent_failure, "frontend must see non-permanent");
+        assert_eq!(info.retry_attempt, 1, "frontend must see retry count");
+        assert!(
+            info.next_retry_in_ms.is_some(),
+            "frontend must see scheduled retry"
+        );
     }
 
     #[tokio::test]
@@ -2350,6 +2409,17 @@ mod tests {
         assert!(
             state.permanent_failure,
             "permanent connect failure must disable the adapter"
+        );
+
+        // 同步到 API 可见层：永久停用标记透出，且无排定的重试
+        let info = manager.get_reconnect_info("test-mock").await;
+        assert!(
+            info.permanent_failure,
+            "frontend must see the permanent failure"
+        );
+        assert_eq!(
+            info.retry_attempt, 0,
+            "permanent failure does not count as a retryable attempt"
         );
     }
 

@@ -150,16 +150,63 @@ function renderMessageRow(m) {
 }
 
 // 统一状态徽章 class 计算（返回修饰类名，配合 "badge" 基类使用）
-function statusBadgeClass(status, connected, health) {
+// permanent: 是否永久停用（凭据拒绝等）。用于区分 "Failed" 的两种语义：
+//   永久 → 红色（已停用，需人工介入）；瞬时 → 黄色（自动重连中，会自动恢复）
+function statusBadgeClass(status, connected, health, permanent) {
   if (connected) {
     // 适配器已连接但传输层不健康 → 警告色
     if (health === 'Degraded' || health === 'Down') return 'badge-yellow';
     return 'badge-green';
   }
-  if (status === 'Failed') return 'badge-red';
+  if (status === 'Failed') return permanent ? 'badge-red' : 'badge-yellow';
   if (status === 'Connecting' || status === 'Starting' || status === 'Disconnecting' || status === 'Stopping') return 'badge-blue';
   if (status === 'Reconnecting') return 'badge-yellow';
   return 'badge-gray';
+}
+
+// 截断长文本（用于失败原因副标题）
+function truncateText(s, max) {
+  return s.length > max ? s.slice(0, max - 1) + '…' : s;
+}
+
+// 毫秒 → 人类可读时长（如 "1m30s"）
+function fmtDuration(ms) {
+  const s = Math.max(1, Math.round(ms / 1000));
+  if (s < 60) return s + 's';
+  const m = Math.floor(s / 60);
+  return m + 'm' + (s % 60 ? `${s % 60}s` : '');
+}
+
+// 生成适配器卡片副标题的"重试/失败原因"文本（无信息时返回 ''）
+function adapterRetryText(a) {
+  const permanent = a.permanent_failure || false;
+  const parts = [];
+  if (a.status === 'Failed') {
+    if (permanent) {
+      parts.push('已停用（不再自动重试）');
+    } else {
+      const label = a.retry_attempt > 0 ? `自动重连中 (第 ${a.retry_attempt} 次)` : '自动重连中';
+      parts.push(label);
+    }
+  }
+  if (a.last_error) {
+    parts.push(truncateText(String(a.last_error), 60));
+  }
+  return parts.join(' · ');
+}
+
+// 每秒更新适配器卡片的"下次重试倒计时"（基于渲染时记录的 data-retry-until 时间戳）
+function tickAdapterCountdown() {
+  document.querySelectorAll('[data-adapter-countdown]').forEach(el => {
+    const until = Number(el.dataset.retryUntil || 0);
+    if (!until) return;
+    const remain = until - Date.now();
+    if (remain <= 0) {
+      el.textContent = '即将重试…';
+      return;
+    }
+    el.textContent = `下次 ${fmtDuration(remain)} 后重试`;
+  });
 }
 
 // 平台 → badge class
@@ -287,6 +334,8 @@ setInterval(() => { if (apiKey && document.getElementById('tab-overview').classL
 setInterval(() => { if (document.getElementById('tab-overview').classList.contains('active')) tickUptime(); }, 1000);
 // 指标 10s 自动刷新（仅 Overview 激活时）
 setInterval(() => { if (apiKey && document.getElementById('tab-metrics').classList.contains('active')) loadMetrics(true); }, 10000);
+// 适配器卡片"下次重试"倒计时走秒（仅 Adapters 激活时）
+setInterval(() => { if (document.getElementById('tab-adapters').classList.contains('active')) tickAdapterCountdown(); }, 1000);
 
 // ─── Metrics (可视化 + 原始数据切换) ──────────
 let metricsRawText = '';
@@ -582,23 +631,40 @@ async function loadAdapters() {
     content.innerHTML = '<div class="grid-2">' + data.adapters.map(a => {
       // 如果有正在轮询中的状态，优先显示轮询状态
       const pollState = adapterPollTimers[a.platform] ? adapterPollTimers[a.platform].displayState : null;
+      const permanent = a.permanent_failure || false;
       // 如果 Connected 但传输层不健康，显示 Degraded 而非 Connected
       let displayStatus = pollState || a.status;
       if (!pollState && a.status === 'Connected' && (a.health === 'Degraded' || a.health === 'Down')) {
         displayStatus = 'Degraded';
       }
-      const statusClass = statusBadgeClass(displayStatus, a.connected, a.health);
+      // Failed 且非永久停用 → 自动重连中（黄色徽章，区别于永久失败的红色）
+      if (!pollState && a.status === 'Failed' && !permanent) {
+        displayStatus = '自动重连中';
+      }
+      const statusClass = statusBadgeClass(a.status, a.connected, a.health, permanent);
       const icon = icons[a.platform] || '🔌';
       const platform = escapeHtml(String(a.platform || ''));
       // 健康状态副标题（默认隐藏，通过 WebSocket 事件更新时显示）
       const healthLabel = a.health === 'Degraded' ? '传输异常' : a.health === 'Down' ? '传输断开' : '';
       const healthDisplay = healthLabel ? 'block' : 'none';
       const healthSubtitle = `<div data-adapter-health="${platform}" style="font-size:12px;color:var(--text-muted);margin-top:2px;display:${healthDisplay}">${escapeHtml(healthLabel)}</div>`;
+      // 重试/失败原因副标题（永久停用 / 自动重连进度 / 最近错误）
+      const retryText = adapterRetryText(a);
+      const retrySubtitle = retryText
+        ? `<div data-adapter-retry="${platform}" style="font-size:12px;color:var(--warning);margin-top:2px">${escapeHtml(retryText)}</div>`
+        : `<div data-adapter-retry="${platform}" style="display:none"></div>`;
+      // 下次重试倒计时（仅瞬时失败且有排定重试时显示，每秒本地走时）
+      const hasCountdown = a.status === 'Failed' && !permanent && typeof a.next_retry_in_ms === 'number';
+      const countdownSubtitle = hasCountdown
+        ? `<div data-adapter-countdown="${platform}" data-retry-until="${Date.now() + a.next_retry_in_ms}" style="font-size:12px;color:var(--warning);margin-top:2px">下次 ${fmtDuration(a.next_retry_in_ms)} 后重试</div>`
+        : `<div data-adapter-countdown="${platform}" style="display:none"></div>`;
       return `<div class="card" data-adapter-card="${platform}">
         <div style="display:flex;justify-content:space-between;align-items:center">
           <div>
             <h3>${icon} ${escapeHtml(String(a.display_name || ''))} <span class="badge ${statusClass}" data-adapter-badge="${platform}">${escapeHtml(String(displayStatus || ''))}</span></h3>
             ${healthSubtitle}
+            ${retrySubtitle}
+            ${countdownSubtitle}
           </div>
           <div data-adapter-buttons="${platform}">
             <button class="btn btn-sm btn-primary adapter-action" data-platform="${platform}" data-action="start" ${a.connected || pollState ? 'disabled':''}>启动</button>
@@ -619,11 +685,12 @@ async function loadAdapters() {
 
 // 更新单个 adapter 卡片的 badge 和按钮状态（不重新渲染整个列表）
 // health: 传输层健康状态（"Healthy" / "Degraded" / "Down" / null），null 表示不覆盖
-function updateAdapterCard(platform, status, connected, polling, health) {
+// permanent: 是否永久停用（默认 false）
+function updateAdapterCard(platform, status, connected, polling, health, permanent) {
   const selector = CSS.escape(String(platform));
   const badge = document.querySelector(`[data-adapter-badge="${selector}"]`);
   if (badge) {
-    badge.className = `badge ${statusBadgeClass(status, connected, health)}`;
+    badge.className = `badge ${statusBadgeClass(status, connected, health, permanent)}`;
     // 如果 Connected 但传输不健康，显示 Degraded
     let displayStatus = status;
     if (status === 'Connected' && (health === 'Degraded' || health === 'Down')) {
@@ -2341,25 +2408,13 @@ function disconnectWebSocket() {
 function handleGatewayEvent(msg) {
   const t = msg.event || '';
   console.log('[EVENT]', t, {currentTab});
-  // Adapter 事件 → 刷新 Overview + 直接更新单个卡片（避免全量重渲染闪烁）
+  // Adapter 事件 → 刷新 Overview + 重新拉取列表。
+  // 事件 payload 本身只携带 platform/health，不携带永久/瞬时分类与重试进度；
+  // 重新拉取列表可让卡片正确区分"自动重连中"与"已永久停用"并显示重试信息。
   if (t.startsWith('adapter.')) {
     if (currentTab === 'overview') refreshOverviewStats();
     if (currentTab === 'adapters') {
-      const platform = msg.data?.platform;
-      const statusMap = {
-        'adapter.connected': { connected: true, status: 'Connected' },
-        'adapter.reconnected': { connected: true, status: 'Connected' },
-        'adapter.disconnected': { connected: false, status: 'Disconnected' },
-        'adapter.error': { connected: false, status: 'Failed' },
-        'adapter.reconnecting': { connected: false, status: 'Reconnecting' },
-        'adapter.reconnect_failed': { connected: false, status: 'Failed' },
-      };
-      const mapped = statusMap[t];
-      if (platform && mapped) {
-        updateAdapterCard(platform, mapped.status, mapped.connected, false, msg.data?.health || null);
-      } else {
-        tabRegistry.adapters.refresh();
-      }
+      tabRegistry.adapters.refresh();
     }
   }
   // 入站消息事件 → 直接渲染（避免与 MessagePersister 缓冲写入竞争）
