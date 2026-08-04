@@ -465,7 +465,7 @@ impl WeChatAdapter {
             .json(&upload_req_body)
             .send()
             .await
-            .map_err(|e| GatewayError::Internal(format!("getuploadurl request failed: {}", e)))?;
+            .map_err(|e| GatewayError::Transient(format!("getuploadurl request failed: {}", e)))?;
 
         let resp_text = tokio::time::timeout(Duration::from_secs(30), raw_resp.text())
             .await
@@ -533,7 +533,7 @@ impl WeChatAdapter {
             .body(ciphertext.clone())
             .send()
             .await
-            .map_err(|e| GatewayError::Internal(format!("CDN upload failed: {}", e)))?;
+            .map_err(|e| GatewayError::Transient(format!("CDN upload failed: {}", e)))?;
 
         let cdn_status = cdn_resp.status();
 
@@ -661,7 +661,7 @@ impl WeChatAdapter {
             .json(body)
             .send()
             .await
-            .map_err(|e| GatewayError::Internal(format!("WeChat {} HTTP failed: {}", label, e)))?;
+            .map_err(|e| GatewayError::Transient(format!("WeChat {} HTTP failed: {}", label, e)))?;
 
         let status = raw_resp.status();
         let resp_text = raw_resp
@@ -816,7 +816,7 @@ impl PlatformAdapter for WeChatAdapter {
                     .get(&qr_url)
                     .send()
                     .await
-                    .map_err(|e| GatewayError::Internal(format!("Failed to get QR code: {}", e)))?
+                    .map_err(|e| GatewayError::Transient(format!("Failed to get QR code: {}", e)))?
                     .json()
                     .await
                     .map_err(|e| {
@@ -876,7 +876,7 @@ impl PlatformAdapter for WeChatAdapter {
                         .send()
                         .await
                         .map_err(|e| {
-                            GatewayError::Internal(format!("QR status poll failed: {}", e))
+                            GatewayError::Transient(format!("QR status poll failed: {}", e))
                         })?
                         .json()
                         .await
@@ -993,11 +993,7 @@ impl PlatformAdapter for WeChatAdapter {
             });
         }
 
-        Ok(ConnectResult {
-            ok: true,
-            error: None,
-            bot_info: self.bot_info.clone(),
-        })
+        Ok(ConnectResult::ok(self.bot_info.clone()))
     }
 
     async fn disconnect(&mut self) -> Result<(), GatewayError> {
@@ -1588,7 +1584,7 @@ async fn poll_messages(
         .timeout(Duration::from_secs(LONGPOLL_TIMEOUT + 10))
         .send()
         .await
-        .map_err(|e| GatewayError::Internal(format!("Longpoll request failed: {}", e)))?;
+        .map_err(|e| GatewayError::Transient(format!("Longpoll request failed: {}", e)))?;
 
     // 检测 bot_token 过期 — iLink API 返回 401 Unauthorized
     if raw_resp.status() == reqwest::StatusCode::UNAUTHORIZED {

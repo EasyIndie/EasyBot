@@ -1,0 +1,2690 @@
+  测试运行器: test
+
+╔══════════════════════════════════════════╗
+║    EasyBot Verification Suite           ║
+╚══════════════════════════════════════════╝
+  工作目录: /Users/joker/Developer/EasyBot
+  模式: 完整 + locked
+  日期: 2026-08-03 23:20:23
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[0;36mcargo check (workspace + all features)[0m
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   Compiling proc-macro2 v1.0.107
+   Compiling unicode-ident v1.0.24
+   Compiling quote v1.0.47
+   Compiling libc v0.2.186
+   Compiling serde v1.0.229
+    Checking cfg-if v1.0.4
+   Compiling serde_core v1.0.229
+    Checking once_cell v1.21.4
+   Compiling shlex v2.0.1
+   Compiling find-msvc-tools v0.1.9
+    Checking bytes v1.12.1
+    Checking memchr v2.8.3
+    Checking pin-project-lite v0.2.17
+    Checking itoa v1.0.18
+    Checking log v0.4.33
+    Checking typenum v1.20.1
+    Checking futures-core v0.3.33
+   Compiling autocfg v1.5.1
+   Compiling pkg-config v0.3.33
+   Compiling version_check v0.9.5
+    Checking futures-sink v0.3.33
+   Compiling generic-array v0.14.7
+   Compiling icu_properties_data v2.2.0
+    Checking slab v0.4.12
+   Compiling icu_normalizer_data v2.2.0
+    Checking subtle v2.6.1
+    Checking errno v0.3.14
+    Checking signal-hook-registry v1.4.8
+    Checking socket2 v0.6.5
+    Checking mio v1.2.2
+   Compiling jobserver v0.1.35
+    Checking tracing-core v0.1.36
+    Checking http v1.4.2
+   Compiling cc v1.3.0
+   Compiling zmij v1.0.23
+   Compiling syn v2.0.119
+   Compiling syn v3.0.2
+   Compiling serde_json v1.0.151
+    Checking futures-channel v0.3.33
+   Compiling num-traits v0.2.19
+    Checking stable_deref_trait v1.2.1
+    Checking equivalent v1.0.2
+   Compiling httparse v1.10.1
+   Compiling thiserror v2.0.19
+    Checking bitflags v2.13.1
+   Compiling cmake v0.1.58
+    Checking hybrid-array v0.4.13
+   Compiling getrandom v0.4.3
+    Checking futures-io v0.3.33
+    Checking zeroize v1.9.0
+   Compiling dunce v1.0.5
+    Checking futures-task v0.3.33
+   Compiling fs_extra v1.3.0
+    Checking percent-encoding v2.3.2
+   Compiling aws-lc-sys v0.43.0
+    Checking rustls-pki-types v1.15.0
+    Checking getrandom v0.2.17
+   Compiling synstructure v0.13.2
+    Checking hashbrown v0.17.1
+   Compiling ring v0.17.14
+   Compiling parking_lot_core v0.9.12
+   Compiling aws-lc-rs v1.17.3
+    Checking indexmap v2.14.0
+   Compiling serde_derive v1.0.229
+   Compiling thiserror-impl v2.0.19
+    Checking base64 v0.22.1
+    Checking crypto-common v0.2.2
+    Checking crypto-common v0.1.7
+    Checking block-buffer v0.10.4
+   Compiling writeable v0.6.3
+   Compiling litemap v0.8.2
+   Compiling zerofrom-derive v0.1.7
+   Compiling yoke-derive v0.8.2
+   Compiling displaydoc v0.2.6
+   Compiling zerovec-derive v0.11.3
+   Compiling tracing-attributes v0.1.31
+   Compiling tokio-macros v2.7.1
+   Compiling futures-macro v0.3.33
+    Checking zerofrom v0.1.8
+    Checking tokio v1.53.1
+    Checking yoke v0.8.3
+    Checking tracing v0.1.44
+    Checking smallvec v1.15.2
+    Checking futures-util v0.3.33
+    Checking zerovec v0.11.6
+    Checking untrusted v0.9.0
+    Checking core-foundation-sys v0.8.7
+   Compiling zerotrie v0.2.4
+    Checking tokio-util v0.7.18
+   Compiling either v1.16.0
+    Checking digest v0.10.7
+    Checking http-body v1.1.0
+   Compiling utf8_iter v1.0.4
+    Checking cmov v0.5.4
+    Checking tinystr v0.8.3
+   Compiling potential_utf v0.1.5
+    Checking icu_locale_core v2.2.0
+   Compiling rustls v0.23.43
+   Compiling icu_collections v2.2.0
+    Checking ctutils v0.4.2
+    Checking block-buffer v0.12.1
+    Checking const-oid v0.10.2
+    Checking digest v0.11.3
+    Checking icu_provider v2.2.0
+    Checking form_urlencoded v1.2.2
+   Compiling aho-corasick v1.1.4
+    Checking cpufeatures v0.2.17
+    Checking fnv v1.0.7
+   Compiling regex-syntax v0.8.11
+    Checking icu_properties v2.2.0
+    Checking icu_normalizer v2.2.0
+    Checking tower-service v0.3.3
+    Checking atomic-waker v1.1.2
+   Compiling getrandom v0.3.4
+   Compiling rand_core v0.10.1
+    Checking try-lock v0.2.5
+    Checking h2 v0.4.15
+    Checking want v0.3.1
+    Checking cpufeatures v0.3.0
+    Checking httpdate v1.0.3
+    Checking idna_adapter v1.2.2
+   Compiling unicase v2.9.0
+   Compiling vcpkg v0.2.15
+    Checking scopeguard v1.2.0
+   Compiling lock_api v0.4.14
+   Compiling idna v1.1.0
+    Checking http-body-util v0.1.4
+   Compiling regex-automata v0.4.16
+   Compiling crossbeam-utils v0.8.22
+   Compiling url v2.5.8
+    Checking rand_core v0.9.5
+    Checking foldhash v0.2.0
+    Checking allocator-api2 v0.2.21
+   Compiling heck v0.5.0
+   Compiling sha2 v0.11.0
+    Checking hashbrown v0.16.1
+    Checking security-framework-sys v2.17.0
+    Checking core-foundation v0.10.1
+   Compiling regex v1.13.1
+    Checking ipnet v2.12.0
+   Compiling iana-time-zone v0.1.65
+    Checking hyper v1.11.0
+    Checking security-framework v3.7.0
+   Compiling parking_lot v0.12.5
+   Compiling mime_guess v2.0.5
+   Compiling parking v2.2.1
+    Checking tower-layer v0.3.3
+   Compiling crc-catalog v2.5.0
+    Checking hyper-util v0.1.20
+   Compiling objc2 v0.6.4
+   Compiling tinyvec_macros v0.1.1
+   Compiling tinyvec v1.12.0
+   Compiling crc v3.4.0
+   Compiling event-listener v5.4.2
+   Compiling sha2 v0.10.9
+   Compiling crossbeam-queue v0.3.13
+   Compiling hashlink v0.11.1
+   Compiling futures-intrusive v0.5.0
+   Compiling chrono v0.4.45
+   Compiling libsqlite3-sys v0.37.0
+    Checking sync_wrapper v1.0.2
+    Checking ryu v1.0.23
+   Compiling uuid v1.24.0
+    Checking objc2-encode v4.1.0
+    Checking mime v0.3.17
+   Compiling unicode-normalization v0.1.25
+   Compiling atoi v2.0.0
+   Compiling spin v0.9.9
+    Checking chacha20 v0.10.1
+   Compiling hmac v0.13.0
+   Compiling tokio-stream v0.1.19
+   Compiling unicode-properties v0.1.4
+   Compiling unicode-bidi v0.3.18
+   Compiling crc32fast v1.5.0
+   Compiling sqlx-core v0.9.0
+   Compiling stringprep v0.1.5
+   Compiling rand v0.10.2
+   Compiling hkdf v0.13.0
+   Compiling flume v0.12.0
+    Checking tower v0.5.3
+   Compiling futures-executor v0.3.33
+   Compiling md-5 v0.11.0
+   Compiling num-conv v0.2.2
+   Compiling time-core v0.1.9
+   Compiling whoami v2.1.2
+   Compiling byteorder v1.5.0
+   Compiling hex v0.4.3
+   Compiling dotenvy v0.15.7
+   Compiling time-macros v0.2.32
+    Checking objc2-core-foundation v0.3.2
+   Compiling sqlx-postgres v0.9.0
+   Compiling sqlx-sqlite v0.9.0
+    Checking data-encoding v2.11.0
+    Checking deranged v0.5.8
+   Compiling zerocopy v0.8.54
+    Checking powerfmt v0.2.0
+    Checking time v0.3.54
+    Checking objc2-foundation v0.3.2
+   Compiling utoipa-gen v5.5.0
+    Checking rand_core v0.6.4
+    Checking option-ext v0.2.0
+    Checking base64ct v1.8.3
+    Checking password-hash v0.5.0
+    Checking dirs-sys v0.5.0
+    Checking objc2-open-directory v0.3.2
+    Checking objc2-io-kit v0.3.2
+    Checking futures v0.3.33
+    Checking tower-http v0.6.11
+    Checking blake2 v0.10.6
+    Checking unsafe-libyaml v0.2.11
+   Compiling anyhow v1.0.104
+   Compiling sqlx-macros-core v0.9.0
+    Checking hashbrown v0.14.5
+    Checking lazy_static v1.5.0
+    Checking dashmap v6.2.1
+    Checking serde_yaml v0.9.34+deprecated
+    Checking argon2 v0.5.3
+    Checking sysinfo v0.39.6
+    Checking dirs v6.0.0
+   Compiling async-trait v0.1.91
+    Checking ppv-lite86 v0.2.21
+    Checking libloading v0.9.0
+   Compiling rustix v1.1.4
+    Checking semver v1.0.28
+    Checking rand_chacha v0.9.0
+    Checking rand v0.9.5
+    Checking sha1 v0.10.7
+   Compiling itertools v0.14.0
+    Checking minimal-lexical v0.2.1
+    Checking nom v7.1.3
+    Checking webpki-roots v1.0.9
+   Compiling sqlx-macros v0.9.0
+    Checking adler2 v2.0.1
+    Checking simd-adler32 v0.3.10
+   Compiling asn1-rs-derive v0.6.0
+   Compiling asn1-rs-impl v0.2.0
+    Checking miniz_oxide v0.8.9
+    Checking block-padding v0.4.2
+    Checking zlib-rs v0.6.6
+   Compiling prettyplease v0.2.37
+    Checking inout v0.2.2
+   Compiling prost-derive v0.13.5
+    Checking rusticata-macros v4.1.0
+    Checking asn1-rs v0.7.2
+    Checking utoipa v5.5.0
+    Checking sqlx v0.9.0
+    Checking serde_urlencoded v0.7.1
+    Checking num-integer v0.1.46
+    Checking flate2 v1.1.9
+    Checking ordered-float v2.10.1
+    Checking base64 v0.23.0
+   Compiling bumpalo v3.20.3
+   Compiling oid-registry v0.8.1
+   Compiling same-file v1.0.6
+    Checking fastrand v2.5.0
+   Compiling prost v0.13.5
+   Compiling thiserror v1.0.69
+   Compiling fixedbitset v0.5.7
+   Compiling petgraph v0.7.1
+   Compiling zopfli v0.8.3
+   Compiling tempfile v3.27.0
+   Compiling walkdir v2.5.0
+    Checking serde-value v0.7.0
+    Checking num-bigint v0.4.8
+    Checking cipher v0.5.2
+    Checking sha1 v0.11.0
+   Compiling prost-types v0.13.5
+   Compiling thiserror-impl v1.0.69
+   Compiling serde_repr v0.1.21
+   Compiling pulldown-cmark v0.13.4
+   Compiling multimap v0.10.1
+   Compiling unicode-width v0.2.2
+    Checking twilight-model v0.17.1
+   Compiling getopts v0.2.24
+   Compiling prost-build v0.13.5
+    Checking der-parser v10.0.0
+   Compiling rust-embed-utils v8.12.0
+    Checking tungstenite v0.29.0
+    Checking sharded-slab v0.1.7
+    Checking matchers v0.2.0
+    Checking tracing-serde v0.2.0
+    Checking tracing-log v0.2.0
+    Checking thread_local v1.1.10
+   Compiling protobuf v3.7.2
+    Checking cpubits v0.1.1
+    Checking nu-ansi-term v0.50.3
+   Compiling pulldown-cmark-escape v0.11.0
+   Compiling zip v3.0.0
+    Checking utf-8 v0.7.6
+    Checking tracing-subscriber v0.3.23
+    Checking aes v0.9.2
+   Compiling larksuite-oapi-sdk-rs v0.3.3
+    Checking protobuf-support v3.7.2
+    Checking tokio-tungstenite v0.29.0
+    Checking x509-parser v0.18.1
+   Compiling rust-embed-impl v8.12.0
+    Checking axum-core v0.5.6
+   Compiling utoipa-swagger-ui v9.0.2
+    Checking rustls-native-certs v0.8.4
+    Checking twilight-http-ratelimiting v0.17.1
+   Compiling axum-macros v0.5.1
+    Checking rustls-pemfile v2.2.0
+    Checking serde_path_to_error v0.1.20
+    Checking coarsetime v0.1.37
+    Checking matchit v0.8.4
+   Compiling prometheus v0.14.0
+    Checking utf8parse v0.2.2
+    Checking simdutf8 v0.1.5
+    Checking sha1_smol v1.0.1
+    Checking anstyle-parse v1.0.0
+    Checking rust-embed v8.12.0
+   Compiling easybot-api v0.0.28 (/Users/joker/Developer/EasyBot/crates/easybot-api)
+    Checking axum v0.8.9
+    Checking cbc v0.2.1
+    Checking webpki-roots v0.26.11
+    Checking twilight-gateway-queue v0.17.0
+   Compiling libmimalloc-sys v0.1.49
+    Checking anstyle-query v1.1.5
+    Checking anstyle v1.0.14
+    Checking colorchoice v1.0.5
+    Checking is_terminal_polyfill v1.70.2
+    Checking anstream v1.0.0
+    Checking tower-http v0.7.0
+    Checking num_cpus v1.17.0
+    Checking clap_lex v1.1.0
+    Checking md5 v0.8.1
+    Checking deadpool-runtime v0.1.4
+    Checking strsim v0.11.1
+    Checking qrcode v0.14.1
+    Checking clap_builder v4.6.2
+    Checking deadpool v0.12.3
+    Checking crossbeam-channel v0.5.16
+   Compiling clap_derive v4.6.4
+    Checking assert-json-diff v2.0.2
+    Checking ureq-proto v0.6.0
+    Checking utf8-zero v0.8.1
+   Compiling easybot-bin v0.0.28 (/Users/joker/Developer/EasyBot/bin)
+    Checking symlink v0.1.0
+    Checking tracing-appender v0.2.5
+    Checking wiremock v0.6.5
+    Checking mimalloc v0.1.52
+    Checking clap v4.6.4
+    Checking twilight-validate v0.17.0
+    Checking twilight-http v0.17.1
+    Checking rustls-webpki v0.103.13
+    Checking tokio-rustls v0.26.4
+    Checking rustls-platform-verifier v0.7.0
+    Checking tungstenite v0.26.2
+    Checking aioduct v0.2.3
+    Checking tungstenite v0.30.0
+    Checking ureq v3.3.0
+    Checking hyper-rustls v0.27.9
+    Checking tokio-websockets v0.13.3
+    Checking reqwest v0.13.4
+    Checking tokio-tungstenite v0.26.2
+    Checking tokio-tungstenite v0.30.0
+    Checking twilight-gateway v0.17.1
+    Checking easybot-core v0.0.28 (/Users/joker/Developer/EasyBot/crates/easybot-core)
+    Checking easybot-plugin-sdk v0.0.28 (/Users/joker/Developer/EasyBot/crates/easybot-plugin-sdk)
+    Checking easybot-adapter-qq v0.0.28 (/Users/joker/Developer/EasyBot/crates/easybot-adapter-qq)
+    Checking easybot-adapter-wechat v0.0.28 (/Users/joker/Developer/EasyBot/crates/easybot-adapter-wechat)
+    Checking easybot-adapter-telegram v0.0.28 (/Users/joker/Developer/EasyBot/crates/easybot-adapter-telegram)
+    Checking easybot-adapter-discord v0.0.28 (/Users/joker/Developer/EasyBot/crates/easybot-adapter-discord)
+    Checking fixtures v0.0.28 (/Users/joker/Developer/EasyBot/tests/fixtures)
+    Checking mock-adapter v0.0.28 (/Users/joker/Developer/EasyBot/tests/plugins/mock-adapter)
+    Checking integration-tests v0.0.28 (/Users/joker/Developer/EasyBot/tests/integration)
+    Checking easybot-adapter-feishu v0.0.28 (/Users/joker/Developer/EasyBot/crates/easybot-adapter-feishu)
+    Checking e2e-tests v0.0.28 (/Users/joker/Developer/EasyBot/tests/e2e)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 5m 24s
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[0;36mcargo fmt --check[0m
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[0;36mcargo clippy (all targets + warnings as errors)[0m
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    Checking easybot-core v0.0.28 (/Users/joker/Developer/EasyBot/crates/easybot-core)
+   Compiling easybot-api v0.0.28 (/Users/joker/Developer/EasyBot/crates/easybot-api)
+   Compiling semver v1.0.28
+   Compiling winnow v1.0.4
+    Checking console v0.16.4
+    Checking similar v2.7.0
+   Compiling toml_datetime v1.1.1+spec-1.1.0
+   Compiling glob v0.3.3
+   Compiling rustc_version v0.4.1
+   Compiling relative-path v1.9.3
+   Compiling easybot-bin v0.0.28 (/Users/joker/Developer/EasyBot/bin)
+    Checking futures-timer v3.0.4
+    Checking insta v1.48.0
+   Compiling rstest_macros v0.26.1
+   Compiling toml_parser v1.1.2+spec-1.1.0
+   Compiling toml_edit v0.25.13+spec-1.1.0
+   Compiling proc-macro-crate v3.5.0
+    Checking rstest v0.26.1
+    Checking fixtures v0.0.28 (/Users/joker/Developer/EasyBot/tests/fixtures)
+    Checking easybot-adapter-discord v0.0.28 (/Users/joker/Developer/EasyBot/crates/easybot-adapter-discord)
+    Checking easybot-adapter-qq v0.0.28 (/Users/joker/Developer/EasyBot/crates/easybot-adapter-qq)
+    Checking easybot-adapter-feishu v0.0.28 (/Users/joker/Developer/EasyBot/crates/easybot-adapter-feishu)
+    Checking easybot-adapter-wechat v0.0.28 (/Users/joker/Developer/EasyBot/crates/easybot-adapter-wechat)
+    Checking easybot-adapter-telegram v0.0.28 (/Users/joker/Developer/EasyBot/crates/easybot-adapter-telegram)
+    Checking easybot-plugin-sdk v0.0.28 (/Users/joker/Developer/EasyBot/crates/easybot-plugin-sdk)
+    Checking mock-adapter v0.0.28 (/Users/joker/Developer/EasyBot/tests/plugins/mock-adapter)
+    Checking integration-tests v0.0.28 (/Users/joker/Developer/EasyBot/tests/integration)
+    Checking e2e-tests v0.0.28 (/Users/joker/Developer/EasyBot/tests/e2e)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2m 50s
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[0;36mFeature Matrix (7 种组合)[0m
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  验证各适配器独立/组合编译...
+  ⏳ 无适配器...  [0;32m✅[0m 无适配器
+  ⏳ 仅 Telegram...  [0;32m✅[0m 仅 Telegram
+  ⏳ 仅 Discord...  [0;32m✅[0m 仅 Discord
+  ⏳ Telegram + Discord...  [0;32m✅[0m Telegram + Discord
+  ⏳ 仅飞书...  [0;32m✅[0m 仅飞书
+  ⏳ 仅 QQ...  [0;32m✅[0m 仅 QQ
+  ⏳ 仅微信...  [0;32m✅[0m 仅微信
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[0;36mcargo build --workspace[0m
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   Compiling cfg-if v1.0.4
+   Compiling memchr v2.8.3
+   Compiling bytes v1.12.1
+   Compiling once_cell v1.21.4
+   Compiling libc v0.2.186
+   Compiling pin-project-lite v0.2.17
+   Compiling futures-core v0.3.33
+   Compiling typenum v1.20.1
+   Compiling itoa v1.0.18
+   Compiling serde_core v1.0.229
+   Compiling log v0.4.33
+   Compiling equivalent v1.0.2
+   Compiling zerofrom v0.1.8
+   Compiling stable_deref_trait v1.2.1
+   Compiling bitflags v2.13.1
+   Compiling yoke v0.8.3
+   Compiling hashbrown v0.17.1
+   Compiling zerovec v0.11.6
+   Compiling jobserver v0.1.35
+   Compiling mio v1.2.2
+   Compiling socket2 v0.6.5
+   Compiling errno v0.3.14
+   Compiling cc v1.3.0
+   Compiling futures-sink v0.3.33
+   Compiling signal-hook-registry v1.4.8
+   Compiling litemap v0.8.2
+   Compiling subtle v2.6.1
+   Compiling tinystr v0.8.3
+   Compiling futures-task v0.3.33
+   Compiling slab v0.4.12
+   Compiling percent-encoding v2.3.2
+   Compiling tokio v1.53.1
+   Compiling futures-io v0.3.33
+   Compiling writeable v0.6.3
+   Compiling potential_utf v0.1.5
+   Compiling serde v1.0.229
+   Compiling zerotrie v0.2.4
+   Compiling tracing-core v0.1.36
+   Compiling utf8_iter v1.0.4
+   Compiling icu_locale_core v2.2.0
+   Compiling http v1.4.2
+   Compiling icu_collections v2.2.0
+   Compiling generic-array v0.14.7
+   Compiling icu_normalizer_data v2.2.0
+   Compiling hybrid-array v0.4.13
+   Compiling icu_properties_data v2.2.0
+   Compiling tracing v0.1.44
+   Compiling icu_provider v2.2.0
+   Compiling block-buffer v0.10.4
+   Compiling crypto-common v0.1.7
+   Compiling zmij v1.0.23
+   Compiling futures-channel v0.3.33
+   Compiling core-foundation-sys v0.8.7
+   Compiling smallvec v1.15.2
+   Compiling icu_properties v2.2.0
+   Compiling crypto-common v0.2.2
+   Compiling cmake v0.1.58
+   Compiling form_urlencoded v1.2.2
+   Compiling zeroize v1.9.0
+   Compiling futures-util v0.3.33
+   Compiling num-traits v0.2.19
+   Compiling httparse v1.10.1
+   Compiling thiserror v2.0.19
+   Compiling rand_core v0.10.1
+   Compiling aws-lc-sys v0.43.0
+   Compiling rustls-pki-types v1.15.0
+   Compiling cpufeatures v0.2.17
+   Compiling getrandom v0.2.17
+   Compiling aho-corasick v1.1.4
+   Compiling scopeguard v1.2.0
+   Compiling regex-syntax v0.8.11
+   Compiling cmov v0.5.4
+   Compiling ctutils v0.4.2
+   Compiling lock_api v0.4.14
+   Compiling getrandom v0.4.3
+   Compiling block-buffer v0.12.1
+   Compiling ring v0.17.14
+   Compiling indexmap v2.14.0
+   Compiling base64 v0.22.1
+   Compiling const-oid v0.10.2
+   Compiling digest v0.11.3
+   Compiling serde_json v1.0.151
+   Compiling untrusted v0.9.0
+   Compiling digest v0.10.7
+   Compiling tokio-util v0.7.18
+   Compiling http-body v1.1.0
+   Compiling either v1.16.0
+   Compiling cpufeatures v0.3.0
+   Compiling foldhash v0.2.0
+   Compiling allocator-api2 v0.2.21
+   Compiling fnv v1.0.7
+   Compiling hashbrown v0.16.1
+   Compiling regex-automata v0.4.16
+   Compiling icu_normalizer v2.2.0
+   Compiling atomic-waker v1.1.2
+   Compiling tower-service v0.3.3
+   Compiling try-lock v0.2.5
+   Compiling h2 v0.4.15
+   Compiling want v0.3.1
+   Compiling idna_adapter v1.2.2
+   Compiling iana-time-zone v0.1.65
+   Compiling httpdate v1.0.3
+   Compiling idna v1.1.0
+   Compiling getrandom v0.3.4
+   Compiling sha2 v0.11.0
+   Compiling http-body-util v0.1.4
+   Compiling parking v2.2.1
+   Compiling crc-catalog v2.5.0
+   Compiling unicase v2.9.0
+   Compiling event-listener v5.4.2
+   Compiling crc v3.4.0
+   Compiling regex v1.13.1
+   Compiling url v2.5.8
+   Compiling rand_core v0.9.5
+   Compiling hashlink v0.11.1
+   Compiling chacha20 v0.10.1
+   Compiling crossbeam-utils v0.8.22
+   Compiling parking_lot_core v0.9.12
+   Compiling core-foundation v0.10.1
+   Compiling security-framework-sys v2.17.0
+   Compiling ipnet v2.12.0
+   Compiling mime v0.3.17
+   Compiling tinyvec_macros v0.1.1
+   Compiling tinyvec v1.12.0
+   Compiling security-framework v3.7.0
+   Compiling parking_lot v0.12.5
+   Compiling spin v0.9.9
+   Compiling tower-layer v0.3.3
+   Compiling sha2 v0.10.9
+   Compiling unicode-normalization v0.1.25
+   Compiling futures-intrusive v0.5.0
+   Compiling crossbeam-queue v0.3.13
+   Compiling chrono v0.4.45
+   Compiling hyper v1.11.0
+   Compiling mime_guess v2.0.5
+   Compiling libsqlite3-sys v0.37.0
+   Compiling hmac v0.13.0
+   Compiling sync_wrapper v1.0.2
+   Compiling hex v0.4.3
+   Compiling objc2-encode v4.1.0
+   Compiling hyper-util v0.1.20
+   Compiling unicode-bidi v0.3.18
+   Compiling ryu v1.0.23
+   Compiling unicode-properties v0.1.4
+   Compiling objc2 v0.6.4
+   Compiling stringprep v0.1.5
+   Compiling hkdf v0.13.0
+   Compiling atoi v2.0.0
+   Compiling md-5 v0.11.0
+   Compiling uuid v1.24.0
+   Compiling dotenvy v0.15.7
+   Compiling tokio-stream v0.1.19
+   Compiling byteorder v1.5.0
+   Compiling whoami v2.1.2
+   Compiling futures-executor v0.3.33
+   Compiling sqlx-core v0.9.0
+   Compiling tower v0.5.3
+   Compiling flume v0.12.0
+   Compiling rand v0.10.2
+   Compiling time-core v0.1.9
+   Compiling num-conv v0.2.2
+   Compiling objc2-core-foundation v0.3.2
+   Compiling time-macros v0.2.32
+   Compiling deranged v0.5.8
+   Compiling data-encoding v2.11.0
+   Compiling powerfmt v0.2.0
+   Compiling sqlx-postgres v0.9.0
+   Compiling sqlx-sqlite v0.9.0
+   Compiling time v0.3.54
+   Compiling crc32fast v1.5.0
+   Compiling objc2-foundation v0.3.2
+   Compiling utoipa-gen v5.5.0
+   Compiling rand_core v0.6.4
+   Compiling option-ext v0.2.0
+   Compiling zlib-rs v0.6.6
+   Compiling base64ct v1.8.3
+   Compiling password-hash v0.5.0
+   Compiling dirs-sys v0.5.0
+   Compiling objc2-open-directory v0.3.2
+   Compiling zerocopy v0.8.54
+   Compiling objc2-io-kit v0.3.2
+   Compiling sqlx-macros-core v0.9.0
+   Compiling futures v0.3.33
+   Compiling tower-http v0.6.11
+   Compiling blake2 v0.10.6
+   Compiling sqlx-macros v0.9.0
+   Compiling hashbrown v0.14.5
+   Compiling fastrand v2.5.0
+   Compiling unsafe-libyaml v0.2.11
+   Compiling lazy_static v1.5.0
+   Compiling dashmap v6.2.1
+   Compiling argon2 v0.5.3
+   Compiling sqlx v0.9.0
+   Compiling utoipa v5.5.0
+   Compiling serde_yaml v0.9.34+deprecated
+   Compiling ppv-lite86 v0.2.21
+   Compiling sysinfo v0.39.6
+   Compiling dirs v6.0.0
+   Compiling libloading v0.9.0
+   Compiling semver v1.0.28
+   Compiling rand_chacha v0.9.0
+   Compiling anyhow v1.0.104
+   Compiling itertools v0.14.0
+   Compiling rand v0.9.5
+   Compiling sha1 v0.10.7
+   Compiling minimal-lexical v0.2.1
+   Compiling base64 v0.23.0
+   Compiling nom v7.1.3
+   Compiling webpki-roots v1.0.9
+   Compiling adler2 v2.0.1
+   Compiling simd-adler32 v0.3.10
+   Compiling prost-derive v0.13.5
+   Compiling block-padding v0.4.2
+   Compiling miniz_oxide v0.8.9
+   Compiling rustix v1.1.4
+   Compiling inout v0.2.2
+   Compiling serde_urlencoded v0.7.1
+   Compiling flate2 v1.1.9
+   Compiling ordered-float v2.10.1
+   Compiling num-integer v0.1.46
+   Compiling rusticata-macros v4.1.0
+   Compiling same-file v1.0.6
+   Compiling asn1-rs v0.7.2
+   Compiling zopfli v0.8.3
+   Compiling prost v0.13.5
+   Compiling num-bigint v0.4.8
+   Compiling walkdir v2.5.0
+   Compiling petgraph v0.7.1
+   Compiling prost-types v0.13.5
+   Compiling tempfile v3.27.0
+   Compiling serde-value v0.7.0
+   Compiling cipher v0.5.2
+   Compiling sha1 v0.11.0
+   Compiling prost-build v0.13.5
+   Compiling thiserror v1.0.69
+   Compiling twilight-model v0.17.1
+   Compiling der-parser v10.0.0
+   Compiling oid-registry v0.8.1
+   Compiling rust-embed-utils v8.12.0
+   Compiling zip v3.0.0
+   Compiling tungstenite v0.29.0
+   Compiling sharded-slab v0.1.7
+   Compiling matchers v0.2.0
+   Compiling tracing-serde v0.2.0
+   Compiling tracing-log v0.2.0
+   Compiling thread_local v1.1.10
+   Compiling cpubits v0.1.1
+   Compiling utf-8 v0.7.6
+   Compiling nu-ansi-term v0.50.3
+   Compiling utoipa-swagger-ui v9.0.2
+   Compiling larksuite-oapi-sdk-rs v0.3.3
+   Compiling aes v0.9.2
+   Compiling tracing-subscriber v0.3.23
+   Compiling pulldown-cmark v0.13.4
+   Compiling tokio-tungstenite v0.29.0
+   Compiling x509-parser v0.18.1
+   Compiling rust-embed-impl v8.12.0
+   Compiling protobuf-support v3.7.2
+   Compiling axum-core v0.5.6
+   Compiling rustls-native-certs v0.8.4
+   Compiling twilight-http-ratelimiting v0.17.1
+   Compiling rustls-pemfile v2.2.0
+   Compiling serde_path_to_error v0.1.20
+   Compiling coarsetime v0.1.37
+   Compiling sha1_smol v1.0.1
+   Compiling matchit v0.8.4
+   Compiling simdutf8 v0.1.5
+   Compiling utf8parse v0.2.2
+   Compiling easybot-api v0.0.28 (/Users/joker/Developer/EasyBot/crates/easybot-api)
+   Compiling anstyle-parse v1.0.0
+   Compiling axum v0.8.9
+   Compiling rust-embed v8.12.0
+   Compiling protobuf v3.7.2
+   Compiling cbc v0.2.1
+   Compiling webpki-roots v0.26.11
+   Compiling twilight-gateway-queue v0.17.0
+   Compiling libmimalloc-sys v0.1.49
+   Compiling is_terminal_polyfill v1.70.2
+   Compiling colorchoice v1.0.5
+   Compiling anstyle-query v1.1.5
+   Compiling anstyle v1.0.14
+   Compiling tower-http v0.7.0
+   Compiling num_cpus v1.17.0
+   Compiling anstream v1.0.0
+   Compiling qrcode v0.14.1
+   Compiling md5 v0.8.1
+   Compiling strsim v0.11.1
+   Compiling clap_lex v1.1.0
+   Compiling deadpool-runtime v0.1.4
+   Compiling clap_builder v4.6.2
+   Compiling deadpool v0.12.3
+   Compiling crossbeam-channel v0.5.16
+   Compiling prometheus v0.14.0
+   Compiling assert-json-diff v2.0.2
+   Compiling ureq-proto v0.6.0
+   Compiling utf8-zero v0.8.1
+   Compiling easybot-bin v0.0.28 (/Users/joker/Developer/EasyBot/bin)
+   Compiling symlink v0.1.0
+   Compiling tracing-appender v0.2.5
+   Compiling clap v4.6.4
+   Compiling wiremock v0.6.5
+   Compiling mimalloc v0.1.52
+   Compiling aws-lc-rs v1.17.3
+   Compiling rustls v0.23.43
+   Compiling twilight-validate v0.17.0
+   Compiling twilight-http v0.17.1
+   Compiling rustls-webpki v0.103.13
+   Compiling tokio-rustls v0.26.4
+   Compiling rustls-platform-verifier v0.7.0
+   Compiling tungstenite v0.26.2
+   Compiling aioduct v0.2.3
+   Compiling tungstenite v0.30.0
+   Compiling ureq v3.3.0
+   Compiling hyper-rustls v0.27.9
+   Compiling tokio-websockets v0.13.3
+   Compiling tokio-tungstenite v0.26.2
+   Compiling reqwest v0.13.4
+   Compiling twilight-gateway v0.17.1
+   Compiling tokio-tungstenite v0.30.0
+   Compiling easybot-core v0.0.28 (/Users/joker/Developer/EasyBot/crates/easybot-core)
+   Compiling easybot-adapter-wechat v0.0.28 (/Users/joker/Developer/EasyBot/crates/easybot-adapter-wechat)
+   Compiling easybot-plugin-sdk v0.0.28 (/Users/joker/Developer/EasyBot/crates/easybot-plugin-sdk)
+   Compiling easybot-adapter-discord v0.0.28 (/Users/joker/Developer/EasyBot/crates/easybot-adapter-discord)
+   Compiling easybot-adapter-qq v0.0.28 (/Users/joker/Developer/EasyBot/crates/easybot-adapter-qq)
+   Compiling easybot-adapter-telegram v0.0.28 (/Users/joker/Developer/EasyBot/crates/easybot-adapter-telegram)
+   Compiling fixtures v0.0.28 (/Users/joker/Developer/EasyBot/tests/fixtures)
+   Compiling integration-tests v0.0.28 (/Users/joker/Developer/EasyBot/tests/integration)
+   Compiling mock-adapter v0.0.28 (/Users/joker/Developer/EasyBot/tests/plugins/mock-adapter)
+   Compiling easybot-adapter-feishu v0.0.28 (/Users/joker/Developer/EasyBot/crates/easybot-adapter-feishu)
+   Compiling e2e-tests v0.0.28 (/Users/joker/Developer/EasyBot/tests/e2e)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 32m 16s
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[0;36mtest (default features)[0m
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   Compiling rustc_version v0.4.1
+   Compiling console v0.16.4
+   Compiling similar v2.7.0
+   Compiling toml_edit v0.25.13+spec-1.1.0
+   Compiling futures-timer v3.0.4
+   Compiling integration-tests v0.0.28 (/Users/joker/Developer/EasyBot/tests/integration)
+   Compiling easybot-bin v0.0.28 (/Users/joker/Developer/EasyBot/bin)
+   Compiling mock-adapter v0.0.28 (/Users/joker/Developer/EasyBot/tests/plugins/mock-adapter)
+   Compiling rstest_macros v0.26.1
+   Compiling insta v1.48.0
+   Compiling proc-macro-crate v3.5.0
+   Compiling e2e-tests v0.0.28 (/Users/joker/Developer/EasyBot/tests/e2e)
+   Compiling easybot-adapter-discord v0.0.28 (/Users/joker/Developer/EasyBot/crates/easybot-adapter-discord)
+   Compiling easybot-api v0.0.28 (/Users/joker/Developer/EasyBot/crates/easybot-api)
+   Compiling rstest v0.26.1
+   Compiling easybot-adapter-telegram v0.0.28 (/Users/joker/Developer/EasyBot/crates/easybot-adapter-telegram)
+   Compiling easybot-adapter-feishu v0.0.28 (/Users/joker/Developer/EasyBot/crates/easybot-adapter-feishu)
+   Compiling easybot-adapter-qq v0.0.28 (/Users/joker/Developer/EasyBot/crates/easybot-adapter-qq)
+   Compiling easybot-adapter-wechat v0.0.28 (/Users/joker/Developer/EasyBot/crates/easybot-adapter-wechat)
+   Compiling easybot-core v0.0.28 (/Users/joker/Developer/EasyBot/crates/easybot-core)
+   Compiling fixtures v0.0.28 (/Users/joker/Developer/EasyBot/tests/fixtures)
+   Compiling easybot-plugin-sdk v0.0.28 (/Users/joker/Developer/EasyBot/crates/easybot-plugin-sdk)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 4m 08s
+     Running unittests src/lib.rs (target/debug/deps/e2e_tests-5cede6bcc78db2e2)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/discord.rs (target/debug/deps/discord-df4ff3307d6c5ae0)
+
+running 9 tests
+test test_e2e_discord_health ... ok
+test test_e2e_discord_auth_failure ... ok
+test test_e2e_discord_delete_message ... ok
+test test_e2e_discord_send_error ... ok
+test test_e2e_discord_send_media ... ok
+test test_e2e_discord_edit_message ... ok
+test test_e2e_discord_send_interactive ... ok
+test test_e2e_discord_lifecycle ... ok
+test test_e2e_discord_send_message ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 11.62s
+
+     Running tests/feishu.rs (target/debug/deps/feishu-9e7b6a75c842f29b)
+
+running 8 tests
+test test_e2e_feishu_health ... ok
+test test_e2e_feishu_auth_failure ... ok
+test test_e2e_feishu_edit_message ... ok
+test test_e2e_feishu_send_message ... ok
+test test_e2e_feishu_delete_message ... ok
+test test_e2e_feishu_send_error ... ok
+test test_e2e_feishu_send_interactive ... ok
+test test_e2e_feishu_lifecycle ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 9.46s
+
+     Running tests/qq.rs (target/debug/deps/qq-e3036cc2238a33f9)
+
+running 6 tests
+test test_e2e_qq_health ... ok
+test test_e2e_qq_auth_failure ... ok
+test test_e2e_qq_send_media ... ok
+test test_e2e_qq_send_message ... ok
+test test_e2e_qq_send_error ... ok
+test test_e2e_qq_lifecycle ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.32s
+
+     Running tests/telegram.rs (target/debug/deps/telegram-7df9bf4bbd1654a2)
+
+running 10 tests
+test test_e2e_health ... ok
+test test_e2e_auth_required ... ok
+test test_e2e_edit_message ... ok
+test test_e2e_send_markdown ... ok
+test test_e2e_send_interactive ... ok
+test test_e2e_delete_message ... ok
+test test_e2e_send_message ... ok
+test test_e2e_send_media ... ok
+test test_e2e_batch_send ... ok
+test test_e2e_lifecycle ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 8.99s
+
+     Running tests/wechat.rs (target/debug/deps/wechat-d96ab3f3bd2980b1)
+
+running 5 tests
+test test_e2e_wechat_health ... ok
+test test_e2e_wechat_send_error ... ok
+test test_e2e_wechat_send_message ... ok
+test test_e2e_wechat_send_api_error ... ok
+test test_e2e_wechat_lifecycle ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.39s
+
+     Running unittests src/lib.rs (target/debug/deps/easybot_adapter_discord-60a3c868de21afa8)
+
+running 33 tests
+test tests::test_build_keyboard_components_multi_row ... ok
+test tests::test_build_keyboard_components_url_button ... ok
+test tests::test_build_keyboard_components_callback_button ... ok
+test tests::test_capabilities ... ok
+test tests::test_default ... ok
+test tests::test_default_state ... ok
+test tests::test_convert_own_message_is_filtered ... ok
+test tests::test_convert_message_timestamp_parsing ... ok
+test tests::test_convert_message_bot_author_not_self ... ok
+test tests::test_convert_message_empty_content ... ok
+test tests::test_convert_guild_message ... ok
+test tests::test_convert_dm_message ... ok
+test tests::test_display_name ... ok
+test tests::test_handle_event_none_stops ... ok
+test tests::test_handle_event_error_continues ... ok
+test tests::test_platform_name ... ok
+test tests::test_health_before_init ... ok
+test tests::test_init_without_token ... ok
+test tests::test_runtime_config_after_init ... ok
+test tests::test_disconnect_idempotent ... ok
+test tests::test_double_disconnect ... ok
+test tests::test_runtime_config_before_init ... ok
+test tests::test_status_summary ... ok
+test types::tests::test_discord_guild_deserialize_without_owner ... ok
+test types::tests::test_discord_guild_deserialize ... ok
+test types::tests::test_discord_user_deserialize_bot_false ... ok
+test types::tests::test_discord_message_deserialize_without_bot_on_author ... ok
+test types::tests::test_discord_user_deserialize_with_bot_field ... ok
+test tests::test_handle_event_ready_updates_heartbeat ... ok
+test types::tests::test_discord_user_deserialize_without_bot_field ... ok
+test tests::test_init_and_connect_without_real_token ... ok
+test tests::test_get_chat_info ... ok
+test tests::test_send_message_mocked ... ok
+
+test result: ok. 33 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 3.14s
+
+     Running tests/send_mock.rs (target/debug/deps/send_mock-abe5ec44ccb13619)
+
+running 20 tests
+test test_connect_no_token_returns_config_error ... ok
+test test_delete_message_not_found ... ok
+test test_send_http_401 ... ok
+test test_delete_message_success ... ok
+test test_connect_http_error ... ok
+test test_edit_message_not_found ... ok
+test test_edit_message_success ... ok
+test test_connect_success ... ok
+test test_send_media_no_data ... ok
+test test_send_http_500 ... ok
+test test_send_malformed_response ... ok
+test test_send_media_rate_limited ... ok
+test test_send_media_http_error ... ok
+test test_send_media_from_local_file ... ok
+test test_send_media_success ... ok
+test test_send_media_with_caption ... ok
+test test_send_wrong_channel_returns_error ... ok
+test test_send_success ... ok
+test test_send_uses_correct_channel ... ok
+test test_send_http_429_rate_limit ... ok
+
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.02s
+
+     Running unittests src/lib.rs (target/debug/deps/easybot_adapter_feishu-283178236dc475eb)
+
+running 29 tests
+test event::tests::test_timestamp_parse_fallback ... ok
+test event::tests::test_handle_image_message ... ok
+test event::tests::test_handle_text_message_group ... ok
+test event::tests::test_handle_malformed_content_uses_raw ... ok
+test event::tests::test_handle_text_message_p2p ... ok
+test tests::test_adapter_default ... ok
+test tests::test_capabilities ... ok
+test tests::test_capabilities_all_expected ... ok
+test tests::test_create_adapter ... ok
+test tests::test_delete_message_before_connect ... ok
+test tests::test_disconnect_idempotent ... ok
+test tests::test_double_disconnect ... ok
+test tests::test_get_chat_info_network_error ... ok
+test tests::test_health_before_init ... ok
+test tests::test_init_missing_app_id ... ok
+test tests::test_init_missing_config ... ok
+test tests::test_init_valid_config ... ok
+test tests::test_runtime_config_after_init ... ok
+test tests::test_runtime_config_before_init ... ok
+test tests::test_send_before_connect ... ok
+test tests::test_status_summary ... ok
+test types::tests::test_deserialize_invalid_json_should_fail ... ok
+test types::tests::test_deserialize_message_receive_event_group ... ok
+test types::tests::test_deserialize_message_receive_event_minimal ... ok
+test types::tests::test_deserialize_message_receive_event_p2p ... ok
+test types::tests::test_deserialize_unknown_chat_type ... ok
+test event::tests::test_handle_missing_msg_type_error ... ok
+test event::tests::test_handle_unknown_chat_type_should_not_publish ... ok
+test event::tests::test_handle_invalid_event_data ... ok
+
+test result: ok. 29 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.20s
+
+     Running tests/send_mock.rs (target/debug/deps/send_mock-ac6ab15eb42d5fc6)
+
+running 20 tests
+test test_init_requires_app_id_and_secret ... ok
+test test_init_sets_starting ... ok
+test test_new_state_created ... ok
+test test_disconnect_sets_stopped ... ok
+test test_connect_fails_without_mock ... ok
+test test_connect_success_state ... ok
+test test_send_http_error ... ok
+test test_edit_message_success ... ok
+test test_send_apicode_error ... ok
+test test_edit_message_http_error ... ok
+test test_send_interactive_api_error ... ok
+test test_edit_message_api_error ... ok
+test test_send_interactive_http_error ... ok
+test test_send_media_no_url_or_data_error ... ok
+test test_token_refresh_failure ... ok
+test test_send_interactive_success ... ok
+test test_send_malformed_response ... ok
+test test_send_success ... ok
+test test_send_media_image_success ... ok
+test test_send_media_request_body ... ok
+
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s
+
+     Running unittests src/lib.rs (target/debug/deps/easybot_adapter_qq-ace4b5ba7fff705a)
+
+running 44 tests
+test tests::test_capabilities ... ok
+test tests::test_default ... ok
+test tests::test_def_state_created ... ok
+test tests::test_bot_token_uninitialized ... ok
+test tests::test_create_adapter ... ok
+test tests::test_display_name ... ok
+test tests::test_disconnect_idempotent ... ok
+test tests::test_double_disconnect ... ok
+test tests::test_get_chat_info_uninitialized ... ok
+test tests::test_handle_dispatch_group_at ... ok
+test tests::test_handle_dispatch_c2c ... ok
+test tests::test_handle_dispatch_group_message_create_mentioned ... ok
+test tests::test_handle_dispatch_group_message_create_not_mentioned ... ok
+test tests::test_handle_dispatch_ignored_event ... ok
+test tests::test_handle_dispatch_at_message ... ok
+test tests::test_handle_dispatch_c2c_self_not_filtered ... ok
+test tests::test_handle_dispatch_malformed_data ... ok
+test tests::test_handle_dispatch_missing_data ... ok
+test tests::test_handle_dispatch_self_filter_channel ... ok
+test tests::test_health_before_init ... ok
+test tests::test_init_missing_config ... ok
+test tests::test_init_valid_config ... ok
+test tests::test_runtime_config_after_init ... ok
+test tests::test_runtime_config_before_init ... ok
+test tests::test_send_before_connect ... ok
+test tests::test_status_summary ... ok
+test tests::test_token_store_clone ... ok
+test tests::test_token_store_get_uninitialized_returns_err ... ok
+test tests::test_token_store_new_needs_refresh ... ok
+test types::tests::test_c2c_message_event_deserialize ... ok
+test types::tests::test_c2c_message_event_without_content ... ok
+test types::tests::test_channel_message_event_deserialize ... ok
+test types::tests::test_channel_message_event_without_guild_id ... ok
+test types::tests::test_group_message_create_event_deserialize ... ok
+test types::tests::test_group_message_create_event_no_mentions ... ok
+test types::tests::test_group_message_event_deserialize ... ok
+test types::tests::test_keyboard_serialization_callback_button ... ok
+test types::tests::test_keyboard_serialization_multi_row ... ok
+test types::tests::test_keyboard_serialization_url_button ... ok
+test types::tests::test_qq_guild_deserialize ... ok
+test types::tests::test_qq_user_deserialize_with_bot_field ... ok
+test types::tests::test_qq_user_deserialize_without_bot_field ... ok
+test types::tests::test_send_message_request_serialize ... ok
+test types::tests::test_send_message_response_deserialize ... ok
+
+test result: ok. 44 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/send_mock.rs (target/debug/deps/send_mock-b51e868fc20a3efd)
+
+running 18 tests
+test test_init_requires_app_id_and_token ... ok
+test test_connect_disconnect_state_cycle ... ok
+test test_send_before_connect_returns_error ... ok
+test test_send_media_before_connect_fails ... ok
+test test_connect_success ... ok
+test test_edit_message_success ... ok
+test test_send_malformed_response ... ok
+test test_delete_message_success ... ok
+test test_send_interactive_success ... ok
+test test_send_http_error ... ok
+test test_send_media_error ... ok
+test test_token_refresh_failure ... ok
+test test_send_media_image_success ... ok
+test test_send_message_success ... ok
+test test_send_media_group_no_text_uses_direct_upload ... ok
+test test_send_media_request_body ... ok
+test test_send_media_group_routes_to_upload ... ok
+test test_connect_failure_state ... ok
+
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.25s
+
+     Running unittests src/lib.rs (target/debug/deps/easybot_adapter_telegram-1de727617b2407d7)
+
+running 30 tests
+test tests::test_chat_type_mapping::case_2 ... ok
+test tests::test_convert_animation_message ... ok
+test tests::test_chat_type_mapping::case_4 ... ok
+test tests::test_chat_type_mapping::case_1 ... ok
+test tests::test_chat_type_mapping::case_3 ... ok
+test tests::test_convert_audio_message ... ok
+test tests::test_capabilities ... ok
+test tests::test_convert_document_message ... ok
+test tests::test_convert_caption_fallback ... ok
+test tests::test_convert_photo_message ... ok
+test tests::test_convert_sticker_message ... ok
+test tests::test_convert_video_message ... ok
+test tests::test_convert_voice_message ... ok
+test tests::test_default ... ok
+test tests::test_default_state ... ok
+test tests::test_convert_message ... ok
+test tests::test_disconnect_idempotent ... ok
+test tests::test_display_name ... ok
+test tests::test_double_disconnect ... ok
+test tests::test_health_before_init ... ok
+test tests::test_init_without_token ... ok
+test tests::test_platform_name ... ok
+test tests::test_runtime_config_after_init ... ok
+test tests::test_runtime_config_before_init ... ok
+test tests::test_status_summary ... ok
+test tests::test_status_summary_includes_health ... ok
+test tests::test_send_before_connect_errors ... ok
+test tests::test_send_message_mocked ... ok
+test tests::test_init_and_connect_without_real_token ... ok
+test tests::test_get_chat_info ... ok
+
+test result: ok. 30 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.05s
+
+     Running tests/send_mock.rs (target/debug/deps/send_mock-7c32f7f31dd29aae)
+
+running 29 tests
+test test_connect_no_token_returns_config_error ... ok
+test test_init_rejects_empty_token ... ok
+test test_send_http_error_500 ... ok
+test test_send_http_error_401 ... ok
+test test_send_http_error_429_rate_limit ... ok
+test test_connect_http_error ... ok
+test test_send_interactive_api_error ... ok
+test test_connect_malformed_response ... ok
+test test_connect_api_error ... ok
+test test_connect_success ... ok
+test test_send_interactive_http_error ... ok
+test test_send_interactive_success ... ok
+test test_send_media_animation_type ... ok
+test test_send_media_api_error ... ok
+test test_send_media_audio_type ... ok
+test test_send_media_no_url_or_data ... ok
+test test_send_media_http_error ... ok
+test test_send_media_document_type ... ok
+test test_send_media_sticker_type ... ok
+test test_send_media_success ... ok
+test test_send_success ... ok
+test test_send_media_video_type ... ok
+test test_send_telegram_api_error ... ok
+test test_send_with_malformed_json_response ... ok
+test test_send_interactive_with_reply_to ... ok
+test test_send_interactive_with_url_button ... ok
+test test_send_interactive_inline_keyboard_format ... ok
+test test_send_media_sends_correct_fields ... ok
+test test_send_uses_correct_chat_id ... ok
+
+test result: ok. 29 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.12s
+
+     Running unittests src/lib.rs (target/debug/deps/easybot_adapter_wechat-6f974ce8b4547a36)
+
+running 39 tests
+test tests::test_aes_padded_size ... ok
+test tests::test_base64_encode_uin ... ok
+test tests::test_base64_encode_uin_max ... ok
+test tests::test_base64_encode_uin_zero ... ok
+test tests::test_convert_empty_item_list ... ok
+test tests::test_convert_file_message ... ok
+test tests::test_convert_group_message ... ok
+test tests::test_convert_image_message ... ok
+test tests::test_aes_128_ecb_encrypt_decrypt_roundtrip ... ok
+test tests::test_convert_unknown_message_type ... ok
+test tests::test_capabilities ... ok
+test tests::test_build_cdn_upload_url ... ok
+test tests::test_convert_text_message ... ok
+test tests::test_create_adapter ... ok
+test tests::test_default ... ok
+test tests::test_credentials_serialization_roundtrip ... ok
+test tests::test_deserialize_empty_getupdates_response ... ok
+test tests::test_deserialize_weixin_message_from_json ... ok
+test tests::test_deserialize_image_weixin_message ... ok
+test tests::test_encode_aes_key_for_api_format ... ok
+test tests::test_encode_aes_key_for_api_decodable_by_wechat_client ... ok
+test tests::test_generate_filekey ... ok
+test tests::test_md5_hex ... ok
+test tests::test_pkcs7_pad_empty ... ok
+test tests::test_get_chat_info_always_dm ... ok
+test tests::test_disconnect_idempotent ... ok
+test tests::test_health_before_init ... ok
+test tests::test_pkcs7_pad_exact_block ... ok
+test tests::test_pkcs7_pad_partial_block ... ok
+test tests::test_double_disconnect ... ok
+test tests::test_runtime_config_before_init ... ok
+test tests::test_send_media_before_connect_errors ... ok
+test tests::test_init ... ok
+test tests::test_runtime_config_after_init ... ok
+test tests::test_send_before_connect_errors ... ok
+test tests::test_status_summary ... ok
+test tests::test_init_with_saved_credentials ... ok
+test tests::test_url_encode_for_cdn ... ok
+test tests::test_set_event_bus ... ok
+
+test result: ok. 39 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/send_mock.rs (target/debug/deps/send_mock-9322d5ae1b4984a1)
+
+running 12 tests
+test test_disconnect_from_created_is_idempotent ... ok
+test test_new_state_created ... ok
+test test_disconnect_sets_stopped ... ok
+test test_init_sets_starting ... ok
+test test_init_always_succeeds ... ok
+test test_connect_success_with_credentials ... ok
+test test_send_http_error ... ok
+test test_send_malformed_response ... ok
+test test_send_empty_response ... ok
+test test_send_uses_msg_id_str_fallback ... ok
+test test_send_success ... ok
+test test_send_ret_error_code ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running unittests src/lib.rs (target/debug/deps/easybot_api-81bcf1c20b945db8)
+
+running 23 tests
+test metrics::tests::outbound_delivery_backlog_has_bounded_labels ... ok
+test metrics::tests::api_key_usage_metrics_are_bounded_and_do_not_expose_secrets ... ok
+test metrics::tests::commercial_ledger_integrity_metrics_are_bounded_and_refresh_is_throttled ... ok
+test metrics::tests::pending_key_rotation_metric_has_no_dynamic_labels ... ok
+test middleware::rate_limit::tests::test_rate_limiter_disabled ... ok
+test middleware::rate_limit::tests::rate_limit_response_includes_retry_after ... ok
+test middleware::rate_limit::tests::test_rate_limiter_prune ... ok
+test middleware::rate_limit::tests::test_rate_limiter_enabled ... ok
+test middleware::rate_limit::tests::test_sliding_window_over_limit ... ok
+test middleware::rate_limit::tests::test_rate_limiter_under_limit_allows_burst ... ok
+test middleware::rate_limit::tests::untrusted_direct_peer_cannot_spoof_forwarded_client ... ok
+test middleware::rate_limit::tests::trusted_proxy_chain_uses_rightmost_untrusted_client ... ok
+test middleware::rate_limit::tests::test_sliding_window_under_limit ... ok
+test routes::config::tests::config_update_shape_rejects_non_object_and_excessive_complexity ... ok
+test routes::config::tests::gateway_config_round_trips_after_hot_reload_merge ... ok
+test routes::messages::tests::target_parser_enforces_resource_bounds ... ok
+test routes::ws::tests::all_frame_types_share_a_bounded_rate_budget ... ok
+test routes::config::tests::recursively_redacts_all_config_credentials_and_url_secrets ... ok
+test openapi::tests::security_requirements_match_router_authentication ... ok
+test routes::messages::tests::public_adapter_errors_are_redacted_and_bounded ... ok
+test log_collector::tests::redacts_common_credentials_from_log_messages ... ok
+test outbox_tests::committed_event_is_republished_and_acknowledged_after_restart ... ok
+test openapi::tests::openapi_v1_contract_snapshot ... ok
+
+test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.15s
+
+     Running tests/api_integration.rs (target/debug/deps/api_integration-81f72b544b8ad985)
+
+running 41 tests
+test test_adapter_status_not_found ... ok
+test test_batch_send_too_many_targets ... ok
+test test_adapters_list_empty ... ok
+test test_batch_send_rejects_duplicate_targets_and_replays_idempotent_result ... ok
+test test_cors_allows_idempotency_and_exposes_commercial_response_headers ... ok
+test test_batch_send_with_invalid_target ... ok
+test test_delete_message_invalid_target ... ok
+test test_authenticated_requests_are_metered_by_key_id ... ok
+test test_admin_login_issues_expiring_memory_session ... ok
+test test_edit_message_invalid_target ... ok
+test test_audit_ledger_records_management_actions_and_enforces_permission ... ok
+test test_edit_message_nonexistent_platform ... ok
+test test_health_endpoint_returns_200 ... ok
+test test_get_config_returns_config ... ok
+test test_delivery_journal_query_and_manual_reconciliation_are_audited ... ok
+test test_invalid_auth_returns_401 ... ok
+test test_internal_management_credential_names_are_reserved ... ok
+test test_api_key_rotation_revokes_old_key_and_preserves_policy ... ok
+test test_liveness_and_readiness_are_public_and_distinct ... ok
+test test_list_api_key_types ... ok
+test test_list_api_keys ... ok
+test test_logs_endpoint_returns_logs ... ok
+test test_message_history_empty ... ok
+test test_message_history_rejects_limit_above_contract ... ok
+test test_message_history_with_filter_params ... ok
+test test_protected_route_requires_auth ... ok
+test test_financial_event_ledger_is_idempotent_conflict_safe_and_scoped ... ok
+test test_send_message_adapter_not_connected ... ok
+test test_durable_usage_export_is_reconciled_and_permission_scoped ... ok
+test test_privacy_export_and_cascade_delete_remove_message_payloads ... ok
+test test_send_message_empty_target ... ok
+test test_per_key_quota_returns_headers_and_429 ... ok
+test test_send_message_invalid_target_format ... ok
+test test_send_message_text_too_long ... ok
+test test_sessions_list_empty ... ok
+test test_send_message_replays_persisted_idempotent_response_and_rejects_reuse ... ok
+test test_start_nonexistent_adapter ... ok
+test test_stop_nonexistent_adapter ... ok
+test test_system_info_returns_system_data ... ok
+test test_nested_api_routes_enforce_fine_grained_permissions ... ok
+test test_target_grants_are_managed_by_subject_and_enforced_on_send ... ok
+
+test result: ok. 41 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 26.29s
+
+     Running tests/common.rs (target/debug/deps/common-65479d185b61c8e6)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/routes.rs (target/debug/deps/routes-5b4ae5ed86c41798)
+
+running 24 tests
+test test_admin_login_rejects_oversized_body_before_json_allocation ... ok
+test test_get_config ... ok
+test test_api_key_creation_rejects_oversized_body_before_json_allocation ... ok
+test test_config_update_rejects_non_object_body ... ok
+test test_adapter_status_nonexistent_returns_404 ... ok
+test test_config_update_rejects_body_before_large_json_allocation ... ok
+test test_audit_query_rejects_limits_outside_documented_contract ... ok
+test test_health_no_auth_needed ... ok
+test test_health_returns_ok ... ok
+test test_get_nonexistent_session ... ok
+test test_api_key_history_query_rejects_unbounded_pagination ... ok
+test test_health_snapshot ... ok
+test test_list_adapters_with_valid_key ... ok
+test test_list_chats_empty ... ok
+test test_protected_route_returns_401_with_invalid_key ... ok
+test test_list_sessions_empty ... ok
+test test_protected_route_returns_401_without_key ... ok
+test test_log_query_rejects_unbounded_inputs ... ok
+test test_message_history_empty ... ok
+test test_unknown_route_returns_404 ... ok
+test test_message_history_rejects_unbounded_limit ... ok
+test test_send_message_with_invalid_target ... ok
+test test_valid_config_update_requires_reviewed_restart ... ok
+test test_update_check_returns_structure ... ok
+
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 12.30s
+
+     Running tests/ws.rs (target/debug/deps/ws-8551476d8ee9ffa1)
+
+running 10 tests
+test test_ws_auth_required_when_no_token ... ok
+test test_ws_global_admin_key_receives_targets_without_grants ... ok
+test test_ws_event_streaming_after_auth ... ok
+test test_ws_multiple_clients_receive_events ... ok
+test test_ws_auth_ok_with_valid_token ... ok
+test test_ws_http_auth_failed ... ok
+test test_ws_auth_failed_with_invalid_token ... ok
+test test_ws_client_clean_disconnect ... ok
+test test_ws_multiple_events_sequential ... ok
+test test_ws_subjects_are_isolated_by_target_grants ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 18.16s
+
+     Running unittests src/main.rs (target/debug/deps/easybot-549bb93c5a165e71)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/easybot_core-3fb86b30a0cb7a28)
+
+running 188 tests
+test adapter::manager::tests::test_compute_backoff_sequence ... ok
+test adapter::manager::tests::test_compute_backoff_capped_at_300s ... ok
+test adapter::manager::tests::test_inject_credentials_does_not_overwrite_existing_token ... ok
+test adapter::manager::tests::test_inject_credentials_populates_token_and_extra ... ok
+test adapter::manager::tests::test_list_statuses_after_stop ... ok
+test adapter::manager::tests::test_list_statuses_preserves_terminal_failed_state ... ok
+test adapter::manager::tests::test_list_statuses_after_start ... ok
+test adapter::manager::tests::test_config_stored_on_start_cleared_on_stop ... ok
+test adapter::manager::tests::test_has_connected_after_start ... ok
+test adapter::manager::tests::test_health_status_computation ... ok
+test adapter::manager::tests::test_list_statuses_reflects_live_adapter_health ... ok
+test adapter::manager::tests::test_start_all_skips_disabled ... ok
+test adapter::manager::tests::test_start_all_auto_enables_with_injected_credentials ... ok
+test adapter::manager::tests::test_start_all_disabled_by_config_overrides_env_vars ... ok
+test adapter::manager::tests::test_send_message_delegation ... ok
+test auth::api_key::tests::api_key_locator_rejects_malformed_or_unbounded_secrets ... ok
+test adapter::manager::tests::test_start_publishes_adapter_connected ... ok
+test adapter::manager::tests::test_start_passes_config_to_adapter ... ok
+test adapter::manager::tests::test_set_status_failed_preserves_display_name ... ok
+test adapter::manager::tests::test_stop_all_clears_configs ... ok
+test adapter::manager::tests::test_stop_all_cleans_up ... ok
+test adapter::manager::tests::test_stop_publishes_adapter_disconnected ... ok
+test auth::api_key::tests::billing_ledger_anchor_detects_deleted_valid_event ... ok
+test auth::api_key::tests::audit_chain_anchor_detects_tail_deletion_and_full_truncation ... ok
+test auth::api_key::tests::billing_events_are_idempotent_and_conflicting_replays_are_rejected ... ok
+test auth::api_key::tests::durable_subject_quota_survives_manager_restart ... ok
+test auth::api_key::tests::durable_subject_quota_does_not_oversell_under_concurrency ... ok
+test auth::api_key::tests::metering_failure_blocks_and_real_write_probe_recovers ... ok
+test auth::api_key::tests::idempotency_reservation_replays_and_rejects_changed_requests ... ok
+test auth::api_key::tests::storage_readiness_detects_closed_pool ... ok
+test auth::api_key::tests::test_audit_chain_persists_and_detects_tampering ... ok
+test auth::api_key::tests::concurrent_key_creation_cannot_oversell_active_limit ... ok
+test auth::api_key::tests::stale_argon_result_cannot_resurrect_revoked_loaded_key ... ok
+test auth::api_key::tests::test_create_key_rejects_duplicate_policy_entries ... ok
+test auth::api_key::tests::restart_keeps_inactive_key_history_out_of_authentication_memory ... ok
+test auth::api_key::tests::test_delete_revoked_key ... ok
+test auth::api_key::tests::test_invalid_key ... ok
+test auth::api_key::tests::target_grants_are_subject_scoped_action_scoped_and_fail_closed ... ok
+test auth::api_key::tests::usage_ledger_integrity_detects_row_deletion_from_both_copies ... ok
+test auth::api_key::tests::usage_ledger_is_atomic_persistent_and_filterable ... ok
+test auth::api_key::tests::test_create_and_authenticate ... ok
+test bus::event_bus::tests::test_broadcast_full_lags_slow_receiver ... ok
+test bus::event_bus::tests::test_event_without_subscribers_is_silent ... ok
+test bus::event_bus::tests::test_multi_consumer_receive_same_event ... ok
+test bus::event_bus::tests::test_publish_subscribe ... ok
+test bus::event_bus::tests::test_subscribe_many_receives_all_types ... ok
+test bus::event_bus::tests::test_subscribe_many_stream_cleanup ... ok
+test config::home::tests::test_cli_override_takes_precedence ... ok
+test config::home::tests::test_env_path_in_paths ... ok
+test config::home::tests::test_legacy_path ... ok
+test config::home::tests::test_resolve_with_env_var ... ok
+test config::service::tests::test_generate_launchd_plist_contains_required_keys ... ok
+test config::service::tests::test_generate_linux_script_contains_commands ... ok
+test config::service::tests::test_generate_macos_script_contains_commands ... ok
+test config::service::tests::test_generate_service_files_returns_platform_files ... ok
+test config::service::tests::test_generate_systemd_unit_contains_required_sections ... ok
+test config::service::tests::test_generate_windows_script_contains_commands ... ok
+test config::tests::production_config_accepts_hardened_reverse_proxy_deployment ... ok
+test config::tests::production_config_rejects_unsupported_application_tls ... ok
+test config::tests::production_config_reports_all_unsafe_settings ... ok
+test config::tests::test_generate_env_example_contains_admin_password ... ok
+test config::tests::test_generate_env_example_contains_allow_plaintext ... ok
+test config::tests::test_generate_env_example_contains_expected_vars ... ok
+test config::tests::test_generate_env_example_does_not_enable_plaintext_by_default ... ok
+test config::tests::test_generate_local_config_example_contains_override_examples ... ok
+test config::tests::test_load_env_creates_variables ... ok
+test config::tests::test_load_env_does_not_override_existing ... ok
+test config::tests::test_load_env_missing_file_returns_ok ... ok
+test config::tests::test_load_env_reads_secret_file ... ok
+test config::tests::test_merge_configs ... ok
+test config::tests::test_merge_configs_preserves_enabled_false_through_deserialize ... ok
+test config::tests::test_resolve_env_vars ... ok
+test config::tests::test_resolve_env_vars_missing ... ok
+test config::tests::test_resolve_env_vars_skips_comments ... ok
+test plugin::loader::tests::test_get_factory_for_unknown_plugin ... ok
+test plugin::loader::tests::test_load_all_idempotent ... ok
+test plugin::loader::tests::test_load_all_mixed_results ... ok
+test plugin::loader::tests::test_load_all_skips_files ... ok
+test plugin::loader::tests::test_load_from_nonexistent_dir ... ok
+test plugin::loader::tests::test_load_single_invalid_yaml ... ok
+test plugin::loader::tests::test_load_single_missing_library ... ok
+test plugin::loader::tests::test_load_single_missing_manifest ... ok
+test plugin::loader::tests::test_loader_empty_dir ... ok
+test plugin::loader::tests::test_plugin_error_messages ... ok
+test plugin::loader::tests::test_register_all_empty_registry ... ok
+test plugin::manifest::tests::test_custom_library_path ... ok
+test plugin::manifest::tests::test_default_library_path_linux ... ok
+test plugin::manifest::tests::test_invalid_yaml ... ok
+test plugin::manifest::tests::test_library_path_rejects_absolute ... ok
+test plugin::manifest::tests::test_library_path_rejects_parent_dir_traversal ... ok
+test plugin::manifest::tests::test_manifest_minimal ... ok
+test plugin::manifest::tests::test_parse_manifest ... ok
+test auth::api_key::tests::test_expired_key ... ok
+test auth::api_key::tests::test_revoke_key ... ok
+test session::manager::tests::test_concurrent_get_or_create ... ok
+test session::manager::tests::test_concurrent_read_during_write ... ok
+test session::manager::tests::test_delete ... ok
+test session::manager::tests::test_get_or_create ... ok
+test session::manager::tests::test_list_filter_by_platform ... ok
+test auth::api_key::tests::test_authentication_persists_last_used_at ... ok
+test session::bridge::tests::test_bridge_creates_session ... ok
+test auth::api_key::tests::rotation_reconciliation_enforces_state_specific_atomic_action ... ok
+test session::bridge::tests::test_bridge_session_source_fields ... ok
+test session::message_persister::tests::failed_batch_is_retained_and_persisted_after_recovery ... ok
+test auth::api_key::tests::full_capacity_allows_only_one_safe_rotation_transition ... ok
+test storage::migration::tests::test_migration_forward ... ok
+test storage::migration::tests::test_migration_idempotent ... ok
+test storage::migration::tests::test_reject_unversioned_existing_schema ... ok
+test storage::migration::tests::test_rollback_and_reapply ... ok
+test storage::migration::tests::test_rollback_to_non_existent_version ... ok
+test storage::migration::tests::version_table_timestamp_is_64_bit ... ok
+test storage::retention::tests::test_delete_expired_messages ... ok
+test storage::retention::tests::test_delete_expired_outbound_deliveries ... ok
+test storage::retention::tests::test_delete_expired_sessions ... ok
+test storage::retention::tests::test_retention_noop_when_zero_interval ... ok
+test storage::sqlite::tests::failed_multi_step_migration_rolls_back_prior_schema_changes ... ok
+test storage::sqlite::tests::file_pool_applies_durable_security_pragmas_to_every_connection ... ok
+test storage::sqlite::tests::migration_refuses_database_from_newer_schema_version ... ok
+test storage::sqlite::tests::outbound_delivery_finalization_is_atomic_with_message_history ... ok
+test storage::sqlite::tests::outbound_local_ids_are_unique_when_platform_reuses_message_id ... ok
+test storage::sqlite::tests::test_field_specific_query ... ok
+test storage::sqlite::tests::test_inbound_to_stored_message ... ok
+test storage::sqlite::tests::test_message_delete ... ok
+test storage::sqlite::tests::test_message_store_and_list ... ok
+test storage::sqlite::tests::test_message_store_multiple ... ok
+test storage::sqlite::tests::test_migration_adds_api_key_quota_to_existing_database ... ok
+test storage::sqlite::tests::test_outbound_to_stored_message ... ok
+test auth::api_key::tests::usage_subject_survives_credential_purge ... ok
+test storage::sqlite::tests::test_session_delete ... ok
+test storage::sqlite::tests::test_session_get_nonexistent ... ok
+test storage::sqlite::tests::test_session_list_filter ... ok
+test storage::sqlite::tests::test_session_load_all ... ok
+test storage::sqlite::tests::test_session_upsert_and_get ... ok
+test types::message::tests::test_inbound_message_requires_sender_field ... ok
+test types::message::tests::test_inbound_message_serde_new_format ... ok
+test types::message::tests::test_parse_mode_default_is_none ... ok
+test types::message::tests::test_parse_mode_serde_lowercase ... ok
+test types::message::tests::test_parse_mode_serde_roundtrip ... ok
+test updater::compact::tests::test_manifest_roundtrip ... ok
+test updater::compact::tests::test_read_manifest_nonexistent ... ok
+test updater::compact::tests::test_update_systemd_exec_start_no_unit ... ok
+test storage::sqlite::tests::test_session_upsert_preserves_created_at ... ok
+test updater::github::tests::test_github_api_latest_release_mock ... ok
+test updater::github::tests::test_github_api_checksums_mock ... ok
+test updater::github::tests::test_github_api_not_found ... ok
+test updater::github::tests::test_github_api_rate_limit ... ok
+test updater::github::tests::test_github_client_new ... ok
+test updater::github::tests::test_parse_checksums_empty ... ok
+test updater::github::tests::test_parse_checksums_normal ... ok
+test updater::github::tests::test_parse_checksums_skips_bad_lines ... ok
+test updater::github::tests::test_sha256_hex_non_existent_file ... ok
+test updater::github::tests::test_sha256_hex_empty_file ... ok
+test updater::github::tests::test_version_manifest_requires_release_asset ... ok
+test updater::precheck::tests::test_check_permissions_temp_dir ... ok
+test updater::precheck::tests::test_check_plugin_compatibility_no_plugins ... ok
+test updater::precheck::tests::test_detect_dev_mode_cargo_path ... ok
+test updater::precheck::tests::test_detect_environment_no_panic ... ok
+test updater::precheck::tests::test_plugin_manifest_requires_sdk_version ... ok
+test updater::replace::tests::test_create_backup_nonexistent_source ... ok
+test updater::replace::tests::test_verify_binary_nonexistent ... ok
+test updater::types::tests::test_asset_name_includes_platform ... ok
+test updater::types::tests::test_error_display ... ok
+test updater::types::tests::test_supported_platform_matrix ... ok
+test updater::types::tests::test_target_triple_returns_supported ... ok
+test updater::types::tests::test_version_comparison_equal ... ok
+test updater::types::tests::test_version_comparison_invalid ... ok
+test updater::types::tests::test_version_comparison_newer ... ok
+test updater::types::tests::test_version_comparison_older ... ok
+test updater::types::tests::test_version_from_tag ... ok
+test util::tests::test_backoff_increases ... ok
+test util::tests::test_backoff_sequence ... ok
+test updater::replace::tests::test_backup_and_rollback ... ok
+test webhook::tests::test_dispatch_catch_all ... ok
+test webhook::tests::test_dispatch_delivers_to_matching_webhook ... ok
+test webhook::tests::test_dispatch_filtered_by_event_type ... ok
+test webhook::tests::test_dispatch_filtered_by_platform ... ok
+test webhook::tests::test_dispatch_hmac_signature ... ok
+test webhook::tests::test_dispatch_multiple_webhooks ... ok
+test webhook::tests::test_dispatch_no_secret_means_no_signature ... ok
+test webhook::tests::test_empty_webhooks_is_noop ... ok
+test webhook::tests::test_hex_encode_values ... ok
+test session::message_persister::tests::test_full_pipeline_non_inbound_ignored ... ok
+test session::message_persister::tests::test_persister_ignores_non_inbound_events ... ok
+test session::message_persister::tests::test_full_pipeline_inbound ... ok
+test session::message_persister::tests::test_persister_multiple_messages ... ok
+test session::message_persister::tests::test_persister_stores_inbound_message ... ok
+test webhook::tests::test_eventbus_integration ... ok
+test auth::api_key::tests::ephemeral_sessions_are_authenticatable_hidden_and_bounded ... ok
+
+test result: ok. 188 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.19s
+
+     Running unittests src/lib.rs (target/debug/deps/easybot_plugin_sdk-2ce60742a5d55e22)
+
+running 6 tests
+test ffi::tests::test_declare_plugin_abi_version ... ok
+test ffi::tests::test_abi_version_constant ... ok
+test ffi::tests::test_plugin_create_destroy_roundtrip ... ok
+test ffi::tests::test_plugin_create_returns_non_null ... ok
+test ffi::tests::test_plugin_created_adapter_methods ... ok
+test ffi::tests::test_plugin_destroy_null_pointer ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/fixtures-be445e6bb8298db9)
+
+running 6 tests
+test tests::test_all_bytes_under_500 ... ok
+test tests::test_all_bytes_non_empty ... ok
+test tests::test_magic_bytes ... ok
+test tests::test_attachment_for_type_covers_all_variants ... ok
+test tests::test_attachments_have_sensible_defaults ... ok
+test tests::test_base64_roundtrip ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/integration_tests-44cb357ab4bb1a98)
+
+running 21 tests
+test cli::test_cli_short_flags ... ok
+test cli::test_cli_help ... ok
+test cli::test_cli_unknown_flag ... ok
+test updater::tests::test_current_asset_name ... ok
+test cli::test_cli_version ... ok
+test updater::tests::test_current_target_triple ... ok
+test updater::tests::test_manifest_file_read_write ... ok
+test updater::tests::test_semver_parse_invalid ... ok
+test updater::tests::test_semver_parse_valid ... ok
+test updater::tests::test_update_error_display ... ok
+test updater::tests::test_version_comparison_edge_cases ... ok
+test updater::tests::test_version_comparison_semver ... ok
+test updater::tests::test_version_from_tag ... ok
+test updater::tests::test_version_from_tag_edge_cases ... ok
+test cli::test_cli_init_creates_config ... ok
+[2m2026-08-03T16:08:48.394238Z[0m [32m INFO[0m [2measybot_core::storage::migration[0m[2m:[0m Running SQLite migration v1: Initial schema: sessions, messages, api_keys
+[2m2026-08-03T16:08:48.394241Z[0m [32m INFO[0m [2measybot_core::storage::migration[0m[2m:[0m Running SQLite migration v1: Initial schema: sessions, messages, api_keys
+[2m2026-08-03T16:08:48.398159Z[0m [32m INFO[0m [2measybot_core::storage::migration[0m[2m:[0m SQLite migration v1 applied
+[2m2026-08-03T16:08:48.398190Z[0m [32m INFO[0m [2measybot_core::storage::migration[0m[2m:[0m Running SQLite migration v2: Commercial readiness and subject target authorization
+[2m2026-08-03T16:08:48.398181Z[0m [32m INFO[0m [2measybot_core::storage::migration[0m[2m:[0m SQLite migration v1 applied
+[2m2026-08-03T16:08:48.398243Z[0m [32m INFO[0m [2measybot_core::storage::migration[0m[2m:[0m Running SQLite migration v2: Commercial readiness and subject target authorization
+test cli::test_cli_init_idempotent ... ok
+[2m2026-08-03T16:08:48.410718Z[0m [32m INFO[0m [2measybot_core::storage::migration[0m[2m:[0m SQLite migration v2 applied
+[2m2026-08-03T16:08:48.410960Z[0m [32m INFO[0m [2measybot_core::storage::migration[0m[2m:[0m SQLite migration v2 applied
+[2m2026-08-03T16:08:48.411830Z[0m [33m WARN[0m [2measybot_core::storage::migration[0m[2m:[0m Rolling back SQLite migration v2: Commercial readiness and subject target authorization
+test updater::tests::test_migration_on_temp_db ... ok
+[2m2026-08-03T16:08:48.416110Z[0m [32m INFO[0m [2measybot_core::storage::migration[0m[2m:[0m SQLite migration v2 rolled back
+[2m2026-08-03T16:08:48.416131Z[0m [33m WARN[0m [2measybot_core::storage::migration[0m[2m:[0m Rolling back SQLite migration v1: Initial schema: sessions, messages, api_keys
+[2m2026-08-03T16:08:48.417363Z[0m [32m INFO[0m [2measybot_core::storage::migration[0m[2m:[0m SQLite migration v1 rolled back
+[2m2026-08-03T16:08:48.417841Z[0m [32m INFO[0m [2measybot_core::storage::migration[0m[2m:[0m Running SQLite migration v1: Initial schema: sessions, messages, api_keys
+[2m2026-08-03T16:08:48.419307Z[0m [32m INFO[0m [2measybot_core::storage::migration[0m[2m:[0m SQLite migration v1 applied
+[2m2026-08-03T16:08:48.419324Z[0m [32m INFO[0m [2measybot_core::storage::migration[0m[2m:[0m Running SQLite migration v2: Commercial readiness and subject target authorization
+[2m2026-08-03T16:08:48.424459Z[0m [32m INFO[0m [2measybot_core::storage::migration[0m[2m:[0m SQLite migration v2 applied
+test updater::tests::test_migration_rollback_on_temp_db ... ok
+test cli::test_production_rejects_unsigned_dynamic_plugins ... ok
+[2m2026-08-03T16:08:48.882813Z[0m [32m INFO[0m [2measybot_core::plugin::loader[0m[2m:[0m Loaded plugin 'mock-test' (Mock Test Adapter) from /var/folders/z0/1h35x82j7d767_fm_x3tvdsh0000gn/T/.tmpFv4XvL/mock-test
+test tests::test_load_mock_plugin ... ok
+test cli::test_openapi_has_security_scheme ... ok
+
+test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.09s
+
+     Running unittests src/lib.rs (target/debug/deps/mock_adapter-871c7c06850e1912)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests e2e_tests
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests easybot_adapter_discord
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests easybot_adapter_feishu
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests easybot_adapter_qq
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests easybot_adapter_telegram
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests easybot_adapter_wechat
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests easybot_api
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests easybot_core
+
+running 3 tests
+test crates/easybot-core/src/adapter/manager.rs - adapter::manager::AdapterManager::init_self_ref (line 161) ... ignored
+test crates/easybot-core/src/types/adapter.rs - types::adapter::capabilities (line 531) ... ignored
+test crates/easybot-core/src/util.rs - util::backoff_with_jitter (line 11) ... ok
+
+test result: ok. 1 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+all doctests ran in 2.26s; merged doctests compilation took 1.72s
+   Doc-tests easybot_plugin_sdk
+
+running 1 test
+test crates/easybot-plugin-sdk/src/ffi.rs - ffi::declare_plugin (line 26) ... ignored
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+all doctests ran in 0.72s; merged doctests compilation took 0.22s
+   Doc-tests fixtures
+
+running 1 test
+test tests/fixtures/src/lib.rs - (line 10) ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+all doctests ran in 1.37s; merged doctests compilation took 0.83s
+   Doc-tests integration_tests
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[0;36mcargo build -p mock-adapter[0m
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   Compiling serde_core v1.0.229
+   Compiling displaydoc v0.2.6
+   Compiling slab v0.4.12
+   Compiling log v0.4.33
+   Compiling subtle v2.6.1
+   Compiling num-traits v0.2.19
+   Compiling tracing-core v0.1.36
+   Compiling digest v0.11.3
+   Compiling futures-util v0.3.33
+   Compiling crypto-common v0.1.7
+   Compiling digest v0.10.7
+   Compiling tracing v0.1.44
+   Compiling sha2 v0.10.9
+   Compiling rustls v0.23.43
+   Compiling rustls-webpki v0.103.13
+   Compiling rand v0.10.2
+   Compiling tinystr v0.8.3
+   Compiling zerotrie v0.2.4
+   Compiling icu_collections v2.2.0
+   Compiling atoi v2.0.0
+   Compiling icu_locale_core v2.2.0
+   Compiling chrono v0.4.45
+   Compiling hmac v0.13.0
+   Compiling tokio-util v0.7.18
+   Compiling hkdf v0.13.0
+   Compiling sha2 v0.11.0
+   Compiling icu_provider v2.2.0
+   Compiling serde v1.0.229
+   Compiling icu_properties v2.2.0
+   Compiling serde_json v1.0.151
+   Compiling indexmap v2.14.0
+   Compiling futures-executor v0.3.33
+   Compiling uuid v1.24.0
+   Compiling tokio-stream v0.1.19
+   Compiling smallvec v1.15.2
+   Compiling icu_normalizer v2.2.0
+   Compiling either v1.16.0
+   Compiling parking_lot_core v0.9.12
+   Compiling parking_lot v0.12.5
+   Compiling idna_adapter v1.2.2
+   Compiling idna v1.1.0
+   Compiling futures-intrusive v0.5.0
+   Compiling md-5 v0.11.0
+   Compiling bitflags v2.13.1
+   Compiling url v2.5.8
+   Compiling mime_guess v2.0.5
+   Compiling hyper v1.11.0
+   Compiling sqlx-core v0.9.0
+   Compiling getrandom v0.3.4
+   Compiling tower v0.5.3
+   Compiling tokio-rustls v0.26.4
+   Compiling hyper-util v0.1.20
+   Compiling password-hash v0.5.0
+   Compiling tower-http v0.6.11
+   Compiling regex-automata v0.4.16
+   Compiling rustls-platform-verifier v0.7.0
+   Compiling blake2 v0.10.6
+   Compiling utoipa-gen v5.5.0
+   Compiling dashmap v6.2.1
+   Compiling hyper-rustls v0.27.9
+   Compiling serde_yaml v0.9.34+deprecated
+   Compiling reqwest v0.13.4
+   Compiling argon2 v0.5.3
+   Compiling sqlx-postgres v0.9.0
+   Compiling sqlx-sqlite v0.9.0
+   Compiling regex v1.13.1
+   Compiling rand_core v0.9.5
+   Compiling futures v0.3.33
+   Compiling sqlx-macros-core v0.9.0
+   Compiling utoipa v5.5.0
+   Compiling sqlx-macros v0.9.0
+   Compiling sqlx v0.9.0
+   Compiling easybot-core v0.0.28 (/Users/joker/Developer/EasyBot/crates/easybot-core)
+   Compiling easybot-plugin-sdk v0.0.28 (/Users/joker/Developer/EasyBot/crates/easybot-plugin-sdk)
+   Compiling mock-adapter v0.0.28 (/Users/joker/Developer/EasyBot/tests/plugins/mock-adapter)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 45.01s
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[0;36mtest (all features + plugin-system)[0m
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   Compiling easybot-bin v0.0.28 (/Users/joker/Developer/EasyBot/bin)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 3.82s
+     Running unittests src/lib.rs (target/debug/deps/e2e_tests-5cede6bcc78db2e2)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/discord.rs (target/debug/deps/discord-df4ff3307d6c5ae0)
+
+running 9 tests
+test test_e2e_discord_health ... ok
+test test_e2e_discord_auth_failure ... ok
+test test_e2e_discord_delete_message ... ok
+test test_e2e_discord_send_media ... ok
+test test_e2e_discord_edit_message ... ok
+test test_e2e_discord_send_interactive ... ok
+test test_e2e_discord_send_error ... ok
+test test_e2e_discord_send_message ... ok
+test test_e2e_discord_lifecycle ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.40s
+
+     Running tests/feishu.rs (target/debug/deps/feishu-9e7b6a75c842f29b)
+
+running 8 tests
+test test_e2e_feishu_health ... ok
+test test_e2e_feishu_auth_failure ... ok
+test test_e2e_feishu_edit_message ... ok
+test test_e2e_feishu_send_message ... ok
+test test_e2e_feishu_delete_message ... ok
+test test_e2e_feishu_send_error ... ok
+test test_e2e_feishu_send_interactive ... ok
+test test_e2e_feishu_lifecycle ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.75s
+
+     Running tests/qq.rs (target/debug/deps/qq-e3036cc2238a33f9)
+
+running 6 tests
+test test_e2e_qq_health ... ok
+test test_e2e_qq_auth_failure ... ok
+test test_e2e_qq_send_media ... ok
+test test_e2e_qq_send_error ... ok
+test test_e2e_qq_send_message ... ok
+test test_e2e_qq_lifecycle ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.86s
+
+     Running tests/telegram.rs (target/debug/deps/telegram-7df9bf4bbd1654a2)
+
+running 10 tests
+test test_e2e_auth_required ... ok
+test test_e2e_health ... ok
+test test_e2e_edit_message ... ok
+test test_e2e_delete_message ... ok
+test test_e2e_send_interactive ... ok
+test test_e2e_send_markdown ... ok
+test test_e2e_batch_send ... ok
+test test_e2e_send_media ... ok
+test test_e2e_send_message ... ok
+test test_e2e_lifecycle ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 8.13s
+
+     Running tests/wechat.rs (target/debug/deps/wechat-d96ab3f3bd2980b1)
+
+running 5 tests
+test test_e2e_wechat_health ... ok
+test test_e2e_wechat_send_message ... ok
+test test_e2e_wechat_send_api_error ... ok
+test test_e2e_wechat_send_error ... ok
+test test_e2e_wechat_lifecycle ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.44s
+
+     Running unittests src/lib.rs (target/debug/deps/easybot_adapter_discord-60a3c868de21afa8)
+
+running 33 tests
+test tests::test_build_keyboard_components_callback_button ... ok
+test tests::test_build_keyboard_components_multi_row ... ok
+test tests::test_build_keyboard_components_url_button ... ok
+test tests::test_default ... ok
+test tests::test_capabilities ... ok
+test tests::test_default_state ... ok
+test tests::test_display_name ... ok
+test tests::test_disconnect_idempotent ... ok
+test tests::test_double_disconnect ... ok
+test tests::test_handle_event_error_continues ... ok
+test tests::test_handle_event_none_stops ... ok
+test tests::test_handle_event_ready_updates_heartbeat ... ok
+test tests::test_health_before_init ... ok
+test tests::test_convert_own_message_is_filtered ... ok
+test tests::test_init_without_token ... ok
+test tests::test_platform_name ... ok
+test tests::test_convert_guild_message ... ok
+test tests::test_runtime_config_after_init ... ok
+test tests::test_convert_dm_message ... ok
+test tests::test_convert_message_bot_author_not_self ... ok
+test tests::test_convert_message_empty_content ... ok
+test tests::test_convert_message_timestamp_parsing ... ok
+test tests::test_runtime_config_before_init ... ok
+test tests::test_status_summary ... ok
+test types::tests::test_discord_guild_deserialize_without_owner ... ok
+test types::tests::test_discord_user_deserialize_without_bot_field ... ok
+test types::tests::test_discord_guild_deserialize ... ok
+test types::tests::test_discord_user_deserialize_bot_false ... ok
+test types::tests::test_discord_user_deserialize_with_bot_field ... ok
+test types::tests::test_discord_message_deserialize_without_bot_on_author ... ok
+test tests::test_get_chat_info ... ok
+test tests::test_init_and_connect_without_real_token ... ok
+test tests::test_send_message_mocked ... ok
+
+test result: ok. 33 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.11s
+
+     Running tests/send_mock.rs (target/debug/deps/send_mock-abe5ec44ccb13619)
+
+running 20 tests
+test test_connect_no_token_returns_config_error ... ok
+test test_delete_message_success ... ok
+test test_delete_message_not_found ... ok
+test test_send_http_401 ... ok
+test test_edit_message_not_found ... ok
+test test_connect_http_error ... ok
+test test_send_media_no_data ... ok
+test test_send_http_500 ... ok
+test test_send_malformed_response ... ok
+test test_send_media_http_error ... ok
+test test_send_media_rate_limited ... ok
+test test_connect_success ... ok
+test test_edit_message_success ... ok
+test test_send_success ... ok
+test test_send_media_from_local_file ... ok
+test test_send_media_with_caption ... ok
+test test_send_media_success ... ok
+test test_send_uses_correct_channel ... ok
+test test_send_wrong_channel_returns_error ... ok
+test test_send_http_429_rate_limit ... ok
+
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.05s
+
+     Running unittests src/lib.rs (target/debug/deps/easybot_adapter_feishu-283178236dc475eb)
+
+running 29 tests
+test event::tests::test_handle_image_message ... ok
+test event::tests::test_handle_text_message_group ... ok
+test event::tests::test_handle_text_message_p2p ... ok
+test event::tests::test_timestamp_parse_fallback ... ok
+test event::tests::test_handle_malformed_content_uses_raw ... ok
+test tests::test_adapter_default ... ok
+test tests::test_capabilities ... ok
+test tests::test_capabilities_all_expected ... ok
+test tests::test_create_adapter ... ok
+test tests::test_disconnect_idempotent ... ok
+test tests::test_delete_message_before_connect ... ok
+test tests::test_double_disconnect ... ok
+test tests::test_health_before_init ... ok
+test tests::test_init_missing_app_id ... ok
+test tests::test_init_missing_config ... ok
+test tests::test_get_chat_info_network_error ... ok
+test tests::test_runtime_config_after_init ... ok
+test tests::test_runtime_config_before_init ... ok
+test tests::test_send_before_connect ... ok
+test tests::test_status_summary ... ok
+test types::tests::test_deserialize_invalid_json_should_fail ... ok
+test tests::test_init_valid_config ... ok
+test types::tests::test_deserialize_message_receive_event_group ... ok
+test types::tests::test_deserialize_message_receive_event_minimal ... ok
+test types::tests::test_deserialize_message_receive_event_p2p ... ok
+test types::tests::test_deserialize_unknown_chat_type ... ok
+test event::tests::test_handle_invalid_event_data ... ok
+test event::tests::test_handle_unknown_chat_type_should_not_publish ... ok
+test event::tests::test_handle_missing_msg_type_error ... ok
+
+test result: ok. 29 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.21s
+
+     Running tests/send_mock.rs (target/debug/deps/send_mock-ac6ab15eb42d5fc6)
+
+running 20 tests
+test test_init_sets_starting ... ok
+test test_init_requires_app_id_and_secret ... ok
+test test_new_state_created ... ok
+test test_disconnect_sets_stopped ... ok
+test test_connect_fails_without_mock ... ok
+test test_connect_success_state ... ok
+test test_edit_message_api_error ... ok
+test test_send_http_error ... ok
+test test_edit_message_http_error ... ok
+test test_edit_message_success ... ok
+test test_send_interactive_api_error ... ok
+test test_send_interactive_http_error ... ok
+test test_send_apicode_error ... ok
+test test_send_media_no_url_or_data_error ... ok
+test test_token_refresh_failure ... ok
+test test_send_interactive_success ... ok
+test test_send_success ... ok
+test test_send_media_image_success ... ok
+test test_send_malformed_response ... ok
+test test_send_media_request_body ... ok
+
+test result: ok. 20 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.15s
+
+     Running unittests src/lib.rs (target/debug/deps/easybot_adapter_qq-ace4b5ba7fff705a)
+
+running 44 tests
+test tests::test_def_state_created ... ok
+test tests::test_capabilities ... ok
+test tests::test_bot_token_uninitialized ... ok
+test tests::test_default ... ok
+test tests::test_create_adapter ... ok
+test tests::test_display_name ... ok
+test tests::test_double_disconnect ... ok
+test tests::test_disconnect_idempotent ... ok
+test tests::test_get_chat_info_uninitialized ... ok
+test tests::test_handle_dispatch_ignored_event ... ok
+test tests::test_handle_dispatch_missing_data ... ok
+test tests::test_handle_dispatch_self_filter_channel ... ok
+test tests::test_handle_dispatch_malformed_data ... ok
+test tests::test_health_before_init ... ok
+test tests::test_init_missing_config ... ok
+test tests::test_init_valid_config ... ok
+test tests::test_runtime_config_after_init ... ok
+test tests::test_runtime_config_before_init ... ok
+test tests::test_status_summary ... ok
+test tests::test_send_before_connect ... ok
+test tests::test_token_store_clone ... ok
+test tests::test_token_store_get_uninitialized_returns_err ... ok
+test tests::test_token_store_new_needs_refresh ... ok
+test types::tests::test_c2c_message_event_without_content ... ok
+test types::tests::test_c2c_message_event_deserialize ... ok
+test tests::test_handle_dispatch_c2c_self_not_filtered ... ok
+test tests::test_handle_dispatch_c2c ... ok
+test tests::test_handle_dispatch_group_at ... ok
+test types::tests::test_channel_message_event_without_guild_id ... ok
+test tests::test_handle_dispatch_at_message ... ok
+test tests::test_handle_dispatch_group_message_create_not_mentioned ... ok
+test types::tests::test_group_message_create_event_deserialize ... ok
+test tests::test_handle_dispatch_group_message_create_mentioned ... ok
+test types::tests::test_channel_message_event_deserialize ... ok
+test types::tests::test_group_message_event_deserialize ... ok
+test types::tests::test_keyboard_serialization_callback_button ... ok
+test types::tests::test_keyboard_serialization_multi_row ... ok
+test types::tests::test_keyboard_serialization_url_button ... ok
+test types::tests::test_qq_guild_deserialize ... ok
+test types::tests::test_qq_user_deserialize_with_bot_field ... ok
+test types::tests::test_qq_user_deserialize_without_bot_field ... ok
+test types::tests::test_group_message_create_event_no_mentions ... ok
+test types::tests::test_send_message_request_serialize ... ok
+test types::tests::test_send_message_response_deserialize ... ok
+
+test result: ok. 44 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/send_mock.rs (target/debug/deps/send_mock-b51e868fc20a3efd)
+
+running 18 tests
+test test_init_requires_app_id_and_token ... ok
+test test_connect_disconnect_state_cycle ... ok
+test test_send_before_connect_returns_error ... ok
+test test_send_media_before_connect_fails ... ok
+test test_connect_success ... ok
+test test_edit_message_success ... ok
+test test_delete_message_success ... ok
+test test_send_media_error ... ok
+test test_send_http_error ... ok
+test test_send_malformed_response ... ok
+test test_send_interactive_success ... ok
+test test_token_refresh_failure ... ok
+test test_send_media_image_success ... ok
+test test_send_message_success ... ok
+test test_send_media_group_no_text_uses_direct_upload ... ok
+test test_send_media_request_body ... ok
+test test_send_media_group_routes_to_upload ... ok
+test test_connect_failure_state ... ok
+
+test result: ok. 18 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.21s
+
+     Running unittests src/lib.rs (target/debug/deps/easybot_adapter_telegram-1de727617b2407d7)
+
+running 30 tests
+test tests::test_chat_type_mapping::case_1 ... ok
+test tests::test_chat_type_mapping::case_2 ... ok
+test tests::test_chat_type_mapping::case_4 ... ok
+test tests::test_convert_animation_message ... ok
+test tests::test_convert_audio_message ... ok
+test tests::test_chat_type_mapping::case_3 ... ok
+test tests::test_convert_caption_fallback ... ok
+test tests::test_convert_document_message ... ok
+test tests::test_convert_sticker_message ... ok
+test tests::test_convert_voice_message ... ok
+test tests::test_convert_video_message ... ok
+test tests::test_convert_photo_message ... ok
+test tests::test_capabilities ... ok
+test tests::test_default ... ok
+test tests::test_display_name ... ok
+test tests::test_default_state ... ok
+test tests::test_platform_name ... ok
+test tests::test_double_disconnect ... ok
+test tests::test_health_before_init ... ok
+test tests::test_init_without_token ... ok
+test tests::test_disconnect_idempotent ... ok
+test tests::test_runtime_config_after_init ... ok
+test tests::test_runtime_config_before_init ... ok
+test tests::test_status_summary_includes_health ... ok
+test tests::test_status_summary ... ok
+test tests::test_convert_message ... ok
+test tests::test_init_and_connect_without_real_token ... ok
+test tests::test_send_before_connect_errors ... ok
+test tests::test_send_message_mocked ... ok
+test tests::test_get_chat_info ... ok
+
+test result: ok. 30 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.11s
+
+     Running tests/send_mock.rs (target/debug/deps/send_mock-7c32f7f31dd29aae)
+
+running 29 tests
+test test_init_rejects_empty_token ... ok
+test test_connect_no_token_returns_config_error ... ok
+test test_send_http_error_500 ... ok
+test test_send_http_error_429_rate_limit ... ok
+test test_connect_malformed_response ... ok
+test test_send_http_error_401 ... ok
+test test_connect_http_error ... ok
+test test_connect_api_error ... ok
+test test_send_interactive_api_error ... ok
+test test_connect_success ... ok
+test test_send_interactive_http_error ... ok
+test test_send_interactive_success ... ok
+test test_send_media_api_error ... ok
+test test_send_media_animation_type ... ok
+test test_send_media_no_url_or_data ... ok
+test test_send_media_audio_type ... ok
+test test_send_media_document_type ... ok
+test test_send_media_http_error ... ok
+test test_send_media_sticker_type ... ok
+test test_send_media_success ... ok
+test test_send_success ... ok
+test test_send_media_video_type ... ok
+test test_send_telegram_api_error ... ok
+test test_send_with_malformed_json_response ... ok
+test test_send_interactive_with_url_button ... ok
+test test_send_interactive_inline_keyboard_format ... ok
+test test_send_interactive_with_reply_to ... ok
+test test_send_media_sends_correct_fields ... ok
+test test_send_uses_correct_chat_id ... ok
+
+test result: ok. 29 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.15s
+
+     Running unittests src/lib.rs (target/debug/deps/easybot_adapter_wechat-6f974ce8b4547a36)
+
+running 39 tests
+test tests::test_aes_padded_size ... ok
+test tests::test_base64_encode_uin ... ok
+test tests::test_base64_encode_uin_max ... ok
+test tests::test_base64_encode_uin_zero ... ok
+test tests::test_aes_128_ecb_encrypt_decrypt_roundtrip ... ok
+test tests::test_convert_unknown_message_type ... ok
+test tests::test_convert_empty_item_list ... ok
+test tests::test_convert_file_message ... ok
+test tests::test_convert_image_message ... ok
+test tests::test_convert_group_message ... ok
+test tests::test_convert_text_message ... ok
+test tests::test_capabilities ... ok
+test tests::test_default ... ok
+test tests::test_create_adapter ... ok
+test tests::test_deserialize_empty_getupdates_response ... ok
+test tests::test_build_cdn_upload_url ... ok
+test tests::test_deserialize_image_weixin_message ... ok
+test tests::test_deserialize_weixin_message_from_json ... ok
+test tests::test_credentials_serialization_roundtrip ... ok
+test tests::test_encode_aes_key_for_api_decodable_by_wechat_client ... ok
+test tests::test_encode_aes_key_for_api_format ... ok
+test tests::test_md5_hex ... ok
+test tests::test_pkcs7_pad_empty ... ok
+test tests::test_pkcs7_pad_exact_block ... ok
+test tests::test_pkcs7_pad_partial_block ... ok
+test tests::test_generate_filekey ... ok
+test tests::test_health_before_init ... ok
+test tests::test_runtime_config_before_init ... ok
+test tests::test_get_chat_info_always_dm ... ok
+test tests::test_double_disconnect ... ok
+test tests::test_disconnect_idempotent ... ok
+test tests::test_runtime_config_after_init ... ok
+test tests::test_init_with_saved_credentials ... ok
+test tests::test_init ... ok
+test tests::test_send_before_connect_errors ... ok
+test tests::test_url_encode_for_cdn ... ok
+test tests::test_send_media_before_connect_errors ... ok
+test tests::test_set_event_bus ... ok
+test tests::test_status_summary ... ok
+
+test result: ok. 39 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/send_mock.rs (target/debug/deps/send_mock-9322d5ae1b4984a1)
+
+running 12 tests
+test test_init_sets_starting ... ok
+test test_disconnect_from_created_is_idempotent ... ok
+test test_new_state_created ... ok
+test test_disconnect_sets_stopped ... ok
+test test_init_always_succeeds ... ok
+test test_connect_success_with_credentials ... ok
+test test_send_http_error ... ok
+test test_send_malformed_response ... ok
+test test_send_empty_response ... ok
+test test_send_ret_error_code ... ok
+test test_send_uses_msg_id_str_fallback ... ok
+test test_send_success ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.04s
+
+     Running unittests src/lib.rs (target/debug/deps/easybot_api-81bcf1c20b945db8)
+
+running 23 tests
+test middleware::rate_limit::tests::test_rate_limiter_disabled ... ok
+test middleware::rate_limit::tests::test_rate_limiter_prune ... ok
+test middleware::rate_limit::tests::rate_limit_response_includes_retry_after ... ok
+test middleware::rate_limit::tests::test_sliding_window_over_limit ... ok
+test middleware::rate_limit::tests::test_sliding_window_under_limit ... ok
+test metrics::tests::api_key_usage_metrics_are_bounded_and_do_not_expose_secrets ... ok
+test metrics::tests::commercial_ledger_integrity_metrics_are_bounded_and_refresh_is_throttled ... ok
+test metrics::tests::outbound_delivery_backlog_has_bounded_labels ... ok
+test metrics::tests::pending_key_rotation_metric_has_no_dynamic_labels ... ok
+test middleware::rate_limit::tests::test_rate_limiter_under_limit_allows_burst ... ok
+test middleware::rate_limit::tests::test_rate_limiter_enabled ... ok
+test middleware::rate_limit::tests::untrusted_direct_peer_cannot_spoof_forwarded_client ... ok
+test middleware::rate_limit::tests::trusted_proxy_chain_uses_rightmost_untrusted_client ... ok
+test routes::config::tests::config_update_shape_rejects_non_object_and_excessive_complexity ... ok
+test routes::messages::tests::target_parser_enforces_resource_bounds ... ok
+test routes::ws::tests::all_frame_types_share_a_bounded_rate_budget ... ok
+test routes::config::tests::recursively_redacts_all_config_credentials_and_url_secrets ... ok
+test routes::config::tests::gateway_config_round_trips_after_hot_reload_merge ... ok
+test openapi::tests::security_requirements_match_router_authentication ... ok
+test routes::messages::tests::public_adapter_errors_are_redacted_and_bounded ... ok
+test log_collector::tests::redacts_common_credentials_from_log_messages ... ok
+test outbox_tests::committed_event_is_republished_and_acknowledged_after_restart ... ok
+test openapi::tests::openapi_v1_contract_snapshot ... ok
+
+test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s
+
+     Running tests/api_integration.rs (target/debug/deps/api_integration-81f72b544b8ad985)
+
+running 41 tests
+test test_adapter_status_not_found ... ok
+test test_batch_send_too_many_targets ... ok
+test test_adapters_list_empty ... ok
+test test_batch_send_rejects_duplicate_targets_and_replays_idempotent_result ... ok
+test test_cors_allows_idempotency_and_exposes_commercial_response_headers ... ok
+test test_batch_send_with_invalid_target ... ok
+test test_delete_message_invalid_target ... ok
+test test_authenticated_requests_are_metered_by_key_id ... ok
+test test_admin_login_issues_expiring_memory_session ... ok
+test test_edit_message_invalid_target ... ok
+test test_edit_message_nonexistent_platform ... ok
+test test_audit_ledger_records_management_actions_and_enforces_permission ... ok
+test test_health_endpoint_returns_200 ... ok
+test test_delivery_journal_query_and_manual_reconciliation_are_audited ... ok
+test test_get_config_returns_config ... ok
+test test_invalid_auth_returns_401 ... ok
+test test_internal_management_credential_names_are_reserved ... ok
+test test_api_key_rotation_revokes_old_key_and_preserves_policy ... ok
+test test_liveness_and_readiness_are_public_and_distinct ... ok
+test test_list_api_keys ... ok
+test test_list_api_key_types ... ok
+test test_logs_endpoint_returns_logs ... ok
+test test_message_history_empty ... ok
+test test_message_history_rejects_limit_above_contract ... ok
+test test_message_history_with_filter_params ... ok
+test test_protected_route_requires_auth ... ok
+test test_financial_event_ledger_is_idempotent_conflict_safe_and_scoped ... ok
+test test_send_message_adapter_not_connected ... ok
+test test_durable_usage_export_is_reconciled_and_permission_scoped ... ok
+test test_send_message_empty_target ... ok
+test test_privacy_export_and_cascade_delete_remove_message_payloads ... ok
+test test_per_key_quota_returns_headers_and_429 ... ok
+test test_send_message_invalid_target_format ... ok
+test test_send_message_replays_persisted_idempotent_response_and_rejects_reuse ... ok
+test test_send_message_text_too_long ... ok
+test test_sessions_list_empty ... ok
+test test_start_nonexistent_adapter ... ok
+test test_stop_nonexistent_adapter ... ok
+test test_system_info_returns_system_data ... ok
+test test_nested_api_routes_enforce_fine_grained_permissions ... ok
+test test_target_grants_are_managed_by_subject_and_enforced_on_send ... ok
+
+test result: ok. 41 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 32.91s
+
+     Running tests/common.rs (target/debug/deps/common-65479d185b61c8e6)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/routes.rs (target/debug/deps/routes-5b4ae5ed86c41798)
+
+running 24 tests
+test test_admin_login_rejects_oversized_body_before_json_allocation ... ok
+test test_adapter_status_nonexistent_returns_404 ... ok
+test test_api_key_creation_rejects_oversized_body_before_json_allocation ... ok
+test test_config_update_rejects_body_before_large_json_allocation ... ok
+test test_get_config ... ok
+test test_config_update_rejects_non_object_body ... ok
+test test_audit_query_rejects_limits_outside_documented_contract ... ok
+test test_health_no_auth_needed ... ok
+test test_health_returns_ok ... ok
+test test_health_snapshot ... ok
+test test_get_nonexistent_session ... ok
+test test_api_key_history_query_rejects_unbounded_pagination ... ok
+test test_list_adapters_with_valid_key ... ok
+test test_list_chats_empty ... ok
+test test_list_sessions_empty ... ok
+test test_protected_route_returns_401_with_invalid_key ... ok
+test test_protected_route_returns_401_without_key ... ok
+test test_log_query_rejects_unbounded_inputs ... ok
+test test_message_history_rejects_unbounded_limit ... ok
+test test_message_history_empty ... ok
+test test_unknown_route_returns_404 ... ok
+test test_send_message_with_invalid_target ... ok
+test test_valid_config_update_requires_reviewed_restart ... ok
+test test_update_check_returns_structure ... ok
+
+test result: ok. 24 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 16.35s
+
+     Running tests/ws.rs (target/debug/deps/ws-8551476d8ee9ffa1)
+
+running 10 tests
+test test_ws_event_streaming_after_auth ... ok
+test test_ws_multiple_clients_receive_events ... ok
+test test_ws_global_admin_key_receives_targets_without_grants ... ok
+test test_ws_client_clean_disconnect ... ok
+test test_ws_http_auth_failed ... ok
+test test_ws_auth_required_when_no_token ... ok
+test test_ws_auth_ok_with_valid_token ... ok
+test test_ws_auth_failed_with_invalid_token ... ok
+test test_ws_multiple_events_sequential ... ok
+test test_ws_subjects_are_isolated_by_target_grants ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 19.23s
+
+     Running unittests src/main.rs (target/debug/deps/easybot-89704047860449a4)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/easybot_core-3fb86b30a0cb7a28)
+
+running 188 tests
+test adapter::manager::tests::test_compute_backoff_capped_at_300s ... ok
+test adapter::manager::tests::test_compute_backoff_sequence ... ok
+test adapter::manager::tests::test_inject_credentials_populates_token_and_extra ... ok
+test adapter::manager::tests::test_inject_credentials_does_not_overwrite_existing_token ... ok
+test adapter::manager::tests::test_list_statuses_after_stop ... ok
+test adapter::manager::tests::test_config_stored_on_start_cleared_on_stop ... ok
+test adapter::manager::tests::test_list_statuses_after_start ... ok
+test adapter::manager::tests::test_list_statuses_preserves_terminal_failed_state ... ok
+test adapter::manager::tests::test_send_message_delegation ... ok
+test adapter::manager::tests::test_health_status_computation ... ok
+test adapter::manager::tests::test_list_statuses_reflects_live_adapter_health ... ok
+test adapter::manager::tests::test_has_connected_after_start ... ok
+test adapter::manager::tests::test_start_all_skips_disabled ... ok
+test adapter::manager::tests::test_start_all_disabled_by_config_overrides_env_vars ... ok
+test adapter::manager::tests::test_start_all_auto_enables_with_injected_credentials ... ok
+test auth::api_key::tests::api_key_locator_rejects_malformed_or_unbounded_secrets ... ok
+test adapter::manager::tests::test_start_publishes_adapter_connected ... ok
+test adapter::manager::tests::test_start_passes_config_to_adapter ... ok
+test adapter::manager::tests::test_stop_all_cleans_up ... ok
+test adapter::manager::tests::test_stop_all_clears_configs ... ok
+test adapter::manager::tests::test_set_status_failed_preserves_display_name ... ok
+test adapter::manager::tests::test_stop_publishes_adapter_disconnected ... ok
+test auth::api_key::tests::billing_ledger_anchor_detects_deleted_valid_event ... ok
+test auth::api_key::tests::audit_chain_anchor_detects_tail_deletion_and_full_truncation ... ok
+test auth::api_key::tests::durable_subject_quota_survives_manager_restart ... ok
+test auth::api_key::tests::billing_events_are_idempotent_and_conflicting_replays_are_rejected ... ok
+test auth::api_key::tests::durable_subject_quota_does_not_oversell_under_concurrency ... ok
+test auth::api_key::tests::metering_failure_blocks_and_real_write_probe_recovers ... ok
+test auth::api_key::tests::idempotency_reservation_replays_and_rejects_changed_requests ... ok
+test auth::api_key::tests::storage_readiness_detects_closed_pool ... ok
+test auth::api_key::tests::test_audit_chain_persists_and_detects_tampering ... ok
+test auth::api_key::tests::concurrent_key_creation_cannot_oversell_active_limit ... ok
+test auth::api_key::tests::stale_argon_result_cannot_resurrect_revoked_loaded_key ... ok
+test auth::api_key::tests::test_create_key_rejects_duplicate_policy_entries ... ok
+test auth::api_key::tests::restart_keeps_inactive_key_history_out_of_authentication_memory ... ok
+test auth::api_key::tests::test_delete_revoked_key ... ok
+test auth::api_key::tests::test_invalid_key ... ok
+test auth::api_key::tests::target_grants_are_subject_scoped_action_scoped_and_fail_closed ... ok
+test auth::api_key::tests::usage_ledger_integrity_detects_row_deletion_from_both_copies ... ok
+test auth::api_key::tests::usage_ledger_is_atomic_persistent_and_filterable ... ok
+test auth::api_key::tests::test_expired_key ... ok
+test bus::event_bus::tests::test_broadcast_full_lags_slow_receiver ... ok
+test bus::event_bus::tests::test_event_without_subscribers_is_silent ... ok
+test bus::event_bus::tests::test_multi_consumer_receive_same_event ... ok
+test bus::event_bus::tests::test_publish_subscribe ... ok
+test auth::api_key::tests::test_create_and_authenticate ... ok
+test bus::event_bus::tests::test_subscribe_many_receives_all_types ... ok
+test config::home::tests::test_cli_override_takes_precedence ... ok
+test config::home::tests::test_env_path_in_paths ... ok
+test config::home::tests::test_legacy_path ... ok
+test config::home::tests::test_resolve_with_env_var ... ok
+test config::service::tests::test_generate_launchd_plist_contains_required_keys ... ok
+test config::service::tests::test_generate_linux_script_contains_commands ... ok
+test config::service::tests::test_generate_macos_script_contains_commands ... ok
+test config::service::tests::test_generate_service_files_returns_platform_files ... ok
+test config::service::tests::test_generate_systemd_unit_contains_required_sections ... ok
+test config::service::tests::test_generate_windows_script_contains_commands ... ok
+test config::tests::production_config_accepts_hardened_reverse_proxy_deployment ... ok
+test config::tests::production_config_rejects_unsupported_application_tls ... ok
+test config::tests::production_config_reports_all_unsafe_settings ... ok
+test config::tests::test_generate_env_example_contains_admin_password ... ok
+test config::tests::test_generate_env_example_contains_allow_plaintext ... ok
+test config::tests::test_generate_env_example_contains_expected_vars ... ok
+test config::tests::test_generate_env_example_does_not_enable_plaintext_by_default ... ok
+test config::tests::test_generate_local_config_example_contains_override_examples ... ok
+test config::tests::test_load_env_creates_variables ... ok
+test config::tests::test_load_env_does_not_override_existing ... ok
+test config::tests::test_load_env_missing_file_returns_ok ... ok
+test config::tests::test_load_env_reads_secret_file ... ok
+test config::tests::test_merge_configs ... ok
+test config::tests::test_merge_configs_preserves_enabled_false_through_deserialize ... ok
+test auth::api_key::tests::test_revoke_key ... ok
+test config::tests::test_resolve_env_vars_missing ... ok
+test config::tests::test_resolve_env_vars ... ok
+test plugin::loader::tests::test_get_factory_for_unknown_plugin ... ok
+test plugin::loader::tests::test_load_all_idempotent ... ok
+test plugin::loader::tests::test_load_all_mixed_results ... ok
+test plugin::loader::tests::test_load_all_skips_files ... ok
+test plugin::loader::tests::test_load_from_nonexistent_dir ... ok
+test plugin::loader::tests::test_load_single_invalid_yaml ... ok
+test plugin::loader::tests::test_load_single_missing_library ... ok
+test plugin::loader::tests::test_load_single_missing_manifest ... ok
+test plugin::loader::tests::test_loader_empty_dir ... ok
+test plugin::loader::tests::test_plugin_error_messages ... ok
+test config::tests::test_resolve_env_vars_skips_comments ... ok
+test plugin::manifest::tests::test_custom_library_path ... ok
+test plugin::manifest::tests::test_default_library_path_linux ... ok
+test plugin::loader::tests::test_register_all_empty_registry ... ok
+test plugin::manifest::tests::test_invalid_yaml ... ok
+test plugin::manifest::tests::test_library_path_rejects_absolute ... ok
+test plugin::manifest::tests::test_library_path_rejects_parent_dir_traversal ... ok
+test plugin::manifest::tests::test_manifest_minimal ... ok
+test plugin::manifest::tests::test_parse_manifest ... ok
+test bus::event_bus::tests::test_subscribe_many_stream_cleanup ... ok
+test session::manager::tests::test_concurrent_get_or_create ... ok
+test session::manager::tests::test_concurrent_read_during_write ... ok
+test session::manager::tests::test_delete ... ok
+test session::manager::tests::test_get_or_create ... ok
+test session::manager::tests::test_list_filter_by_platform ... ok
+test auth::api_key::tests::rotation_reconciliation_enforces_state_specific_atomic_action ... ok
+test auth::api_key::tests::test_authentication_persists_last_used_at ... ok
+test session::bridge::tests::test_bridge_creates_session ... ok
+test session::bridge::tests::test_bridge_session_source_fields ... ok
+test session::message_persister::tests::failed_batch_is_retained_and_persisted_after_recovery ... ok
+test auth::api_key::tests::full_capacity_allows_only_one_safe_rotation_transition ... ok
+test storage::migration::tests::test_migration_forward ... ok
+test storage::migration::tests::test_migration_idempotent ... ok
+test storage::migration::tests::test_reject_unversioned_existing_schema ... ok
+test storage::migration::tests::test_rollback_and_reapply ... ok
+test storage::migration::tests::test_rollback_to_non_existent_version ... ok
+test storage::migration::tests::version_table_timestamp_is_64_bit ... ok
+test storage::retention::tests::test_delete_expired_messages ... ok
+test storage::retention::tests::test_delete_expired_outbound_deliveries ... ok
+test storage::retention::tests::test_delete_expired_sessions ... ok
+test storage::retention::tests::test_retention_noop_when_zero_interval ... ok
+test storage::sqlite::tests::failed_multi_step_migration_rolls_back_prior_schema_changes ... ok
+test storage::sqlite::tests::file_pool_applies_durable_security_pragmas_to_every_connection ... ok
+test storage::sqlite::tests::migration_refuses_database_from_newer_schema_version ... ok
+test storage::sqlite::tests::outbound_delivery_finalization_is_atomic_with_message_history ... ok
+test storage::sqlite::tests::outbound_local_ids_are_unique_when_platform_reuses_message_id ... ok
+test storage::sqlite::tests::test_field_specific_query ... ok
+test storage::sqlite::tests::test_inbound_to_stored_message ... ok
+test storage::sqlite::tests::test_message_delete ... ok
+test storage::sqlite::tests::test_message_store_and_list ... ok
+test storage::sqlite::tests::test_message_store_multiple ... ok
+test storage::sqlite::tests::test_migration_adds_api_key_quota_to_existing_database ... ok
+test storage::sqlite::tests::test_outbound_to_stored_message ... ok
+test storage::sqlite::tests::test_session_delete ... ok
+test storage::sqlite::tests::test_session_get_nonexistent ... ok
+test storage::sqlite::tests::test_session_list_filter ... ok
+test storage::sqlite::tests::test_session_load_all ... ok
+test storage::sqlite::tests::test_session_upsert_and_get ... ok
+test storage::sqlite::tests::test_session_upsert_preserves_created_at ... ok
+test types::message::tests::test_inbound_message_requires_sender_field ... ok
+test types::message::tests::test_inbound_message_serde_new_format ... ok
+test types::message::tests::test_parse_mode_default_is_none ... ok
+test types::message::tests::test_parse_mode_serde_lowercase ... ok
+test types::message::tests::test_parse_mode_serde_roundtrip ... ok
+test updater::compact::tests::test_manifest_roundtrip ... ok
+test updater::compact::tests::test_read_manifest_nonexistent ... ok
+test updater::compact::tests::test_update_systemd_exec_start_no_unit ... ok
+test updater::github::tests::test_github_api_checksums_mock ... ok
+test updater::github::tests::test_github_api_latest_release_mock ... ok
+test updater::github::tests::test_github_api_not_found ... ok
+test updater::github::tests::test_github_api_rate_limit ... ok
+test updater::github::tests::test_github_client_new ... ok
+test updater::github::tests::test_parse_checksums_empty ... ok
+test updater::github::tests::test_parse_checksums_normal ... ok
+test updater::github::tests::test_parse_checksums_skips_bad_lines ... ok
+test updater::github::tests::test_sha256_hex_empty_file ... ok
+test updater::github::tests::test_sha256_hex_non_existent_file ... ok
+test updater::github::tests::test_version_manifest_requires_release_asset ... ok
+test updater::precheck::tests::test_check_permissions_temp_dir ... ok
+test updater::precheck::tests::test_check_plugin_compatibility_no_plugins ... ok
+test updater::precheck::tests::test_detect_dev_mode_cargo_path ... ok
+test updater::precheck::tests::test_detect_environment_no_panic ... ok
+test updater::precheck::tests::test_plugin_manifest_requires_sdk_version ... ok
+test updater::replace::tests::test_backup_and_rollback ... ok
+test updater::replace::tests::test_create_backup_nonexistent_source ... ok
+test updater::replace::tests::test_verify_binary_nonexistent ... ok
+test updater::types::tests::test_asset_name_includes_platform ... ok
+test updater::types::tests::test_error_display ... ok
+test updater::types::tests::test_supported_platform_matrix ... ok
+test updater::types::tests::test_target_triple_returns_supported ... ok
+test updater::types::tests::test_version_comparison_equal ... ok
+test updater::types::tests::test_version_comparison_invalid ... ok
+test updater::types::tests::test_version_comparison_newer ... ok
+test updater::types::tests::test_version_comparison_older ... ok
+test updater::types::tests::test_version_from_tag ... ok
+test util::tests::test_backoff_increases ... ok
+test util::tests::test_backoff_sequence ... ok
+test webhook::tests::test_dispatch_catch_all ... ok
+test webhook::tests::test_dispatch_delivers_to_matching_webhook ... ok
+test webhook::tests::test_dispatch_filtered_by_event_type ... ok
+test webhook::tests::test_dispatch_filtered_by_platform ... ok
+test webhook::tests::test_dispatch_hmac_signature ... ok
+test webhook::tests::test_dispatch_multiple_webhooks ... ok
+test webhook::tests::test_dispatch_no_secret_means_no_signature ... ok
+test webhook::tests::test_empty_webhooks_is_noop ... ok
+test session::message_persister::tests::test_full_pipeline_non_inbound_ignored ... ok
+test webhook::tests::test_hex_encode_values ... ok
+test session::message_persister::tests::test_persister_ignores_non_inbound_events ... ok
+test auth::api_key::tests::usage_subject_survives_credential_purge ... ok
+test session::message_persister::tests::test_full_pipeline_inbound ... ok
+test session::message_persister::tests::test_persister_multiple_messages ... ok
+test session::message_persister::tests::test_persister_stores_inbound_message ... ok
+test webhook::tests::test_eventbus_integration ... ok
+test auth::api_key::tests::ephemeral_sessions_are_authenticatable_hidden_and_bounded ... ok
+
+test result: ok. 188 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.87s
+
+     Running unittests src/lib.rs (target/debug/deps/easybot_plugin_sdk-2ce60742a5d55e22)
+
+running 6 tests
+test ffi::tests::test_declare_plugin_abi_version ... ok
+test ffi::tests::test_abi_version_constant ... ok
+test ffi::tests::test_plugin_create_returns_non_null ... ok
+test ffi::tests::test_plugin_destroy_null_pointer ... ok
+test ffi::tests::test_plugin_create_destroy_roundtrip ... ok
+test ffi::tests::test_plugin_created_adapter_methods ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/fixtures-be445e6bb8298db9)
+
+running 6 tests
+test tests::test_all_bytes_under_500 ... ok
+test tests::test_all_bytes_non_empty ... ok
+test tests::test_magic_bytes ... ok
+test tests::test_attachment_for_type_covers_all_variants ... ok
+test tests::test_attachments_have_sensible_defaults ... ok
+test tests::test_base64_roundtrip ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/integration_tests-44cb357ab4bb1a98)
+
+running 21 tests
+test cli::test_cli_unknown_flag ... ok
+test cli::test_cli_help ... ok
+test updater::tests::test_current_asset_name ... ok
+test updater::tests::test_current_target_triple ... ok
+test updater::tests::test_manifest_file_read_write ... ok
+test cli::test_cli_version ... ok
+test cli::test_cli_init_creates_config ... ok
+test updater::tests::test_semver_parse_invalid ... ok
+test updater::tests::test_semver_parse_valid ... ok
+test updater::tests::test_update_error_display ... ok
+test updater::tests::test_version_comparison_edge_cases ... ok
+test updater::tests::test_version_comparison_semver ... ok
+test updater::tests::test_version_from_tag ... ok
+test updater::tests::test_version_from_tag_edge_cases ... ok
+[2m2026-08-03T16:11:38.842141Z[0m [32m INFO[0m [2measybot_core::storage::migration[0m[2m:[0m Running SQLite migration v1: Initial schema: sessions, messages, api_keys
+[2m2026-08-03T16:11:38.842145Z[0m [32m INFO[0m [2measybot_core::storage::migration[0m[2m:[0m Running SQLite migration v1: Initial schema: sessions, messages, api_keys
+[2m2026-08-03T16:11:38.845241Z[0m [32m INFO[0m [2measybot_core::storage::migration[0m[2m:[0m SQLite migration v1 applied
+[2m2026-08-03T16:11:38.845343Z[0m [32m INFO[0m [2measybot_core::storage::migration[0m[2m:[0m Running SQLite migration v2: Commercial readiness and subject target authorization
+[2m2026-08-03T16:11:38.845938Z[0m [32m INFO[0m [2measybot_core::storage::migration[0m[2m:[0m SQLite migration v1 applied
+[2m2026-08-03T16:11:38.845966Z[0m [32m INFO[0m [2measybot_core::storage::migration[0m[2m:[0m Running SQLite migration v2: Commercial readiness and subject target authorization
+test cli::test_cli_init_idempotent ... ok
+[2m2026-08-03T16:11:38.857313Z[0m [32m INFO[0m [2measybot_core::storage::migration[0m[2m:[0m SQLite migration v2 applied
+[2m2026-08-03T16:11:38.857321Z[0m [32m INFO[0m [2measybot_core::storage::migration[0m[2m:[0m SQLite migration v2 applied
+[2m2026-08-03T16:11:38.859373Z[0m [33m WARN[0m [2measybot_core::storage::migration[0m[2m:[0m Rolling back SQLite migration v2: Commercial readiness and subject target authorization
+test updater::tests::test_migration_on_temp_db ... ok
+[2m2026-08-03T16:11:38.864205Z[0m [32m INFO[0m [2measybot_core::storage::migration[0m[2m:[0m SQLite migration v2 rolled back
+[2m2026-08-03T16:11:38.864232Z[0m [33m WARN[0m [2measybot_core::storage::migration[0m[2m:[0m Rolling back SQLite migration v1: Initial schema: sessions, messages, api_keys
+[2m2026-08-03T16:11:38.865554Z[0m [32m INFO[0m [2measybot_core::storage::migration[0m[2m:[0m SQLite migration v1 rolled back
+[2m2026-08-03T16:11:38.866317Z[0m [32m INFO[0m [2measybot_core::storage::migration[0m[2m:[0m Running SQLite migration v1: Initial schema: sessions, messages, api_keys
+[2m2026-08-03T16:11:38.868009Z[0m [32m INFO[0m [2measybot_core::storage::migration[0m[2m:[0m SQLite migration v1 applied
+[2m2026-08-03T16:11:38.868030Z[0m [32m INFO[0m [2measybot_core::storage::migration[0m[2m:[0m Running SQLite migration v2: Commercial readiness and subject target authorization
+[2m2026-08-03T16:11:38.875471Z[0m [32m INFO[0m [2measybot_core::storage::migration[0m[2m:[0m SQLite migration v2 applied
+test updater::tests::test_migration_rollback_on_temp_db ... ok
+test cli::test_production_rejects_unsigned_dynamic_plugins ... ok
+test cli::test_cli_short_flags ... ok
+[2m2026-08-03T16:11:39.341517Z[0m [32m INFO[0m [2measybot_core::plugin::loader[0m[2m:[0m Loaded plugin 'mock-test' (Mock Test Adapter) from /var/folders/z0/1h35x82j7d767_fm_x3tvdsh0000gn/T/.tmp3mMBs3/mock-test
+test tests::test_load_mock_plugin ... ok
+test cli::test_openapi_has_security_scheme ... ok
+
+test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.64s
+
+     Running unittests src/lib.rs (target/debug/deps/mock_adapter-871c7c06850e1912)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests e2e_tests
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests easybot_adapter_discord
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests easybot_adapter_feishu
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests easybot_adapter_qq
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests easybot_adapter_telegram
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests easybot_adapter_wechat
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests easybot_api
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests easybot_core
+
+running 3 tests
+test crates/easybot-core/src/adapter/manager.rs - adapter::manager::AdapterManager::init_self_ref (line 161) ... ignored
+test crates/easybot-core/src/types/adapter.rs - types::adapter::capabilities (line 531) ... ignored
+test crates/easybot-core/src/util.rs - util::backoff_with_jitter (line 11) ... ok
+
+test result: ok. 1 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+all doctests ran in 2.18s; merged doctests compilation took 1.65s
+   Doc-tests easybot_plugin_sdk
+
+running 1 test
+test crates/easybot-plugin-sdk/src/ffi.rs - ffi::declare_plugin (line 26) ... ignored
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+all doctests ran in 0.80s; merged doctests compilation took 0.21s
+   Doc-tests fixtures
+
+running 1 test
+test tests/fixtures/src/lib.rs - (line 10) ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+all doctests ran in 1.28s; merged doctests compilation took 0.77s
+   Doc-tests integration_tests
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[0;36mSQLite backup/restore drill[0m
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Previous database preserved at: /var/folders/z0/1h35x82j7d767_fm_x3tvdsh0000gn/T//easybot-backup-test.IH5VZ4/restored.db.pre-restore.20260803T161147Z
+Backup/restore test passed
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[0;36mRelease asset integrity drill[0m
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Release asset verification test passed
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[0;36mCommercial launch gate self-test[0m
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Commercial launch gate self-test passed
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+[0;36mAdmin stored-XSS invariant test[0m
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Admin stored-XSS invariant test passed
+
+╔══════════════════════════════════════════╗
+║  验收结果                                ║
+╚══════════════════════════════════════════╝
+
+[0;32m✓[0m cargo check (workspace + all features) (329s)
+[0;32m✓[0m cargo fmt --check (8s)
+[0;32m✓[0m cargo clippy (all targets + warnings as errors) (172s)
+[0;32m✓[0m Feature Matrix (7/7 通过) (46s)
+[0;32m✓[0m cargo build --workspace (1938s)
+[0;32m✓[0m test (default features) (421s)
+[0;32m✓[0m cargo build -p mock-adapter (45s)
+[0;32m✓[0m test (all features + plugin-system) (124s)
+[0;32m✓[0m SQLite backup/restore drill (1s)
+[0;32m✓[0m Release asset integrity drill (0s)
+[0;32m✓[0m Commercial launch gate self-test (1s)
+[0;32m✓[0m Admin stored-XSS invariant test (0s)
+
+总计: 12 步 | [0;32m通过: 12[0m | [0;31m失败: 0[0m
+
+[0;32m✅ 验收全部通过！[0m

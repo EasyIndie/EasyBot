@@ -94,7 +94,8 @@ impl FeishuTokenStore {
             }))
             .send()
             .await
-            .map_err(|e| GatewayError::Internal(format!("Feishu token refresh failed: {}", e)))?
+            // 网络层失败（DNS/超时/拒连）是瞬态错误——健康监控应退避重试。
+            .map_err(|e| GatewayError::Transient(format!("Feishu token refresh failed: {}", e)))?
             .json()
             .await
             .map_err(|e| {
@@ -245,7 +246,7 @@ impl FeishuAdapter {
         let resp = req
             .send()
             .await
-            .map_err(|e| GatewayError::Internal(format!("Feishu {} failed: {}", method, e)))?;
+            .map_err(|e| GatewayError::Transient(format!("Feishu {} failed: {}", method, e)))?;
 
         let result: FeishuApiResponse<T> = resp.json().await.map_err(|e| {
             GatewayError::Internal(format!("Feishu {} parse failed: {}", method, e))
@@ -306,7 +307,7 @@ impl FeishuAdapter {
             .header("Authorization", format!("Bearer {}", token))
             .send()
             .await
-            .map_err(|e| GatewayError::Internal(format!("Feishu DELETE failed: {}", e)))?;
+            .map_err(|e| GatewayError::Transient(format!("Feishu DELETE failed: {}", e)))?;
 
         let result: FeishuApiResponse<serde_json::Value> = resp
             .json()
@@ -395,11 +396,7 @@ impl PlatformAdapter for FeishuAdapter {
         // 3. 如果配置了 EventBus，启动 WebSocket 事件订阅
         self.cancel_and_respawn_ws().await;
 
-        Ok(ConnectResult {
-            ok: true,
-            error: None,
-            bot_info: self.bot_info.clone(),
-        })
+        Ok(ConnectResult::ok(self.bot_info.clone()))
     }
 
     async fn disconnect(&mut self) -> Result<(), GatewayError> {
@@ -984,11 +981,10 @@ impl FeishuAdapter {
 
         // 如果有 URL，先下载
         let file_data = if let Some(ref url) = media.url {
-            let resp = client
-                .get(url)
-                .send()
-                .await
-                .map_err(|e| GatewayError::Internal(format!("Download media failed: {}", e)))?;
+            let resp =
+                client.get(url).send().await.map_err(|e| {
+                    GatewayError::Transient(format!("Download media failed: {}", e))
+                })?;
             // SECURITY: Reject oversized downloads to prevent OOM
             if let Some(content_length) = resp.content_length() {
                 const MAX_DOWNLOAD_BYTES: u64 = 25 * 1024 * 1024; // 25MB
@@ -1035,7 +1031,7 @@ impl FeishuAdapter {
             .multipart(form)
             .send()
             .await
-            .map_err(|e| GatewayError::Internal(format!("Feishu upload failed: {}", e)))?;
+            .map_err(|e| GatewayError::Transient(format!("Feishu upload failed: {}", e)))?;
 
         let result: FeishuApiResponse<FeishuUploadData> = resp
             .json()

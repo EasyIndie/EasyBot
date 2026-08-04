@@ -120,11 +120,14 @@ jobs:
           DIGEST_AMD64="${{ needs.build-amd64.outputs.digest }}"
           DIGEST_ARM64="${{ needs.build-arm64.outputs.digest }}"
           TAGS="${{ steps.docker-prep.outputs.meta-tags }}"
+          ANNOTATION="${{ steps.docker-prep.outputs.meta-annotations }}"
 
           while IFS= read -r tag; do
             [ -z "$tag" ] && continue
             echo "Creating manifest: $tag"
+            # --annotation on the merged index is what GHCR reads for the package description.
             docker buildx imagetools create \
+              --annotation "$ANNOTATION" \
               -t "$tag" \
               "${REGISTRY}/${IMAGE}@${DIGEST_AMD64}" \
               "${REGISTRY}/${IMAGE}@${DIGEST_ARM64}"

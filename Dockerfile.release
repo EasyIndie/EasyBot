@@ -14,6 +14,10 @@ ARG TARGETARCH
 COPY --chown=easybot:easybot dist/easybot-${TARGETARCH} /usr/local/bin/easybot
 RUN chmod +x /usr/local/bin/easybot
 
+# 内置容器化默认配置（server.host: 0.0.0.0，保证 -p 端口发布可达）。
+# 用户挂载自己的 gateway.yaml 时会覆盖此文件。
+COPY --chown=easybot:easybot deploy/gateway.container.yaml /etc/easybot/gateway.yaml
+
 USER easybot
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD ["wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/api/v1/live"]

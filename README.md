@@ -157,32 +157,59 @@ cargo run -- --debug
 
 需要安全重试的单条发送必须遵循[消息发送幂等与重试](docs/10%20message-idempotency.md)，复用同一 `Idempotency-Key`，禁止超时后自动生成新键。
 
-### Docker 部署
+### Docker 部署（使用已发布镜像）
+
+预编译镜像发布在 GitHub Container Registry，支持 amd64 / arm64 多架构：
+
+```bash
+# 拉取镜像
+docker pull ghcr.io/easyindie/easybot:latest
+
+# 运行（通过环境变量传入令牌，自动启用对应适配器；未设令牌的平台自动跳过）
+docker run -d --name easybot \
+  -p 127.0.0.1:8080:8080 \
+  -v easybot-data:/var/lib/easybot \
+  -e EASYBOT_HOME=/var/lib/easybot \
+  -e EASYBOT_ALLOW_PLAINTEXT=true \
+  -e EASYBOT_ADMIN_PASSWORD='替换为强密码' \
+  -e TELEGRAM_BOT_TOKEN='你的Telegram令牌' \
+  ghcr.io/easyindie/easybot:latest
+
+# 查看状态
+curl http://127.0.0.1:8080/api/v1/live
+```
+
+> 💡 管理后台：`http://127.0.0.1:8080/admin`。其他平台令牌（`DISCORD_BOT_TOKEN` / `FEISHU_APP_ID`+`FEISHU_APP_SECRET` / `QQ_APP_ID`+`QQ_CLIENT_SECRET` / 微信扫码）见[用户手册](docs/01%20user-guide.md)。
+> ⚠️ `EASYBOT_ALLOW_PLAINTEXT=true` 是发布镜像的硬性启动要求：应用监听器仅支持 HTTP，必须置于可信 TLS 反向代理后或受信主机上。
+
+### Docker Compose 部署（使用已发布镜像）
+
+```bash
+# 复制环境变量模板并填入令牌（适配器按已设令牌自动启用）
+cp .env.example .env && vim .env
+
+# 一键启动（基于已发布镜像，无需构建）
+docker compose -f compose.quickstart.yml up -d
+
+# 查看状态
+curl http://127.0.0.1:8080/api/v1/live
+```
+
+### 从源码构建（开发者）
 
 ```bash
 # 构建镜像
 docker build -t easybot .
 
 # 运行（通过环境变量传入令牌，自动启用对应适配器）
-docker run -p 8080:8080 \
+docker run -p 127.0.0.1:8080:8080 \
+  -e EASYBOT_ALLOW_PLAINTEXT=true \
   -e TELEGRAM_BOT_TOKEN="your_token_here" \
   easybot
-```
 
-### Docker Compose 部署
-
-```bash
-# 复制环境变量模板并填入令牌
-cp .env.example .env && vim .env
-
-# 启动（系统自动检测已设置令牌的平台）
+# 或使用仓库内的开发编排（从源码构建 + 可选 PostgreSQL / Prometheus 监控）
 docker compose up -d
-
-# 启动 + PostgreSQL + Prometheus 监控
 docker compose --profile postgres --profile monitoring up -d
-
-# 查看状态
-curl http://localhost:8080/health
 ```
 
 ---

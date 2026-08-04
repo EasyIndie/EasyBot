@@ -1,0 +1,35 @@
+G1 CAPACITY TEST REPORT
+=======================
+Date: 2026-08-03
+Candidate: v0.0.28 (ghcr.io/easyindie/easybot@sha256:05b6a5e0...b068)
+Endpoint: GET /api/v1/adapters (authenticated, per-key quota unlimited)
+Instance limits: compose cpus=2, memory=512m, pids=512 (production stack)
+Storage: PostgreSQL + SQLite auth.db, production config
+Per-IP rate limit raised to 12000/min for this measurement (see note).
+
+RESULTS (load-test.sh, MAX_ERROR_RATE=1%, MAX_P95_MS=1000)
+----------------------------------------------------------
+1. 500 requests, concurrency 10
+   success=500 errors=0 error_rate=0.00% p95=396.9ms rps=33.3 passed=true
+   (JSON: load-report-500-c10.json)
+
+2. 1000 requests, concurrency 20
+   success=1000 errors=0 error_rate=0.00% p95=977.3ms rps=33.3 passed=true
+   (JSON: load-report-1000-c20.json)
+
+COMPARISON TO G0 BASELINE
+-------------------------
+| scenario        | G0 baseline      | this run      | result          |
+| 500 @ c10       | 0 err, p95 480ms | 0 err, 397ms  | PASS, better    |
+| 1000 @ c20      | 0 err, p95 1446ms| 0 err, 977ms  | PASS (<1s now)  |
+
+NOTE ON RATE LIMITING
+---------------------
+The production per-IP rate limiter defaults to 60 requests/min. A 500-request
+load from a single IP at that default produced HTTP 429 (error_rate ~4.6%),
+which CONFIRMS the production rate limiter engages correctly. The G0 baseline
+and this measurement therefore use a raised per-IP limit (12000/min, burst
+200) so the test measures CPU/memory-bound throughput rather than the
+per-IP limiter. The Managed Pilot SKU promises 600 requests/min/customer as a
+quota cap, not concurrent throughput; the per-IP limiter should be sized per
+deployment for G1.

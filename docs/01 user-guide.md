@@ -119,7 +119,42 @@ curl -X POST http://localhost:8080/api/v1/messages/send \
 
 ## 3. 安装指南
 
-### 3.1 Docker Compose（推荐）
+### 3.1 从 GitHub Container Registry 部署（推荐，无需构建）
+
+预编译的多架构镜像（amd64 / arm64）发布在 `ghcr.io/easyindie/easybot`，Tag 约定：`latest`、`vX.Y.Z`、`X.Y`。
+
+#### 方式一：docker run
+
+```bash
+docker pull ghcr.io/easyindie/easybot:latest
+
+docker run -d --name easybot \
+  -p 127.0.0.1:8080:8080 \
+  -v easybot-data:/var/lib/easybot \
+  -e EASYBOT_HOME=/var/lib/easybot \
+  -e EASYBOT_ALLOW_PLAINTEXT=true \
+  -e EASYBOT_ADMIN_PASSWORD='替换为强密码' \
+  -e TELEGRAM_BOT_TOKEN='你的Telegram令牌' \
+  ghcr.io/easyindie/easybot:latest
+
+curl http://127.0.0.1:8080/api/v1/live
+```
+
+#### 方式二：docker compose（quickstart）
+
+```bash
+# 克隆仓库（或仅获取 compose.quickstart.yml）后：
+cp .env.example .env
+vim .env                                    # 填入令牌
+docker compose -f compose.quickstart.yml up -d
+curl http://127.0.0.1:8080/api/v1/live
+```
+
+> **关于 `EASYBOT_ALLOW_PLAINTEXT=true`：** 应用监听器仅支持 HTTP，release 构建启动时硬性校验该变量，确认你接受"应用须置于可信 TLS 反向代理后或私网内"的前提。镜像内置配置绑定容器内 `0.0.0.0`（`deploy/gateway.container.yaml`），宿主机侧 `-p` 请映射到 `127.0.0.1` 或置于防火墙后。
+> **数据持久化：** `-v easybot_data:/var/lib/easybot` 保存 SQLite 数据库与日志。令牌只需设置要启用的平台，未设令牌的平台自动跳过。
+> **生产加固**（TLS 反向代理、固定镜像 digest、Docker secrets、资源限制）请使用 `deploy/docker-compose.production.yml`，见[商用上线门禁](05%20commercial-readiness.md)。
+
+### 3.2 Docker Compose（源码构建）
 
 ```bash
 cp .env.example .env
@@ -133,15 +168,16 @@ docker compose --profile postgres up -d
 docker compose --profile postgres --profile monitoring up -d
 ```
 
-### 3.2 Docker 单容器
+### 3.3 Docker 单容器（源码构建）
 
 ```bash
 docker build -t easybot .
 docker run -d \
   --name easybot \
-  -p 8080:8080 \
+  -p 127.0.0.1:8080:8080 \
   -e TELEGRAM_BOT_TOKEN="your_token" \
   -e EASYBOT_HOME=/var/lib/easybot \
+  -e EASYBOT_ALLOW_PLAINTEXT=true \
   -v easybot_data:/var/lib/easybot/data \
   easybot
 ```
@@ -158,9 +194,9 @@ docker run -d \
 | `QQ_CLIENT_SECRET` | QQ 机器人 Client Secret |
 | `EASYBOT_HOME` | 数据目录（默认 `/var/lib/easybot`） |
 | `EASYBOT_ADMIN_PASSWORD` | 管理后台密码（**必设**） |
-| `EASYBOT_ALLOW_PLAINTEXT` | 生产环境跳过 TLS 检查 |
+| `EASYBOT_ALLOW_PLAINTEXT` | release 构建启动硬性要求：确认应用置于可信 TLS 反代后/私网内（设为 `true`） |
 
-### 3.3 从源码构建
+### 3.4 从源码构建
 
 ```bash
 # 安装 Rust
@@ -189,7 +225,7 @@ vim ~/.easybot/.env
 | `cargo build --release --no-default-features --features "adapter-telegram,adapter-discord"` | 仅构建指定适配器 |
 | `cargo build --release --no-default-features` | 最小构建（无适配器） |
 
-### 3.4 预编译二进制
+### 3.5 预编译二进制
 
 从 [GitHub Releases](https://github.com/EasyIndie/EasyBot/releases) 下载对应平台的二进制：
 

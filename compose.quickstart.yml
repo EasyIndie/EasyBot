@@ -1,0 +1,47 @@
+# EasyBot 快速开始 — 直接使用已发布的镜像（无需克隆仓库构建）：
+#
+#   cp .env.example .env          # 填入令牌，对应适配器自动启用
+#   docker compose -f compose.quickstart.yml up -d
+#   curl http://127.0.0.1:8080/api/v1/live
+#
+# 说明：
+#   - EASYBOT_ALLOW_PLAINTEXT=true 是 release 构建的硬性启动要求（应用监听器仅支持
+#     HTTP，须置于可信 TLS 反向代理后或受信主机上，详见 docs/01 user-guide.md）。
+#   - 镜像内置 server.host: 0.0.0.0（见 deploy/gateway.container.yaml），宿主机侧
+#     默认映射到 127.0.0.1；如需自定义配置，可挂载自己的 gateway.yaml 覆盖。
+#   - 健康检查继承镜像自带的 HEALTHCHECK（无需在此重复声明）。
+#   - 生产加固部署请改用 deploy/docker-compose.production.yml。
+
+services:
+  easybot:
+    image: ghcr.io/easyindie/easybot:latest
+    pull_policy: always
+    restart: unless-stopped
+    ports:
+      - "${EASYBOT_BIND_ADDRESS:-127.0.0.1}:8080:8080"
+    volumes:
+      - easybot_data:/var/lib/easybot
+      # 可选：挂载自定义配置覆盖镜像内置默认配置
+      # - ./deploy/gateway.container.yaml:/etc/easybot/gateway.yaml:ro
+    environment:
+      - EASYBOT_HOME=/var/lib/easybot
+      - EASYBOT_ALLOW_PLAINTEXT=true
+      - EASYBOT_ADMIN_PASSWORD
+      - EASYBOT_ADMIN_PASSWORD_FILE
+      # SECURITY: 生产环境优先使用 *_FILE（Docker secrets / bind mount）而非环境变量，
+      # 因为环境变量可通过 docker inspect 查看。
+      - TELEGRAM_BOT_TOKEN
+      - TELEGRAM_BOT_TOKEN_FILE
+      - DISCORD_BOT_TOKEN
+      - DISCORD_BOT_TOKEN_FILE
+      - FEISHU_APP_ID
+      - FEISHU_APP_ID_FILE
+      - FEISHU_APP_SECRET
+      - FEISHU_APP_SECRET_FILE
+      - QQ_APP_ID
+      - QQ_APP_ID_FILE
+      - QQ_CLIENT_SECRET
+      - QQ_CLIENT_SECRET_FILE
+
+volumes:
+  easybot_data:

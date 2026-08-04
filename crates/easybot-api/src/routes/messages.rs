@@ -512,7 +512,8 @@ pub async fn send_message(
 /// 批量发送消息
 ///
 /// 向多个目标发送相同的文本消息。每个目标格式为 "platform:chatId"。
-/// 使用并发限制（最大 5 个并发）和整体 30 秒超时。
+/// 权限按 target 独立校验：无权限的目标以 `results` 中 `failed` 记录，不阻断有权限目标投递；
+/// 仅当全部目标都无权限时整体返回 403。使用并发限制（最大 5 个并发）和整体 30 秒超时。
 #[utoipa::path(
     post,
     path = "/api/v1/messages/batch-send",
@@ -522,6 +523,7 @@ pub async fn send_message(
     responses(
         (status = 200, description = "Batch send results", body = serde_json::Value),
         (status = 400, description = "Invalid request"),
+        (status = 403, description = "No target in the batch is authorized for the caller"),
     )
 )]
 pub async fn batch_send(
@@ -549,6 +551,10 @@ pub async fn batch_send(
         }));
     }
     let mut unique_targets = std::collections::HashSet::with_capacity(req.targets.len());
+    // 按 target 做权限校验：无权限/无法校验的目标只记录失败，不阻断有权限目标投递。
+    let mut sendable: Vec<(String, String, String)> = Vec::new(); // (target, platform, chat_id)
+    let mut pre_blocked: Vec<(String, &'static str, String)> = Vec::new(); // (target, status, error)
+    let global_access = easybot_core::auth::permissions::has_global_target_access(&actor);
     for target in &req.targets {
         let Some((platform, chat_id)) = parse_target(target) else {
             return Err(api_error(GatewayError::InvalidRequest(
@@ -560,14 +566,50 @@ pub async fn batch_send(
                 "duplicate target: {target}"
             ))));
         }
-        require_target_action(
-            &state,
-            &actor,
-            &platform,
-            &chat_id,
-            target_actions::MESSAGES_SEND,
-        )
-        .await?;
+        if global_access {
+            sendable.push((target.clone(), platform, chat_id));
+            continue;
+        }
+        match state
+            .auth_manager
+            .target_authorized(
+                &actor.subject_id,
+                &platform,
+                &chat_id,
+                target_actions::MESSAGES_SEND,
+            )
+            .await
+        {
+            Ok(true) => sendable.push((target.clone(), platform, chat_id)),
+            Ok(false) => pre_blocked.push((
+                target.clone(),
+                "failed",
+                format!("subject is not authorized for {platform}:{chat_id}"),
+            )),
+            Err(error) => pre_blocked.push((
+                target.clone(),
+                "indeterminate",
+                format!("authorization check failed: {error}"),
+            )),
+        }
+    }
+    // 全部目标都不可投递时整体拒绝，避免调用方误以为已部分投递。
+    if sendable.is_empty() {
+        return Err(api_error(
+            if pre_blocked.iter().all(|(_, status, _)| *status == "failed") {
+                GatewayError::Forbidden(
+                    "subject is not authorized for any target in this batch".into(),
+                )
+            } else {
+                GatewayError::StorageError(
+                    pre_blocked
+                        .iter()
+                        .find(|(_, status, _)| *status == "indeterminate")
+                        .map(|(_, _, error)| error.clone())
+                        .unwrap_or_else(|| "authorization storage unavailable".into()),
+                )
+            },
+        ));
     }
 
     let idempotency_key = headers
@@ -639,11 +681,17 @@ pub async fn batch_send(
     let parse_mode = req.parse_mode.unwrap_or_default();
     let semaphore = Arc::new(tokio::sync::Semaphore::new(5)); // 最大并发 5
     let results = Arc::new(tokio::sync::Mutex::new(serde_json::Map::new()));
-    let mut handles = Vec::with_capacity(req.targets.len());
+    // 无权限/无法校验的目标先占位，保证 results 覆盖所有 target，total 与条目数一致
+    for (target, status, error) in &pre_blocked {
+        results.lock().await.insert(
+            target.clone(),
+            serde_json::json!({ "status": status, "error": error }),
+        );
+    }
+    let mut handles = Vec::with_capacity(sendable.len());
 
-    // 并发发送所有目标
-    for target in &req.targets {
-        let target = target.clone();
+    // 并发发送所有已授权目标
+    for (target, platform, chat_id) in sendable {
         let text = req.text.clone();
         let parse_mode = parse_mode.clone();
         let semaphore = semaphore.clone();
@@ -655,145 +703,132 @@ pub async fn batch_send(
         let handle = tokio::spawn(async move {
             let _permit = semaphore.acquire().await;
 
-            match parse_target(&target) {
-                Some((platform, chat_id)) => {
-                    let chat_id_for_store = chat_id.clone();
-                    let text_for_store = text.clone();
-                    let delivery_id = uuid::Uuid::now_v7().to_string();
-                    let delivery = OutboundDelivery {
-                        id: delivery_id.clone(),
-                        actor_id,
-                        idempotency_key,
-                        platform: platform.clone(),
-                        chat_id: chat_id.clone(),
-                        request_json: serde_json::json!({
-                            "target": target.clone(),
-                            "text": text.clone(),
-                            "parse_mode": parse_mode.clone(),
-                        }),
-                        created_at: chrono::Utc::now().timestamp_millis(),
-                    };
+            let chat_id_for_store = chat_id.clone();
+            let text_for_store = text.clone();
+            let delivery_id = uuid::Uuid::now_v7().to_string();
+            let delivery = OutboundDelivery {
+                id: delivery_id.clone(),
+                actor_id,
+                idempotency_key,
+                platform: platform.clone(),
+                chat_id: chat_id.clone(),
+                request_json: serde_json::json!({
+                    "target": target.clone(),
+                    "text": text.clone(),
+                    "parse_mode": parse_mode.clone(),
+                }),
+                created_at: chrono::Utc::now().timestamp_millis(),
+            };
+            if let Err(error) = state
+                .message_store
+                .prepare_outbound_delivery(&delivery)
+                .await
+            {
+                tracing::error!(%error, target, "refusing batch platform call because delivery intent could not be persisted");
+                results.lock().await.insert(
+                    target.clone(),
+                    serde_json::json!({
+                        "status": "failed",
+                        "error": "Message persistence unavailable",
+                    }),
+                );
+                return;
+            }
+            let send_result = tokio::time::timeout(
+                std::time::Duration::from_secs(15),
+                state.adapter_manager.send_message(
+                    &platform,
+                    SendTextParams {
+                        chat_id,
+                        message: OutboundMessage { text, parse_mode },
+                        reply_to: None,
+                        metadata: None,
+                    },
+                ),
+            )
+            .await;
+
+            match send_result {
+                Ok(Ok(r)) => {
+                    // 记录出站消息指标
+                    if let Some(ref metrics) = state.metrics {
+                        metrics.record_outbound_message(&platform);
+                    }
+                    let stored = StoredMessage::from_outbound(
+                        &platform,
+                        &chat_id_for_store,
+                        None,
+                        &text_for_store,
+                        &r,
+                    );
                     if let Err(error) = state
                         .message_store
-                        .prepare_outbound_delivery(&delivery)
+                        .finalize_outbound_delivery(
+                            &delivery_id,
+                            if r.success {
+                                OutboundDeliveryState::Succeeded
+                            } else {
+                                OutboundDeliveryState::Failed
+                            },
+                            &serde_json::to_value(&r).unwrap_or_default(),
+                            Some(&stored),
+                        )
                         .await
                     {
-                        tracing::error!(%error, target, "refusing batch platform call because delivery intent could not be persisted");
+                        tracing::error!(%error, target, "batch platform result is indeterminate because delivery journal could not be finalized");
                         results.lock().await.insert(
                             target.clone(),
                             serde_json::json!({
-                                "status": "failed",
-                                "error": "Message persistence unavailable",
+                                "status": "indeterminate",
+                                "error": "Platform result could not be committed",
                             }),
                         );
                         return;
                     }
-                    let send_result = tokio::time::timeout(
-                        std::time::Duration::from_secs(15),
-                        state.adapter_manager.send_message(
-                            &platform,
-                            SendTextParams {
-                                chat_id,
-                                message: OutboundMessage { text, parse_mode },
-                                reply_to: None,
-                                metadata: None,
-                            },
-                        ),
-                    )
-                    .await;
-
-                    match send_result {
-                        Ok(Ok(r)) => {
-                            // 记录出站消息指标
-                            if let Some(ref metrics) = state.metrics {
-                                metrics.record_outbound_message(&platform);
-                            }
-                            let stored = StoredMessage::from_outbound(
-                                &platform,
-                                &chat_id_for_store,
-                                None,
-                                &text_for_store,
-                                &r,
-                            );
-                            if let Err(error) = state
-                                .message_store
-                                .finalize_outbound_delivery(
-                                    &delivery_id,
-                                    if r.success {
-                                        OutboundDeliveryState::Succeeded
-                                    } else {
-                                        OutboundDeliveryState::Failed
-                                    },
-                                    &serde_json::to_value(&r).unwrap_or_default(),
-                                    Some(&stored),
-                                )
-                                .await
-                            {
-                                tracing::error!(%error, target, "batch platform result is indeterminate because delivery journal could not be finalized");
-                                results.lock().await.insert(
-                                    target.clone(),
-                                    serde_json::json!({
-                                        "status": "indeterminate",
-                                        "error": "Platform result could not be committed",
-                                    }),
-                                );
-                                return;
-                            }
-                            let mut item = serde_json::json!({
-                                "status": if r.success { "sent" } else { "failed" },
-                                "messageId": r.message_id,
-                            });
-                            if let Some(error) = &r.error {
-                                item["error"] = serde_json::json!(sanitize_error_message(error));
-                            }
-                            if let Some(error_code) = &r.error_code {
-                                item["errorCode"] = serde_json::json!(error_code);
-                            }
-                            results.lock().await.insert(target.clone(), item);
-                        }
-                        Ok(Err(e)) => {
-                            let sanitized = sanitize_error_message(&e.to_string());
-                            if let Err(error) = state
-                                .message_store
-                                .finalize_outbound_delivery(
-                                    &delivery_id,
-                                    OutboundDeliveryState::Failed,
-                                    &serde_json::json!({ "error": sanitized }),
-                                    None,
-                                )
-                                .await
-                            {
-                                tracing::error!(%error, target, "failed to finalize rejected batch delivery");
-                            }
-                            results.lock().await.insert(
-                                target.clone(),
-                                serde_json::json!({
-                                    "status": "failed",
-                                    "error": sanitized,
-                                }),
-                            );
-                        }
-                        Err(_) => {
-                            results.lock().await.insert(
-                                target.clone(),
-                                serde_json::json!({
-                                    "status": "indeterminate",
-                                    "error": "Platform result is unknown after timeout (15s)",
-                                }),
-                            );
-                        }
+                    let mut item = serde_json::json!({
+                        "status": if r.success { "sent" } else { "failed" },
+                        "messageId": r.message_id,
+                    });
+                    if let Some(error) = &r.error {
+                        item["error"] = serde_json::json!(sanitize_error_message(error));
                     }
+                    if let Some(error_code) = &r.error_code {
+                        item["errorCode"] = serde_json::json!(error_code);
+                    }
+                    results.lock().await.insert(target.clone(), item);
                 }
-                None => {
+                Ok(Err(e)) => {
+                    let sanitized = sanitize_error_message(&e.to_string());
+                    if let Err(error) = state
+                        .message_store
+                        .finalize_outbound_delivery(
+                            &delivery_id,
+                            OutboundDeliveryState::Failed,
+                            &serde_json::json!({ "error": sanitized }),
+                            None,
+                        )
+                        .await
+                    {
+                        tracing::error!(%error, target, "failed to finalize rejected batch delivery");
+                    }
                     results.lock().await.insert(
                         target.clone(),
                         serde_json::json!({
                             "status": "failed",
-                            "error": format!("Invalid target: {}", target),
+                            "error": sanitized,
                         }),
                     );
                 }
-            };
+                Err(_) => {
+                    results.lock().await.insert(
+                        target.clone(),
+                        serde_json::json!({
+                            "status": "indeterminate",
+                            "error": "Platform result is unknown after timeout (15s)",
+                        }),
+                    );
+                }
+            }
         });
 
         handles.push(handle);

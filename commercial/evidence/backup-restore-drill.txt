@@ -1,0 +1,53 @@
+G1 BACKUP / RESTORE DRILL REPORT
+=================================
+Date: 2026-08-03
+Candidate: v0.0.28 (ghcr.io/easyindie/easybot@sha256:05b6a5e0...b068)
+Host: local macOS dev (Docker Desktop)
+
+SCENARIO
+--------
+Production-style deployment (read-only container, tmpfs, file secrets,
+PostgreSQL durable store + separate SQLite auth.db). Seeded real data via API
+(2 API keys, audit events, usage ledger) and PG (2 messages, 1 session).
+Ran paired backup, simulated total data loss (PG schema dropped + auth.db
+data removed), restored from the paired batch, verified all stores.
+
+RESULT: PASS
+
+BACKUP
+------
+- production-backup.sh produced a paired batch:
+    batch_id=20260803T140427Z
+    postgres_archive=easybot-20260803T140427Z.dump   (26 KB, pg_dump custom)
+    auth_archive=easybot-20260803T140427Z.sqlite3    (200 KB)
+    auth_schema_version=2
+  Both archives carry .sha256; manifest has its own .sha256; COMPLETE marker set.
+
+RESTORE
+-------
+- production-restore.sh verified archive checksums + schema version, took a
+  pre-restore safety backup, then restored PostgreSQL and auth.db (--force).
+- The previous (damaged) auth.db was preserved as
+  auth.db.pre-restore.<ts> before replacement.
+
+POST-RESTORE VERIFICATION (all via live API)
+---------------------------------------------
+- API keys: 2 customer keys restored and AUTHENTICATING (HTTP 200).
+- Audit chain: hash chain intact, 5 events (admin.login.succeeded,
+  api_key.created, ...).
+- Usage ledger: total_requests=13, 6 hourly records exported.
+- Messages: 2 restored and readable via /api/v1/messages.
+- Sessions: 1 restored in PostgreSQL.
+- Admin session keys are ephemeral (not persisted) — a fresh /admin/login is
+  required after an app restart. Customer durable keys survive restore.
+
+NOTES / DEVIATIONS (dev-host only)
+----------------------------------
+- production-up.sh host-ownership gate (UID 10001) requires a production
+  Linux host; on macOS Docker Desktop the container user (10001) maps host
+  bind mounts transparently, so the compose stack was brought up directly.
+- Backup/restore run from a postgres:16 worker container on the compose
+  backend network (host cannot resolve the container service name).
+- A hand-seeded session with source_json='{}' caused an app-load
+  deserialization failure; corrected to a valid SessionSource JSON. This is a
+  seed-data quality issue, not a restore defect.

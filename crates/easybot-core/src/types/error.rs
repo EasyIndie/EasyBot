@@ -54,6 +54,10 @@ pub enum GatewayError {
 
     #[error("Request timed out: {0}")]
     RequestTimeout(String),
+
+    /// 临时性失败（网络中断、DNS、超时、平台 5xx、限流）——重连应重试，不得永久禁用适配器。
+    #[error("Transient failure: {0}")]
+    Transient(String),
 }
 
 impl GatewayError {
@@ -80,6 +84,7 @@ impl GatewayError {
             GatewayError::StorageError(_) => "STORAGE_ERROR",
             GatewayError::Internal(_) => "INTERNAL_ERROR",
             GatewayError::RequestTimeout(_) => "REQUEST_TIMEOUT",
+            GatewayError::Transient(_) => "TRANSIENT_ERROR",
         }
     }
 
@@ -94,7 +99,7 @@ impl GatewayError {
             GatewayError::PlatformNotFound(_) | GatewayError::ChatNotFound(_) => 404,
             GatewayError::Conflict(_) => 409,
             GatewayError::RateLimited { .. } => 429,
-            GatewayError::AdapterNotConnected(_) => 503,
+            GatewayError::AdapterNotConnected(_) | GatewayError::Transient(_) => 503,
             GatewayError::ConfigError(_)
             | GatewayError::StorageError(_)
             | GatewayError::Internal(_) => 500,
@@ -112,6 +117,7 @@ impl GatewayError {
             Self::Internal(_) => "Internal server error".to_string(),
             Self::StorageError(_) => "Storage error".to_string(),
             Self::ConfigError(_) => "Configuration error".to_string(),
+            Self::Transient(_) => "Temporary failure".to_string(),
             // 以下变体的消息是用户交互中产生的，可安全返回
             Self::InvalidRequest(msg) => format!("Invalid request: {}", msg),
             Self::Conflict(msg) => format!("Conflict: {msg}"),
@@ -136,7 +142,7 @@ impl GatewayError {
     pub fn is_internal_error(&self) -> bool {
         matches!(
             self,
-            Self::Internal(_) | Self::StorageError(_) | Self::ConfigError(_)
+            Self::Internal(_) | Self::StorageError(_) | Self::ConfigError(_) | Self::Transient(_)
         )
     }
 

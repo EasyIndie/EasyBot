@@ -1453,6 +1453,101 @@ async fn test_batch_send_rejects_duplicate_targets_and_replays_idempotent_result
     assert_eq!(replay.json::<Value>().await.unwrap()["total"], 2);
 }
 
+#[tokio::test]
+async fn test_batch_send_skips_unauthorized_targets_and_sends_authorized_ones() {
+    let (state, admin_key, addr) = test_server().await;
+    let (_, customer_key) = state
+        .auth_manager
+        .create_key(
+            "batch-customer",
+            vec![
+                "messagessend".into(),
+                "messagesread".into(),
+                "sessionsread".into(),
+                "adaptersread".into(),
+            ],
+            None,
+        )
+        .await
+        .unwrap();
+    let customer = state
+        .auth_manager
+        .authenticate(&customer_key)
+        .await
+        .unwrap();
+    // 只授权 qq:group-a，qq:group-b 无权限
+    authed_client(&admin_key)
+        .post(url(
+            &addr,
+            &format!("/api/v1/subjects/{}/target-grants", customer.subject_id),
+        ))
+        .json(&serde_json::json!({
+            "platform":"qq",
+            "chat_id":"group-a",
+            "actions":["messages:send", "messages:read", "sessions:read"]
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    let resp = authed_client(&customer_key)
+        .post(url(&addr, "/api/v1/messages/batch-send"))
+        .json(&serde_json::json!({
+            "targets": ["qq:group-a", "qq:group-b"],
+            "text": "broadcast"
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    // 整体 200，未被无权限目标拖垮
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["total"], 2);
+    // 无权限目标单独记录为 failed，不包含 "not authorized" 之外的投递错误
+    assert_eq!(body["results"]["qq:group-b"]["status"], "failed");
+    assert_eq!(
+        body["results"]["qq:group-b"]["error"],
+        "subject is not authorized for qq:group-b"
+    );
+    // 有权限目标不应被判为未授权（其最终状态取决于平台 adapter，不在此断言）
+    assert_ne!(
+        body["results"]["qq:group-a"]["error"].as_str(),
+        Some("subject is not authorized for qq:group-a")
+    );
+}
+
+#[tokio::test]
+async fn test_batch_send_all_targets_unauthorized_returns_403() {
+    let (state, _admin_key, addr) = test_server().await;
+    let (_, customer_key) = state
+        .auth_manager
+        .create_key(
+            "batch-customer-no-grants",
+            vec![
+                "messagessend".into(),
+                "messagesread".into(),
+                "sessionsread".into(),
+                "adaptersread".into(),
+            ],
+            None,
+        )
+        .await
+        .unwrap();
+
+    let resp = authed_client(&customer_key)
+        .post(url(&addr, "/api/v1/messages/batch-send"))
+        .json(&serde_json::json!({
+            "targets": ["qq:group-a", "qq:group-b"],
+            "text": "broadcast"
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(resp.status(), 403);
+}
+
 // ── 编辑/删除消息（错误路径）──
 
 #[tokio::test]

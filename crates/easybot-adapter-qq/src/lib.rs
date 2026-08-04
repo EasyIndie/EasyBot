@@ -235,7 +235,10 @@ impl QqAdapter {
         let resp = req
             .send()
             .await
-            .map_err(|e| GatewayError::Internal(format!("QQ {} {} failed: {}", method, path, e)))?;
+            // 网络层失败（DNS/超时/拒连）是瞬态错误——健康监控应退避重试，不得永久停用。
+            .map_err(|e| {
+                GatewayError::Transient(format!("QQ {} {} failed: {}", method, path, e))
+            })?;
         if !resp.status().is_success() {
             let s = resp.status();
             let b = resp.text().await.unwrap_or_default();
@@ -309,7 +312,7 @@ impl QqAdapter {
             .header("Authorization", token)
             .send()
             .await
-            .map_err(|e| GatewayError::Internal(format!("QQ DELETE {} failed: {}", path, e)))?;
+            .map_err(|e| GatewayError::Transient(format!("QQ DELETE {} failed: {}", path, e)))?;
         if !resp.status().is_success() {
             let s = resp.status();
             let b = resp.text().await.unwrap_or_default();
@@ -790,10 +793,16 @@ impl PlatformAdapter for QqAdapter {
         let token_store =
             QqTokenStore::new(app_id.to_string(), client_secret.to_string(), auth_base_url);
         if let Err(e) = token_store.refresh().await {
-            return Ok(ConnectResult {
-                ok: false,
-                error: Some(format!("QQ auth failed (getAppAccessToken): {}", e)),
-                bot_info: None,
+            // 网络/解析层失败（Transient）→ 重连应重试；凭据被拒（AuthFailed）→ 永久停用。
+            return Ok(match &e {
+                GatewayError::Transient(_) => ConnectResult::failed(
+                    format!("QQ getAppAccessToken request failed: {}", e),
+                    Some(ConnectErrorKind::Transient),
+                ),
+                _ => ConnectResult::failed(
+                    format!("QQ auth failed (getAppAccessToken): {}", e),
+                    Some(ConnectErrorKind::Permanent),
+                ),
             });
         }
 
@@ -805,10 +814,16 @@ impl PlatformAdapter for QqAdapter {
             Ok(u) => u,
             Err(e) => {
                 self.token_store = None;
-                return Ok(ConnectResult {
-                    ok: false,
-                    error: Some(format!("QQ auth failed: {}", e)),
-                    bot_info: None,
+                // 网络层失败 → 瞬态；API 返回 401/403（凭据问题）→ 永久。
+                return Ok(match &e {
+                    GatewayError::Transient(_) => ConnectResult::failed(
+                        format!("QQ /users/@me request failed: {}", e),
+                        Some(ConnectErrorKind::Transient),
+                    ),
+                    _ => ConnectResult::failed(
+                        format!("QQ auth failed: {}", e),
+                        Some(ConnectErrorKind::Permanent),
+                    ),
                 });
             }
         };
@@ -850,11 +865,7 @@ impl PlatformAdapter for QqAdapter {
             });
         }
 
-        Ok(ConnectResult {
-            ok: true,
-            error: None,
-            bot_info: Some(bot_info),
-        })
+        Ok(ConnectResult::ok(Some(bot_info)))
     }
 
     async fn disconnect(&mut self) -> Result<(), GatewayError> {

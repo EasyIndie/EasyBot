@@ -17,6 +17,10 @@ inputs:
       type=semver,pattern={{major}}.{{minor}}
       type=sha,prefix=,suffix=,format=short
       type=raw,value=latest,enable={{is_default_branch}}
+  description:
+    description: "Image description. Set as an OCI label and an index-level annotation; GHCR surfaces the annotation as the package description on the container page."
+    required: false
+    default: "EasyBot — 即时通信网关：统一接入 Telegram / Discord / 飞书 / QQ / 微信，提供 REST + WebSocket API、会话管理、消息编辑/删除与插件系统。快速开始：docker run -d --name easybot -p 127.0.0.1:8080:8080 -v easybot-data:/var/lib/easybot -e EASYBOT_HOME=/var/lib/easybot -e EASYBOT_ALLOW_PLAINTEXT=true -e EASYBOT_ADMIN_PASSWORD=更换为强密码 ghcr.io/easyindie/easybot:latest，然后访问 http://127.0.0.1:8080。完整部署指南见仓库 README 与 docs/01 user-guide.md。"
 
 outputs:
   lower-repo:
@@ -28,6 +32,9 @@ outputs:
   meta-labels:
     description: "Docker metadata labels"
     value: ${{ steps.meta.outputs.labels }}
+  meta-annotations:
+    description: "Docker OCI annotations (index-level), including the image description"
+    value: ${{ steps.annotations.outputs.annotations }}
 
 runs:
   using: composite
@@ -53,3 +60,14 @@ runs:
       with:
         images: ${{ inputs.registry }}/${{ steps.lower.outputs.repo }}
         tags: ${{ inputs.tags }}
+        labels: |
+          org.opencontainers.image.description=${{ inputs.description }}
+
+    # GHCR reads the package description from an index-level OCI annotation,
+    # not from per-platform image labels. Emit the annotation for callers to
+    # pass to docker/build-push-action.
+    - name: Emit OCI annotations (GHCR package description)
+      id: annotations
+      shell: bash
+      run: |
+        echo "annotations=index:org.opencontainers.image.description=${{ inputs.description }}" >> "$GITHUB_OUTPUT"

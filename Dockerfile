@@ -39,6 +39,9 @@ RUN useradd -r -u 10001 --user-group -m -s /bin/bash easybot \
     && mkdir -p /var/lib/easybot/data /var/lib/easybot/logs /var/lib/easybot/plugins /etc/easybot \
     && chown -R easybot:easybot /var/lib/easybot /etc/easybot
 COPY --from=builder --chown=easybot:easybot /easybot /usr/local/bin/easybot
+# 内置容器化默认配置（server.host: 0.0.0.0，保证 -p 端口发布可达）。
+# 用户挂载自己的 gateway.yaml 时会覆盖此文件。
+COPY --chown=easybot:easybot deploy/gateway.container.yaml /etc/easybot/gateway.yaml
 USER easybot
 EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD ["curl", "-f", "http://127.0.0.1:8080/api/v1/live"]

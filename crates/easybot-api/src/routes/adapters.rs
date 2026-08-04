@@ -31,6 +31,14 @@ pub struct AdapterItem {
     #[schema(example = "Healthy")]
     pub health: Option<String>,
     pub connected: bool,
+    /// 最近一次错误（连接/重连失败原因）；None 表示无错误
+    pub last_error: Option<String>,
+    /// 是否永久停用（凭据拒绝等，不再自动重试，需人工介入）
+    pub permanent_failure: bool,
+    /// 连续失败重试次数（瞬时失败自动重试中会递增）
+    pub retry_attempt: u32,
+    /// 距下次自动重试的毫秒数；None 表示当前无排定的重试
+    pub next_retry_in_ms: Option<u64>,
 }
 
 /// 获取适配器列表
@@ -44,16 +52,22 @@ pub struct AdapterItem {
 )]
 pub async fn list_adapters(State(state): State<AppState>) -> Json<AdapterListResponse> {
     let adapters = state.adapter_manager.list_statuses().await;
-    let items: Vec<AdapterItem> = adapters
-        .into_iter()
-        .map(|s| AdapterItem {
+    let mut items = Vec::with_capacity(adapters.len());
+    for s in adapters {
+        // 重连/重试状态由健康监测器维护，与适配器自报的状态分离
+        let info = state.adapter_manager.get_reconnect_info(&s.platform).await;
+        items.push(AdapterItem {
             platform: s.platform,
             display_name: s.display_name,
             status: format!("{:?}", s.state),
             health: s.health.map(|h| format!("{:?}", h)),
             connected: s.connected,
-        })
-        .collect();
+            last_error: s.last_error,
+            permanent_failure: info.permanent_failure,
+            retry_attempt: info.retry_attempt,
+            next_retry_in_ms: info.next_retry_in_ms,
+        });
+    }
 
     Json(AdapterListResponse { adapters: items })
 }
