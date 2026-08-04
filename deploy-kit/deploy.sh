@@ -35,7 +35,7 @@ docker pull "$IMAGE"
 
 # 幂等：若存在同名容器则先删除（保留卷数据）
 if docker ps -a --format '{{.Names}}' | grep -qx "$NAME"; then
-  echo "▶ 移除已存在容器 $NAME（命名卷 easybot-data 保留）..."
+  echo "▶ 移除已存在容器 ${NAME}（命名卷 easybot-data 保留）..."
   docker rm -f "$NAME" >/dev/null
 fi
 
