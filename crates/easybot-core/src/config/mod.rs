@@ -377,8 +377,8 @@ pub fn generate_env_example() -> String {
 # QQ_APP_ID=your_qq_app_id
 # QQ_CLIENT_SECRET=your_qq_client_secret
 
-# 管理后台登录密码（用于浏览器访问 /admin 时验证身份）
-# EASYBOT_ADMIN_PASSWORD=your_password
+# 管理后台登录密码（用于浏览器访问 /admin 时验证身份；生产环境至少 12 个字符）
+# EASYBOT_ADMIN_PASSWORD=replace-with-a-long-random-password
 
 # PostgreSQL（可选，默认：SQLite）
 # DATABASE_URL=postgresql://user:password@localhost:5432/easybot
@@ -456,8 +456,9 @@ server:
     enabled: false
     certFile: ""
     keyFile: ""
-  # 管理后台登录密码（也可通过 EASYBOT_ADMIN_PASSWORD 环境变量覆盖）
-  adminPassword: "easybot"
+  # 管理后台登录密码（也可通过 EASYBOT_ADMIN_PASSWORD 环境变量覆盖）。
+  # 留空 = 禁用管理后台登录；生产环境建议至少 12 个字符。
+  adminPassword: ""
 
 api:
   basePath: "/api/v1"
@@ -671,6 +672,21 @@ adapters:
             "expected Some(false), got {:?}",
             telegram_cfg.enabled
         );
+    }
+
+    #[test]
+    fn test_admin_password_accepts_camelcase_yaml_key() {
+        // 回归保护：gateway.yaml 中的 adminPassword（camelCase）必须正确映射到
+        // Rust 字段 server.admin_password（snake_case）。该映射由 ServerConfig 上的
+        // #[serde(rename_all = "camelCase")] 提供，防止未来改动误删此属性。
+        let yaml = r#"
+server:
+  host: "127.0.0.1"
+  port: 8080
+  adminPassword: "543859230"
+"#;
+        let config: GatewayConfig = serde_yaml::from_str(yaml).expect("yaml should parse");
+        assert_eq!(config.server.admin_password, "543859230");
     }
 
     #[test]

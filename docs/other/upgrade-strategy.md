@@ -56,7 +56,7 @@
 服务管理器 (service manager)
   ├─ systemd unit 中的 ExecStart 硬编码路径
   ├─ launchd plist 中的 ProgramArguments
-  └─ Windows 服务的 binPath
+  └─ Windows NSSM 服务的 exe 路径：升级时二进制原地替换即可，无需改动服务注册
 
 API/观测面 (observability)
   ├─ API 响应格式变化（字段新增/删除/重命名）

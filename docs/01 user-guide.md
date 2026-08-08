@@ -482,7 +482,7 @@ easybot --debug
 easybot [OPTIONS]
 
 选项:
-  -c, --config <FILE>   配置文件路径
+  -c, --config <FILE>   配置文件路径（.env / gateway.local.yaml 仍从 --dir 目录解析）
       --dir <DIR>       配置目录路径（默认 ~/.easybot/）
       --init            初始化配置目录并退出
   -d, --debug           调试模式（DEBUG 级别日志）
@@ -518,9 +518,16 @@ cd ~/.easybot && ./easybot.sh install
 
 **Windows（Service）：**
 ```powershell
+# 前置依赖：NSSM（https://nssm.cc），缺失时 install 命令会给出安装提示
+#   choco install nssm      # 或从 nssm.cc/download 下载后放入 PATH
+
 cd ~/.easybot
 PowerShell -ExecutionPolicy Bypass -File manage-service.ps1 install
+PowerShell -ExecutionPolicy Bypass -File manage-service.ps1 status
+PowerShell -ExecutionPolicy Bypass -File manage-service.ps1 logs
 ```
+
+> 完整部署步骤与常见问题排查见 `docs/other/windows-deployment.md`。
 
 ### 6.4 健康检查
 

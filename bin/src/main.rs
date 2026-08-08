@@ -24,7 +24,8 @@ struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
 
-    /// 配置文件路径（优先级高于 --dir）
+    /// 配置文件路径。仅指定 gateway.yaml 的位置；.env、gateway.local.yaml、数据/日志
+    /// 始终从 --dir / EASYBOT_HOME / 默认目录解析，不随 --config 变化。
     #[arg(short, long)]
     config: Option<String>,
 
@@ -514,7 +515,7 @@ async fn main() -> anyhow::Result<()> {
         .unwrap_or_else(|_| config.server.admin_password.clone());
     if admin_password.is_empty() {
         tracing::warn!(
-            "管理后台密码未设置！请设置 EASYBOT_ADMIN_PASSWORD 环境变量或在 gateway.yaml 中配置 server.admin_password。\n\
+            "管理后台密码未设置！请设置 EASYBOT_ADMIN_PASSWORD 环境变量或在 gateway.yaml 中配置 server.adminPassword。\n\
              未设置密码时管理后台登录将始终被拒绝。"
         );
     }
@@ -752,7 +753,19 @@ async fn shutdown_signal() -> std::io::Result<()> {
 
 #[cfg(not(unix))]
 async fn shutdown_signal() -> std::io::Result<()> {
-    tokio::signal::ctrl_c().await
+    // Windows 上没有 SIGTERM。NSSM 停止控制台程序默认发 Ctrl+C（现有 ctrl_c 已覆盖）；
+    // 同时监听 Ctrl+Break / 控制台关闭 / 系统关机，让 NSSM 的替代停止方式
+    // 与系统关机都能触发同一套优雅关闭流程。
+    use tokio::signal::windows::{ctrl_break, ctrl_close, ctrl_shutdown};
+    let mut brk = ctrl_break()?;
+    let mut close = ctrl_close()?;
+    let mut shutdown = ctrl_shutdown()?;
+    tokio::select! {
+        result = tokio::signal::ctrl_c() => result,
+        _ = brk.recv() => Ok(()),
+        _ = close.recv() => Ok(()),
+        _ = shutdown.recv() => Ok(()),
+    }
 }
 
 /// 处理 init 命令：创建默认配置目录
@@ -847,6 +860,7 @@ async fn handle_init(cli: Cli) -> anyhow::Result<()> {
             println!(
                 "  3. Install as Windows Service (recommended for production, admin required):"
             );
+            println!("     Prerequisite: NSSM (choco install nssm, or https://nssm.cc)");
             println!("     cd {}", paths.home.display());
             println!("     PowerShell -ExecutionPolicy Bypass -File manage-service.ps1 install");
             println!("     PowerShell -ExecutionPolicy Bypass -File manage-service.ps1 status");
