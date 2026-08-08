@@ -102,7 +102,7 @@ async fn test_update_check_returns_structure() {
 
     // 即使 GitHub API 不可达，也应返回 200 并包含版本信息
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(json["current_version"], "0.0.31");
+    assert_eq!(json["current_version"], "0.0.32");
     assert!(json["schema_version"].is_number());
     assert!(json["update_available"].is_boolean());
     assert!(json["requires_db_migration"].is_boolean());

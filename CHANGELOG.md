@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.32] - 2026-08-08
+
+### Fixed
+
+- **Windows 服务部署全面修复** — `manage-service.ps1` 从 `sc.exe` 体系重写为
+  **NSSM** 体系：修复 `Start-Service` 1053 启动超时（EasyBot 非原生服务程序，需
+  NSSM 包装）、NSSM `Application/AppParameters` 被引号包裹导致 1066 退出码、`$Home`
+  与 PowerShell 只读自动变量冲突导致脚本报错、以及服务用 `--config` 注册导致
+  `.env` / `gateway.local.yaml` / 数据 / 日志从错误目录（`%APPDATA%\easybot\`）解析
+  的根因问题。新脚本以 `--dir <home>` 启动，自动检测 NSSM 并给出安装指引，崩溃自动
+  重启、stdout/stderr 重定向到 `logs/easybot.out.log` / `.err.log`。
+- **Windows 优雅关闭增强** — `shutdown_signal()` 的非 unix 分支新增
+  `ctrl_break` / `ctrl_close` / `ctrl_shutdown` 监听，NSSM 以非 Ctrl+C 方式停止服务
+  时也能触发同一套优雅关闭流程。
+- **`--init` 模板默认管理密码改为空** — `gateway.yaml` 模板 `adminPassword` 默认值由
+  `"easybot"` 改为 `""`（管理后台默认禁用登录），与 `default_admin_password()` 返回空、
+  未配置即拒绝登录的既有安全设计一致；`EASYBOT_ADMIN_PASSWORD` 占位值改为
+  `replace-with-a-long-random-password` 并补充生产环境强度提示。
+- **误导性告警文案修正** — 配置文件密钥缺失的告警提示 `server.admin_password` 改为
+  实际 YAML 键名 `server.adminPassword`（camelCase），避免用户按 snake_case 配置无效。
+- **Windows 部署文档** — 新增 `docs/other/windows-deployment.md` 完整部署指南（下载校验
+  → `--init --dir` → `.env` / `gateway.local.yaml` → NSSM 安装 → 验证 → 排查对照表），
+  `docs/01 user-guide.md` Windows（Service）段落同步更新。
+
 ## [0.0.31] - 2026-08-04
 
 ### Fixed

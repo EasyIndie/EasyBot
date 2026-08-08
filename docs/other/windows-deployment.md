@@ -1,6 +1,6 @@
 # EasyBot Windows 部署指南
 
-> 适用版本：v0.0.31+（此前版本请先升级）。验证环境：Windows 10 (10.0.26200) + PowerShell 5.1 / pwsh 7 + NSSM 2.24。
+> 适用版本：v0.0.32+（此前版本请先升级）。验证环境：Windows 10 (10.0.26200) + PowerShell 5.1 / pwsh 7 + NSSM 2.24。
 
 本指南描述在 Windows 上将 EasyBot 安装为后台服务的完整路径：下载校验 → 初始化配置 → 配置凭据与适配器 → 用 NSSM 注册服务 → 验证。
 
@@ -11,10 +11,9 @@ EasyBot 是普通控制台程序，**不是**原生 Windows 服务程序（无 `
 1. 下载对应架构的二进制（GitHub Releases 页）：
    - `easybot-x86_64-pc-windows-msvc.exe`（Intel/AMD）
    - `easybot-aarch64-pc-windows-msvc.exe`（ARM64）
-2. 校验 SHA256（v0.0.31 x86_64 示例值）：
+2. 校验 SHA256（示例，实际以对应版本 Release 附带的 `checksums.txt` 为准）：
    ```powershell
    Get-FileHash .\easybot-x86_64-pc-windows-msvc.exe -Algorithm SHA256
-   # 77c64353bba9527ea4e4d22cdf84b80ed6e40ce4375ea5565c6e0b000565523a
    ```
    与 `checksums.txt` 中记录值比对一致后再继续。
 3. 安装 NSSM（服务包装器）：
@@ -108,7 +107,7 @@ curl.exe -X POST http://localhost:8080/admin/login `
 
 | # | 现象 | 根因 | 解决 |
 |:--|:-----|:-----|:-----|
-| 1 | `manage-service.ps1` 报 "Cannot overwrite variable HOME" | `$Home` 是 PowerShell 只读自动变量 | 已改名为 `$HomeDir`（v0.0.31 修复） |
+| 1 | `manage-service.ps1` 报 "Cannot overwrite variable HOME" | `$Home` 是 PowerShell 只读自动变量 | 已改名为 `$HomeDir`（v0.0.32 修复） |
 | 2 | `Start-Service` 报 1053 启动超时 | EasyBot 非原生服务程序，sc.exe 直连 SCM 会超时 | 用 NSSM 包装（本脚本默认方式） |
 | 3 | 服务启动即停，事件日志"找不到路径"，退出码 1066 | NSSM 的 Application/AppParameters 被加了引号，引号被当作路径一部分 | 参数裸传（本脚本已内置） |
 | 4 | gateway.local.yaml 的适配器禁用失效 / .env 不加载 | 用 `--config` 注册，.env 与 local 配置从错误目录解析 | 服务用 `--dir <home>`（本脚本已内置） |

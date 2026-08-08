@@ -90,7 +90,7 @@ curl http://localhost:8080/api/v1/health
 ```json
 {
   "status": "healthy",
-  "version": "0.0.31",
+  "version": "0.0.32",
   "uptime": 12,
   "adapters": { "total": 1, "connected": 1 },
   "sessions": { "active": 0 }
@@ -231,10 +231,10 @@ vim ~/.easybot/.env
 
 ```bash
 # Linux (x86_64)
-curl -LO https://github.com/EasyIndie/EasyBot/releases/download/v0.0.31/easybot-x86_64-unknown-linux-musl
+curl -LO https://github.com/EasyIndie/EasyBot/releases/download/v0.0.32/easybot-x86_64-unknown-linux-musl
 
 # macOS (Apple Silicon)
-curl -LO https://github.com/EasyIndie/EasyBot/releases/download/v0.0.31/easybot-aarch64-apple-darwin
+curl -LO https://github.com/EasyIndie/EasyBot/releases/download/v0.0.32/easybot-aarch64-apple-darwin
 
 chmod +x easybot-*
 ./easybot-x86_64-unknown-linux-musl --init --dir ~/.easybot
@@ -538,7 +538,7 @@ curl http://localhost:8080/api/v1/health
 ```json
 {
   "status": "healthy",
-  "version": "0.0.31",
+  "version": "0.0.32",
   "uptime": 3600,
   "adapters": { "total": 5, "connected": 3 },
   "sessions": { "active": 42 }
@@ -1090,4 +1090,4 @@ docker compose pull && docker compose up -d
 
 ---
 
-*最后更新：2026-08-04 · EasyBot v0.0.31*
+*最后更新：2026-08-08 · EasyBot v0.0.32*
