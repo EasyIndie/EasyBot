@@ -8,14 +8,11 @@
 #   Step 2 (cargo fmt)           → ci.yml check
 #   Step 3 (cargo clippy)        → ci.yml check
 #   Step 4 (Feature Matrix)      → ci.yml test-feature-matrix
-#   Step 5 (cargo build)         → ci.yml test-default
-#   Step 6 (Test default)        → ci.yml test-default
-#   Step 7 (build mock-adapter)  → ci.yml test-all
-#   Step 8 (Test all)            → ci.yml test-all
-#   Step 9 (Backup/restore)      → local disaster-recovery gate
-#   Step 10 (Release integrity)  → checksum/tamper-detection gate
-#   Step 11 (Launch gate)        → commercial evidence gate self-test
-#   Step 12 (Admin XSS)          → stored-XSS and credential-storage invariants
+#   Step 5 (cargo build)         → local full-build gate
+#   Step 6 (Test default)        → default feature regression
+#   Step 7 (build mock-adapter)  → plugin integration prerequisite
+#   Step 8 (Test all)            → ci.yml test
+#   Steps 9-12                   → recovery/release/commercial/security drills
 #
 # 用法：
 #   bash scripts/verify.sh              # 跑全部检查
@@ -115,9 +112,9 @@ for arg in "$@"; do
     --fast) FAST=true ;;
     --locked) LOCKED="--locked" ;;
     --help)
-      echo "EasyBot 一键验收脚本（CI 检查 + 数据恢复门禁）"
+      echo "EasyBot 一键验收脚本（12 步：CI 核心检查 + 本地发布门禁）"
       echo ""
-      echo "  bash scripts/verify.sh             完整检查（10 步：代码、测试、灾备、发布完整性）"
+      echo "  bash scripts/verify.sh             完整检查（12 步：代码、测试、灾备、发布完整性）"
       echo "  bash scripts/verify.sh --fast      快速检查，跳过 clippy 和 fmt"
       echo "  bash scripts/verify.sh --locked    追加 --locked 到 cargo 命令"
       echo "  bash scripts/verify.sh --fast --locked  快速 + 锁定依赖版本"
@@ -133,6 +130,8 @@ for arg in "$@"; do
       echo "    8. 测试 (default + plugin-system)"
       echo "    9. SQLite 备份、校验与恢复演练"
       echo "   10. 发布资产校验与篡改检测演练"
+      echo "   11. 商业发布门禁自测"
+      echo "   12. 管理端存储型 XSS 不变量"
       echo ""
       echo "  安装 cargo-nextest 可加速测试: cargo install cargo-nextest"
       exit 0

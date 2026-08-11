@@ -6,7 +6,15 @@ on:
     paths: [Dockerfile, .dockerignore, Cargo.toml, Cargo.lock, "crates/**", "bin/**"]
   pull_request:
     branches: [main]
-    paths: [Dockerfile, .dockerignore, Cargo.toml, Cargo.lock, "crates/**", "bin/**"]
+    paths:
+      - Dockerfile
+      - .dockerignore
+      - "deploy/**"
+      - "compose*.yml"
+      - "scripts/test-container-*.sh"
+      - "scripts/verify-container-image.sh"
+      - ".github/actions/docker-setup/**"
+      - ".github/workflows/docker.yml"
 
 permissions:
   contents: read

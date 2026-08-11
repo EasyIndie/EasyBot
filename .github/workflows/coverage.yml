@@ -1,0 +1,61 @@
+name: Coverage
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "docs/**"
+      - "**.md"
+  schedule:
+    - cron: "15 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  coverage:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: ./.github/actions/setup-rust
+        id: rust-setup
+        with:
+          install-protoc: auto
+          cache-shared-key: "coverage-ubuntu"
+          cache-save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@6a1bd70eaac3c8bdf093356838d7ee09fda951cf # v2
+        with:
+          tool: cargo-llvm-cov
+
+      - name: Build mock-adapter
+        run: bash scripts/ci-step.sh "coverage mock-adapter" cargo build -p mock-adapter --locked
+
+      - name: Build CLI test binary
+        run: bash scripts/ci-step.sh "coverage CLI binary" cargo build -p easybot-bin --bin easybot --features "default,plugin-system" --locked
+
+      - name: Generate code coverage
+        run: bash scripts/ci-step.sh "llvm-cov" cargo llvm-cov --workspace --features "default,plugin-system" --locked --lcov --output-path lcov.info
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: lcov.info
+          fail_ci_if_error: false
+
+      - name: Cache summary
+        if: always()
+        shell: bash
+        run: |
+          echo "Rust cache exact hit: ${{ steps.rust-setup.outputs.cache-hit || 'false' }}" >> "$GITHUB_STEP_SUMMARY"

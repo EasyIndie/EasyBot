@@ -42,6 +42,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: ./.github/actions/setup-rust
+        id: rust-setup
         with:
           components: clippy, rustfmt
           install-protoc: auto
@@ -49,13 +50,13 @@ jobs:
           cache-save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Clippy
-        run: cargo clippy --workspace --features "default,plugin-system" --all-targets --locked -- -D warnings
-
-      - name: Build
-        run: cargo build --workspace --features "default,plugin-system" --locked
+        run: bash scripts/ci-step.sh "clippy" cargo clippy --workspace --features "default,plugin-system" --all-targets --locked -- -D warnings
 
       - name: Build mock-adapter
-        run: cargo build -p mock-adapter --locked
+        run: bash scripts/ci-step.sh "mock-adapter build" cargo build -p mock-adapter --locked
+
+      - name: Build CLI test binary
+        run: bash scripts/ci-step.sh "CLI binary build" cargo build -p easybot-bin --bin easybot --features "default,plugin-system" --locked
 
       - name: Install cargo-nextest
         uses: taiki-e/install-action@6a1bd70eaac3c8bdf093356838d7ee09fda951cf # v2
@@ -63,7 +64,13 @@ jobs:
           tool: cargo-nextest
 
       - name: Test
-        run: cargo nextest run --workspace --features "default,plugin-system" --locked
+        run: bash scripts/ci-step.sh "nextest" cargo nextest run --workspace --features "default,plugin-system" --locked
+
+      - name: Cache summary
+        if: always()
+        shell: bash
+        run: |
+          echo "Rust cache exact hit: ${{ steps.rust-setup.outputs.cache-hit || 'false' }}" >> "$GITHUB_STEP_SUMMARY"
 
   # ── Feature matrix: validate edge feature combinations ─────────────
   feature-check:
@@ -73,21 +80,24 @@ jobs:
         include:
           - features: "--no-default-features"
             protoc: "auto"
+            cache-key: "feature-minimal"
           - features: "--no-default-features --features adapter-telegram,adapter-discord"
             protoc: "auto"
+            cache-key: "feature-chat"
           - features: "--no-default-features --features adapter-feishu,adapter-qq,adapter-wechat"
             protoc: "auto"
+            cache-key: "feature-platform"
       fail-fast: false
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: ./.github/actions/setup-rust
         with:
           install-protoc: ${{ matrix.protoc }}
-          cache-shared-key: "feature-check"
+          cache-shared-key: ${{ matrix.cache-key }}
           cache-save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Check (${{ matrix.features }})
-        run: cargo check --workspace ${{ matrix.features }} --locked
+        run: bash scripts/ci-step.sh "feature check" cargo check --workspace ${{ matrix.features }} --locked
 
   # ── Disaster recovery: backup integrity and restore drill ──────────
   disaster-recovery:
@@ -102,34 +112,3 @@ jobs:
     uses: ./.github/workflows/platform-matrix.yml
     with:
       operation: check
-
-  # ── Code coverage ───────────────────────────────────────────────────
-  coverage:
-    runs-on: ubuntu-latest
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-      - uses: ./.github/actions/setup-rust
-        with:
-          install-protoc: auto
-
-      - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@6a1bd70eaac3c8bdf093356838d7ee09fda951cf # v2
-        with:
-          tool: cargo-llvm-cov
-
-      - name: Build workspace (for integration tests)
-        run: cargo build --workspace --features "default,plugin-system" --locked
-
-      - name: Build mock-adapter
-        run: cargo build -p mock-adapter --locked
-
-      - name: Generate code coverage
-        run: cargo llvm-cov --workspace --features "default,plugin-system" --locked --lcov --output-path lcov.info
-
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          files: lcov.info
-          fail_ci_if_error: false

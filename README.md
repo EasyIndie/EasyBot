@@ -438,6 +438,17 @@ cargo build -p mock-adapter && cargo test -p integration-tests
 cargo test -p easybot-core config::tests
 ```
 
+开发反馈分层、性能基线与安全磁盘清理见
+[开发与 CI 性能指南](docs/other/development-performance.md)。常用入口：
+
+```bash
+make diagnostics                         # 只读环境/磁盘报告
+make benchmark                           # 热缓存基线
+make ci-history                          # 最近 PR CI 的 P50/P95
+make check-package PACKAGE=easybot-core  # 单包快速检查
+make disk                                # 清理预览，不删除
+```
+
 ### 代码规范
 
 ```bash
