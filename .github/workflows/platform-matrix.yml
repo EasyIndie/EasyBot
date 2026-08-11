@@ -67,6 +67,7 @@ jobs:
           version: ${{ inputs.version }}
 
       - uses: ./.github/actions/setup-rust
+        id: rust-setup
         with:
           target: ${{ matrix.target }}
           install-protoc: auto
@@ -76,13 +77,19 @@ jobs:
 
       - name: Check target
         if: inputs.operation == 'check' && !contains(matrix.target, 'musl')
-        run: cargo check --workspace --features "default,plugin-system" --target ${{ matrix.target }} --locked
+        run: bash scripts/ci-step.sh "target check" cargo check --workspace --features "default,plugin-system" --target ${{ matrix.target }} --locked
 
       # musl dependencies such as ring and aws-lc-sys compile C sources.
       # Validate the release binary with zigbuild's cross C toolchain.
       - name: Check target (musl)
         if: inputs.operation == 'check' && contains(matrix.target, 'musl')
-        run: cargo zigbuild --bin easybot --features "default,plugin-system" --target ${{ matrix.target }} --locked
+        run: bash scripts/ci-step.sh "musl target check" cargo zigbuild --bin easybot --features "default,plugin-system" --target ${{ matrix.target }} --locked
+
+      - name: Check cache summary
+        if: inputs.operation == 'check' && always()
+        shell: bash
+        run: |
+          echo "Rust cache exact hit: ${{ steps.rust-setup.outputs.cache-hit || 'false' }}" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Build release binary (musl)
         if: inputs.operation == 'build' && contains(matrix.target, 'musl')

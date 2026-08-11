@@ -107,6 +107,14 @@ strip = "symbols"
 panic = "abort"
 debug = 0
 
+# Keep EasyBot workspace crates debuggable while avoiding large debug sections for
+# third-party dependencies during normal development and tests.
+[profile.dev.package."*"]
+debug = 0
+
+[profile.test.package."*"]
+debug = 0
+
 [workspace.lints.rust]
 unsafe_code = "deny"
 missing_docs = "warn"

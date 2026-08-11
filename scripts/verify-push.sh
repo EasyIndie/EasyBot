@@ -46,6 +46,8 @@ run_step "cargo clippy (workspace + plugin-system)" \
 run_step "cargo build -p mock-adapter" \
     $CARGO build -p mock-adapter --locked
 
+# CLI integration tests execute target/debug/easybot directly; cargo test does
+# not build a workspace binary unless it is an explicit test dependency.
 run_step "cargo build -p easybot-bin --bin easybot" \
     $CARGO build -p easybot-bin --bin easybot --locked
 

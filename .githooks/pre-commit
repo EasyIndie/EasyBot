@@ -2,8 +2,8 @@
 # EasyBot pre-commit hook
 # 安装: bin/build.rs 在 cargo build/check/test 时自动配置 core.hooksPath
 #
-# 提交前只运行快速检查，不通过则阻止提交。
-# 更重的 clippy/test 放到 pre-push，完整验收请运行 make verify。
+# 提交前只运行不触发编译的快速检查。
+# 编译、clippy/test 放到 pre-push，完整验收请运行 make verify。
 #
 # 跳过检查（不推荐）: git commit --no-verify
 
@@ -33,12 +33,4 @@ if git diff --cached --name-only --diff-filter=ACMR | grep -q '\.rs$'; then
     fi
     echo ">>> cargo fmt 通过"
 
-    # ── cargo check ──
-    echo ">>> 快速编译检查 cargo check..."
-    if ! $CARGO check --workspace --features "default,plugin-system"; then
-        echo ""
-        echo ">>> cargo check 未通过。请修复以上 error 后重试。"
-        exit 1
-    fi
-    echo ">>> cargo check 通过"
 fi
