@@ -56,3 +56,9 @@ Docker Desktop 数据文件的表观大小并不等于可回收空间，以 `doc
 - 容器/部署相关 PR：额外运行 Docker 镜像验证。
 - main：运行主 CI 和 coverage；符合镜像路径条件时构建双架构镜像。
 - coverage 另在每周一运行，可手动触发；安全审计与灾备门禁保持独立。
+
+CI 的 protoc 固定为官方 v23.4 发布包，并在各 runner 上校验 SHA-256 后安装。
+不依赖 Homebrew、apt 或 Node.js setup action，以避免 runner 全局状态警告和
+JavaScript action 运行时弃用影响。
+macOS runner 会在 Rust 工具链安装前移除镜像预装但未信任的 `aws/tap`；不会
+信任该 tap，也不会关闭 Homebrew 的 tap trust 检查。
