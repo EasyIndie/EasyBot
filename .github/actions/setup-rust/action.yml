@@ -57,24 +57,16 @@ runs:
         components: ${{ inputs.components }}
         target: ${{ inputs.target }}
 
-    # ----- protoc (Linux) -----
-    - name: Install protoc (Linux apt)
-      if: ${{ runner.os == 'Linux' && (inputs.install-protoc == 'auto' || inputs.install-protoc == 'linux') }}
+    # ----- protoc (official pinned release; no package-manager or Node action) -----
+    - name: Install protoc (Linux/macOS)
+      if: ${{ (runner.os == 'Linux' && (inputs.install-protoc == 'auto' || inputs.install-protoc == 'linux')) || (runner.os == 'macOS' && (inputs.install-protoc == 'auto' || inputs.install-protoc == 'macos')) }}
       shell: bash
-      run: sudo apt-get update -qq && sudo apt-get install -y -qq protobuf-compiler
+      run: bash scripts/install-protoc.sh
 
-    # ----- protoc (macOS) -----
-    - name: Install protoc (macOS brew)
-      if: ${{ runner.os == 'macOS' && (inputs.install-protoc == 'auto' || inputs.install-protoc == 'macos') }}
-      shell: bash
-      run: brew install protobuf
-
-    # ----- protoc (Windows) -----
     - name: Install protoc (Windows)
       if: ${{ runner.os == 'Windows' && (inputs.install-protoc == 'auto' || inputs.install-protoc == 'windows') }}
-      uses: arduino/setup-protoc@c65c819552d16ad3c9b72d9dfd5ba5237b9c906b # v3
-      with:
-        repo-token: ${{ github.token }}
+      shell: pwsh
+      run: ./scripts/install-protoc.ps1
 
     # ----- cargo-zigbuild (release cross-compilation only) -----
     - name: Install cargo-zigbuild
