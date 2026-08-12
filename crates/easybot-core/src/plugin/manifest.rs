@@ -28,6 +28,9 @@ pub struct PluginManifest {
     /// 不指定时按平台规则推断：lib{name}.so / lib{name}.dylib / {name}.dll
     #[serde(default)]
     pub library: Option<String>,
+    /// 是否启用。缺省启用（向后兼容：旧清单无此字段默认 true）
+    #[serde(default)]
+    pub enabled: Option<bool>,
 }
 
 fn default_version() -> String {
@@ -76,6 +79,11 @@ impl PluginManifest {
 
         Ok(plugin_dir.join(&lib))
     }
+
+    /// 插件是否启用（缺省启用）
+    pub fn is_enabled(&self) -> bool {
+        self.enabled.unwrap_or(true)
+    }
 }
 
 #[cfg(test)]
@@ -118,6 +126,7 @@ author: "EasyBot Contributors"
             sdk_version: 1,
             author: None,
             library: None,
+            enabled: None,
         };
         let dir = Path::new("/plugins/my-adapter");
         let path = manifest.library_path(dir).unwrap();
@@ -144,6 +153,7 @@ author: "EasyBot Contributors"
             sdk_version: 1,
             author: None,
             library: Some("custom.so".into()),
+            enabled: None,
         };
         let dir = Path::new("/plugins/my-adapter");
         let path = manifest.library_path(dir).unwrap();
@@ -160,6 +170,7 @@ author: "EasyBot Contributors"
             sdk_version: 1,
             author: None,
             library: Some("/usr/lib/libc.so.6".into()),
+            enabled: None,
         };
         let dir = Path::new("/plugins/my-adapter");
         assert!(manifest.library_path(dir).is_err());
@@ -175,6 +186,7 @@ author: "EasyBot Contributors"
             sdk_version: 1,
             author: None,
             library: Some("../../../usr/lib/libc.so.6".into()),
+            enabled: None,
         };
         let dir = Path::new("/plugins/my-adapter");
         let result = manifest.library_path(dir);
@@ -189,5 +201,17 @@ author: "EasyBot Contributors"
     fn test_invalid_yaml() {
         let result = PluginManifest::from_yaml("invalid: [yaml: broken");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_enabled_defaults_to_true() {
+        // 无 enabled 字段 → 启用（向后兼容）
+        let manifest = PluginManifest::from_yaml("name: \"a\"\nsdk_version: 1").unwrap();
+        assert!(manifest.is_enabled());
+
+        // enabled: false → 禁用
+        let manifest =
+            PluginManifest::from_yaml("name: \"a\"\nsdk_version: 1\nenabled: false").unwrap();
+        assert!(!manifest.is_enabled());
     }
 }

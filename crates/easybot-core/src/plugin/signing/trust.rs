@@ -14,6 +14,22 @@ use super::{SigningError, public_key_fingerprint};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
+/// 发布者信任判定抽象
+///
+/// 供加载器与生产门禁校验"这把公钥是否代表受信任的发布者"。
+/// 由调用方组合配置 `trusted_publishers` 与用户 `.trust` 实现
+/// （`PluginManager` / 生产门禁提供组合实现）。
+pub trait PublisherTrust {
+    /// 发布者的这把公钥是否受信任
+    fn is_trusted(&self, publisher: &str, public_key_b64: &str) -> bool;
+}
+
+impl PublisherTrust for TrustStore {
+    fn is_trusted(&self, publisher: &str, public_key_b64: &str) -> bool {
+        TrustStore::is_trusted(self, publisher, public_key_b64)
+    }
+}
+
 /// 单个信任条目
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TrustEntry {

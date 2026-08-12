@@ -46,6 +46,8 @@ use tokio::sync::RwLock;
 use tracing::{info, warn};
 
 use super::manifest::PluginManifest;
+use super::signing::PluginSignature;
+use super::signing::trust::PublisherTrust;
 use crate::adapter::{AdapterFactory, AdapterRegistry};
 use crate::bus::EventBus;
 use crate::types::adapter::PlatformAdapter;
@@ -83,6 +85,15 @@ pub enum PluginError {
 
     #[error("Plugin platform '{0}' conflicts with already registered platform")]
     PlatformConflict(String),
+
+    #[error("Plugin '{0}' is disabled in its manifest")]
+    DisabledPlugin(String),
+
+    #[error("Plugin signature verification failed for {path}: {detail}")]
+    SignatureVerificationFailed { path: PathBuf, detail: String },
+
+    #[error("Plugin publisher '{0}' is not trusted")]
+    UntrustedPublisher(String),
 }
 
 /// 已加载的插件库包装
@@ -176,20 +187,71 @@ pub struct PluginLoadResult {
     pub display_name: String,
 }
 
+/// 插件加载策略
+///
+/// 控制签名校验强度：
+///
+/// - [`lenient`](PluginLoadPolicy::lenient)：dev 默认——有 `plugin.sig.json` 则验签，
+///   无签名仅告警（向后兼容现有手动放置的插件）
+/// - [`strict`](PluginLoadPolicy::strict)：prod——无签名或验签失败即拒绝；
+///   且可选地校验发布者是否受信任（`trust` 非空时）
+#[derive(Clone)]
+pub struct PluginLoadPolicy {
+    /// 是否开启签名校验（有 `plugin.sig.json` 即验签）
+    pub verify_signatures: bool,
+    /// 是否强制要求签名（strict/prod：无签名或验签失败即拒绝）
+    pub require_signatures: bool,
+    /// 发布者信任判定（None = 只做密码学校验，不做发布者信任校验）
+    pub trust: Option<Arc<dyn PublisherTrust + Send + Sync>>,
+}
+
+impl PluginLoadPolicy {
+    /// lenient：有签名验、无签名 warn（dev 默认，向后兼容）
+    pub fn lenient() -> Self {
+        Self {
+            verify_signatures: true,
+            require_signatures: false,
+            trust: None,
+        }
+    }
+
+    /// strict：无签名或验签失败即拒绝；`trust` 非空时校验发布者信任
+    pub fn strict(trust: Option<Arc<dyn PublisherTrust + Send + Sync>>) -> Self {
+        Self {
+            verify_signatures: true,
+            require_signatures: true,
+            trust,
+        }
+    }
+}
+
+impl Default for PluginLoadPolicy {
+    fn default() -> Self {
+        Self::lenient()
+    }
+}
+
 /// 插件加载器
 ///
 /// 扫描指定目录，加载所有有效插件。
 pub struct PluginLoader {
     plugins_dir: PathBuf,
+    policy: PluginLoadPolicy,
     /// platform_name → (library, display_name)
     loaded: RwLock<HashMap<String, (Arc<PluginLibrary>, String)>>,
 }
 
 impl PluginLoader {
-    /// 创建指向 `plugins/` 目录的加载器
+    /// 创建指向 `plugins/` 目录的加载器（lenient 策略）
     pub fn new(plugins_dir: PathBuf) -> Self {
+        Self::with_policy(plugins_dir, PluginLoadPolicy::lenient())
+    }
+
+    /// 创建带指定加载策略的加载器
+    pub fn with_policy(plugins_dir: PathBuf, policy: PluginLoadPolicy) -> Self {
         Self {
             plugins_dir,
+            policy,
             loaded: RwLock::new(HashMap::new()),
         }
     }
@@ -258,6 +320,11 @@ impl PluginLoader {
                 detail: e.to_string(),
             })?;
 
+        // 1.5 启用检查（禁用插件跳过加载，不报错）
+        if !manifest.is_enabled() {
+            return Err(PluginError::DisabledPlugin(manifest.name.clone()));
+        }
+
         // 2. 定位动态库（含路径穿越安全检查）
         let lib_path = manifest
             .library_path(dir)
@@ -269,9 +336,14 @@ impl PluginLoader {
             return Err(PluginError::LibraryNotFound(lib_path));
         }
 
+        // 2.5 签名校验（在 dlopen 之前执行，避免加载未经验证的代码）
+        if self.policy.verify_signatures {
+            self.verify_signature(dir, &lib_path, &manifest)?;
+        }
+
         // 3. 加载动态库
         // SAFETY: dlopen/dlsym 是 unsafe 操作，因为动态库中的代码
-        // 在执行构造函数时立即运行。我们已经验证了文件存在性。
+        // 在执行构造函数时立即运行。我们已经验证了文件存在性与签名。
         let library = unsafe {
             Library::new(&lib_path).map_err(|e| PluginError::LibraryLoadError {
                 path: lib_path.clone(),
@@ -321,6 +393,59 @@ impl PluginLoader {
             platform_name,
             display_name,
         })
+    }
+
+    /// 校验插件签名（`plugin.sig.json` 覆盖动态库字节）
+    ///
+    /// - 有签名文件：验签 + （可选）发布者信任校验；失败 → `SignatureVerificationFailed` / `UntrustedPublisher`
+    /// - 无签名文件：strict 拒绝；lenient 仅告警（向后兼容手动放置的插件）
+    fn verify_signature(
+        &self,
+        dir: &Path,
+        lib_path: &Path,
+        manifest: &PluginManifest,
+    ) -> Result<(), PluginError> {
+        let sig_path = dir.join("plugin.sig.json");
+
+        if sig_path.exists() {
+            let sig = PluginSignature::from_file(&sig_path).map_err(|e| {
+                PluginError::SignatureVerificationFailed {
+                    path: sig_path.clone(),
+                    detail: format!("cannot read plugin.sig.json: {e}"),
+                }
+            })?;
+
+            sig.verify_library(lib_path)
+                .map_err(|e| PluginError::SignatureVerificationFailed {
+                    path: sig_path.clone(),
+                    detail: format!(
+                        "signature for '{}' does not match {}: {e}",
+                        manifest.name,
+                        lib_path.display()
+                    ),
+                })?;
+
+            if let Some(ref trust) = self.policy.trust
+                && !trust.is_trusted(&sig.publisher, &sig.public_key)
+            {
+                return Err(PluginError::UntrustedPublisher(sig.publisher));
+            }
+        } else if self.policy.require_signatures {
+            return Err(PluginError::SignatureVerificationFailed {
+                path: sig_path,
+                detail: format!(
+                    "plugin '{}' has no plugin.sig.json and strict policy requires signatures",
+                    manifest.name
+                ),
+            });
+        } else {
+            warn!(
+                "Plugin '{}' has no plugin.sig.json — skipping signature verification",
+                manifest.name
+            );
+        }
+
+        Ok(())
     }
 
     /// 为已加载的插件生成 AdapterFactory
@@ -593,6 +718,219 @@ library: "libmissing.so"
         let (succeeded, failed) = loader.load_all().await;
         assert!(succeeded.is_empty());
         assert!(failed.is_empty());
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn test_load_single_disabled_plugin() {
+        let dir = std::env::temp_dir().join(format!("plugin-test-disabled-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        create_plugin_subdir(
+            dir.parent().unwrap(),
+            dir.file_name().unwrap().to_str().unwrap(),
+            r#"name: "disabled-plugin"
+display_name: "Disabled"
+version: "1.0"
+sdk_version: 1
+enabled: false
+library: "libtest.so"
+"#,
+            true, // lib exists but should not be loaded
+        );
+
+        let loader = PluginLoader::new(dir.parent().unwrap().to_path_buf());
+        let result = loader.load_single(&dir).await;
+        assert!(
+            matches!(result, Err(PluginError::DisabledPlugin(name)) if name == "disabled-plugin")
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn test_strict_policy_rejects_unsigned() {
+        let dir = std::env::temp_dir().join(format!(
+            "plugin-test-strict-unsigned-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        create_plugin_subdir(
+            dir.parent().unwrap(),
+            dir.file_name().unwrap().to_str().unwrap(),
+            r#"name: "unsigned-plugin"
+display_name: "Unsigned"
+version: "1.0"
+sdk_version: 1
+library: "libtest.so"
+"#,
+            true, // lib exists but no plugin.sig.json
+        );
+
+        let loader = PluginLoader::with_policy(
+            dir.parent().unwrap().to_path_buf(),
+            PluginLoadPolicy::strict(None),
+        );
+        let result = loader.load_single(&dir).await;
+        assert!(matches!(
+            result,
+            Err(PluginError::SignatureVerificationFailed { .. })
+        ));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn test_lenient_allows_unsigned() {
+        let dir = std::env::temp_dir().join(format!(
+            "plugin-test-lenient-unsigned-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        create_plugin_subdir(
+            dir.parent().unwrap(),
+            dir.file_name().unwrap().to_str().unwrap(),
+            r#"name: "unsigned-plugin"
+display_name: "Unsigned"
+version: "1.0"
+sdk_version: 1
+library: "libtest.so"
+"#,
+            true,
+        );
+
+        // lenient：无签名仅告警，继续走到 dlopen（假库 → LibraryLoadError，而非签名错误）
+        let loader = PluginLoader::new(dir.parent().unwrap().to_path_buf());
+        let result = loader.load_single(&dir).await;
+        assert!(
+            matches!(result, Err(PluginError::LibraryLoadError { .. })),
+            "lenient should proceed past signature check, got: {:?}",
+            result.map(|_| ())
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 在插件目录写一个对给定字节内容有效的 plugin.sig.json
+    fn write_sig_file(
+        dir: &Path,
+        lib_name: &str,
+        signed_content: &[u8],
+        publisher: &str,
+    ) -> (PluginSignature, String) {
+        use crate::plugin::signing::{
+            SIGNATURE_SCHEMA_VERSION, encode_public_key, generate_keypair, sign_artifact,
+        };
+        let (signing, verifying) = generate_keypair();
+        let sig = PluginSignature {
+            schema_version: SIGNATURE_SCHEMA_VERSION,
+            name: "signed-plugin".into(),
+            version: "1.0.0".into(),
+            publisher: publisher.into(),
+            artifact: lib_name.into(),
+            signature: sign_artifact(signed_content, &signing),
+            public_key: encode_public_key(&verifying),
+        };
+        sig.write_to(&dir.join("plugin.sig.json")).unwrap();
+        (sig, encode_public_key(&verifying))
+    }
+
+    #[tokio::test]
+    async fn test_signature_mismatch_fails() {
+        let dir =
+            std::env::temp_dir().join(format!("plugin-test-sig-mismatch-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        create_plugin_subdir(
+            dir.parent().unwrap(),
+            dir.file_name().unwrap().to_str().unwrap(),
+            r#"name: "signed-plugin"
+display_name: "Signed"
+version: "1.0"
+sdk_version: 1
+library: "libtest.so"
+"#,
+            true,
+        );
+
+        // 签名内容与实际库文件（b"dummy"）不符 → 验签失败（dlopen 之前即拒）
+        write_sig_file(&dir, "libtest.so", b"different-content", "pub-a");
+
+        let loader = PluginLoader::new(dir.parent().unwrap().to_path_buf());
+        let result = loader.load_single(&dir).await;
+        assert!(matches!(
+            result,
+            Err(PluginError::SignatureVerificationFailed { .. })
+        ));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn test_strict_rejects_untrusted_publisher() {
+        let dir =
+            std::env::temp_dir().join(format!("plugin-test-untrusted-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        create_plugin_subdir(
+            dir.parent().unwrap(),
+            dir.file_name().unwrap().to_str().unwrap(),
+            r#"name: "signed-plugin"
+display_name: "Signed"
+version: "1.0"
+sdk_version: 1
+library: "libtest.so"
+"#,
+            true,
+        );
+
+        // 签名有效（覆盖 b"dummy"），但发布者未加入信任 → UntrustedPublisher
+        write_sig_file(&dir, "libtest.so", b"dummy", "pub-a");
+        let empty_trust = Arc::new(crate::plugin::signing::trust::TrustStore::default());
+
+        let loader = PluginLoader::with_policy(
+            dir.parent().unwrap().to_path_buf(),
+            PluginLoadPolicy::strict(Some(empty_trust)),
+        );
+        let result = loader.load_single(&dir).await;
+        assert!(
+            matches!(result, Err(PluginError::UntrustedPublisher(ref p)) if p == "pub-a"),
+            "got: {:?}",
+            result.map(|_| ())
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn test_strict_accepts_trusted_publisher() {
+        let dir = std::env::temp_dir().join(format!("plugin-test-trusted-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        create_plugin_subdir(
+            dir.parent().unwrap(),
+            dir.file_name().unwrap().to_str().unwrap(),
+            r#"name: "signed-plugin"
+display_name: "Signed"
+version: "1.0"
+sdk_version: 1
+library: "libtest.so"
+"#,
+            true,
+        );
+
+        let (_sig, pk_b64) = write_sig_file(&dir, "libtest.so", b"dummy", "pub-a");
+        let mut trust = crate::plugin::signing::trust::TrustStore::default();
+        trust.add("pub-a", &pk_b64);
+
+        let loader = PluginLoader::with_policy(
+            dir.parent().unwrap().to_path_buf(),
+            PluginLoadPolicy::strict(Some(Arc::new(trust))),
+        );
+        // 签名 + 信任都通过 → 走到 dlopen（假库 → LibraryLoadError，而非签名/信任错误）
+        let result = loader.load_single(&dir).await;
+        assert!(
+            matches!(result, Err(PluginError::LibraryLoadError { .. })),
+            "should pass signature+trust and reach dlopen, got: {:?}",
+            result.map(|_| ())
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }
