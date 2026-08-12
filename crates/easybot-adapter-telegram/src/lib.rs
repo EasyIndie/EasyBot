@@ -14,7 +14,7 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 use std::time::Duration;
 use tokio::sync::Semaphore;
 
@@ -58,6 +58,12 @@ pub struct TelegramAdapter {
     http_client: OnceLock<reqwest::Client>,
     /// 群组管理员列表缓存（事件驱动更新，无需 TTL）
     admin_cache: AdminCache,
+    /// 最近一次 getUpdates offset（重连后从该值继续，避免重复消息风暴）
+    last_offset: Arc<AtomicI64>,
+    /// 消息处理全局并发信号量（跨轮询批次限制总并发）
+    msg_semaphore: Arc<Semaphore>,
+    /// 永久鉴权失败标记（getUpdates 401/403 → 停止轮询，重连路径据此进入 Failed）
+    auth_failed: Arc<AtomicBool>,
 }
 
 impl TelegramAdapter {
@@ -93,7 +99,21 @@ impl TelegramAdapter {
             heartbeat: Heartbeat::new(),
             http_client: OnceLock::new(),
             admin_cache: Arc::new(AsyncMutex::new(HashMap::new())),
+            last_offset: Arc::new(AtomicI64::new(0)),
+            msg_semaphore: Arc::new(Semaphore::new(5)),
+            auth_failed: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    /// 将字符串形式的 ID 解析为 JSON 数字。
+    ///
+    /// Telegram 要求 `message_id` / `reply_to_message_id` 为 Integer，不能是字符串。
+    /// `chat_id` 保持字符串合法，但 ID 字段必须为数字。解析失败时保留原字符串，
+    /// 避免静默丢失字段（此时请求会被 Telegram 拒绝）。
+    fn json_id(s: &str) -> serde_json::Value {
+        s.parse::<i64>()
+            .map(serde_json::Value::from)
+            .unwrap_or_else(|_| serde_json::Value::String(s.to_string()))
     }
 
     /// 获取或创建缓存的 HTTP 客户端（延迟初始化，连接池复用）
@@ -368,6 +388,27 @@ impl TelegramAdapter {
         }
     }
 
+    /// 将 Telegram callback_query 转换为网关 CallbackEvent
+    fn convert_callback_query(cq: TelegramCallbackQuery) -> Option<CallbackEvent> {
+        // 先在移动字段前序列化原始数据（仅调试用）
+        let metadata = serde_json::to_value(&cq).ok();
+        let message = cq.message.as_deref();
+        let chat_id = message
+            .map(|m| m.chat.id.to_string())
+            .unwrap_or_else(|| cq.inline_message_id.clone().unwrap_or_default());
+        Some(CallbackEvent {
+            id: cq.id,
+            platform: "telegram".to_string(),
+            chat_id,
+            user_id: cq.from.id.to_string(),
+            data: cq.data.unwrap_or_default(),
+            message_id: message
+                .map(|m| m.message_id.to_string())
+                .unwrap_or_default(),
+            metadata,
+        })
+    }
+
     /// 调用 Telegram API 的辅助方法
     async fn api_call<T: serde::de::DeserializeOwned>(
         &self,
@@ -407,15 +448,23 @@ impl TelegramAdapter {
                 .unwrap_or_else(|| "Unknown error".to_string());
             let err = GatewayError::Internal(format!("Telegram API error: {}", desc));
 
-            // 429 Too Many Requests: 遵守 Telegram 的 retry_after 延迟
-            if api_resp.error_code == Some(429)
-                && let Some(retry_after) = api_resp.parameters.as_ref().and_then(|p| p.retry_after)
-            {
+            // 429 Too Many Requests: 返回 RateLimited（含 retry_after），由上层处理，
+            // 不再在调用路径内同步 sleep（会阻塞事件循环并掩盖限流语义）。
+            // 无 parameters.retry_after 时仍映射 RateLimited（retry_after_ms=0，
+            // 与统一约定一致），而非落到 Internal(500)——429 语义就是限流，
+            // 与是否携带 retry_after 无关。
+            if api_resp.error_code == Some(429) {
+                let retry_after_ms = api_resp
+                    .parameters
+                    .as_ref()
+                    .and_then(|p| p.retry_after)
+                    .map(|ra| (ra as u64) * 1000)
+                    .unwrap_or(0);
                 tracing::warn!(
-                    "Telegram API 429 rate limited, retrying after {}s",
-                    retry_after
+                    "Telegram API 429 rate limited, retry_after {}ms",
+                    retry_after_ms
                 );
-                tokio::time::sleep(Duration::from_secs(retry_after as u64)).await;
+                return Err(GatewayError::RateLimited { retry_after_ms });
             }
 
             Err(err)
@@ -433,10 +482,14 @@ impl TelegramAdapter {
         heartbeat: Heartbeat,
         admin_cache: AdminCache,
         messages_in: Arc<AtomicU64>,
+        last_offset: Arc<AtomicI64>,
+        msg_semaphore: Arc<Semaphore>,
+        auth_failed: Arc<AtomicBool>,
     ) {
-        let mut offset: i64 = 0;
+        // 重连后从上次持久化的 offset 继续，避免重复消息风暴
+        let mut offset: i64 = last_offset.load(Ordering::Relaxed);
         let mut poll_errors: u32 = 0;
-        tracing::info!("Telegram long polling started");
+        tracing::info!("Telegram long polling started (initial offset={})", offset);
 
         loop {
             tokio::select! {
@@ -450,9 +503,6 @@ impl TelegramAdapter {
                             poll_errors = 0;
                             heartbeat.beat_success(); // stream-health: successful poll
 
-                            // 限制消息处理并发数，避免批量消息时 API 过载
-                            let permit = Arc::new(Semaphore::new(5));
-
                             for update in updates {
                                 if update.update_id >= offset {
                                     offset = update.update_id + 1;
@@ -462,9 +512,20 @@ impl TelegramAdapter {
                                 if let Some(ref member_update) = update.chat_member {
                                     Self::update_admin_cache(&admin_cache, member_update).await;
                                 }
-                                // Handle messages → 并行处理（Semaphore 控制并发上限）
+                                // Handle callback_query → 发布 callback.received（轻量，串行保序）
+                                if let Some(cq) = update.callback_query
+                                    && let Some(callback) = Self::convert_callback_query(cq)
+                                {
+                                    let event = GatewayEvent::new(
+                                        event_types::CALLBACK_RECEIVED,
+                                        "telegram",
+                                        serde_json::to_value(&callback).unwrap_or_default(),
+                                    );
+                                    event_bus.publish(event);
+                                }
+                                // Handle messages → 并行处理（全局 Semaphore 控制总并发上限）
                                 if let Some(tg_msg) = update.message {
-                                    let permit = permit.clone();
+                                    let sem = msg_semaphore.clone();
                                     let admin_cache = admin_cache.clone();
                                     let client = client.clone();
                                     let base_url = base_url.clone();
@@ -472,12 +533,13 @@ impl TelegramAdapter {
                                     let eb = event_bus.clone();
                                     let mi = messages_in.clone();
                                     tokio::spawn(async move {
-                                        let _guard = permit.acquire().await.expect("Semaphore");
+                                        let _guard = sem.acquire_owned().await.expect("Semaphore");
                                         let chat_id = tg_msg.chat.id;
+                                        let chat_type = tg_msg.chat.chat_type.clone();
                                         let user_id = tg_msg.from.as_ref().map(|u| u.id);
                                         let sender_role = Self::resolve_sender_role(
                                             &admin_cache, &client, &base_url, &token,
-                                            chat_id, user_id,
+                                            chat_id, user_id, &chat_type,
                                         ).await;
                                         if let Some(inbound) = Self::convert_message(tg_msg, sender_role) {
                                             mi.fetch_add(1, Ordering::Relaxed);
@@ -491,8 +553,23 @@ impl TelegramAdapter {
                                     });
                                 }
                             }
+
+                            // 成功收到更新后写回 offset（重连/取消安全：Atomic 写回无竞态）
+                            last_offset.store(offset, Ordering::Relaxed);
                         }
                         Err(e) => {
+                            // 401/403 = 永久鉴权失败（token 被拒/吊销）→ 停止轮询，
+                            // 交由健康监控触发 retry_transport → 返回 AuthFailed → 进入 Failed。
+                            if matches!(&e, GatewayError::AuthFailed(_) | GatewayError::Forbidden(_))
+                            {
+                                tracing::error!(
+                                    "Telegram polling permanent auth failure: {} — stopping",
+                                    e
+                                );
+                                auth_failed.store(true, Ordering::Relaxed);
+                                heartbeat.record_error(e.to_string());
+                                break;
+                            }
                             poll_errors += 1;
                             let delay = easybot_core::util::backoff_with_jitter(poll_errors);
                             tracing::warn!("Telegram polling error (attempt {}): {} — retrying in {:?}", poll_errors, e, delay);
@@ -516,7 +593,7 @@ impl TelegramAdapter {
         let params = serde_json::json!({
             "offset": *offset,
             "timeout": POLL_TIMEOUT,
-            "allowed_updates": ["message", "chat_member"],
+            "allowed_updates": ["message", "chat_member", "callback_query"],
         });
 
         let resp = client
@@ -525,7 +602,17 @@ impl TelegramAdapter {
             .timeout(Duration::from_secs(POLL_TIMEOUT as u64 + 10))
             .send()
             .await
-            .map_err(|e| GatewayError::Internal(format!("Poll request failed: {}", e)))?;
+            .map_err(|e| GatewayError::Transient(format!("Poll request failed: {}", e)))?;
+
+        // HTTP 层 401/403 = 永久鉴权失败（token 被拒/吊销），不是瞬态错误
+        if resp.status() == reqwest::StatusCode::UNAUTHORIZED
+            || resp.status() == reqwest::StatusCode::FORBIDDEN
+        {
+            return Err(GatewayError::AuthFailed(format!(
+                "Telegram getUpdates rejected with HTTP {}",
+                resp.status()
+            )));
+        }
 
         let api_resp: TelegramApiResponse<Vec<TelegramUpdate>> = resp
             .json()
@@ -535,11 +622,20 @@ impl TelegramAdapter {
         if api_resp.ok {
             Ok(api_resp.result.unwrap_or_default())
         } else {
-            Err(GatewayError::Internal(
-                api_resp
-                    .description
-                    .unwrap_or_else(|| "Unknown polling error".to_string()),
-            ))
+            let desc = api_resp
+                .description
+                .unwrap_or_else(|| "Unknown polling error".to_string());
+            match api_resp.error_code {
+                Some(401) => Err(GatewayError::AuthFailed(format!(
+                    "Telegram polling 401: {}",
+                    desc
+                ))),
+                Some(403) => Err(GatewayError::Forbidden(format!(
+                    "Telegram polling 403: {}",
+                    desc
+                ))),
+                _ => Err(GatewayError::Transient(desc)),
+            }
         }
     }
 
@@ -581,8 +677,14 @@ impl TelegramAdapter {
         token: &str,
         chat_id: i64,
         user_id: Option<i64>,
+        chat_type: &str,
     ) -> Option<SenderRole> {
         let user_id = user_id?;
+
+        // 私聊没有管理员概念，getChatAdministrators 必然失败 → 直接视为普通成员
+        if chat_type == "private" {
+            return Some(SenderRole::Member);
+        }
 
         // 1. 查缓存（异步锁，等待获取）
         {
@@ -666,6 +768,9 @@ impl TelegramAdapter {
                 let _ = cancel_tx.send(());
             }
 
+            // 手动重启（connect / 完整重连）时清除永久失败标记
+            self.auth_failed.store(false, Ordering::Relaxed);
+
             let token = match self.config.as_ref().and_then(|c| c.token.clone()) {
                 Some(t) => t,
                 None => {
@@ -683,6 +788,9 @@ impl TelegramAdapter {
             let hb = self.heartbeat.clone();
             let ac = self.admin_cache.clone();
             let mi = self.messages_in.clone();
+            let lo = self.last_offset.clone();
+            let sem = self.msg_semaphore.clone();
+            let af = self.auth_failed.clone();
             let polling_client = self.http_client().clone();
 
             tokio::spawn(async move {
@@ -695,6 +803,9 @@ impl TelegramAdapter {
                     hb,
                     ac,
                     mi,
+                    lo,
+                    sem,
+                    af,
                 )
                 .await;
             });
@@ -825,9 +936,29 @@ impl PlatformAdapter for TelegramAdapter {
         if self.event_bus.is_none() {
             return Ok(false);
         }
+        // 永久鉴权失败（getUpdates 401/403）→ 直接上报 AuthFailed，
+        // 由健康监控 classify_error 归类为 Permanent → 进入 Failed 状态。
+        if self.auth_failed.load(Ordering::Relaxed) {
+            return Err(GatewayError::AuthFailed(
+                "Telegram bot token was rejected (401/403); adapter disabled".to_string(),
+            ));
+        }
         self.spawn_polling_task();
         tracing::info!("Telegram transport retry: polling task restarted");
         Ok(true)
+    }
+
+    /// 持久化 getUpdates offset，使适配器重建（API stop/start、进程内替换）后
+    /// 从上次位置继续拉取，避免重复消息风暴。
+    async fn cursor_state(&self) -> Option<serde_json::Value> {
+        Some(serde_json::json!({ "offset": self.last_offset.load(Ordering::Relaxed) }))
+    }
+
+    async fn restore_cursor_state(&self, state: serde_json::Value) {
+        if let Some(offset) = state.get("offset").and_then(|v| v.as_i64()) {
+            self.last_offset.store(offset, Ordering::Relaxed);
+            tracing::info!("Telegram restored getUpdates offset to {}", offset);
+        }
     }
 
     fn state(&self) -> AdapterState {
@@ -873,9 +1004,9 @@ impl PlatformAdapter for TelegramAdapter {
             ParseMode::None => {}
         }
 
-        // 回复引用
+        // 回复引用（Telegram 要求 Integer）
         if let Some(reply_to) = &params.reply_to {
-            body["reply_to_message_id"] = serde_json::json!(reply_to);
+            body["reply_to_message_id"] = Self::json_id(reply_to);
         }
 
         // 平台特定参数
@@ -958,12 +1089,14 @@ impl PlatformAdapter for TelegramAdapter {
                 field: url,
             });
 
-            if let Some(caption) = &params.media.caption {
+            // caption 优先取 media.caption，缺失时回退到 params.text
+            let caption = params.media.caption.clone().or_else(|| params.text.clone());
+            if let Some(caption) = &caption {
                 body["caption"] = serde_json::json!(caption);
             }
 
             if let Some(reply_to) = &params.reply_to {
-                body["reply_to_message_id"] = serde_json::json!(reply_to);
+                body["reply_to_message_id"] = Self::json_id(reply_to);
             }
 
             let result: TelegramMessage = match self.api_call(method, Some(body)).await {
@@ -1028,7 +1161,9 @@ impl PlatformAdapter for TelegramAdapter {
                 .part(field, part)
                 .text("chat_id", params.chat_id.clone());
 
-            if let Some(caption) = &params.media.caption {
+            // caption 优先取 media.caption，缺失时回退到 params.text
+            let caption = params.media.caption.clone().or_else(|| params.text.clone());
+            if let Some(caption) = &caption {
                 form = form.text("caption", caption.clone());
             }
 
@@ -1155,7 +1290,7 @@ impl PlatformAdapter for TelegramAdapter {
         });
 
         if let Some(reply_to) = &params.reply_to {
-            body["reply_to_message_id"] = serde_json::json!(reply_to);
+            body["reply_to_message_id"] = Self::json_id(reply_to);
         }
 
         let result: TelegramMessage = match self.api_call("sendMessage", Some(body)).await {
@@ -1206,6 +1341,40 @@ impl PlatformAdapter for TelegramAdapter {
         Ok(())
     }
 
+    /// 应答按钮回调：关闭 Telegram 按钮加载态。
+    ///
+    /// 必须在收到 `callback_query` 后尽快（约 10s 内）应答，否则按钮保持旋转。
+    /// `text` 显示在按钮上方的通知；`show_alert` 切换 toast/alert；`url` 仅对
+    /// 内联按钮（inline keyboard 中带 url 的回调）有效。
+    async fn answer_callback_query(
+        &self,
+        params: AnswerCallbackParams,
+    ) -> Result<(), GatewayError> {
+        let mut body = serde_json::json!({
+            "callback_query_id": params.callback_id,
+        });
+        if let Some(text) = params.text {
+            body["text"] = serde_json::Value::String(text);
+        }
+        if let Some(url) = params.url {
+            body["url"] = serde_json::Value::String(url);
+        }
+        if let Some(show_alert) = params.show_alert {
+            body["show_alert"] = serde_json::Value::Bool(show_alert);
+        }
+        if let Some(cache_time) = params.cache_time {
+            body["cache_time"] = serde_json::Value::Number(cache_time.into());
+        }
+        // answerCallbackQuery 失败由 api_call 映射：429 → RateLimited（可重试）；
+        // 其余（含 400/401）→ Internal(500)。注意：过期/无效的 callback_query_id 是
+        // **终态-良性**错误——已过期的回调永远无法再应答，重试无意义（客户端应忽略，
+        // 而非依赖该错误触发重试）。此处不吞错误：非法 query_id 也可能是调用方传错
+        // 参数，返回错误有助于定位。
+        self.api_call::<serde_json::Value>("answerCallbackQuery", Some(body))
+            .await?;
+        Ok(())
+    }
+
     async fn send_draft(&self, params: SendDraftParams) -> Result<DraftResult, GatewayError> {
         let mut body = serde_json::json!({
             "chat_id": params.chat_id,
@@ -1226,12 +1395,12 @@ impl PlatformAdapter for TelegramAdapter {
         }
 
         if let Some(ref reply_to) = params.reply_to {
-            body["reply_to_message_id"] = serde_json::json!(reply_to);
+            body["reply_to_message_id"] = Self::json_id(reply_to);
         }
 
         if let Some(ref msg_id) = params.message_id {
-            // 更新已有草稿 → 使用 editMessageText
-            body["message_id"] = serde_json::json!(msg_id);
+            // 更新已有草稿 → 使用 editMessageText（message_id 要求 Integer）
+            body["message_id"] = Self::json_id(msg_id);
             match self
                 .api_call::<serde_json::Value>("editMessageText", Some(body))
                 .await
@@ -1299,7 +1468,7 @@ impl PlatformAdapter for TelegramAdapter {
     async fn edit_message(&self, params: EditMessageParams) -> Result<EditResult, GatewayError> {
         let mut body = serde_json::json!({
             "chat_id": params.chat_id,
-            "message_id": params.message_id,
+            "message_id": Self::json_id(&params.message_id),
             "text": params.message.text,
         });
 
@@ -1337,7 +1506,7 @@ impl PlatformAdapter for TelegramAdapter {
     ) -> Result<DeleteResult, GatewayError> {
         let body = serde_json::json!({
             "chat_id": chat_id,
-            "message_id": message_id,
+            "message_id": Self::json_id(message_id),
         });
 
         match self
@@ -1889,5 +2058,181 @@ mod tests {
         let inbound = TelegramAdapter::convert_message(msg, None).unwrap();
         assert_eq!(inbound.msg_type, MessageType::Image);
         assert_eq!(inbound.text.as_deref(), Some("A beautiful photo"));
+    }
+
+    // ── T1: ID 字段按 JSON 数字序列化 ──
+
+    #[test]
+    fn test_json_id_parses_number() {
+        assert_eq!(TelegramAdapter::json_id("42"), serde_json::json!(42));
+        assert!(TelegramAdapter::json_id("42").is_number());
+    }
+
+    #[test]
+    fn test_json_id_fallback_to_string() {
+        // 非数字字符串无法解析 → 回退为字符串，保留字段
+        assert_eq!(
+            TelegramAdapter::json_id("not-a-number"),
+            serde_json::json!("not-a-number")
+        );
+    }
+
+    // ── T3: callback_query 转换 ──
+
+    #[test]
+    fn test_convert_callback_query() {
+        let cq = TelegramCallbackQuery {
+            id: "cb_123".to_string(),
+            from: TelegramUser {
+                id: 999,
+                is_bot: false,
+                first_name: "Clicker".to_string(),
+                last_name: None,
+                username: None,
+                language_code: None,
+            },
+            message: Some(Box::new(make_base_msg())), // message_id: 100, chat id: -100123456
+            inline_message_id: None,
+            chat_instance: Some("instance".to_string()),
+            data: Some("yes".to_string()),
+        };
+        let event = TelegramAdapter::convert_callback_query(cq).unwrap();
+        assert_eq!(event.id, "cb_123");
+        assert_eq!(event.platform, "telegram");
+        assert_eq!(event.chat_id, "-100123456");
+        assert_eq!(event.user_id, "999");
+        assert_eq!(event.data, "yes");
+        assert_eq!(event.message_id, "100");
+    }
+
+    #[test]
+    fn test_convert_callback_query_inline_no_message() {
+        let cq = TelegramCallbackQuery {
+            id: "cb_inline".to_string(),
+            from: TelegramUser {
+                id: 999,
+                is_bot: false,
+                first_name: "Clicker".to_string(),
+                last_name: None,
+                username: None,
+                language_code: None,
+            },
+            message: None,
+            inline_message_id: Some("inline_42".to_string()),
+            chat_instance: None,
+            data: None,
+        };
+        let event = TelegramAdapter::convert_callback_query(cq).unwrap();
+        assert_eq!(event.chat_id, "inline_42");
+        assert_eq!(event.data, "");
+        assert_eq!(event.message_id, "");
+    }
+
+    #[tokio::test]
+    async fn test_cursor_state_round_trip() {
+        let adapter = TelegramAdapter::new();
+        // 初始 cursor 为 0
+        let state = adapter.cursor_state().await.unwrap();
+        assert_eq!(state["offset"], 0);
+
+        // 恢复 offset=42，再导出应一致
+        adapter
+            .restore_cursor_state(serde_json::json!({ "offset": 42 }))
+            .await;
+        let state = adapter.cursor_state().await.unwrap();
+        assert_eq!(state["offset"], 42);
+
+        // 非法 state 不 panic、不改 offset
+        adapter.restore_cursor_state(serde_json::json!({})).await;
+        assert_eq!(adapter.cursor_state().await.unwrap()["offset"], 42);
+    }
+
+    #[tokio::test]
+    async fn test_poll_once_parses_message_and_callback() {
+        use wiremock::matchers::{body_partial_json, method};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+        // 断言 getUpdates 请求携带正确的 offset 与 allowed_updates（含 callback_query）
+        Mock::given(method("POST"))
+            .and(wiremock::matchers::path("/bottest-token/getUpdates"))
+            .and(body_partial_json(serde_json::json!({
+                "offset": 10,
+                "allowed_updates": ["message", "chat_member", "callback_query"],
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "ok": true,
+                "result": [
+                    {
+                        "update_id": 10,
+                        "message": {
+                            "message_id": 100,
+                            "from": {"id": 12345, "is_bot": false, "first_name": "T"},
+                            "chat": {"id": -100123456, "type": "private"},
+                            "date": 1700000000,
+                            "text": "hello"
+                        }
+                    },
+                    {
+                        "update_id": 11,
+                        "callback_query": {
+                            "id": "cb_1",
+                            "from": {"id": 12345, "is_bot": false, "first_name": "T"},
+                            "message": {
+                                "message_id": 101,
+                                "chat": {"id": -100123456, "type": "private"},
+                                "date": 1700000000,
+                                "text": "btn"
+                            },
+                            "chat_instance": "ci_1",
+                            "data": "yes"
+                        }
+                    }
+                ]
+            })))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        let base = format!("http://127.0.0.1:{}/bot", mock_server.address().port());
+        let client = reqwest::Client::new();
+        let mut offset = 10;
+        let updates = TelegramAdapter::poll_once(&client, "test-token", &base, &mut offset)
+            .await
+            .unwrap();
+
+        assert_eq!(updates.len(), 2);
+        let msg = updates.iter().find(|u| u.message.is_some()).unwrap();
+        assert_eq!(msg.update_id, 10);
+        assert_eq!(msg.message.as_ref().unwrap().text.as_deref(), Some("hello"));
+        let cb = updates.iter().find(|u| u.callback_query.is_some()).unwrap();
+        assert_eq!(cb.callback_query.as_ref().unwrap().id, "cb_1");
+        assert_eq!(
+            cb.callback_query.as_ref().unwrap().data.as_deref(),
+            Some("yes")
+        );
+    }
+
+    #[tokio::test]
+    async fn test_poll_once_http_401_is_permanent_auth_failure() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(wiremock::matchers::path("/bottest-token/getUpdates"))
+            .respond_with(ResponseTemplate::new(401))
+            .mount(&mock_server)
+            .await;
+
+        let base = format!("http://127.0.0.1:{}/bot", mock_server.address().port());
+        let client = reqwest::Client::new();
+        let mut offset = 0;
+        let err = TelegramAdapter::poll_once(&client, "test-token", &base, &mut offset)
+            .await
+            .unwrap_err();
+
+        // 401 → AuthFailed（永久），绝不能误判为 Transient
+        assert!(matches!(err, GatewayError::AuthFailed(_)));
     }
 }

@@ -4,7 +4,7 @@
 //! 包含适配器生命周期、能力声明、消息发送、健康检查等。
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::atomic::{AtomicI64, AtomicU32, Ordering};
 
 use crate::types::error::GatewayError;
 use crate::types::message::*;
@@ -208,6 +208,14 @@ impl AdapterConfig {
 /// heartbeat in 120 seconds, the adapter is considered Degraded.
 pub const DEFAULT_LIVENESS_THRESHOLD_MS: i64 = 120_000;
 
+/// Default "stuck retry loop" threshold: an adapter that has recorded this
+/// many consecutive failures (via [`Heartbeat::record_failure`]) with no
+/// intervening success is reported `Down` by [`PlatformAdapter::health_status`],
+/// so the health monitor intervenes even though the background task is still
+/// alive (liveness fresh). Catches permanent failures that a retry loop keeps
+/// retrying forever (e.g. an expired token that never refreshes).
+pub const DEFAULT_FAILURE_LOOP_THRESHOLD: u32 = 20;
+
 /// Utility for tracking background task liveness and message-stream health.
 ///
 /// Maintains two independent signals:
@@ -233,6 +241,10 @@ pub struct Heartbeat {
     last_connected_at: Arc<AtomicI64>,
     last_error_at: Arc<AtomicI64>,
     last_error: Arc<std::sync::Mutex<Option<String>>>,
+    /// Consecutive failures since the last successful receive/poll.  Reset by
+    /// [`beat_success`](Self::beat_success).  Used to detect a "stuck retry
+    /// loop" — a task that keeps beating liveness while never succeeding.
+    consecutive_failures: Arc<AtomicU32>,
 }
 
 impl Heartbeat {
@@ -246,6 +258,7 @@ impl Heartbeat {
             last_connected_at: Arc::new(AtomicI64::new(0)),
             last_error_at: Arc::new(AtomicI64::new(0)),
             last_error: Arc::new(std::sync::Mutex::new(None)),
+            consecutive_failures: Arc::new(AtomicU32::new(0)),
         }
     }
 
@@ -269,6 +282,26 @@ impl Heartbeat {
         // A successful receive also implies liveness — update liveness beat
         // so callers don't need to call both methods.
         self.last_beat_ms.store(now, Ordering::Relaxed);
+        // A success breaks any consecutive-failure streak.
+        self.consecutive_failures.store(0, Ordering::Relaxed);
+    }
+
+    /// Record a failure on the background task's error/retry path.
+    ///
+    /// Combined with [`beat`](Self::beat) (which keeps liveness fresh during
+    /// retries), this lets [`health_status`](crate::types::adapter::PlatformAdapter::health_status)
+    /// detect a **stuck retry loop**: the task is alive but repeatedly failing
+    /// and never succeeding, which otherwise looks Healthy and never gets
+    /// health-monitor intervention.  Call this on genuine errors (auth
+    /// rejection, permanent 5xx, exhausted retries) — the count resets to 0
+    /// on the next [`beat_success`](Self::beat_success).
+    pub fn record_failure(&self) {
+        self.consecutive_failures.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Number of consecutive failures since the last successful receive/poll.
+    pub fn consecutive_failures(&self) -> u32 {
+        self.consecutive_failures.load(Ordering::Relaxed)
     }
 
     /// How many milliseconds have elapsed since the last liveness beat.
@@ -466,12 +499,27 @@ pub trait PlatformAdapter: Send + Sync {
         self.heartbeat_age_ms()
     }
 
+    /// Returns the number of consecutive failures recorded by the background
+    /// task, reset on each successful receive (via [`Heartbeat::beat_success`]).
+    ///
+    /// Used by [`health_status`](Self::health_status) to detect a **stuck
+    /// retry loop**: a task that keeps beating liveness (so `heartbeat_age_ms`
+    /// stays fresh) while repeatedly failing and never succeeding — which
+    /// otherwise looks `Healthy` and never triggers health-monitor recovery.
+    /// Adapters that call [`Heartbeat::record_failure`] on their error paths
+    /// should override this to return `Some(count)`. Default `None` keeps the
+    /// existing behaviour for adapters that don't track failures yet.
+    fn heartbeat_failure_count(&self) -> Option<u32> {
+        None
+    }
+
     /// Compute the canonical health status from adapter state and an optional
     /// message-stream heartbeat.
     ///
     /// The default implementation checks:
     /// - `Connected` + recent successful message receipt => `Healthy`
     /// - `Connected` + stale message stream => `Degraded`
+    /// - Stuck retry loop (alive but never succeeding) => `Down`
     /// - Anything else => `Down`
     ///
     /// Override this if your adapter needs custom health logic.
@@ -483,6 +531,15 @@ pub trait PlatformAdapter: Send + Sync {
             // exited after exhausting internal retries).
             if let Some(age_ms) = self.heartbeat_age_ms()
                 && age_ms > DEFAULT_LIVENESS_THRESHOLD_MS
+            {
+                return HealthStatus::Down;
+            }
+            // Stuck retry loop: the task is alive (liveness fresh) but has
+            // recorded many consecutive failures with no intervening success.
+            // Report Down so the health monitor intervenes instead of letting
+            // a permanent failure retry forever while looking "alive".
+            if let Some(failures) = self.heartbeat_failure_count()
+                && failures >= DEFAULT_FAILURE_LOOP_THRESHOLD
             {
                 return HealthStatus::Down;
             }
@@ -522,6 +579,19 @@ pub trait PlatformAdapter: Send + Sync {
     /// 发送输入指示器（可选）
     async fn send_typing(&self, _chat_id: &str) -> Result<(), GatewayError> {
         Err(GatewayError::capability_not_supported("send_typing"))
+    }
+
+    /// 应答按钮回调（可选）
+    ///
+    /// 平台（如 Telegram）要求收到 `callback.received` 后尽快应答以关闭按钮
+    /// 加载态，否则按钮保持旋转直到超时。默认返回 `CapabilityNotSupported`。
+    async fn answer_callback_query(
+        &self,
+        _params: AnswerCallbackParams,
+    ) -> Result<(), GatewayError> {
+        Err(GatewayError::capability_not_supported(
+            "answer_callback_query",
+        ))
     }
 
     // ── 流式消息 ──
@@ -584,6 +654,20 @@ pub trait PlatformAdapter: Send + Sync {
     ) -> Option<crate::types::session::SessionSource> {
         None
     }
+
+    // ── 重连状态持久化 ──
+
+    /// 返回当前重连游标状态（如 Telegram getUpdates offset）。
+    ///
+    /// 健康监测器在适配器停止/替换前调用并暂存；重新启动时经
+    /// [`restore_cursor_state`](Self::restore_cursor_state) 交还，避免重启后
+    /// 重复拉取历史消息。默认返回 `None`（不支持持久化）。
+    async fn cursor_state(&self) -> Option<serde_json::Value> {
+        None
+    }
+
+    /// 恢复重连游标状态。在 `connect()` 之前由管理器调用。
+    async fn restore_cursor_state(&self, _state: serde_json::Value) {}
 }
 
 /// 简化能力声明宏

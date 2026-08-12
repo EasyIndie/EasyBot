@@ -94,14 +94,28 @@ adapters:
 | 属性 | 值 |
 |------|-----|
 | 连接方式 | REST API + WebSocket 事件订阅（protobuf 二进制） |
-| 鉴权方式 | `tenant_access_token`（自动刷新，7200s 过期） |
+| 鉴权方式 | `tenant_access_token`（`CachedTokenStore`：300s 临界自动刷新，单飞行；7200s 过期） |
 | 入站 SDK | `larksuite-oapi-sdk-rs` v0.1.2 + `ws` feature |
 | 事件协议 | 飞书 v2.0 事件协议 (schema: "2.0") |
 | 事件类型 | `im.message.receive_v1` |
 | 群聊消息权限 | 默认 `group_at_msg:readonly`（仅 @消息）；全量需 `group_msg` 敏感权限 |
 | 字段名 | `message_type`（非 `msg_type`）|
-| Token 刷新 | ✅ 自动刷新，300s 提前量 |
+| Token 刷新 | ✅ 自动刷新（300s 提前量，单飞行）；被拒（HTTP 401 / code 99991663/99991665/20013/20005）→ 强制刷新重试一次 |
 | 能力声明 | Text、Image、Audio、Video、Document、Interactive、Markdown、Group、MessageEdit、MessageDelete |
+
+### Token 失效处理（2026 协议）
+
+`tenant_access_token` 被服务端提前失效时，请求返回以下错误码之一，适配器会**强制刷新 token 并重试一次**：
+
+| code | 含义 |
+|------|------|
+| `99991663` | tenant token 过期 / 该 API 不支持 tenant token |
+| `99991665` | tenant_access_token 非法 |
+| `20013` | tenant access token 无效 |
+| `20005` | access_token 无效/过期（通用） |
+| HTTP 401 | 未授权 |
+
+> 明确**不**触发重试：`99991661`（缺少 token header，代码 bug）、`99991664`（是 **app_access_token** 非法，不是 tenant token）。
 
 ### WebSocket 事件接收
 
@@ -162,4 +176,4 @@ curl -s "http://localhost:8080/api/v1/messages?platform=feishu" \
 - [x] ~~添加飞书 `im.message.receive_v1` 事件签名的真实验证（当前使用 `skip_sign_verify()`）~~（已实现：从 config.extra 或 `FEISHU_VERIFICATION_TOKEN`/`FEISHU_ENCRYPT_KEY` 环境变量读取验证配置；配置时启用真实验证，未配置时保持跳过兼容）
 - [x] ~~合并飞书 5 个 `api_*` 方法为统一的 `send_api_request`~~
 - [ ] 支持更多消息类型（图片、文件等入站消息的 content 解析）
-- [x] ~~合并两套独立 token 管理系统（适配器实例的 `access_token` + WebSocket 任务的 `token_cache`）~~（已合并为共享 `FeishuTokenStore`）
+- [x] ~~合并两套独立 token 管理系统（适配器实例的 `access_token` + WebSocket 任务的 `token_cache`）~~（已合并为共享 `CachedTokenStore`，抽取到 easybot-core：缓存 + 单飞行刷新 + token 被拒重试一次）

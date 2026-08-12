@@ -31,7 +31,7 @@ mod gateway;
 mod types;
 
 use parking_lot::Mutex;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -44,10 +44,12 @@ use easybot_core::types::message::*;
 use tokio::sync::broadcast;
 use types::*;
 
-/// QQ API 基础 URL（正式环境）
-const QQ_API: &str = "https://api.sgroup.qq.com";
+/// QQ API 基础 URL（正式环境，官方统一地址 api.bot.qq.com）
+const QQ_API: &str = "https://api.bot.qq.com";
 /// QQ 鉴权 API 基础 URL（正式环境）
 const QQ_AUTH_API: &str = "https://bots.qq.com";
+/// chat_id → ChatType 路由缓存上限（对齐 CLAUDE.md：适配器缓存必须有大小上限）
+const CHAT_TYPE_CACHE_LIMIT: usize = 10_000;
 
 use auth::QqTokenStore;
 
@@ -70,7 +72,53 @@ pub struct QqAdapter {
     token_store: Option<QqTokenStore>,
     /// Tracks chat_id → ChatType mapping, populated from inbound messages.
     /// Used to route outbound messages directly to the correct endpoint.
-    chat_types: Arc<Mutex<HashMap<String, ChatType>>>,
+    /// Bounded LRU cache: 超限时逐出最久未活跃条目（而非全量清空）。
+    chat_types: Arc<Mutex<ChatTypeCache>>,
+}
+
+/// chat_id → ChatType 路由缓存，带 LRU 逐出上限。
+///
+/// 由入站消息填充，用于出站消息直接路由到正确端点。
+/// 超限时仅逐出最久未活跃条目，保留其余路由知识（原实现 `clear()` 会丢失全部路由）。
+pub(crate) struct ChatTypeCache {
+    map: HashMap<String, ChatType>,
+    /// 活跃顺序（队尾 = 最近活跃，用于 LRU 逐出）。
+    order: VecDeque<String>,
+    limit: usize,
+}
+
+impl ChatTypeCache {
+    pub(crate) fn new(limit: usize) -> Self {
+        Self {
+            map: HashMap::new(),
+            order: VecDeque::new(),
+            limit,
+        }
+    }
+
+    pub(crate) fn get(&self, chat_id: &str) -> Option<ChatType> {
+        self.map.get(chat_id).copied()
+    }
+
+    /// 插入/更新条目（LRU：已存在条目移到队尾视为最近活跃）；
+    /// 超限时仅逐出最久未活跃条目。
+    pub(crate) fn insert(&mut self, chat_id: String, chat_type: ChatType) {
+        if let Some(pos) = self.order.iter().position(|k| *k == chat_id) {
+            self.order.remove(pos);
+        }
+        self.map.insert(chat_id.clone(), chat_type);
+        self.order.push_back(chat_id);
+        while self.order.len() > self.limit {
+            if let Some(oldest) = self.order.pop_front() {
+                self.map.remove(&oldest);
+            }
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn len(&self) -> usize {
+        self.map.len()
+    }
 }
 
 impl QqAdapter {
@@ -137,7 +185,7 @@ impl QqAdapter {
             http_client: std::sync::OnceLock::new(),
             bot_user_id: None,
             token_store: None,
-            chat_types: Arc::new(Mutex::new(HashMap::new())),
+            chat_types: Arc::new(Mutex::new(ChatTypeCache::new(CHAT_TYPE_CACHE_LIMIT))),
         }
     }
 
@@ -170,53 +218,33 @@ impl QqAdapter {
         })
     }
 
-    /// 获取鉴权头字符串：`QQBot {access_token}`
-    fn bot_token(&self) -> Result<String, GatewayError> {
-        self.token_store
-            .as_ref()
-            .ok_or_else(|| {
-                GatewayError::ConfigError(
-                    "Token store not initialized (call connect() first)".to_string(),
-                )
-            })?
-            .get()
-    }
-
-    /// 发送 QQ API 请求，检测 401 Unauthorized 时自动刷新 token 并重试一次
-    async fn send_api_request<T: serde::de::DeserializeOwned>(
+    /// 发送 QQ API 请求：token 无效/过期时经 core 公共机制刷新一次并重试一次。
+    /// （统一收敛 401 / code 11244 / 11242 的检测与刷新，见 auth::is_token_invalid_error）
+    async fn send_api_request<T: serde::de::DeserializeOwned + Send>(
         &self,
         method: reqwest::Method,
         path: &str,
         body: Option<&serde_json::Value>,
     ) -> Result<T, GatewayError> {
-        let token = self.bot_token()?;
-        let result = self
-            .send_api_request_raw(&token, method.clone(), path, body)
-            .await;
-
-        // Token expiry (HTTP 401) — refresh once and retry.
-        // SECURITY: Match the HTTP status in the formatted error message
-        // "QQ API error (METHOD path): STATUS - body" to avoid false positives
-        // from body content that happens to contain "401".
-        if let Err(GatewayError::Internal(msg)) = &result
-            && (msg.contains(": 401 ") || msg.contains(": 401 -"))
-        {
-            tracing::warn!(
-                "QQ API 返回 401 Unauthorized（token 可能已过期），尝试刷新 token 后重试"
-            );
-            if let Some(ref store) = self.token_store {
-                let _ = store.refresh().await;
-            }
-            let new_token = self.bot_token()?;
-            return self
-                .send_api_request_raw(&new_token, method, path, body)
-                .await;
-        }
-
-        result
+        let store = self.token_store.as_ref().ok_or_else(|| {
+            GatewayError::ConfigError(
+                "Token store not initialized (call connect() first)".to_string(),
+            )
+        })?;
+        easybot_core::http::send_with_token_retry(
+            &store.inner,
+            auth::is_token_invalid_error,
+            |token| {
+                let method = method.clone();
+                let auth = auth::qq_auth_header(&token);
+                // async move：auth/method 移入 future，借用 self/path/body
+                Box::pin(async move { self.send_api_request_raw(&auth, method, path, body).await })
+            },
+        )
+        .await
     }
 
-    /// 发送原始的 QQ API 请求（无 401 重试）
+    /// 发送原始的 QQ API 请求（无 token 重试）
     async fn send_api_request_raw<T: serde::de::DeserializeOwned>(
         &self,
         token: &str,
@@ -242,9 +270,11 @@ impl QqAdapter {
         if !resp.status().is_success() {
             let s = resp.status();
             let b = resp.text().await.unwrap_or_default();
-            return Err(GatewayError::Internal(format!(
-                "QQ API error ({} {}): {} - {}",
-                method, path, s, b
+            return Err(GatewayError::Internal(auth::qq_api_error_msg(
+                method.as_str(),
+                path,
+                s.as_u16(),
+                &b,
             )));
         }
         resp.json::<T>().await.map_err(|e| {
@@ -253,13 +283,16 @@ impl QqAdapter {
     }
 
     /// QQ API GET
-    async fn api_get<T: serde::de::DeserializeOwned>(&self, path: &str) -> Result<T, GatewayError> {
+    async fn api_get<T: serde::de::DeserializeOwned + Send>(
+        &self,
+        path: &str,
+    ) -> Result<T, GatewayError> {
         self.send_api_request(reqwest::Method::GET, path, None)
             .await
     }
 
     /// QQ API POST
-    async fn api_post<T: serde::de::DeserializeOwned>(
+    async fn api_post<T: serde::de::DeserializeOwned + Send>(
         &self,
         path: &str,
         body: &serde_json::Value,
@@ -269,7 +302,7 @@ impl QqAdapter {
     }
 
     /// QQ API PATCH
-    async fn api_patch<T: serde::de::DeserializeOwned>(
+    async fn api_patch<T: serde::de::DeserializeOwned + Send>(
         &self,
         path: &str,
         body: &serde_json::Value,
@@ -278,32 +311,26 @@ impl QqAdapter {
             .await
     }
 
-    /// QQ API DELETE（不期望 JSON body，仅验证状态码）
+    /// QQ API DELETE（不期望 JSON body，仅验证状态码）。
+    /// 与 send_api_request 同走 core 公共的"token 失效 → 刷新 → 重试一次"机制。
     async fn api_delete(&self, path: &str) -> Result<(), GatewayError> {
-        let token = self.bot_token()?;
-        let result = self.api_delete_raw(&token, path).await;
-
-        // Token expiry (HTTP 401) — refresh once and retry.
-        // SECURITY: Match the HTTP status in the formatted error message
-        // "QQ API error (METHOD path): STATUS - body" to avoid false positives
-        // from body content that happens to contain "401".
-        if let Err(GatewayError::Internal(msg)) = &result
-            && (msg.contains(": 401 ") || msg.contains(": 401 -"))
-        {
-            tracing::warn!(
-                "QQ API 返回 401 Unauthorized（token 可能已过期），尝试刷新 token 后重试"
-            );
-            if let Some(ref store) = self.token_store {
-                let _ = store.refresh().await;
-            }
-            let new_token = self.bot_token()?;
-            return self.api_delete_raw(&new_token, path).await;
-        }
-
-        result
+        let store = self.token_store.as_ref().ok_or_else(|| {
+            GatewayError::ConfigError(
+                "Token store not initialized (call connect() first)".to_string(),
+            )
+        })?;
+        easybot_core::http::send_with_token_retry(
+            &store.inner,
+            auth::is_token_invalid_error,
+            |token| {
+                let auth = auth::qq_auth_header(&token);
+                Box::pin(async move { self.api_delete_raw(&auth, path).await })
+            },
+        )
+        .await
     }
 
-    /// 发送原始 DELETE 请求（无 401 重试）
+    /// 发送原始 DELETE 请求（无 token 重试）
     async fn api_delete_raw(&self, token: &str, path: &str) -> Result<(), GatewayError> {
         let client = self.client();
         let url = format!("{}{}", self.api_base_url(), path);
@@ -316,9 +343,11 @@ impl QqAdapter {
         if !resp.status().is_success() {
             let s = resp.status();
             let b = resp.text().await.unwrap_or_default();
-            return Err(GatewayError::Internal(format!(
-                "QQ API error (DELETE {}): {} - {}",
-                path, s, b
+            return Err(GatewayError::Internal(auth::qq_api_error_msg(
+                "DELETE",
+                path,
+                s.as_u16(),
+                &b,
             )));
         }
         Ok(())
@@ -326,14 +355,17 @@ impl QqAdapter {
 }
 
 /// 从 MIME 类型推导 QQ 文件上传所需的 file_type 参数
-/// 1=image, 2=video, 3=voice, 默认 1 (image)
+/// 1=image, 2=video, 3=voice(音频), 4=file(文档/通用/文本/压缩包)
 fn mime_to_file_type(mime_type: &str) -> u32 {
-    if mime_type.starts_with("image/") {
+    let mime = mime_type.to_ascii_lowercase();
+    if mime.starts_with("image/") {
         1
-    } else if mime_type.starts_with("video/") {
+    } else if mime.starts_with("video/") {
         2
+    } else if mime.starts_with("audio/") {
+        3
     } else {
-        3 // 非图片/视频默认使用文件类型（file_type=3），避免文档/PDF/音频被误作为图片发送
+        4 // 文档/octet-stream/文本/压缩包等 → 文件类型
     }
 }
 
@@ -369,7 +401,7 @@ impl QqAdapter {
     ) -> Result<QqSendMessageResponse, GatewayError> {
         // Fast path: route directly based on known chat type
         // Lock scope: release before any .await to keep the future Send
-        let known_type = { self.chat_types.lock().get(chat_id).copied() };
+        let known_type = { self.chat_types.lock().get(chat_id) };
         if let Some(chat_type) = known_type {
             let path = match chat_type {
                 ChatType::Channel => format!("/channels/{}/messages", chat_id),
@@ -436,6 +468,38 @@ impl QqAdapter {
         let c2c_path = format!("/v2/users/{}/messages", chat_id);
         self.api_post::<QqSendMessageResponse>(&c2c_path, body)
             .await
+    }
+
+    /// 未知 chat_type 时级联尝试删除/撤回（频道 → 群 → C2C）。
+    async fn try_delete_cascade(
+        &self,
+        chat_id: &str,
+        message_id: &str,
+    ) -> Result<(), GatewayError> {
+        let channel_path = format!("/channels/{}/messages/{}", chat_id, message_id);
+        match self.api_delete(&channel_path).await {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                if Self::is_not_found_error(&e) {
+                    tracing::debug!("QQ delete: {} is not a channel, trying group", chat_id);
+                } else {
+                    return Err(e);
+                }
+            }
+        }
+        let group_path = format!("/v2/groups/{}/messages/{}", chat_id, message_id);
+        match self.api_delete(&group_path).await {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                if Self::is_not_found_error(&e) {
+                    tracing::debug!("QQ delete: {} is not a group, trying C2C", chat_id);
+                } else {
+                    return Err(e);
+                }
+            }
+        }
+        let c2c_path = format!("/v2/users/{}/messages/{}", chat_id, message_id);
+        self.api_delete(&c2c_path).await
     }
 
     /// 通用文件上传（JSON body，base64 file_data）
@@ -857,9 +921,26 @@ impl PlatformAdapter for QqAdapter {
                 .unwrap_or_else(|| QQ_API.to_string());
             let hb = self.heartbeat.clone();
             let chat_types = self.chat_types.clone();
+            // 可选覆盖 Gateway intent 订阅集（config.extra["intents"]，数字位掩码）。
+            // 公域机器人可设为 `1<<30 | 1<<25`（PUBLIC_GUILD_MESSAGES | GROUP_AND_C2C_EVENT）；
+            // 缺失时 gateway_loop 使用默认保守集（群/C2C + 私域频道消息）。
+            let intents_override = self
+                .config
+                .as_ref()
+                .and_then(|c| c.extra.get("intents"))
+                .and_then(|v| v.as_u64())
+                .map(|v| v as u32);
             tokio::spawn(async move {
                 Self::gateway_loop(
-                    ts_clone, base_url, eb, bot_id, cancel_rx, msg_in, hb, chat_types,
+                    ts_clone,
+                    base_url,
+                    eb,
+                    bot_id,
+                    cancel_rx,
+                    msg_in,
+                    hb,
+                    chat_types,
+                    intents_override,
                 )
                 .await;
             });
@@ -981,7 +1062,7 @@ impl PlatformAdapter for QqAdapter {
     }
 
     async fn send_media(&self, params: SendMediaParams) -> Result<SendResult, GatewayError> {
-        let known_type = self.chat_types.lock().get(&params.chat_id).copied();
+        let known_type = self.chat_types.lock().get(&params.chat_id);
 
         // Group (v2 API): use file upload + msg_type: 7.
         // v2 group endpoint does NOT support msg_type: 1 (image embed) or
@@ -1110,6 +1191,23 @@ impl PlatformAdapter for QqAdapter {
             }
             Err(e) => {
                 let err_str = e.to_string();
+                // 群聊（未缓存 chat_type）走 msg_type: 2 级联时，群端点返回
+                // 40034011（无效 markdown content）/ 40034127（无 markdown 模板权限）。
+                // 该 chat_id 实为群聊且不支持 markdown 富媒体 → 降级到群文件上传。
+                if err_str.contains("40034011") || err_str.contains("40034127") {
+                    tracing::warn!(
+                        "QQ group does not support msg_type: 2 (markdown), \
+                         downgrading to group file upload: {}",
+                        err_str
+                    );
+                    return self
+                        .send_group_media_upload(
+                            &params.chat_id,
+                            &params.media,
+                            params.text.clone(),
+                        )
+                        .await;
+                }
                 // C2C 私聊不支持 msg_type: 2（11255），降级为纯图片 msg_type: 1
                 if err_str.contains("11255")
                     || (err_str.contains("/v2/users/") && err_str.contains("parse failed"))
@@ -1255,6 +1353,23 @@ impl PlatformAdapter for QqAdapter {
     }
 
     async fn edit_message(&self, params: EditMessageParams) -> Result<EditResult, GatewayError> {
+        // QQ v2 仅支持频道消息编辑（PATCH /channels/{id}/messages/{mid}）；
+        // 群聊/单聊（C2C）只有撤回（DELETE）端点，不支持编辑。
+        let known_type = self.chat_types.lock().get(&params.chat_id);
+        if let Some(t) = known_type
+            && t != ChatType::Channel
+        {
+            let label = match t {
+                ChatType::Group => "群聊",
+                ChatType::Dm => "单聊",
+                _ => "该聊天类型",
+            };
+            return Ok(EditResult {
+                success: false,
+                updated_at: None,
+                error: Some(format!("QQ {}不支持编辑消息（仅支持撤回）", label)),
+            });
+        }
         let path = format!(
             "/channels/{}/messages/{}",
             params.chat_id, params.message_id
@@ -1279,8 +1394,25 @@ impl PlatformAdapter for QqAdapter {
         chat_id: &str,
         message_id: &str,
     ) -> Result<DeleteResult, GatewayError> {
-        let path = format!("/channels/{}/messages/{}", chat_id, message_id);
-        match self.api_delete(&path).await {
+        // 按 chat_type 路由：频道 → 频道删除；群/私聊 → v2 撤回消息。
+        // chat_type 未知时级联尝试（频道 → 群 → C2C）。
+        let known_type = self.chat_types.lock().get(chat_id);
+        let result = match known_type {
+            Some(ChatType::Channel) => {
+                self.api_delete(&format!("/channels/{}/messages/{}", chat_id, message_id))
+                    .await
+            }
+            Some(ChatType::Group) => {
+                self.api_delete(&format!("/v2/groups/{}/messages/{}", chat_id, message_id))
+                    .await
+            }
+            Some(ChatType::Dm) => {
+                self.api_delete(&format!("/v2/users/{}/messages/{}", chat_id, message_id))
+                    .await
+            }
+            _ => self.try_delete_cascade(chat_id, message_id).await,
+        };
+        match result {
             Ok(_) => Ok(DeleteResult {
                 success: true,
                 error: None,
@@ -1293,13 +1425,41 @@ impl PlatformAdapter for QqAdapter {
     }
 
     async fn get_chat_info(&self, chat_id: &str) -> Result<ChatInfo, GatewayError> {
-        let info: QqChannelInfo = self.api_get(&format!("/channels/{}", chat_id)).await?;
-        Ok(ChatInfo {
-            chat_id: info.id,
-            name: Some(info.name),
-            chat_type: ChatType::Group,
-            member_count: None,
-        })
+        // 按 chat_type 路由：频道 → /channels/{id}；群/私聊 → QQ v2 无详情端点，
+        // 返回基础信息；无法确定时回退到频道端点（旧行为），正确标注为 Channel。
+        let known_type = self.chat_types.lock().get(chat_id);
+        match known_type {
+            Some(ChatType::Channel) => {
+                let info: QqChannelInfo = self.api_get(&format!("/channels/{}", chat_id)).await?;
+                Ok(ChatInfo {
+                    chat_id: info.id,
+                    name: Some(info.name),
+                    chat_type: ChatType::Channel,
+                    member_count: None,
+                })
+            }
+            Some(ChatType::Group) => Ok(ChatInfo {
+                chat_id: chat_id.to_string(),
+                name: None,
+                chat_type: ChatType::Group,
+                member_count: None,
+            }),
+            Some(ChatType::Dm) => Ok(ChatInfo {
+                chat_id: chat_id.to_string(),
+                name: None,
+                chat_type: ChatType::Dm,
+                member_count: None,
+            }),
+            _ => {
+                let info: QqChannelInfo = self.api_get(&format!("/channels/{}", chat_id)).await?;
+                Ok(ChatInfo {
+                    chat_id: info.id,
+                    name: Some(info.name),
+                    chat_type: ChatType::Channel,
+                    member_count: None,
+                })
+            }
+        }
     }
 
     async fn list_chats(&self, filter: Option<ChatFilter>) -> Result<Vec<ChatInfo>, GatewayError> {
@@ -1496,6 +1656,49 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_mime_to_file_type() {
+        // 图片/视频保持原映射；audio → 3(voice)；其余 → 4(file)
+        assert_eq!(mime_to_file_type("image/png"), 1);
+        assert_eq!(mime_to_file_type("image/jpeg"), 1);
+        assert_eq!(mime_to_file_type("video/mp4"), 2);
+        assert_eq!(mime_to_file_type("audio/mpeg"), 3);
+        assert_eq!(mime_to_file_type("audio/ogg"), 3);
+        assert_eq!(mime_to_file_type("application/pdf"), 4);
+        assert_eq!(mime_to_file_type("application/octet-stream"), 4);
+        assert_eq!(mime_to_file_type("text/plain"), 4);
+        assert_eq!(mime_to_file_type("application/zip"), 4);
+        // 大小写不敏感
+        assert_eq!(mime_to_file_type("IMAGE/JPEG"), 1);
+    }
+
+    #[test]
+    fn test_chat_type_cache_lru_eviction() {
+        let mut cache = ChatTypeCache::new(3);
+        cache.insert("a".to_string(), ChatType::Dm);
+        cache.insert("b".to_string(), ChatType::Group);
+        cache.insert("c".to_string(), ChatType::Channel);
+        assert_eq!(cache.len(), 3);
+
+        // 超限：仅逐出最旧条目 a，保留其余路由知识
+        cache.insert("d".to_string(), ChatType::Dm);
+        assert_eq!(cache.len(), 3);
+        assert_eq!(cache.get("a"), None);
+        assert_eq!(cache.get("b"), Some(ChatType::Group));
+        assert_eq!(cache.get("c"), Some(ChatType::Channel));
+        assert_eq!(cache.get("d"), Some(ChatType::Dm));
+
+        // LRU：更新已存在条目时移到队尾（b 变为最近活跃）
+        cache.insert("b".to_string(), ChatType::Dm);
+        cache.insert("e".to_string(), ChatType::Group);
+        // 顺序: c, d, b, e → 逐出 c
+        assert_eq!(cache.len(), 3);
+        assert_eq!(cache.get("c"), None);
+        assert_eq!(cache.get("b"), Some(ChatType::Dm));
+        assert_eq!(cache.get("d"), Some(ChatType::Dm));
+        assert_eq!(cache.get("e"), Some(ChatType::Group));
+    }
+
     #[tokio::test]
     async fn test_init_missing_config() {
         let mut adapter = QqAdapter::new();
@@ -1529,13 +1732,6 @@ mod tests {
     }
 
     #[test]
-    fn test_bot_token_uninitialized() {
-        let adapter = QqAdapter::new();
-        // token_store 未设置时应返回错误
-        assert!(adapter.bot_token().is_err());
-    }
-
-    #[test]
     fn test_token_store_new_needs_refresh() {
         let store = QqTokenStore::new("app123".into(), "secret".into(), QQ_AUTH_API.to_string());
         // 新创建的 store 还没有 token，需要 refresh
@@ -1543,17 +1739,10 @@ mod tests {
     }
 
     #[test]
-    fn test_token_store_get_uninitialized_returns_err() {
-        let store = QqTokenStore::new("app123".into(), "secret".into(), QQ_AUTH_API.to_string());
-        // 未 refresh 前 get 应该返回错误
-        assert!(store.get().is_err());
-    }
-
-    #[test]
     fn test_token_store_clone() {
         let store = QqTokenStore::new("app123".into(), "secret".into(), QQ_AUTH_API.to_string());
         let cloned = store.clone();
-        // 两个实例共享同一个 Arc<Mutex> 状态
+        // 两个实例共享同一个 CachedTokenStore 状态
         assert!(store.needs_refresh());
         assert!(cloned.needs_refresh());
     }
@@ -1598,7 +1787,7 @@ mod tests {
             &event_bus,
             "bot_id_001",
             &messages_in,
-            &Arc::new(Mutex::new(HashMap::new())),
+            &Arc::new(Mutex::new(ChatTypeCache::new(CHAT_TYPE_CACHE_LIMIT))),
         )
         .await;
 
@@ -1641,7 +1830,7 @@ mod tests {
             &event_bus,
             "bot_id",
             &messages_in,
-            &Arc::new(Mutex::new(HashMap::new())),
+            &Arc::new(Mutex::new(ChatTypeCache::new(CHAT_TYPE_CACHE_LIMIT))),
         )
         .await;
 
@@ -1690,7 +1879,7 @@ mod tests {
             &event_bus,
             "bot_id",
             &messages_in,
-            &Arc::new(Mutex::new(HashMap::new())),
+            &Arc::new(Mutex::new(ChatTypeCache::new(CHAT_TYPE_CACHE_LIMIT))),
         )
         .await;
 
@@ -1739,7 +1928,7 @@ mod tests {
             &event_bus,
             "bot_id",
             &messages_in,
-            &Arc::new(Mutex::new(HashMap::new())),
+            &Arc::new(Mutex::new(ChatTypeCache::new(CHAT_TYPE_CACHE_LIMIT))),
         )
         .await;
 
@@ -1781,7 +1970,7 @@ mod tests {
             &event_bus,
             "bot_id",
             &messages_in,
-            &Arc::new(Mutex::new(HashMap::new())),
+            &Arc::new(Mutex::new(ChatTypeCache::new(CHAT_TYPE_CACHE_LIMIT))),
         )
         .await;
 
@@ -1821,7 +2010,7 @@ mod tests {
             &event_bus,
             "bot_self",
             &messages_in,
-            &Arc::new(Mutex::new(HashMap::new())),
+            &Arc::new(Mutex::new(ChatTypeCache::new(CHAT_TYPE_CACHE_LIMIT))),
         )
         .await;
 
@@ -1850,7 +2039,7 @@ mod tests {
             &event_bus,
             "bot_id",
             &messages_in,
-            &Arc::new(Mutex::new(HashMap::new())),
+            &Arc::new(Mutex::new(ChatTypeCache::new(CHAT_TYPE_CACHE_LIMIT))),
         )
         .await;
 
@@ -1878,7 +2067,7 @@ mod tests {
             &event_bus,
             "bot_id",
             &messages_in,
-            &Arc::new(Mutex::new(HashMap::new())),
+            &Arc::new(Mutex::new(ChatTypeCache::new(CHAT_TYPE_CACHE_LIMIT))),
         )
         .await;
 
@@ -1911,7 +2100,7 @@ mod tests {
             &event_bus,
             "bot_id",
             &messages_in,
-            &Arc::new(Mutex::new(HashMap::new())),
+            &Arc::new(Mutex::new(ChatTypeCache::new(CHAT_TYPE_CACHE_LIMIT))),
         )
         .await;
 
@@ -1947,7 +2136,7 @@ mod tests {
             &event_bus,
             "bot_self",
             &messages_in,
-            &Arc::new(Mutex::new(HashMap::new())),
+            &Arc::new(Mutex::new(ChatTypeCache::new(CHAT_TYPE_CACHE_LIMIT))),
         )
         .await;
 

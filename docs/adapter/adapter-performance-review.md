@@ -15,7 +15,7 @@
 |---|---|---|
 | §4.1 | 飞书 `upload_media` base64 未解码 | ✅ 2026-07-10 确认已修复 |
 | §2.1 | Telegram AdminCache 使用 `std::sync::Mutex::try_lock` | ✅ 2026-07-10 确认已改用 `AsyncMutex` |
-| §5.4 | QQ Gateway 3500s 定时 token 刷新 (已移除) | ✅ 2026-07-10 确认已移除 |
+| §5.4 | QQ Gateway 3500s 定时 token 刷新（原建议移除，未采纳） | ✅ 2026-08-12 复核：timer 仍存在，已与 core 单飞行刷新合并 |
 | §6.1 | 微信每条消息同步磁盘 I/O (`save_sync_buf`) | ✅ 2026-07-10 确认已用 `spawn_blocking` |
 | §6.2 | 微信非文本消息使用 `[图片]` 占位符 | ✅ 2026-07-10 确认已改为空文本 + `MediaAttachment` |
 | §1.3/5.5 | `messages_in` 在 Telegram/Discord/飞书从未递增 | ✅ 2026-07-10 修复：传递 `Arc<AtomicU64>` 给后台任务并递增 |
@@ -231,6 +231,8 @@ token_cache: Arc<Mutex<Option<(String, Instant)>>>,         // 用于角色解�
 
 **建议**: 合并为单一 token Store，通过 `Arc` 在适配器实例和 webSocket 任务间共享。
 
+> ✅ **已解决。** 适配器实例与 WebSocket 任务共享同一个 `CachedTokenStore`（抽取到 easybot-core），单飞行刷新避免并发重复打鉴权端点；token 被拒（401/99991663 等）→ 强制刷新重试一次。
+
 ### 4.3 五个几乎完全相同的 `api_*` 方法
 
 `api_get`、`api_post`、`api_patch`、`api_put`、`api_delete` 五个方法共享相同的 pattern：
@@ -337,7 +339,7 @@ fn mime_to_file_type(mime_type: &str) -> u32 {
 
 ### 5.4 ~~Gateway 循环中 token 刷新频率无效~~ 已修复
 
-> ✅ **已于 2026-07-10 前修复。** 3500s 定时刷新已移除，现在完全依赖 401 自动重试机制。
+> ✅ **2026-08-12 复核：未按原建议移除。** 3500s 定时刷新仍保留，但已与 core `CachedTokenStore` 单飞行刷新合并——定时与按需刷新共享同一刷新锁，不会重复打鉴权端点；token 被拒（401/11244/11242）走"强制刷新→重试一次"路径。
 
 ~~gateway_loop 中有一个 `token_refresh_timer` 每 3500 秒刷新一次 token，但 `send_api_request` 已经实现了 401 自动重试。两者同时存在导致：
 - 定时刷新可能发生在没有 API 请求的空闲期，浪费一次 HTTP 调用
@@ -518,7 +520,7 @@ while Instant::now() < deadline {
 | ~~🔴 P0~~ | ~~飞书 `upload_media` base64 未解码 (#4.1)~~ | ~~Feishu~~ | ~~1 行~~ | ✅ 已修复 |
 | ~~🔴 P0~~ | ~~微信每条消息同步磁盘 I/O (#6.1)~~ | ~~WeChat~~ | ~~中等~~ | ✅ 已修复 (含 save_context_tokens) |
 | ~~🟠 P1~~ | ~~QQ `try_send` 错误级联 (#5.1)~~ | ~~QQ~~ | ~~低~~ | ✅ 已修复（已有 chat_type 快速路由和非 404 提前终止） |
-| ~~🟠 P1~~ | ~~飞书两套独立 token 管理系统 (#4.2)~~ | ~~Feishu~~ | ~~低~~ | ✅ 已修复（已统一为共享 FeishuTokenStore） |
+| ~~🟠 P1~~ | ~~飞书两套独立 token 管理系统 (#4.2)~~ | ~~Feishu~~ | ~~低~~ | ✅ 已修复（已统一为共享 `CachedTokenStore`，抽取到 easybot-core，单飞行刷新 + 被拒重试） |
 | ~~🟡 P2~~ | ~~Discord gateway 事件双路径 (#3.1)~~ | ~~Discord~~ | ~~低~~ | ✅ 已修复（已清理死代码分支） |
 | ~~🟡 P2~~ | ~~`publish_send_event` 重复代码 (#1.1)~~ | ~~全部适配器~~ | ~~低~~ | ✅ 已修复（迁移到 `EventBus::publish_send_result`，移除 5 个包装函数、31 处调用点） |
 | ~~🟡 P2~~ | ~~飞书 5 个 `api_*` 方法合并 (#4.3)~~ | ~~Feishu~~ | ~~低~~ | ✅ 已修复（合并为 `send_api_request`） |
@@ -548,7 +550,7 @@ while Instant::now() < deadline {
 4. ~~**`messages_in` 从未递增**~~ — 已修复，Telegram/Discord/飞书三适配器均通过 `Arc<AtomicU64>` 传递并递增
 
 ### 架构层面的改进方向
-1. **token 管理统一化**: 每个适配器都有自己的 token 刷新逻辑（飞书已统一为 `FeishuTokenStore`，QQ 等仍各自独立），可以抽象出公共的 `TokenManager` 结构体
+1. ~~**token 管理统一化**~~ — 已完成：QQ/飞书已改用 core `CachedTokenStore` + `send_with_token_retry`（缓存 + 单飞行刷新 + 被拒重试一次），未来新增适配器复用即可
 2. **缓存策略标准化**: 角色/管理员缓存的淘汰策略不一致（Telegram 无 TTL vs Feishu 30s TTL）
 3. **API 调用模式提取**: 各适配器的 api_* 方法重复度极高（飞书已合并为 `send_api_request`，微信已提取 `send_http_post`，QQ 已提取 `resolve_upload_media`，Telegram/Discord 仍保留各自实现），可以组合 `Method` 参数提取为通用模式
 

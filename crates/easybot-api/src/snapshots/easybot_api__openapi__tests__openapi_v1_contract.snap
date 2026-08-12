@@ -1455,6 +1455,77 @@ expression: "ApiDoc::openapi()"
         }
       }
     },
+    "/api/v1/callbacks/answer": {
+      "post": {
+        "tags": [
+          "Messages"
+        ],
+        "summary": "应答按钮回调",
+        "description": "收到 `callback.received` 事件后调用，关闭按钮加载态。\nTelegram 要求在收到 callback 后约 10s 内应答，否则按钮保持旋转。",
+        "operationId": "answer_callback",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnswerCallbackRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Callback answered"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "API key lacks the required permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Adapter not connected / platform not found"
+          },
+          "429": {
+            "description": "Global, IP, or subject quota exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal operation failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Durable metering, quota, storage, or adapter unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/chats/{platform}": {
       "get": {
         "tags": [
@@ -3754,6 +3825,62 @@ expression: "ApiDoc::openapi()"
           "total": {
             "type": "integer",
             "minimum": 0
+          }
+        }
+      },
+      "AnswerCallbackRequest": {
+        "type": "object",
+        "description": "应答按钮回调请求",
+        "required": [
+          "platform",
+          "chat_id",
+          "callback_id"
+        ],
+        "properties": {
+          "cache_time": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "缓存应答时长（秒，Telegram 特有）",
+            "minimum": 0
+          },
+          "callback_id": {
+            "type": "string",
+            "description": "回调 ID（来自 callback.received 事件的 id）",
+            "example": "callback_id_123"
+          },
+          "chat_id": {
+            "type": "string",
+            "description": "回调所在聊天 ID（用于权限校验，来自 callback.received 事件的 chat_id）",
+            "example": "123456789"
+          },
+          "platform": {
+            "type": "string",
+            "description": "平台标识，如 \"telegram\"",
+            "example": "telegram"
+          },
+          "show_alert": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "以 alert 方式展示（默认 toast）"
+          },
+          "text": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "通知文本（显示在按钮上方，可选）"
+          },
+          "url": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "可选跳转 URL（Telegram 特有）"
           }
         }
       },

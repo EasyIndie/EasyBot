@@ -10,10 +10,10 @@ use easybot_core::types::message::{
     OutboundMessage, ParseMode, SendInteractiveParams, SendMediaParams, SendTextParams,
 };
 use std::sync::Arc;
-use wiremock::matchers::{method, path};
+use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-/// 构建测试用的飞书适配器
+/// 构建测试用的飞书适配器（init + connect，token store 在 connect 时构建）
 async fn make_adapter(mock_port: u16) -> impl PlatformAdapter {
     let base_url = format!("http://127.0.0.1:{}", mock_port);
     let config = AdapterConfig {
@@ -29,6 +29,7 @@ async fn make_adapter(mock_port: u16) -> impl PlatformAdapter {
     let mut adapter = easybot_adapter_feishu::FeishuAdapter::new();
     let result = adapter.init(config).await.unwrap();
     assert!(result.ok, "init should succeed");
+    adapter.connect().await.unwrap();
     adapter
 }
 
@@ -159,11 +160,101 @@ async fn test_send_malformed_response() {
     assert!(!result.success, "send should fail with malformed response");
 }
 
+/// 回归测试：飞书 API 返回 code 99991663（tenant token 过期/非法）时，
+/// send 应主动刷新 token 并重试一次。
+#[tokio::test]
+async fn test_send_refreshes_token_on_99991663() {
+    let mock_server = MockServer::start().await;
+
+    // 第一次鉴权（connect 时）→ 旧 token。
+    // 注意：必须用 up_to_n_times(1) 让 mock 在命中一次后被"消费"，
+    // 否则后续刷新请求仍会匹配到它（expect 只做 shutdown 时的校验）。
+    Mock::given(method("POST"))
+        .and(path("/auth/v3/tenant_access_token/internal"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "code": 0,
+            "msg": "ok",
+            "tenant_access_token": "token-OLD",
+            "expire": 7200
+        })))
+        .up_to_n_times(1)
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    // 后续刷新（检测到 99991663 后主动刷新）→ 新 token
+    Mock::given(method("POST"))
+        .and(path("/auth/v3/tenant_access_token/internal"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "code": 0,
+            "msg": "ok",
+            "tenant_access_token": "token-NEW",
+            "expire": 7200
+        })))
+        .up_to_n_times(1)
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    // 旧 token 的发送请求 → code 99991663（tenant token expired）
+    Mock::given(method("POST"))
+        .and(path("/im/v1/messages"))
+        .and(header("Authorization", "Bearer token-OLD"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "code": 99991663,
+            "msg": "tenant token expired",
+        })))
+        .up_to_n_times(1)
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    // 新 token 的发送请求 → 成功
+    Mock::given(method("POST"))
+        .and(path("/im/v1/messages"))
+        .and(header("Authorization", "Bearer token-NEW"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(send_success_response()))
+        .up_to_n_times(1)
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let adapter = make_adapter(mock_server.address().port()).await;
+    let result = adapter.send(send_text_params()).await.unwrap();
+
+    assert!(
+        result.success,
+        "send should refresh token and retry once after 99991663, got: {:?}",
+        result.error
+    );
+    assert_eq!(result.message_id, Some("om_abc123xyz".to_string()));
+
+    mock_server.verify().await;
+}
+
+#[tokio::test]
+async fn test_send_before_connect_returns_error() {
+    // 未 connect() 时 token store 未初始化（inner=None），send 应优雅失败，
+    // 不 panic、不发网络请求。
+    let config = AdapterConfig {
+        enabled: Some(true),
+        token: Some("test-app-secret".into()),
+        api_key: None,
+        base_url: Some("http://127.0.0.1:1".into()),
+        extra: serde_json::json!({ "app_id": "test-app-id" }),
+    };
+    let mut adapter = easybot_adapter_feishu::FeishuAdapter::new();
+    adapter.init(config).await.unwrap();
+
+    let result = adapter.send(send_text_params()).await.unwrap();
+    assert!(!result.success, "send before connect should fail");
+}
+
 #[tokio::test]
 async fn test_token_refresh_failure() {
     let mock_server = MockServer::start().await;
 
-    // token 端点返回错误 → send 应失败
+    // token 端点返回错误 → connect 应失败
     Mock::given(method("POST"))
         .and(path("/auth/v3/tenant_access_token/internal"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
@@ -174,10 +265,30 @@ async fn test_token_refresh_failure() {
         .mount(&mock_server)
         .await;
 
-    let adapter = make_adapter(mock_server.address().port()).await;
-    let result = adapter.send(send_text_params()).await.unwrap();
+    let base_url = format!("http://127.0.0.1:{}", mock_server.address().port());
+    let config = AdapterConfig {
+        enabled: Some(true),
+        token: Some("test-app-secret".into()),
+        api_key: None,
+        base_url: Some(base_url),
+        extra: serde_json::json!({ "app_id": "test-app-id" }),
+    };
+    let mut adapter = easybot_adapter_feishu::FeishuAdapter::new();
+    adapter.init(config).await.unwrap();
 
-    assert!(!result.success, "send should fail when token refresh fails");
+    // token 端点失败 → connect 失败（无法建立连接）
+    let connect_result = adapter.connect().await;
+    assert!(
+        connect_result.is_err(),
+        "connect should fail when token refresh fails"
+    );
+
+    // 连接失败后 send 也应优雅失败（token store 未初始化）
+    let send_result = adapter.send(send_text_params()).await.unwrap();
+    assert!(
+        !send_result.success,
+        "send after failed connect should fail gracefully"
+    );
 }
 
 // ── init 验证 ──
@@ -526,19 +637,43 @@ async fn test_edit_message_http_error() {
 
 // ── P2-10: send_media 测试 ──
 
-/// Mock 飞书文件上传端点: POST /im/v1/files
-async fn mock_upload_endpoint(mock_server: &MockServer) {
+/// 从 multipart 请求体中提取指定文本表单字段的值（用于验证 file_type/file_name）。
+fn multipart_field(body: &[u8], name: &str) -> Option<String> {
+    let needle = format!("name=\"{name}\"");
+    let nbytes = needle.as_bytes();
+    let start = body.windows(nbytes.len()).position(|w| w == nbytes)?;
+    let rest = &body[start + nbytes.len()..];
+    let sep = rest.windows(4).position(|w| w == b"\r\n\r\n")?;
+    let value = &rest[sep + 4..];
+    let end = value
+        .windows(2)
+        .position(|w| w == b"\r\n")
+        .unwrap_or(value.len());
+    Some(String::from_utf8_lossy(&value[..end]).to_string())
+}
+
+/// Mock 飞书图片上传端点: POST /im/v1/images（image_type=message）。
+async fn mock_image_upload_endpoint(mock_server: &MockServer) {
     Mock::given(method("POST"))
-        .and(path("/im/v1/files"))
+        .and(path("/im/v1/images"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "code": 0,
             "msg": "ok",
             "data": {
-                "file_key": "file_key_abc123",
-                "file_name": "test.png"
+                "image_key": "img_key_abc123",
             }
         })))
         .expect(1..)
+        .mount(mock_server)
+        .await;
+}
+
+/// 回归保护：图片上传绝不允许走 /im/v1/files。
+async fn mock_deny_file_upload_for_images(mock_server: &MockServer) {
+    Mock::given(method("POST"))
+        .and(path("/im/v1/files"))
+        .respond_with(ResponseTemplate::new(404))
+        .expect(0)
         .mount(mock_server)
         .await;
 }
@@ -566,7 +701,8 @@ fn send_media_params() -> SendMediaParams {
 async fn test_send_media_image_success() {
     let mock_server = MockServer::start().await;
     mock_token_endpoint(&mock_server).await;
-    mock_upload_endpoint(&mock_server).await;
+    mock_image_upload_endpoint(&mock_server).await;
+    mock_deny_file_upload_for_images(&mock_server).await;
 
     // Mock 发送端点
     Mock::given(method("POST"))
@@ -627,19 +763,22 @@ async fn test_send_media_request_body() {
     let mock_server = MockServer::start().await;
     mock_token_endpoint(&mock_server).await;
 
-    // Mock 上传端点
+    // 图片上传走 /im/v1/images
     Mock::given(method("POST"))
-        .and(path("/im/v1/files"))
+        .and(path("/im/v1/images"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "code": 0,
             "msg": "ok",
             "data": {
-                "file_key": "file_key_body_test",
+                "image_key": "img_key_body_test",
             }
         })))
         .expect(1..)
         .mount(&mock_server)
         .await;
+
+    // 回归保护：图片不应走 /im/v1/files
+    mock_deny_file_upload_for_images(&mock_server).await;
 
     // 捕获发送请求体
     let captured_body = Arc::new(std::sync::Mutex::new(None::<serde_json::Value>));
@@ -668,8 +807,196 @@ async fn test_send_media_request_body() {
     assert_eq!(body["receive_id"], "oc_abc123");
     assert_eq!(body["msg_type"], "image");
 
-    // content 是 JSON 字符串，包含 file_key
+    // content 是 JSON 字符串，包含 image_key（飞书图片消息协议）
     let content_str = body["content"].as_str().unwrap();
     let content: serde_json::Value = serde_json::from_str(content_str).unwrap();
-    assert_eq!(content["file_key"], "file_key_body_test");
+    assert_eq!(content["image_key"], "img_key_body_test");
+    assert!(content.get("file_key").is_none());
+}
+
+fn send_media_video_params() -> SendMediaParams {
+    SendMediaParams {
+        chat_id: "oc_abc123".to_string(),
+        text: None,
+        media: MediaAttachment {
+            media_type: MediaType::Video,
+            url: None,
+            data: Some("dGVzdA==".to_string()),
+            mime_type: "video/mp4".to_string(),
+            filename: Some("video.mp4".to_string()),
+            caption: None,
+            thumbnail_url: None,
+            file_size: None,
+            duration: Some(12.5),
+        },
+        reply_to: None,
+    }
+}
+
+#[tokio::test]
+async fn test_send_media_video_success() {
+    let mock_server = MockServer::start().await;
+    mock_token_endpoint(&mock_server).await;
+
+    // 视频走 /im/v1/files，file_type 必须为 mp4
+    Mock::given(method("POST"))
+        .and(path("/im/v1/files"))
+        .and(|req: &wiremock::Request| {
+            multipart_field(&req.body, "file_type").as_deref() == Some("mp4")
+        })
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "code": 0,
+            "msg": "ok",
+            "data": { "file_key": "file_key_video" }
+        })))
+        .expect(1..)
+        .mount(&mock_server)
+        .await;
+
+    // 回归保护：非法 file_type 的 /im/v1/files 请求必须被拒绝（卡住协议）
+    Mock::given(method("POST"))
+        .and(path("/im/v1/files"))
+        .and(|req: &wiremock::Request| {
+            multipart_field(&req.body, "file_type").as_deref() != Some("mp4")
+        })
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "code": 99999,
+            "msg": "invalid file_type",
+        })))
+        .expect(0)
+        .mount(&mock_server)
+        .await;
+
+    // 捕获发送请求体
+    let captured_body = Arc::new(std::sync::Mutex::new(None::<serde_json::Value>));
+    let captured = captured_body.clone();
+    Mock::given(method("POST"))
+        .and(path("/im/v1/messages"))
+        .and(move |req: &wiremock::Request| {
+            if let Ok(body) = serde_json::from_slice::<serde_json::Value>(&req.body) {
+                *captured.lock().unwrap() = Some(body);
+            }
+            true
+        })
+        .respond_with(ResponseTemplate::new(200).set_body_json(send_success_response()))
+        .expect(1..)
+        .mount(&mock_server)
+        .await;
+
+    let adapter = make_adapter(mock_server.address().port()).await;
+    let result = adapter.send_media(send_media_video_params()).await.unwrap();
+    assert!(result.success);
+
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    let body = captured_body.lock().unwrap().take().unwrap();
+    assert_eq!(body["msg_type"], "media");
+    let content: serde_json::Value =
+        serde_json::from_str(body["content"].as_str().unwrap()).unwrap();
+    assert_eq!(content["file_key"], "file_key_video");
+
+    mock_server.verify().await;
+}
+
+fn send_media_document_params() -> SendMediaParams {
+    SendMediaParams {
+        chat_id: "oc_abc123".to_string(),
+        text: None,
+        media: MediaAttachment {
+            media_type: MediaType::Document,
+            url: None,
+            data: Some("dGVzdA==".to_string()),
+            mime_type: "application/pdf".to_string(),
+            filename: Some("report.pdf".to_string()),
+            caption: None,
+            thumbnail_url: None,
+            file_size: None,
+            duration: None,
+        },
+        reply_to: None,
+    }
+}
+
+#[tokio::test]
+async fn test_send_media_document_success() {
+    let mock_server = MockServer::start().await;
+    mock_token_endpoint(&mock_server).await;
+
+    // 文件走 /im/v1/files，.pdf 扩展名 → file_type=pdf，且带 file_name
+    Mock::given(method("POST"))
+        .and(path("/im/v1/files"))
+        .and(|req: &wiremock::Request| {
+            multipart_field(&req.body, "file_type").as_deref() == Some("pdf")
+                && multipart_field(&req.body, "file_name").as_deref() == Some("report.pdf")
+        })
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "code": 0,
+            "msg": "ok",
+            "data": { "file_key": "file_key_doc" }
+        })))
+        .expect(1..)
+        .mount(&mock_server)
+        .await;
+
+    let captured_body = Arc::new(std::sync::Mutex::new(None::<serde_json::Value>));
+    let captured = captured_body.clone();
+    Mock::given(method("POST"))
+        .and(path("/im/v1/messages"))
+        .and(move |req: &wiremock::Request| {
+            if let Ok(body) = serde_json::from_slice::<serde_json::Value>(&req.body) {
+                *captured.lock().unwrap() = Some(body);
+            }
+            true
+        })
+        .respond_with(ResponseTemplate::new(200).set_body_json(send_success_response()))
+        .expect(1..)
+        .mount(&mock_server)
+        .await;
+
+    let adapter = make_adapter(mock_server.address().port()).await;
+    let result = adapter
+        .send_media(send_media_document_params())
+        .await
+        .unwrap();
+    assert!(result.success);
+
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    let body = captured_body.lock().unwrap().take().unwrap();
+    assert_eq!(body["msg_type"], "file");
+    let content: serde_json::Value =
+        serde_json::from_str(body["content"].as_str().unwrap()).unwrap();
+    assert_eq!(content["file_key"], "file_key_doc");
+    assert_eq!(content["file_name"], "report.pdf");
+
+    mock_server.verify().await;
+}
+
+#[tokio::test]
+async fn test_send_media_sticker_rejected() {
+    let mock_server = MockServer::start().await;
+    mock_token_endpoint(&mock_server).await;
+
+    let adapter = make_adapter(mock_server.address().port()).await;
+    let result = adapter
+        .send_media(SendMediaParams {
+            chat_id: "oc_abc123".to_string(),
+            text: None,
+            media: MediaAttachment {
+                media_type: MediaType::Sticker,
+                url: None,
+                data: Some("dGVzdA==".to_string()),
+                mime_type: "image/png".to_string(),
+                filename: Some("sticker.png".to_string()),
+                caption: None,
+                thumbnail_url: None,
+                file_size: None,
+                duration: None,
+            },
+            reply_to: None,
+        })
+        .await;
+
+    assert!(
+        result.is_err(),
+        "send_media sticker should be rejected (no official upload channel)"
+    );
 }

@@ -175,6 +175,7 @@ impl Server {
             (&Method::GET, _) if route_path == "/config" => Permission::ConfigRead,
             (&Method::POST, _) if route_path == "/messages/send" => Permission::MessagesSend,
             (&Method::POST, _) if route_path == "/messages/batch-send" => Permission::MessagesSend,
+            (&Method::POST, _) if route_path == "/callbacks/answer" => Permission::MessagesSend,
             (&Method::POST, _) if route_path.starts_with("/messages/deliveries/") => {
                 Permission::MessagesSend
             }
@@ -430,6 +431,10 @@ pub fn create_router(state: AppState) -> Router {
         .route(
             "/messages/batch-send",
             post(routes::messages::batch_send).layer(RequestBodyLimitLayer::new(128 * 1024)),
+        )
+        .route(
+            "/callbacks/answer",
+            post(routes::messages::answer_callback).layer(RequestBodyLimitLayer::new(8 * 1024)),
         )
         .route(
             "/messages/deliveries",

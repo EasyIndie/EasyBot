@@ -6,7 +6,6 @@
 
 use parking_lot::Mutex;
 use std::borrow::Cow;
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
@@ -19,6 +18,7 @@ use tokio::sync::broadcast;
 use tokio_tungstenite::MaybeTlsStream;
 use tokio_tungstenite::tungstenite::Message;
 
+use crate::ChatTypeCache;
 use crate::auth::QqTokenStore;
 
 impl crate::QqAdapter {
@@ -42,11 +42,15 @@ impl crate::QqAdapter {
         mut cancel_rx: broadcast::Receiver<()>,
         messages_in: Arc<AtomicU64>,
         heartbeat: easybot_core::types::adapter::Heartbeat,
-        chat_types: Arc<Mutex<HashMap<String, ChatType>>>,
+        chat_types: Arc<Mutex<ChatTypeCache>>,
+        intents_override: Option<u32>,
     ) {
         let mut reconnect_attempts: u32 = 0;
         let mut seq: u64 = 0;
         let mut session_id: Option<String> = None;
+        // 默认订阅保守集（群/C2C + 私域频道消息）；公域机器人可通过
+        // config.extra["intents"] 覆盖为 PUBLIC_GUILD_MESSAGES | GROUP_AND_C2C_EVENT。
+        let intents = intents_override.unwrap_or(crate::types::intents::DEFAULT);
         loop {
             // 每次重连前刷新 access token
             if token_store.needs_refresh()
@@ -173,7 +177,7 @@ impl crate::QqAdapter {
             tracing::info!("QQ Gateway connected");
 
             // 尝试 RESUME（如果有之前的 session_id）或完整 Identify
-            let token_str = match token_store.get() {
+            let token_str = match token_store.get().await {
                 Ok(t) => t,
                 Err(e) => {
                     tracing::error!("QQ failed to get token: {}", e);
@@ -215,9 +219,7 @@ impl crate::QqAdapter {
                     "op": 2,
                     "d": {
                         "token": token_str,
-                        "intents": crate::types::intents::AT_MESSAGE
-                            | crate::types::intents::C2C_MESSAGE
-                            | crate::types::intents::GROUP_AT_MESSAGE,
+                        "intents": intents,
                         "shard": [0, 1],
                     }
                 });
@@ -341,7 +343,7 @@ impl crate::QqAdapter {
         token_store: &QqTokenStore,
         base_url: &str,
     ) -> FetchGatewayResult {
-        let token = match token_store.get() {
+        let token = match token_store.get().await {
             Ok(t) => t,
             Err(e) => {
                 tracing::warn!("QQ fetch_gateway_url: token error: {}", e);
@@ -372,24 +374,20 @@ impl crate::QqAdapter {
             }
         };
         let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        // 任意状态码都先判 token 失效谓词（覆盖 HTTP 200 + code 11244 / 11242 的场景）。
+        // ★ 命中即致命鉴权错误——终止重试（原实现把 401 当瞬态无限重试、200+11244 解析失败也无限重试）。
+        if crate::auth::is_qq_token_invalid_response(status.as_u16(), &body) {
+            tracing::error!(
+                "QQ fetch_gateway_url: {} returned {} — body: {} \
+                 (token invalid/expired — stopping retries)",
+                url,
+                status,
+                body,
+            );
+            return FetchGatewayResult::AuthError(body);
+        }
         if !status.is_success() {
-            let body = resp.text().await.unwrap_or_default();
-            // 解析错误响应体，检测致命鉴权错误
-            if let Ok(err_body) = serde_json::from_str::<serde_json::Value>(&body)
-                && let Some(code) = err_body.get("code").and_then(|c| c.as_i64())
-                && code == 11244
-            {
-                // 11244 = "token not exist or expire" — 凭据无效，无需重试
-                tracing::error!(
-                    "QQ fetch_gateway_url: {} returned {} — body: {} \
-                     (code={}: token invalid or expired — stopping retries)",
-                    url,
-                    status,
-                    body,
-                    code,
-                );
-                return FetchGatewayResult::AuthError(body);
-            }
             tracing::warn!(
                 "QQ fetch_gateway_url: {} returned {} — body: {}",
                 url,
@@ -398,7 +396,7 @@ impl crate::QqAdapter {
             );
             return FetchGatewayResult::Transient;
         }
-        match resp.json::<crate::types::GatewayResponse>().await {
+        match serde_json::from_str::<crate::types::GatewayResponse>(&body) {
             Ok(data) => FetchGatewayResult::Success(data.url),
             Err(e) => {
                 tracing::warn!("QQ fetch_gateway_url: JSON parse failed: {}", e);
@@ -506,7 +504,7 @@ impl crate::QqAdapter {
         event_bus: &EventBus,
         bot_id: &str,
         messages_in: &AtomicU64,
-        chat_types: &Arc<Mutex<HashMap<String, ChatType>>>,
+        chat_types: &Arc<Mutex<ChatTypeCache>>,
     ) {
         let data = match payload.d.as_ref() {
             Some(d) => d,
@@ -572,15 +570,10 @@ impl crate::QqAdapter {
                     metadata: serde_json::to_string(&data).ok(),
                 };
 
-                // Track chat type for direct outbound routing, with size cap
-                {
-                    let mut ct = chat_types.lock();
-                    ct.insert(inbound.chat_id.clone(), inbound.chat_type);
-                    const CHAT_TYPE_CACHE_LIMIT: usize = 10_000;
-                    if ct.len() > CHAT_TYPE_CACHE_LIMIT {
-                        ct.clear();
-                    }
-                }
+                // Track chat type for direct outbound routing (LRU 逐出)
+                chat_types
+                    .lock()
+                    .insert(inbound.chat_id.clone(), inbound.chat_type);
 
                 let event = GatewayEvent::new(
                     easybot_core::types::event::event_types::MESSAGE_INBOUND,
@@ -647,15 +640,10 @@ impl crate::QqAdapter {
                     metadata: serde_json::to_string(&data).ok(),
                 };
 
-                // Track chat type for direct outbound routing, with size cap
-                {
-                    let mut ct = chat_types.lock();
-                    ct.insert(inbound.chat_id.clone(), inbound.chat_type);
-                    const CHAT_TYPE_CACHE_LIMIT: usize = 10_000;
-                    if ct.len() > CHAT_TYPE_CACHE_LIMIT {
-                        ct.clear();
-                    }
-                }
+                // Track chat type for direct outbound routing (LRU 逐出)
+                chat_types
+                    .lock()
+                    .insert(inbound.chat_id.clone(), inbound.chat_type);
 
                 let event = GatewayEvent::new(
                     easybot_core::types::event::event_types::MESSAGE_INBOUND,
@@ -747,15 +735,10 @@ impl crate::QqAdapter {
                     }),
                 };
 
-                // Track chat type for direct outbound routing, with size cap
-                {
-                    let mut ct = chat_types.lock();
-                    ct.insert(inbound.chat_id.clone(), inbound.chat_type);
-                    const CHAT_TYPE_CACHE_LIMIT: usize = 10_000;
-                    if ct.len() > CHAT_TYPE_CACHE_LIMIT {
-                        ct.clear();
-                    }
-                }
+                // Track chat type for direct outbound routing (LRU 逐出)
+                chat_types
+                    .lock()
+                    .insert(inbound.chat_id.clone(), inbound.chat_type);
 
                 let event = GatewayEvent::new(
                     easybot_core::types::event::event_types::MESSAGE_INBOUND,
@@ -817,15 +800,10 @@ impl crate::QqAdapter {
                     metadata: serde_json::to_string(&data).ok(),
                 };
 
-                // Track chat type for direct outbound routing, with size cap
-                {
-                    let mut ct = chat_types.lock();
-                    ct.insert(inbound.chat_id.clone(), inbound.chat_type);
-                    const CHAT_TYPE_CACHE_LIMIT: usize = 10_000;
-                    if ct.len() > CHAT_TYPE_CACHE_LIMIT {
-                        ct.clear();
-                    }
-                }
+                // Track chat type for direct outbound routing (LRU 逐出)
+                chat_types
+                    .lock()
+                    .insert(inbound.chat_id.clone(), inbound.chat_type);
 
                 let event = GatewayEvent::new(
                     easybot_core::types::event::event_types::MESSAGE_INBOUND,

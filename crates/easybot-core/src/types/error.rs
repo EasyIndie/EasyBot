@@ -173,7 +173,6 @@ impl GatewayError {
 pub struct ApiErrorResponse {
     pub error: ApiErrorDetail,
 }
-
 /// API 错误详情
 #[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct ApiErrorDetail {

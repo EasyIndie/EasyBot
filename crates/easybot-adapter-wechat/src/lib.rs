@@ -30,7 +30,7 @@
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -41,7 +41,7 @@ use easybot_core::types::message::*;
 
 mod crypto;
 use crypto::{
-    WeChatCredentials, aes_128_ecb_encrypt, aes_padded_size, base64_encode_uin,
+    ContextTokenEntry, WeChatCredentials, aes_128_ecb_encrypt, aes_padded_size, base64_encode_uin,
     build_cdn_upload_url, encode_aes_key_for_api, generate_filekey, load_context_tokens,
     load_credentials_from_disk, load_sync_buf, md5_hex, resolve_media_data, save_context_tokens,
     save_credentials_to_disk, save_sync_buf,
@@ -70,6 +70,20 @@ const ITEM_TYPE_VIDEO: i32 = 5;
 
 /// CDN 上传基础 URL
 const CDN_BASE_URL: &str = "https://novac2c.cdn.weixin.qq.com/c2c";
+
+/// context_token 有效期（毫秒）。iLink 会话凭据约 60-160s 过期，
+/// 超过该时长发送时可能被静默拒绝，需降级处理。
+const CONTEXT_TOKEN_TTL_MS: i64 = 60_000;
+
+/// context_tokens 映射容量上限（保留最近 N 个聊天的令牌，防无界增长）
+const CONTEXT_TOKENS_MAX: usize = 500;
+
+/// session 过期 (-14) 连续次数上限：超过则判定会话彻底失效，
+/// 清除凭据触发重新扫码登录（与 401 路径一致），避免永不自愈。
+const SESSION_EXPIRED_MAX_CONSECUTIVE: u32 = 3;
+
+/// context_tokens 防抖落盘间隔（秒）：令牌变更先标记脏位，由周期任务合并写盘
+const CONTEXT_TOKENS_PERSIST_INTERVAL_SECS: u64 = 10;
 
 // ── iLink API 响应类型 ──
 
@@ -116,6 +130,10 @@ struct GetUpdatesResponse {
     /// API 错误码，0 或缺失表示成功；-14 表示 session 过期
     #[serde(default)]
     errcode: i64,
+    /// 外部资料显示部分响应使用 `{"ret":0,"msgs":...}`，与 errcode 双字段容错。
+    /// 任一非 0（尤其 -14）都应进入对应错误分支，避免漏判会话过期。
+    #[serde(default)]
+    ret: i64,
     #[serde(default)]
     errmsg: Option<String>,
 }
@@ -124,8 +142,9 @@ struct GetUpdatesResponse {
 #[derive(Debug, serde::Deserialize)]
 #[allow(dead_code)]
 struct WeixinMessage {
-    #[serde(default)]
-    message_id: Option<i64>,
+    /// 消息 ID 可能为整数或字符串（不同版本格式不一致），与发送响应同一 flexible 反序列化
+    #[serde(default, deserialize_with = "deserialize_flexible_id")]
+    message_id: Option<String>,
     #[serde(default)]
     from_user_id: String,
     #[serde(default)]
@@ -156,6 +175,12 @@ struct WeixinMessageItem {
     image_item: Option<WeixinImageItem>,
     #[serde(default)]
     file_item: Option<WeixinFileItem>,
+    /// 语音项（item_type = 3），未定义时 serde 默认忽略，避免入站语音被掏空
+    #[serde(default)]
+    voice_item: Option<WeixinVoiceItem>,
+    /// 视频项（item_type = 5）
+    #[serde(default)]
+    video_item: Option<WeixinVideoItem>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -195,6 +220,49 @@ struct WeixinFileItem {
     aes_key: Option<String>,
     #[serde(default)]
     file_url: Option<String>,
+}
+
+/// 语音消息项（item_type = 3）
+#[derive(Debug, serde::Deserialize)]
+#[allow(dead_code)]
+struct WeixinVoiceItem {
+    #[serde(default)]
+    md5sum: Option<String>,
+    #[serde(default)]
+    file_size: Option<i64>,
+    #[serde(default)]
+    file_url: Option<String>,
+    #[serde(default)]
+    aes_key: Option<String>,
+    #[serde(default)]
+    play_length: Option<i64>,
+    /// 语音转写文本（如 API 已提供，放入 MediaAttachment.caption）
+    #[serde(default)]
+    text: Option<String>,
+}
+
+/// 视频消息项（item_type = 5）
+#[derive(Debug, serde::Deserialize)]
+#[allow(dead_code)]
+struct WeixinVideoItem {
+    #[serde(default)]
+    md5sum: Option<String>,
+    #[serde(default)]
+    file_size: Option<i64>,
+    #[serde(default)]
+    file_name: Option<String>,
+    #[serde(default)]
+    file_url: Option<String>,
+    #[serde(default)]
+    aes_key: Option<String>,
+    #[serde(default)]
+    video_size: Option<i64>,
+    #[serde(default)]
+    play_length: Option<i64>,
+    #[serde(default)]
+    height: Option<i64>,
+    #[serde(default)]
+    width: Option<i64>,
 }
 
 /// 发送消息响应
@@ -297,8 +365,8 @@ pub struct WeChatAdapter {
     ilink_bot_id: tokio::sync::RwLock<Option<String>>,
     /// iLink User ID
     ilink_user_id: tokio::sync::RwLock<Option<String>>,
-    /// 每条聊天的上下文令牌（持久化到磁盘，peer_id → token）
-    context_tokens: Arc<tokio::sync::RwLock<HashMap<String, String>>>,
+    /// 每条聊天的上下文令牌（持久化到磁盘，peer_id → 令牌条目）
+    context_tokens: Arc<tokio::sync::RwLock<HashMap<String, ContextTokenEntry>>>,
 }
 
 impl WeChatAdapter {
@@ -1073,10 +1141,12 @@ impl PlatformAdapter for WeChatAdapter {
         let url = format!("{}/ilink/bot/sendmessage", self.api_base_url());
 
         // 查每条聊天的 context_token（持久化）
-        let ctx_token = {
+        let ctx_entry = {
             let tokens = self.context_tokens.read().await;
             tokens.get(&params.chat_id).cloned()
         };
+        let ctx_token = ctx_entry.as_ref().map(|e| e.token.clone());
+        let ctx_stale = ctx_entry.as_ref().map(context_token_stale).unwrap_or(false);
 
         tracing::debug!(
             "WeChat send: to_user_id={}, has_ctx={}, text={}",
@@ -1085,7 +1155,18 @@ impl PlatformAdapter for WeChatAdapter {
             &params.message.text[..params.message.text.len().min(100)]
         );
 
+        // W3: context_token 有效期约 60-160s，长任务后可能已过期。
+        // 无刷新端点时保守处理：仍带 token 尝试一次，靠 -14/-2 降级重试兜底；
+        // 若 API 返回空响应 {}（静默丢失特征）则让失败可见，不盲目当成功。
+        if ctx_stale {
+            tracing::warn!(
+                "WeChat send: context_token 捕获超过 {}ms，可能已过期（将依赖 -14 降级重试）",
+                CONTEXT_TOKEN_TTL_MS
+            );
+        }
+
         // 第一次尝试：带 context_token 发送
+        let mut used_retry_without_token = false;
         let mut resp = self
             .send_text_http(
                 &url,
@@ -1114,6 +1195,7 @@ impl PlatformAdapter for WeChatAdapter {
             }
             drop(resp); // 释放 borrow，允许重新赋值
             // 无 token 重试一次（降级模式，iLink 接受无 token 发送）
+            used_retry_without_token = true;
             resp = self
                 .send_text_http(&url, &token, &params.chat_id, &params.message.text, None)
                 .await;
@@ -1135,6 +1217,27 @@ impl PlatformAdapter for WeChatAdapter {
                 return Err(e);
             }
         };
+
+        // W3（修正）：空响应 {} 是 iLink 文档化的成功响应，无论 token 是否过期都视为成功。
+        // 原先的实现把"过期 token + 空 {}"判为失败（retryable=true），但空 {} 表示 API 已
+        // 接收发送（与 -14 的 token 失效语义不同），且 CONTEXT_TOKEN_TTL_MS=60s 是保守值、
+        // 真实有效期 60-160s——过期窗口内发送的多数消息实际已投递 → 误报失败触发上游重试
+        // → 用户收到重复消息。此处仅在 token 过期时打 WARN 提示歧义，不报失败、不触发重试。
+        if ctx_stale && !used_retry_without_token {
+            let empty_success = resp.message_id.is_none()
+                && resp.msg_id_str.is_none()
+                && resp.msg_id.is_none()
+                && resp.local_id.is_none()
+                && resp.seq.is_none()
+                && resp.ret.is_none();
+            if empty_success {
+                tracing::warn!(
+                    "WeChat send 返回空响应 {{}} 且 context_token 已过期（TTL={}ms，真实有效期更长）：\
+                     空响应按成功处理（iLink 文档语义），若消息实际未到达请人工核对",
+                    CONTEXT_TOKEN_TTL_MS,
+                );
+            }
+        }
 
         // ret 存在且非 0 时报告错误
         if let Some(ret) = resp.ret
@@ -1207,10 +1310,21 @@ impl PlatformAdapter for WeChatAdapter {
             .await?;
 
         // 查每条聊天的 context_token（持久化）
-        let ctx_token = {
+        let ctx_entry = {
             let tokens = self.context_tokens.read().await;
             tokens.get(&params.chat_id).cloned()
         };
+        let ctx_token = ctx_entry.as_ref().map(|e| e.token.clone());
+        let ctx_stale = ctx_entry.as_ref().map(context_token_stale).unwrap_or(false);
+
+        // W3: 与 send() 同理，token 可能已过期。无刷新端点时保守处理，
+        // 空响应 {} + 过期 token → 让失败可见，不盲目当成功。
+        if ctx_stale {
+            tracing::warn!(
+                "WeChat send_media: context_token 捕获超过 {}ms，可能已过期（将依赖 -14 降级重试）",
+                CONTEXT_TOKEN_TTL_MS
+            );
+        }
 
         // 构建消息体
         let url = format!("{}/ilink/bot/sendmessage", self.api_base_url());
@@ -1303,6 +1417,7 @@ impl PlatformAdapter for WeChatAdapter {
         );
 
         // 第一次尝试：带 context_token 发送
+        let mut used_retry_without_token = false;
         let mut resp = self.send_media_http(&url, &token, body.clone()).await;
 
         // 如果 response 是 -14 或 -2（上下文过期）且有 context_token，剥离它重试一次
@@ -1327,6 +1442,7 @@ impl PlatformAdapter for WeChatAdapter {
             if let Some(obj) = body["msg"].as_object_mut() {
                 obj.remove("context_token");
             }
+            used_retry_without_token = true;
             drop(resp);
             resp = self.send_media_http(&url, &token, body).await;
         }
@@ -1347,6 +1463,24 @@ impl PlatformAdapter for WeChatAdapter {
                 return Err(e);
             }
         };
+
+        // W3（修正）：同 send()——空响应 {} 按成功处理，过期 token 时仅打 WARN 提示歧义。
+        // 误报失败（retryable=true）会让已投递的消息被上游重试 → 用户收到重复消息。
+        if ctx_stale && !used_retry_without_token {
+            let empty_success = resp.message_id.is_none()
+                && resp.msg_id_str.is_none()
+                && resp.msg_id.is_none()
+                && resp.local_id.is_none()
+                && resp.seq.is_none()
+                && resp.ret.is_none();
+            if empty_success {
+                tracing::warn!(
+                    "WeChat send_media 返回空响应 {{}} 且 context_token 已过期（TTL={}ms）：\
+                     空响应按成功处理（iLink 文档语义），若媒体消息实际未到达请人工核对",
+                    CONTEXT_TOKEN_TTL_MS,
+                );
+            }
+        }
 
         if let Some(ret) = resp.ret
             && ret != 0
@@ -1431,33 +1565,62 @@ async fn longpoll_loop(
     base_url: String,
     event_bus: Arc<EventBus>,
     mut cancel_rx: tokio::sync::broadcast::Receiver<()>,
-    context_tokens: Arc<tokio::sync::RwLock<HashMap<String, String>>>,
+    context_tokens: Arc<tokio::sync::RwLock<HashMap<String, ContextTokenEntry>>>,
     sync_buf: Arc<tokio::sync::RwLock<String>>,
     heartbeat: Heartbeat,
 ) {
     let url = format!("{}/ilink/bot/getupdates", base_url);
     let mut buf = initial_buf;
     let mut consecutive_failures: u32 = 0;
+    // W5: 单独统计连续 -14 次数，超过上限判定会话彻底失效，清除凭据触发重新扫码
+    let mut session_expired_count: u32 = 0;
+    // W7: 防抖落盘 — 令牌变更只标记脏位，由周期任务合并写盘，避免每条消息全量重写
+    let tokens_dirty = Arc::new(AtomicBool::new(false));
+    let mut persist_interval =
+        tokio::time::interval(Duration::from_secs(CONTEXT_TOKENS_PERSIST_INTERVAL_SECS));
 
     loop {
         tokio::select! {
             _ = cancel_rx.recv() => {
+                // W7（修正）：停止前落盘最后一批脏 token，避免丢失 stop 前 <10s
+                // 捕获的 context_token（此前 cancel 路径直接 break，脏位从不写盘）。
+                if tokens_dirty.swap(false, Ordering::Relaxed) {
+                    let tokens_snapshot = context_tokens.read().await.clone();
+                    tokio::task::spawn_blocking(move || {
+                        save_context_tokens(&tokens_snapshot);
+                    });
+                }
                 tracing::info!("个人微信长轮询已停止");
                 break;
+            }
+            _ = persist_interval.tick() => {
+                // W7: 防抖合并写入 context_tokens（最多每 10s 全量写一次）
+                if tokens_dirty.swap(false, Ordering::Relaxed) {
+                    let tokens_snapshot = context_tokens.read().await.clone();
+                    tokio::task::spawn_blocking(move || {
+                        save_context_tokens(&tokens_snapshot);
+                    });
+                }
             }
             result = poll_messages(&client, &url, &token, &buf) => {
                 match result {
                     Ok(PollOutcome::Messages(new_buf, msgs)) => {
                         heartbeat.beat_success();
                         consecutive_failures = 0;
+                        session_expired_count = 0;
 
-                        // 批量收集 context_tokens，循环结束后统一持久化
-                        let mut tokens_changed = false;
+                        // 收集用户消息携带的 context_tokens（W1: 非用户消息跳过）。
+                        // 只标记脏位，由上面的周期任务合并写盘。
                         for msg in &msgs {
-                            if let Some(ref ct) = msg.context_token {
-                                let mut tokens = context_tokens.write().await;
-                                tokens.insert(msg.from_user_id.clone(), ct.clone());
-                                tokens_changed = true;
+                            if is_user_message(msg)
+                                && let Some(ref ct) = msg.context_token
+                            {
+                                insert_context_token(
+                                    &mut *context_tokens.write().await,
+                                    msg.from_user_id.clone(),
+                                    ct.clone(),
+                                );
+                                tokens_dirty.store(true, Ordering::Relaxed);
                             }
                         }
 
@@ -1468,14 +1631,6 @@ async fn longpoll_loop(
                             let persist_buf = new_buf.clone();
                             tokio::task::spawn_blocking(move || {
                                 save_sync_buf(&persist_buf);
-                            });
-                        }
-
-                        // 批量持久化 context_tokens（一次性写，避免每条消息都写一次）
-                        if tokens_changed {
-                            let tokens_snapshot = context_tokens.read().await.clone();
-                            tokio::task::spawn_blocking(move || {
-                                save_context_tokens(&tokens_snapshot);
                             });
                         }
 
@@ -1494,11 +1649,23 @@ async fn longpoll_loop(
                     Ok(PollOutcome::Timeout) => {
                         heartbeat.beat_success();
                         consecutive_failures = 0;
+                        session_expired_count = 0;
                     }
                     Ok(PollOutcome::SessionExpired(msg)) => {
+                        session_expired_count += 1;
+                        if session_expired_count >= SESSION_EXPIRED_MAX_CONSECUTIVE {
+                            // W5: 连续多次 -14，说明会话过期后长时间无法自愈（扫码状态丢失等）。
+                            // 转 TokenExpired 同等处理：清除凭据，下次启动触发重新扫码登录。
+                            tracing::error!(
+                                "个人微信连续 {} 次 session 过期 (-14)（消息: {}），判定会话彻底失效，清除凭据触发重新扫码",
+                                session_expired_count, msg
+                            );
+                            crypto::clear_credentials_from_disk();
+                            break;
+                        }
                         tracing::warn!(
-                            "WeChat session 过期 (errcode=-14): {} — 暂停 10 分钟后继续轮询，凭据仍然有效",
-                            msg
+                            "WeChat session 过期 (errcode=-14): {} — 暂停 10 分钟后继续轮询 (第 {} 次)",
+                            msg, session_expired_count
                         );
                         // 暂停 10 分钟，期间每 60 秒打一次 heartbeat
                         // 防止健康监测误判为断连而触发重连
@@ -1603,31 +1770,41 @@ async fn poll_messages(
         &resp_text[..resp_text.len().min(500)]
     );
 
-    let resp: GetUpdatesResponse = serde_json::from_str(&resp_text).map_err(|e| {
-        GatewayError::Internal(format!(
-            "Longpoll parse failed: {} (body: {})",
-            e,
-            &resp_text[..resp_text.len().min(200)]
-        ))
-    })?;
+    let resp: GetUpdatesResponse = match serde_json::from_str(&resp_text) {
+        Ok(r) => r,
+        Err(e) => {
+            // W8: 整批解析失败时回退到逐条容错解析——保留成功条目、跳过坏条目，
+            // 避免单条畸形消息（如 message_id 类型异常、未知字段类型）拖垮整个长轮询、
+            // 游标不推进导致消息积压。
+            tracing::warn!("Longpoll 整批解析失败 ({}), 回退逐条容错解析", e);
+            parse_getupdates_lenient(&resp_text)
+        }
+    };
 
-    // 检测 iLink API 错误码
-    if resp.errcode != 0 {
+    // W6: errcode 与 ret 双字段容错。外部资料显示部分响应为 `{"ret":0,"msgs":...}`，
+    // 只解析 errcode 会漏判会话过期（-14）。
+    let api_code = if resp.errcode != 0 {
+        resp.errcode
+    } else {
+        resp.ret
+    };
+    if api_code != 0 {
         let msg = resp.errmsg.unwrap_or_default();
-        if resp.errcode == -14 {
+        if api_code == -14 {
             // -14 表示 session 过期，但 bot_token 本身仍然有效
             // 返回 SessionExpired 信号，由调用方暂停后重试
             return Ok(PollOutcome::SessionExpired(msg));
         }
         // 其他错误码，计入失败计数
         tracing::warn!(
-            "WeChat API 返回错误: errcode={}, errmsg={}",
+            "WeChat API 返回错误: errcode={}, ret={}, errmsg={}",
             resp.errcode,
+            resp.ret,
             msg
         );
         return Err(GatewayError::Internal(format!(
-            "WeChat API error: errcode={}, errmsg={}",
-            resp.errcode, msg
+            "WeChat API error: errcode={}, ret={}, errmsg={}",
+            resp.errcode, resp.ret, msg
         )));
     }
 
@@ -1642,8 +1819,110 @@ async fn poll_messages(
     }
 }
 
+/// 宽松解析 getupdates 响应：整批解析失败时逐条提取有效消息。
+///
+/// 保留成功条目、跳过坏条目（记录告警），并尽量恢复 errcode/ret/游标，
+/// 避免单条畸形消息导致整批丢弃、游标不推进。
+fn parse_getupdates_lenient(resp_text: &str) -> GetUpdatesResponse {
+    let mut result = GetUpdatesResponse {
+        msgs: Vec::new(),
+        get_updates_buf: None,
+        sync_buf: None,
+        errcode: 0,
+        ret: 0,
+        errmsg: None,
+    };
+    let root: serde_json::Value = match serde_json::from_str(resp_text) {
+        Ok(v) => v,
+        Err(_) => return result,
+    };
+    if let Some(v) = root.get("errcode").and_then(|v| v.as_i64()) {
+        result.errcode = v;
+    }
+    if let Some(v) = root.get("ret").and_then(|v| v.as_i64()) {
+        result.ret = v;
+    }
+    result.errmsg = root
+        .get("errmsg")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    result.get_updates_buf = root
+        .get("get_updates_buf")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    result.sync_buf = root
+        .get("sync_buf")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    if let Some(msgs) = root.get("msgs").and_then(|v| v.as_array()) {
+        let mut kept = 0usize;
+        let mut dropped = 0usize;
+        for m in msgs {
+            match serde_json::from_value::<WeixinMessage>(m.clone()) {
+                Ok(msg) => {
+                    result.msgs.push(msg);
+                    kept += 1;
+                }
+                Err(e) => {
+                    dropped += 1;
+                    tracing::warn!("getupdates 单条消息解析失败, 跳过: {}", e);
+                }
+            }
+        }
+        if dropped > 0 {
+            tracing::warn!(
+                "getupdates 容错解析: 保留 {} 条, 跳过 {} 条畸形消息",
+                kept,
+                dropped
+            );
+        }
+    }
+    result
+}
+
+/// iLink 消息类型：1 = USER（用户消息）。BOT 消息/机器人自身回显为其他值。
+/// message_type 缺失时 serde 默认 0，保持容错视为用户消息（不过滤）。
+fn is_user_message(msg: &WeixinMessage) -> bool {
+    msg.message_type == 1 || msg.message_type == 0
+}
+
+/// 判断 context_token 是否已超过有效期（可能已过期）
+fn context_token_stale(entry: &ContextTokenEntry) -> bool {
+    let now = chrono::Utc::now().timestamp_millis();
+    now - entry.captured_at > CONTEXT_TOKEN_TTL_MS
+}
+
+/// 插入 context_token 并维持容量上限（超限时逐出捕获时间最早的条目）
+fn insert_context_token(
+    tokens: &mut HashMap<String, ContextTokenEntry>,
+    peer: String,
+    token: String,
+) {
+    tokens.insert(
+        peer,
+        ContextTokenEntry {
+            token,
+            captured_at: chrono::Utc::now().timestamp_millis(),
+        },
+    );
+    if tokens.len() > CONTEXT_TOKENS_MAX
+        && let Some(oldest) = tokens
+            .iter()
+            .min_by_key(|(_, e)| e.captured_at)
+            .map(|(k, _)| k.clone())
+    {
+        tokens.remove(&oldest);
+    }
+}
+
 /// 将 iLink 消息转换为 InboundMessage
 fn convert_message(msg: WeixinMessage) -> Option<InboundMessage> {
+    // W1: 仅处理用户消息。BOT 消息、机器人自身回显（message_type != 1/0）
+    // 不发布为 message.inbound，避免把机器人自己的输出又当输入循环处理。
+    if !is_user_message(&msg) {
+        return None;
+    }
+
     let is_text_message = msg.item_list.first().map(|i| i.item_type) == Some(1);
 
     let text = if is_text_message {
@@ -1687,10 +1966,39 @@ fn convert_message(msg: WeixinMessage) -> Option<InboundMessage> {
                     duration: None,
                 }]
             }),
+            // W4: 语音（item_type=3）与视频（item_type=5）此前 media 恒为 None，
+            // 因为 voice_item/video_item 字段未定义被 serde 忽略。补上提取分支。
+            3 => item.voice_item.as_ref().map(|v| {
+                vec![MediaAttachment {
+                    media_type: MediaType::Audio,
+                    url: v.file_url.clone(),
+                    data: None,
+                    mime_type: "audio/amr".to_string(),
+                    filename: None,
+                    // 语音转写文本（如 API 已提供）放入 caption
+                    caption: v.text.clone(),
+                    thumbnail_url: None,
+                    file_size: v.file_size.map(|s| s as u64),
+                    duration: v.play_length.map(|s| s as f64),
+                }]
+            }),
+            5 => item.video_item.as_ref().map(|v| {
+                vec![MediaAttachment {
+                    media_type: MediaType::Video,
+                    url: v.file_url.clone(),
+                    data: None,
+                    mime_type: "video/mp4".to_string(),
+                    filename: v.file_name.clone(),
+                    caption: None,
+                    thumbnail_url: None,
+                    file_size: v.file_size.map(|s| s as u64),
+                    duration: v.play_length.map(|s| s as f64),
+                }]
+            }),
             _ => None,
         });
 
-    let msg_id = msg.message_id.map(|id| id.to_string()).unwrap_or_default();
+    let msg_id = msg.message_id.clone().unwrap_or_default();
     // 修复：群聊时使用 group_id 作为 chat_id
     let chat_id = if is_group {
         msg.group_id.clone()
@@ -1745,10 +2053,12 @@ fn convert_message(msg: WeixinMessage) -> Option<InboundMessage> {
         reply_to: None,
         mentions: None,
         mentioned: None,
+        // W2: 不把 context_token 写入 metadata —— 它是 iLink 回复所需的实时会话凭据，
+        // 写进 metadata 会随消息历史 API / raw_payload 泄漏。token 由 context_tokens
+        // 映射单独管理（peer_id → 令牌条目）。
         metadata: Some(
             serde_json::to_string(&serde_json::json!({
                 "session_id": msg.session_id,
-                "context_token": msg.context_token,
             }))
             .unwrap_or_default(),
         ),
@@ -1851,7 +2161,7 @@ mod tests {
     #[test]
     fn test_convert_text_message() {
         let msg = WeixinMessage {
-            message_id: Some(12345),
+            message_id: Some("12345".to_string()),
             from_user_id: "user@im.wechat".to_string(),
             to_user_id: "bot@im.wechat".to_string(),
             message_type: 1,
@@ -1866,6 +2176,8 @@ mod tests {
                 }),
                 image_item: None,
                 file_item: None,
+                voice_item: None,
+                video_item: None,
             }],
         };
 
@@ -1882,15 +2194,20 @@ mod tests {
             meta.get("session_id").and_then(|v| v.as_str()),
             Some("session_abc")
         );
+        // W2: context_token 不得写入 metadata（会话凭据泄漏）
+        assert!(
+            meta.get("context_token").is_none(),
+            "context_token must not leak into metadata"
+        );
     }
 
     #[test]
     fn test_convert_image_message() {
         let msg = WeixinMessage {
-            message_id: Some(67890),
+            message_id: Some("67890".to_string()),
             from_user_id: "user@im.wechat".to_string(),
             to_user_id: "bot@im.wechat".to_string(),
-            message_type: 2,
+            message_type: 1,
             create_time_ms: 1700000000000,
             session_id: "sess2".to_string(),
             group_id: "".to_string(),
@@ -1908,6 +2225,8 @@ mod tests {
                     width: None,
                 }),
                 file_item: None,
+                voice_item: None,
+                video_item: None,
             }],
         };
 
@@ -1926,10 +2245,10 @@ mod tests {
     #[test]
     fn test_convert_file_message() {
         let msg = WeixinMessage {
-            message_id: Some(111),
+            message_id: Some("111".to_string()),
             from_user_id: "user@im.wechat".to_string(),
             to_user_id: "bot@im.wechat".to_string(),
-            message_type: 4,
+            message_type: 1,
             create_time_ms: 1700000000000,
             session_id: "".to_string(),
             group_id: "".to_string(),
@@ -1945,6 +2264,8 @@ mod tests {
                     aes_key: None,
                     file_url: Some("https://cdn.url/file".to_string()),
                 }),
+                voice_item: None,
+                video_item: None,
             }],
         };
 
@@ -1964,7 +2285,7 @@ mod tests {
     #[test]
     fn test_convert_group_message() {
         let msg = WeixinMessage {
-            message_id: Some(222),
+            message_id: Some("222".to_string()),
             from_user_id: "member@im.wechat".to_string(),
             to_user_id: "bot@im.wechat".to_string(),
             message_type: 1,
@@ -1979,6 +2300,8 @@ mod tests {
                 }),
                 image_item: None,
                 file_item: None,
+                voice_item: None,
+                video_item: None,
             }],
         };
 
@@ -2079,7 +2402,7 @@ mod tests {
     #[test]
     fn test_convert_unknown_message_type() {
         let msg = WeixinMessage {
-            message_id: Some(1),
+            message_id: Some("1".to_string()),
             from_user_id: "u@im.wx".to_string(),
             to_user_id: "b@im.bot".to_string(),
             message_type: 99,
@@ -2089,9 +2412,11 @@ mod tests {
             context_token: None,
             item_list: vec![],
         };
-        let inbound = convert_message(msg).unwrap();
-        // 未知消息类型：非文本，text 应为 None
-        assert!(inbound.text.is_none());
+        // W1: 非用户消息（BOT/自身回显，message_type != 1/0）应被过滤，不发布为 inbound
+        assert!(
+            convert_message(msg).is_none(),
+            "non-USER message should be filtered out"
+        );
     }
 
     #[test]
@@ -2111,6 +2436,114 @@ mod tests {
         assert_eq!(inbound.id, "");
         // 空 item_list 视为非文本消息，text 应为 None
         assert!(inbound.text.is_none());
+    }
+
+    /// W1: message_type 缺失（serde default = 0）时应保持容错，不误过滤
+    #[test]
+    fn test_convert_missing_message_type_tolerated() {
+        let msg = WeixinMessage {
+            message_id: Some("3".to_string()),
+            from_user_id: "u@im.wx".to_string(),
+            to_user_id: "b@im.bot".to_string(),
+            message_type: 0,
+            create_time_ms: 3000,
+            session_id: "".to_string(),
+            group_id: "".to_string(),
+            context_token: None,
+            item_list: vec![WeixinMessageItem {
+                item_type: 1,
+                text_item: Some(WeixinTextItem {
+                    text: "缺字段容错".to_string(),
+                }),
+                image_item: None,
+                file_item: None,
+                voice_item: None,
+                video_item: None,
+            }],
+        };
+        let inbound = convert_message(msg).expect("message_type=0 should be tolerated");
+        assert_eq!(inbound.text.as_deref(), Some("缺字段容错"));
+    }
+
+    /// W4: 入站语音（item_type=3）应提取出 Audio media，不再被掏空
+    #[test]
+    fn test_convert_voice_message_media() {
+        let msg = WeixinMessage {
+            message_id: Some("4".to_string()),
+            from_user_id: "u@im.wx".to_string(),
+            to_user_id: "b@im.bot".to_string(),
+            message_type: 1,
+            create_time_ms: 4000,
+            session_id: "".to_string(),
+            group_id: "".to_string(),
+            context_token: None,
+            item_list: vec![WeixinMessageItem {
+                item_type: 3,
+                text_item: None,
+                image_item: None,
+                file_item: None,
+                voice_item: Some(WeixinVoiceItem {
+                    md5sum: None,
+                    file_size: Some(4096),
+                    file_url: Some("https://cdn.url/voice.amr".to_string()),
+                    aes_key: None,
+                    play_length: Some(5),
+                    text: Some("语音转写".to_string()),
+                }),
+                video_item: None,
+            }],
+        };
+        let inbound = convert_message(msg).unwrap();
+        let media = inbound.media.as_ref().expect("voice should produce media");
+        assert!(
+            matches!(media[0].media_type, MediaType::Audio),
+            "expected Audio media, got {:?}",
+            media[0].media_type
+        );
+        assert_eq!(media[0].file_size, Some(4096));
+        // 语音转写文本放入 caption
+        assert_eq!(media[0].caption.as_deref(), Some("语音转写"));
+    }
+
+    /// W4: 入站视频（item_type=5）应提取出 Video media
+    #[test]
+    fn test_convert_video_message_media() {
+        let msg = WeixinMessage {
+            message_id: Some("5".to_string()),
+            from_user_id: "u@im.wx".to_string(),
+            to_user_id: "b@im.bot".to_string(),
+            message_type: 1,
+            create_time_ms: 5000,
+            session_id: "".to_string(),
+            group_id: "".to_string(),
+            context_token: None,
+            item_list: vec![WeixinMessageItem {
+                item_type: 5,
+                text_item: None,
+                image_item: None,
+                file_item: None,
+                voice_item: None,
+                video_item: Some(WeixinVideoItem {
+                    md5sum: None,
+                    file_size: Some(8192),
+                    file_name: Some("clip.mp4".to_string()),
+                    file_url: Some("https://cdn.url/clip.mp4".to_string()),
+                    aes_key: None,
+                    video_size: Some(8192),
+                    play_length: Some(10),
+                    height: None,
+                    width: None,
+                }),
+            }],
+        };
+        let inbound = convert_message(msg).unwrap();
+        let media = inbound.media.as_ref().expect("video should produce media");
+        assert!(
+            matches!(media[0].media_type, MediaType::Video),
+            "expected Video media, got {:?}",
+            media[0].media_type
+        );
+        assert_eq!(media[0].filename.as_deref(), Some("clip.mp4"));
     }
 
     #[test]
@@ -2166,6 +2599,131 @@ mod tests {
         assert!(resp.msgs.is_empty());
         assert_eq!(resp.get_updates_buf.as_deref(), Some("CgkI"));
         assert_eq!(resp.sync_buf.as_deref(), Some("CAAY"));
+    }
+
+    /// W6: getupdates 响应使用 ret 字段（{"ret":0,"msgs":...}）时必须正确解析
+    #[test]
+    fn test_deserialize_getupdates_with_ret_field() {
+        let json = r#"{"ret":0,"msgs":[],"get_updates_buf":"CgkI"}"#;
+        let resp: GetUpdatesResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.ret, 0);
+        assert_eq!(resp.errcode, 0);
+        // ret 与 errcode 双字段容错：任一非 0 都应进入错误分支
+        let json2 = r#"{"ret":-14,"errmsg":"session timeout"}"#;
+        let resp2: GetUpdatesResponse = serde_json::from_str(json2).unwrap();
+        assert_eq!(resp2.ret, -14);
+    }
+
+    /// W10: 入站 message_id 为字符串时也应兼容（flexible 反序列化）
+    #[test]
+    fn test_deserialize_message_id_as_string() {
+        let json = r#"{
+            "message_id": "7472251148840494728",
+            "from_user_id": "user@im.wechat",
+            "to_user_id": "bot@im.bot",
+            "message_type": 1,
+            "create_time_ms": 1000,
+            "item_list": []
+        }"#;
+        let msg: WeixinMessage = serde_json::from_str(json).unwrap();
+        assert_eq!(msg.message_id.as_deref(), Some("7472251148840494728"));
+    }
+
+    /// W10: 入站 message_id 为整数时也应兼容
+    #[test]
+    fn test_deserialize_message_id_as_number() {
+        let json = r#"{
+            "message_id": 7472251148840494728,
+            "from_user_id": "user@im.wechat",
+            "to_user_id": "bot@im.bot",
+            "message_type": 1,
+            "create_time_ms": 1000,
+            "item_list": []
+        }"#;
+        let msg: WeixinMessage = serde_json::from_str(json).unwrap();
+        assert_eq!(msg.message_id.as_deref(), Some("7472251148840494728"));
+    }
+
+    /// W8: 整批解析失败时回退逐条容错解析，保留有效消息、跳过畸形条目
+    #[test]
+    fn test_parse_getupdates_lenient_keeps_valid_msgs() {
+        let json = r#"{
+            "get_updates_buf": "CgkI",
+            "msgs": [
+                {"message_id": 1, "from_user_id": "a@im.wx", "message_type": 1, "item_list": [{"type": 1, "text_item": {"text": "ok"}}]},
+                {"message_id": "bad", "message_type": "not-a-number", "from_user_id": "broken"},
+                {"message_id": 3, "from_user_id": "c@im.wx", "message_type": 1, "item_list": [{"type": 1, "text_item": {"text": "hi"}}]}
+            ]
+        }"#;
+        let resp = parse_getupdates_lenient(json);
+        // 保留 2 条有效消息，跳过 1 条畸形
+        assert_eq!(resp.msgs.len(), 2);
+        assert_eq!(resp.get_updates_buf.as_deref(), Some("CgkI"));
+    }
+
+    /// W8: 整个响应非 JSON 时返回空结果（调用方按无消息处理，游标不前进但长轮询不崩）
+    #[test]
+    fn test_parse_getupdates_lenient_non_json() {
+        let resp = parse_getupdates_lenient("not json at all");
+        assert!(resp.msgs.is_empty());
+        assert_eq!(resp.errcode, 0);
+        assert_eq!(resp.ret, 0);
+    }
+
+    /// W6: -14 出现在 ret 字段时也应判定为会话过期
+    #[test]
+    fn test_poll_ret_minus14_detected_as_session_expired() {
+        let json = r#"{"ret":-14,"errmsg":"session timeout"}"#;
+        let resp: GetUpdatesResponse = serde_json::from_str(json).unwrap();
+        let api_code = if resp.errcode != 0 {
+            resp.errcode
+        } else {
+            resp.ret
+        };
+        assert_eq!(api_code, -14);
+    }
+
+    /// W7: context_tokens 容量上限生效（超限逐出捕获时间最早的条目）
+    #[test]
+    fn test_insert_context_token_caps_at_limit() {
+        let mut tokens: HashMap<String, ContextTokenEntry> = HashMap::new();
+        // 先填满上限：peer0 的 captured_at 最小（最旧）
+        for i in 0..CONTEXT_TOKENS_MAX {
+            tokens.insert(
+                format!("peer{}", i),
+                ContextTokenEntry {
+                    token: format!("tok{}", i),
+                    captured_at: i as i64,
+                },
+            );
+        }
+        // 插入第 501 条 → 超限，最旧的 peer0 应被逐出
+        insert_context_token(&mut tokens, "overflow".to_string(), "tok-ovf".to_string());
+        assert!(tokens.len() <= CONTEXT_TOKENS_MAX, "map must stay bounded");
+        assert!(
+            !tokens.contains_key("peer0"),
+            "oldest entry should be evicted"
+        );
+        assert!(
+            tokens.contains_key("overflow"),
+            "new entry should be present"
+        );
+    }
+
+    /// W3: context_token 过期检测（超过 CONTEXT_TOKEN_TTL_MS 判定过期）
+    #[test]
+    fn test_context_token_stale_detection() {
+        let now = chrono::Utc::now().timestamp_millis();
+        let fresh = ContextTokenEntry {
+            token: "t".to_string(),
+            captured_at: now,
+        };
+        assert!(!context_token_stale(&fresh));
+        let stale = ContextTokenEntry {
+            token: "t".to_string(),
+            captured_at: now - CONTEXT_TOKEN_TTL_MS - 1,
+        };
+        assert!(context_token_stale(&stale));
     }
 
     #[test]

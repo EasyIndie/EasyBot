@@ -5,6 +5,8 @@
 use easybot_core::config::resolve_home;
 use easybot_core::types::error::GatewayError;
 use easybot_core::types::message::MediaAttachment;
+use std::path::PathBuf;
+use std::sync::OnceLock;
 use std::time::Duration;
 
 /// 凭据文件路径（位于 EasyBot 配置根目录下）
@@ -19,17 +21,53 @@ pub(crate) struct WeChatCredentials {
     pub(crate) baseurl: String,
 }
 
-/// EasyBot 配置根目录（与全局解析一致：EASYBOT_HOME > ~/.easybot）
+/// 显式注入的配置根目录（替代 --dir / EASYBOT_HOME 解析）。
+/// 由宿主/测试主动调用；普通运行无需调用，`config_root()` 会自动识别 CLI `--dir`。
+static CONFIG_ROOT_OVERRIDE: OnceLock<PathBuf> = OnceLock::new();
+
+/// 注入 EasyBot 配置根目录（优先级最高）。
+/// 用于让外部宿主（或测试）精确控制微信凭据/状态的落盘位置。
+#[allow(dead_code)]
+pub(crate) fn set_config_root_override(root: PathBuf) {
+    let _ = CONFIG_ROOT_OVERRIDE.set(root);
+}
+
+/// 从进程命令行识别 `--dir` 覆盖（与 bin 的 Cli.dir 解析一致）。
+/// 容器/服务场景通常不传 `--dir`，此时返回 None 交由 `resolve_home` 处理。
+fn detect_cli_dir_override() -> Option<PathBuf> {
+    let mut args = std::env::args().skip(1);
+    while let Some(arg) = args.next() {
+        if arg == "--dir" {
+            return args.next().map(PathBuf::from);
+        }
+        if let Some(v) = arg.strip_prefix("--dir=") {
+            return Some(PathBuf::from(v));
+        }
+    }
+    None
+}
+
+/// EasyBot 配置根目录（与全局解析一致：`--dir` > EASYBOT_HOME > ~/.easybot）。
 ///
 /// 容器部署中 easybot 用户无 home 目录（HOME=/home/easybot 不存在），
 /// 若直接用 `dirs::home_dir()` 会写不进凭据。必须优先 EASYBOT_HOME
 /// （容器内为 /var/lib/easybot 挂载卷），才能持久化凭据/数据。
-pub(crate) fn config_root() -> std::path::PathBuf {
+///
+/// 修复：原先固定 `resolve_home(None)` 会忽略 CLI `--dir` 覆盖，导致
+/// 微信凭据/状态落到错误位置、跨重启丢失。这里先查显式注入，再识别
+/// `--dir`，最后回退 `EASYBOT_HOME` / 平台默认。
+pub(crate) fn config_root() -> PathBuf {
+    if let Some(root) = CONFIG_ROOT_OVERRIDE.get() {
+        return root.clone();
+    }
+    if let Some(dir) = detect_cli_dir_override() {
+        return dir;
+    }
     resolve_home(None)
 }
 
 /// 获取凭据文件路径
-pub(crate) fn credential_path() -> Option<std::path::PathBuf> {
+pub(crate) fn credential_path() -> Option<PathBuf> {
     Some(config_root().join(CREDENTIALS_FILE))
 }
 
@@ -113,17 +151,34 @@ pub(crate) fn atomic_write_json<T: serde::Serialize>(
 }
 
 /// 微信数据目录（上下文令牌 / 长轮询游标等，位于配置根目录下）
-fn wechat_data_dir() -> Option<std::path::PathBuf> {
+fn wechat_data_dir() -> Option<PathBuf> {
     Some(config_root().join("wechat"))
 }
 
 /// 每条聊天的上下文令牌存储路径
-fn context_tokens_path() -> Option<std::path::PathBuf> {
+fn context_tokens_path() -> Option<PathBuf> {
     wechat_data_dir().map(|d| d.join("context_tokens.json"))
 }
 
+/// 上下文令牌条目（含捕获时间戳，用于过期检测与容量逐出）
+///
+/// iLink 的 context_token 有效期约 60-160s，必须记录捕获时间，
+/// 发送前判断是否已过期，避免长任务后回复静默丢失。
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub(crate) struct ContextTokenEntry {
+    /// iLink 回复所需的会话凭据
+    pub(crate) token: String,
+    /// 捕获时间戳（Unix 毫秒）。0 表示未知（旧格式迁移时填充为当前时间）。
+    #[serde(default)]
+    pub(crate) captured_at: i64,
+}
+
 /// 从磁盘加载所有聊天的上下文令牌
-pub(crate) fn load_context_tokens() -> std::collections::HashMap<String, String> {
+///
+/// 兼容新旧两种格式：
+/// - 新格式：`{"peer": {"token": "...", "captured_at": 123}}`
+/// - 旧格式（v0.0.x）：`{"peer": "token字符串"}`，迁移时补齐当前时间戳
+pub(crate) fn load_context_tokens() -> std::collections::HashMap<String, ContextTokenEntry> {
     let path = match context_tokens_path() {
         Some(p) => p,
         None => return std::collections::HashMap::new(),
@@ -131,20 +186,52 @@ pub(crate) fn load_context_tokens() -> std::collections::HashMap<String, String>
     if !path.exists() {
         return std::collections::HashMap::new();
     }
-    match std::fs::read_to_string(&path) {
-        Ok(s) => serde_json::from_str(&s).unwrap_or_else(|e| {
-            tracing::warn!("解析 context_tokens.json 失败 ({}), 使用空映射", e);
-            std::collections::HashMap::new()
-        }),
+    let s = match std::fs::read_to_string(&path) {
+        Ok(s) => s,
         Err(e) => {
             tracing::warn!("读取 context_tokens.json 失败: {}", e);
-            std::collections::HashMap::new()
+            return std::collections::HashMap::new();
         }
+    };
+    // 新格式：peer → {token, captured_at}
+    if let Ok(mut map) =
+        serde_json::from_str::<std::collections::HashMap<String, ContextTokenEntry>>(&s)
+    {
+        let now = chrono::Utc::now().timestamp_millis();
+        for entry in map.values_mut() {
+            if entry.captured_at == 0 {
+                // 未知捕获时间：乐观视为刚捕获，让发送路径的 -14 降级兜底
+                entry.captured_at = now;
+            }
+        }
+        return map;
     }
+    // 旧格式：peer → "token 字符串"
+    if let Ok(legacy) = serde_json::from_str::<std::collections::HashMap<String, String>>(&s) {
+        let now = chrono::Utc::now().timestamp_millis();
+        tracing::info!(
+            "检测到旧版 context_tokens 格式，迁移为带时间戳格式 ({} 条)",
+            legacy.len()
+        );
+        return legacy
+            .into_iter()
+            .map(|(k, token)| {
+                (
+                    k,
+                    ContextTokenEntry {
+                        token,
+                        captured_at: now,
+                    },
+                )
+            })
+            .collect();
+    }
+    tracing::warn!("解析 context_tokens.json 失败, 使用空映射");
+    std::collections::HashMap::new()
 }
 
 /// 保存所有聊天的上下文令牌到磁盘
-pub(crate) fn save_context_tokens(tokens: &std::collections::HashMap<String, String>) {
+pub(crate) fn save_context_tokens(tokens: &std::collections::HashMap<String, ContextTokenEntry>) {
     let path = match context_tokens_path() {
         Some(p) => p,
         None => return,
@@ -155,7 +242,7 @@ pub(crate) fn save_context_tokens(tokens: &std::collections::HashMap<String, Str
 }
 
 /// 长轮询游标文件路径
-fn sync_buf_path() -> Option<std::path::PathBuf> {
+fn sync_buf_path() -> Option<PathBuf> {
     wechat_data_dir().map(|d| d.join("sync_buf.txt"))
 }
 
@@ -340,5 +427,55 @@ mod tests {
         assert_eq!(wechat_data_dir(), Some(root.join("wechat")));
         // 与全局解析完全一致（resolve_home 是唯一事实来源）
         assert_eq!(root, resolve_home(None));
+    }
+
+    /// CLI `--dir` 覆盖必须生效（W9）：config_root() 优先于 EASYBOT_HOME。
+    #[test]
+    fn test_config_root_detect_cli_dir() {
+        // --dir=value 形式
+        assert_eq!(
+            detect_cli_dir_override_from(vec!["easybot", "--dir=/tmp/abc"]),
+            Some(PathBuf::from("/tmp/abc"))
+        );
+        // --dir value 形式
+        assert_eq!(
+            detect_cli_dir_override_from(vec!["easybot", "--dir", "/tmp/def"]),
+            Some(PathBuf::from("/tmp/def"))
+        );
+        // 未传 --dir
+        assert_eq!(detect_cli_dir_override_from(vec!["easybot"]), None);
+    }
+
+    /// 用参数化 argv 调用 detect_cli_dir_override（避免污染真实进程 argv）。
+    fn detect_cli_dir_override_from(args: Vec<&str>) -> Option<PathBuf> {
+        let mut iter = args.into_iter().skip(1);
+        while let Some(arg) = iter.next() {
+            if arg == "--dir" {
+                return iter.next().map(PathBuf::from);
+            }
+            if let Some(v) = arg.strip_prefix("--dir=") {
+                return Some(PathBuf::from(v));
+            }
+        }
+        None
+    }
+
+    /// 新格式 context_tokens 序列化/反序列化往返（W3）。
+    #[test]
+    fn test_context_token_entry_roundtrip() {
+        let mut map: std::collections::HashMap<String, ContextTokenEntry> =
+            std::collections::HashMap::new();
+        map.insert(
+            "user@im.wechat".to_string(),
+            ContextTokenEntry {
+                token: "tok-123".to_string(),
+                captured_at: 1_700_000_000_000,
+            },
+        );
+        let json = serde_json::to_string(&map).unwrap();
+        let back: std::collections::HashMap<String, ContextTokenEntry> =
+            serde_json::from_str(&json).unwrap();
+        assert_eq!(back["user@im.wechat"].token, "tok-123");
+        assert_eq!(back["user@im.wechat"].captured_at, 1_700_000_000_000);
     }
 }

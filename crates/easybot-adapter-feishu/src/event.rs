@@ -91,6 +91,41 @@ fn detect_feishu_msg_type(
             )
         }
         "sticker" => (MessageType::Sticker, None),
+        // 视频：media content 为 {"file_key": ..., "image_key": <封面可选>}
+        "media" => {
+            let parsed = serde_json::from_str::<serde_json::Value>(content).ok();
+            let file_key = parsed
+                .as_ref()
+                .and_then(|v| v.get("file_key").and_then(|k| k.as_str()).map(String::from));
+            let thumbnail_url = parsed.as_ref().and_then(|v| {
+                v.get("image_key")
+                    .and_then(|k| k.as_str())
+                    .map(String::from)
+            });
+            (
+                MessageType::Video,
+                Some(vec![MediaAttachment {
+                    media_type: MediaType::Video,
+                    url: file_key,
+                    data: None,
+                    mime_type: "video/mp4".to_string(),
+                    filename: None,
+                    caption: None,
+                    thumbnail_url,
+                    file_size: None,
+                    duration: None,
+                }]),
+            )
+        }
+        // 富文本：post content 为多语言结构 {"zh-CN": {"title": ..., "content": [...]}}。
+        // 原始 JSON 会作为 text 保留在 handle_message_receive 中（非 text 分支）。
+        "post" => (MessageType::RichText, None),
+        // 消息卡片
+        "interactive" => (MessageType::Interactive, None),
+        // 分享群/用户名片
+        "share_chat" => (MessageType::Share, None),
+        // 纯文本（显式匹配，避免落入默认分支）
+        "text" => (MessageType::Text, None),
         _ => (MessageType::Text, None),
     }
 }
@@ -278,6 +313,86 @@ mod tests {
         let msg: InboundMessage = serde_json::from_value(event.data).unwrap();
         // 非 text 消息，content 原样保留
         assert_eq!(msg.text.as_deref(), Some(r#"{"image_key":"img_abc"}"#));
+    }
+
+    #[tokio::test]
+    async fn test_handle_video_message() {
+        let bus = EventBus::new();
+        let mut rx = bus.subscribe("message.inbound");
+
+        let data = make_event_data(
+            "group",
+            "media",
+            r#"{"file_key":"file_v3_abc","image_key":"img_v3_cover"}"#,
+        );
+        handle_message_receive(data, &bus, "bot_id", None).await;
+
+        let event = tokio::time::timeout(std::time::Duration::from_secs(1), rx.recv())
+            .await
+            .expect("event should be published")
+            .expect("no error");
+
+        let msg: InboundMessage = serde_json::from_value(event.data).unwrap();
+        assert_eq!(msg.msg_type, MessageType::Video);
+        let media = msg.media.expect("video should carry a media attachment");
+        assert_eq!(media[0].media_type, MediaType::Video);
+        assert_eq!(media[0].url.as_deref(), Some("file_v3_abc"));
+        assert_eq!(media[0].thumbnail_url.as_deref(), Some("img_v3_cover"));
+    }
+
+    #[tokio::test]
+    async fn test_handle_post_message_is_richtext() {
+        let bus = EventBus::new();
+        let mut rx = bus.subscribe("message.inbound");
+
+        let data = make_event_data(
+            "group",
+            "post",
+            r#"{"zh-CN":{"title":"标题","content":[[{"tag":"text","text":"正文"}]]}}"#,
+        );
+        handle_message_receive(data, &bus, "bot_id", None).await;
+
+        let event = tokio::time::timeout(std::time::Duration::from_secs(1), rx.recv())
+            .await
+            .expect("event should be published")
+            .expect("no error");
+
+        let msg: InboundMessage = serde_json::from_value(event.data).unwrap();
+        assert_eq!(msg.msg_type, MessageType::RichText);
+    }
+
+    #[tokio::test]
+    async fn test_handle_interactive_message() {
+        let bus = EventBus::new();
+        let mut rx = bus.subscribe("message.inbound");
+
+        let data = make_event_data("group", "interactive", r#"{"type":"card"}"#);
+        handle_message_receive(data, &bus, "bot_id", None).await;
+
+        let event = tokio::time::timeout(std::time::Duration::from_secs(1), rx.recv())
+            .await
+            .expect("event should be published")
+            .expect("no error");
+
+        let msg: InboundMessage = serde_json::from_value(event.data).unwrap();
+        assert_eq!(msg.msg_type, MessageType::Interactive);
+    }
+
+    #[tokio::test]
+    async fn test_handle_share_chat_message() {
+        let bus = EventBus::new();
+        let mut rx = bus.subscribe("message.inbound");
+
+        let data = make_event_data("group", "share_chat", r#"{"chat_id":"oc_xxx"}"#);
+        handle_message_receive(data, &bus, "bot_id", None).await;
+
+        let event = tokio::time::timeout(std::time::Duration::from_secs(1), rx.recv())
+            .await
+            .expect("event should be published")
+            .expect("no error");
+
+        let msg: InboundMessage = serde_json::from_value(event.data).unwrap();
+        assert_eq!(msg.msg_type, MessageType::Share);
     }
 
     #[tokio::test]

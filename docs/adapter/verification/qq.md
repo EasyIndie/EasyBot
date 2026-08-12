@@ -9,10 +9,9 @@
 | `test_create_adapter` | 单元测试 | ❌ | ❌ |
 | `test_capabilities` | 单元测试 | ❌ | ❌ |
 | `test_status_summary` | 单元测试 | ❌ | ❌ |
-| `test_bot_token_uninitialized` | 单元测试 | ❌ | ❌ |
 | `test_token_store_new_needs_refresh` | 单元测试 | ❌ | ❌ |
-| `test_token_store_get_uninitialized_returns_err` | 单元测试 | ❌ | ❌ |
 | `test_token_store_clone` | 单元测试 | ❌ | ❌ |
+| `auth.rs` token 判定单测（401/11244/11242/无关错误） | 单元测试 | ❌ | ❌ |
 | `test_init_missing_config` | 单元测试 | ❌ | ❌ |
 | `test_init_valid_config` | 单元测试 | ❌ | ❌ |
 | `test_qq_user_deserialize_with_bot_field` | 类型反序列化 | ❌ | ❌ |
@@ -47,7 +46,7 @@
 | `test_disconnect_idempotent` | 单元测试 | ❌ | ❌ |
 | `test_double_disconnect` | 单元测试 | ❌ | ❌ |
 | `test_get_chat_info_uninitialized` | 单元测试 | ❌ | ❌ |
-| 10 个 `send_mock` 测试 | 集成测试 | ✅ (mock) | ❌ |
+| 20 个 `send_mock` 测试（含 11244/11242 刷新重试回归） | 集成测试 | ✅ (mock) | ❌ |
 
 ## 前置条件
 
@@ -79,7 +78,7 @@
      ```bash
      curl -s https://api.ipify.org
      ```
-   - ⚠️ 如果本机有代理工具（Surge/Clash 等），需在代理工具中也配置 `api.sgroup.qq.com` 和 `bots.qq.com` 走直连（DIRECT），或添加代理的出口 IP 到白名单
+   - ⚠️ 如果本机有代理工具（Surge/Clash 等），需在代理工具中也配置 `api.bot.qq.com` 和 `bots.qq.com` 走直连（DIRECT），或添加代理的出口 IP 到白名单
 
 5. **沙箱环境配置**（测试用）
    - 左侧菜单 → **沙箱配置**
@@ -121,11 +120,14 @@ cargo run -- --debug
 | 问题 | 原因 | 解决方法 |
 |------|------|---------|
 | `接口访问源IP不在白名单` | 服务器 IP 未在 QQ 平台白名单中 | 在"开发设置→IP白名单"中添加本机公网 IP |
-| DNS 解析到 `198.18.0.x` | 本机代理工具（Surge/Clash）拦截 DNS | 代理工具中配置 `api.sgroup.qq.com` 走 DIRECT，或临时关闭代理 |
+| DNS 解析到 `198.18.0.x` | 本机代理工具（Surge/Clash）拦截 DNS | 代理工具中配置 `api.bot.qq.com` 走 DIRECT，或临时关闭代理 |
 | `主动消息失败, 无权限` | QQ 限制机器人主动发消息 | 必须用 `msg_id` 被动回复（回复用户 5 分钟内收到的消息） |
 | `频道不存在` | 群消息用了 `/channels/` 而非 `/groups/` | 已自动处理（先试 channel 端点，失败则降级到 group 端点） |
 | `缺少 channel_id` 字段 | 群消息格式与频道消息不同 | 已修复（代码根据事件类型使用对应的解析结构） |
 | `不支持的调用` | 用了旧版 `/groups/` 而非 `/v2/groups/` | 已修复（群消息发送使用 `/v2/groups/{openid}/messages`） |
+| `token invalid or expired (11244)` | 服务端提前失效 token（HTTP 500 或偶发 200） | 自动强制刷新 token 并重试一次；若仍失败，检查 `QQ_APP_ID` / `QQ_CLIENT_SECRET` |
+| 业务码 `11242` | 校验 token 系统错误（官方：重试一次即可） | 自动强制刷新 token 并重试一次 |
+| `getAppAccessToken` 限流 `100001` | 鉴权端点限流 | 分类为瞬态错误，健康监控退避重试，**不会**永久停用 |
 
 ### 获取测试用的频道/群 ID
 
@@ -182,7 +184,7 @@ curl -s -H "Authorization: Bearer $API_KEY" \
 | TLS 修正 | 使用 `native-tls` 替代 `rustls + webpki-roots`（GlobalSign 新 CA 不在 webpki-roots 中） | `Cargo.toml`, `lib.rs` |
 | Gateway WebSocket 连接 | 手动建立 DNS→TCP→TLS→WebSocket 连接，支持 `native-tls` | `lib.rs` |
 | 配置更新 | `token` 字段现在存储 `clientSecret`（AppSecret），env var 改为 `QQ_CLIENT_SECRET` | `gateway.local.yaml` |
-| 移除 3500s 定时 token 刷新 | 仅依赖 401 自动重试，移除冗余的定时刷新 | `lib.rs` |
+| Token 刷新收敛 | token 缓存 + 单飞行刷新 + "被拒→强制刷新→重试一次" 抽取到 core `CachedTokenStore`/`send_with_token_retry`；保留 3500s 定时刷新，错误时按需强制刷新 | `lib.rs`, `auth.rs`, `gateway.rs` |
 
 ### 验证中发现并修复的问题
 
@@ -254,12 +256,12 @@ curl -s -X POST http://127.0.0.1:8080/api/v1/messages/send \
 
 | 属性 | 值 |
 |------|-----|
-| API 地址 | `https://api.sgroup.qq.com` |
+| API 地址 | `https://api.bot.qq.com` |
 | 鉴权地址 | `https://bots.qq.com/app/getAppAccessToken` |
 | REST API 鉴权 | `Authorization: QQBot {access_token}` |
 | Gateway Identiy | `"token": "QQBot {access_token}"` |
-| Token 有效期 | 7200 秒，依赖 401 自动重试（已移除 3500s 定时刷新） |
-| 连接方式 | Gateway WebSocket (`wss://api.sgroup.qq.com/websocket`) |
+| Token 有效期 | 7200 秒；3500s 定时刷新 + 最后 60s 临界自动刷新（core 单飞行），被拒（401/11244/11242）→ 强制刷新重试一次 |
+| 连接方式 | Gateway WebSocket (`wss://api.bot.qq.com/websocket`) |
 | TLS 方案 | `native-tls`（系统 CA 证书） |
 | 支持的消息类型 | Text (0), Image (2), Markdown |
 | 支持的能力 | Text, Image, Markdown, Interactive, Group, Thread, MessageEdit, MessageDelete, ChatList |
@@ -267,7 +269,7 @@ curl -s -X POST http://127.0.0.1:8080/api/v1/messages/send \
 | 入站事件类型 | `AT_MESSAGE_CREATE` / `GROUP_AT_MESSAGE_CREATE` / `GROUP_MESSAGE_CREATE` (2026 新版) / `C2C_MESSAGE_CREATE` |
 | 新字段 `mentioned` | 频道/旧版群@ → `Some(true)`, 新版全量群 → `Some(bool)`, C2C → `None` |
 | 自动重连 | ✅ 外层循环自动重连（同时刷新 token） |
-| Token 刷新 | ✅ 每 3500s 定时刷新已移除，仅依赖 401 自动重试 |
+| Token 刷新 | ✅ 3500s 定时刷新 + 60s 临界自动刷新（core 单飞行）；401/11244/11242 → 强制刷新重试一次 |
 
 ## 后续改进建议
 

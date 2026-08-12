@@ -148,7 +148,8 @@ pub struct QqGroupMessageCreateEvent {
 /// @提及信息
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct QqMention {
-    /// 是否 @了当前机器人
+    /// 是否 @了当前机器人（群内 @他人时字段缺失，缺失按 false 处理）
+    #[serde(default)]
     pub is_you: bool,
     /// 提及范围（single / all / here）
     #[serde(default)]
@@ -316,12 +317,31 @@ pub struct QqFileUploadResponse {
 // ── 意图 (Intents) ──
 
 pub mod intents {
-    /// 群聊消息（2026 起涵盖 GROUP_AT_MESSAGE_CREATE 和 GROUP_MESSAGE_CREATE）
-    pub const GROUP_AT_MESSAGE: u32 = 1 << 25;
-    /// 私聊消息
-    pub const C2C_MESSAGE: u32 = 1 << 30;
-    /// 频道消息
-    pub const AT_MESSAGE: u32 = 1 << 9;
+    /// 群聊 + C2C 单聊事件（官方 `GROUP_AND_C2C_EVENT`）
+    ///
+    /// 单个 intent 同时覆盖群聊与私聊：
+    /// - 群聊：`GROUP_AT_MESSAGE_CREATE`（@机器人）、`GROUP_MESSAGE_CREATE`（全量群消息）
+    /// - 单聊/私聊：`C2C_MESSAGE_CREATE`、`FRIEND_ADD` / `FRIEND_DEL` 等
+    ///
+    /// 官方文档：<https://bot.q.qq.com/wiki/develop/api-v2/dev-prepare/interface-framework/event-emit.html>
+    pub const GROUP_AND_C2C_EVENT: u32 = 1 << 25;
+    /// 频道消息（私域机器人专属，`AT_MESSAGE_CREATE`）
+    ///
+    /// 官方文档标注"消息事件，仅私域机器人能够设置此 intents"。
+    pub const GUILD_MESSAGES: u32 = 1 << 9;
+    /// 公域频道消息（公域机器人专属，`AT_MESSAGE_CREATE`）
+    ///
+    /// 与 `GUILD_MESSAGES` 互斥：公域机器人只能订阅此 intent；私域机器人订阅
+    /// 会触发 Identify 失败（4014 → INVALID_SESSION → 无限重连）。
+    pub const PUBLIC_GUILD_MESSAGES: u32 = 1 << 30;
+
+    /// 默认订阅集：群聊/C2C 事件 + 私域频道消息。
+    ///
+    /// 公/私域频道消息 intent 互斥，且运行时无法判定机器人公/私域属性，
+    /// 因此默认订阅覆盖群聊 + 单聊 + 私域频道消息的保守集；
+    /// 公域机器人可通过配置 `extra.intents` 覆盖为
+    /// `PUBLIC_GUILD_MESSAGES | GROUP_AND_C2C_EVENT`。
+    pub const DEFAULT: u32 = GROUP_AND_C2C_EVENT | GUILD_MESSAGES;
 }
 
 #[cfg(test)]
@@ -552,6 +572,33 @@ mod tests {
         let json = serde_json::to_string(&keyboard).unwrap();
         assert!(json.contains(r#""type":0"#)); // action type (URL jump)
         assert!(json.contains(r#""data":"https://example.com""#));
+    }
+
+    #[test]
+    fn test_qq_mention_is_you_defaults_false() {
+        // 群内 @他人时 mentions 项可能不含 is_you 字段 → 缺失按 false 处理，
+        // 否则整个 GROUP_MESSAGE_CREATE 事件解析失败、整条消息被丢弃。
+        let json = r#"{"scope": "single", "username": "someone"}"#;
+        let mention: QqMention = serde_json::from_str(json).unwrap();
+        assert!(!mention.is_you);
+        assert_eq!(mention.scope, Some("single".to_string()));
+
+        let json2 = r#"{"is_you": true}"#;
+        let mention2: QqMention = serde_json::from_str(json2).unwrap();
+        assert!(mention2.is_you);
+    }
+
+    #[test]
+    fn test_intents_default_avoids_guild_domain_conflict() {
+        // C2C 私聊由 1<<25 GROUP_AND_C2C_EVENT 覆盖，1<<30 实为公域频道消息
+        assert_eq!(intents::GROUP_AND_C2C_EVENT, 1 << 25);
+        assert_eq!(intents::PUBLIC_GUILD_MESSAGES, 1 << 30);
+        // 默认订阅集不得同时包含互斥的私域(GUILD_MESSAGES)与公域(PUBLIC_GUILD_MESSAGES)
+        assert_eq!(
+            intents::DEFAULT,
+            intents::GROUP_AND_C2C_EVENT | intents::GUILD_MESSAGES
+        );
+        assert_eq!(intents::DEFAULT & intents::PUBLIC_GUILD_MESSAGES, 0);
     }
 
     #[test]
