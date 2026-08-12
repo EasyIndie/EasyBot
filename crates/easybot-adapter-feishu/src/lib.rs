@@ -18,6 +18,7 @@ use std::time::{Duration, Instant};
 use async_trait::async_trait;
 use easybot_core::bus::EventBus;
 use easybot_core::capabilities;
+use easybot_core::http::{CachedTokenStore, TokenFetcher};
 use easybot_core::types::adapter::*;
 use easybot_core::types::error::GatewayError;
 use easybot_core::types::event::event_types;
@@ -32,19 +33,13 @@ const FEISHU_API: &str = "https://open.feishu.cn/open-apis";
 /// Token 刷新阈值（秒），在过期前提前刷新
 const TOKEN_REFRESH_MARGIN: u64 = 300;
 
-/// 飞书 tenant_access_token 共享存储
+/// 飞书 tenant_access_token 共享存储（`CachedTokenStore` 薄包装）
 ///
-/// 适配器实例和 WebSocket 后台任务共用同一实例，
-/// 避免两套独立的 token 缓存同时刷新浪费 API 调用。
+/// `inner: None` 直到 `connect()` 构建存储（此时冻结 app_id/app_secret）。
+/// 适配器实例和 WebSocket 后台任务共用同一实例，单飞行刷新共享一次鉴权调用。
 #[derive(Clone, Default)]
 struct FeishuTokenStore {
-    inner: Arc<tokio::sync::RwLock<FeishuTokenInner>>,
-}
-
-#[derive(Default)]
-struct FeishuTokenInner {
-    token: Option<String>,
-    expires_at: i64,
+    inner: Option<CachedTokenStore>,
 }
 
 impl FeishuTokenStore {
@@ -52,75 +47,91 @@ impl FeishuTokenStore {
         Self::default()
     }
 
-    /// 获取有效 token，必要时自动刷新
-    async fn get(
-        &self,
-        client: &reqwest::Client,
-        app_id: &str,
-        app_secret: &str,
-        base_url: &str,
-    ) -> Result<String, GatewayError> {
-        let now_ms = chrono::Utc::now().timestamp_millis();
-
-        {
-            let inner = self.inner.read().await;
-            let margin = TOKEN_REFRESH_MARGIN as i64 * 1000;
-            if inner.expires_at > now_ms + margin
-                && let Some(ref token) = inner.token
-            {
-                return Ok(token.clone());
-            }
-        }
-
-        // 需要刷新
-        self.refresh(client, app_id, app_secret, base_url).await
+    /// 返回 `Bearer {token}` 鉴权字符串；缺失/临界时自动刷新（单飞行）。
+    async fn get(&self) -> Result<String, GatewayError> {
+        let store = self.inner.as_ref().ok_or_else(|| {
+            GatewayError::ConfigError(
+                "Feishu token store not initialized (call connect() first)".to_string(),
+            )
+        })?;
+        store.get().await.map(|t| format!("Bearer {t}"))
     }
+}
 
-    /// 刷新 token
-    async fn refresh(
-        &self,
-        client: &reqwest::Client,
-        app_id: &str,
-        app_secret: &str,
-        base_url: &str,
-    ) -> Result<String, GatewayError> {
-        let url = format!("{}/auth/v3/tenant_access_token/internal", base_url);
+/// 从飞书鉴权端点获取 tenant_access_token，返回 `(token, ttl_secs)`。
+///
+/// ★ 错误分类（2026 协议调研）：
+/// - 网络/解析层失败 → 瞬态 `Transient`（重试安全）
+/// - 凭据类错误（鉴权端点只会因 app_id/app_secret 问题返回 token 无效码）→ 永久 `AuthFailed`
+/// - 其他非零 code → 保守按 `Internal` 处理
+async fn feishu_fetch_access_token(
+    client: &reqwest::Client,
+    app_id: &str,
+    app_secret: &str,
+    base_url: &str,
+) -> Result<(String, u64), GatewayError> {
+    let url = format!("{}/auth/v3/tenant_access_token/internal", base_url);
 
-        let resp: FeishuTokenResponse = client
-            .post(&url)
-            .json(&serde_json::json!({
-                "app_id": app_id,
-                "app_secret": app_secret,
-            }))
-            .send()
-            .await
-            // 网络层失败（DNS/超时/拒连）是瞬态错误——健康监控应退避重试。
-            .map_err(|e| GatewayError::Transient(format!("Feishu token refresh failed: {}", e)))?
-            .json()
-            .await
-            .map_err(|e| {
-                GatewayError::Internal(format!("Feishu token refresh parse failed: {}", e))
-            })?;
+    let resp: FeishuTokenResponse = client
+        .post(&url)
+        .json(&serde_json::json!({
+            "app_id": app_id,
+            "app_secret": app_secret,
+        }))
+        .send()
+        .await
+        // 网络层失败（DNS/超时/拒连）是瞬态错误——健康监控应退避重试。
+        .map_err(|e| GatewayError::Transient(format!("Feishu token refresh failed: {}", e)))?
+        .json()
+        .await
+        .map_err(|e| {
+            GatewayError::Transient(format!("Feishu token refresh parse failed: {}", e))
+        })?;
 
-        if resp.code != 0 {
-            return Err(GatewayError::Internal(format!(
-                "Feishu auth failed: {} (code {})",
-                resp.msg.unwrap_or_default(),
-                resp.code
+    if resp.code != 0 {
+        // 鉴权端点返回 token 无效码 = 凭据被拒 → 永久停用（健康监控不应无限重试）。
+        const CREDENTIAL_CODES: &[i64] = &[99991663, 99991664, 99991665, 20013, 20005, 4001];
+        let msg = resp.msg.unwrap_or_default();
+        if CREDENTIAL_CODES.contains(&resp.code) {
+            return Err(GatewayError::AuthFailed(format!(
+                "Feishu auth rejected (code {}): {}",
+                resp.code, msg
             )));
         }
-
-        let token = resp.tenant_access_token.ok_or_else(|| {
-            GatewayError::Internal("No token in feishu refresh response".to_string())
-        })?;
-        let expire = resp.expire.unwrap_or(7200) as i64;
-
-        let mut inner = self.inner.write().await;
-        inner.token = Some(token.clone());
-        inner.expires_at = chrono::Utc::now().timestamp_millis() + (expire * 1000);
-
-        Ok(token)
+        return Err(GatewayError::Internal(format!(
+            "Feishu auth failed: {} (code {})",
+            msg, resp.code
+        )));
     }
+
+    let token = resp.tenant_access_token.ok_or_else(|| {
+        // 成功 code 却缺 token —— 凭据/响应问题，保守按永久。
+        GatewayError::AuthFailed("Feishu token refresh: no tenant_access_token".to_string())
+    })?;
+    let expire = resp.expire.unwrap_or(7200);
+
+    Ok((token, expire))
+}
+
+/// ★ 飞书 token 失效检测（2026 协议调研，官方通用错误码表）。
+///
+/// 命中即"token 无效/过期" → 强制刷新后重试一次：
+/// - `99991663`：tenant token 过期 / 该 API 不支持 tenant token
+/// - `99991665`：tenant_access_token 非法
+/// - `20013`：tenant access token 无效
+/// - `20005`：access_token 无效/过期（通用）
+///
+/// 明确排除（不触发重试）：
+/// - `99991661`：缺少 token（header 缺失，代码 bug）
+/// - `99991664`：是 **app_access_token** 非法，不是 tenant
+fn is_feishu_token_invalid_code(code: i64) -> bool {
+    matches!(code, 99991663 | 99991665 | 20013 | 20005)
+}
+
+/// 适配 `send_with_token_retry` 的谓词：飞书 token 被拒信号统一用
+/// `GatewayError::Unauthorized`（→ HTTP 401）表示。
+fn is_feishu_token_invalid(e: &GatewayError) -> bool {
+    matches!(e, GatewayError::Unauthorized(_))
 }
 
 /// 飞书适配器
@@ -203,42 +214,44 @@ impl FeishuAdapter {
             .unwrap_or(FEISHU_API)
     }
 
-    /// 确保 access token 有效，必要时自动刷新
-    async fn ensure_token(&self) -> Result<String, GatewayError> {
-        let config = self
-            .config
-            .as_ref()
-            .ok_or_else(|| GatewayError::ConfigError("Adapter not initialized".to_string()))?;
-        let app_id = config
-            .extra
-            .get("app_id")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| {
-                GatewayError::ConfigError("Missing 'app_id' in feishu config.extra".to_string())
-            })?;
-        let app_secret = config.token.as_deref().ok_or_else(|| {
-            GatewayError::ConfigError("Missing 'token' (app_secret) for feishu".to_string())
-        })?;
-        let base_url = self.api_base_url();
-        self.token_store
-            .get(self.client(), app_id, app_secret, base_url)
-            .await
-    }
-
-    /// 统一的飞书 API 请求方法
-    async fn send_api_request<T: serde::de::DeserializeOwned>(
+    /// 统一的飞书 API 请求方法。
+    ///
+    /// 通过 `send_with_token_retry` 包装：token 缺失/临界时单飞行刷新；
+    /// 若 API 返回 token 失效信号（HTTP 401 / code 99991663 等）→ 强制刷新一次再重试。
+    async fn send_api_request<T: serde::de::DeserializeOwned + Send>(
         &self,
         method: reqwest::Method,
         path: &str,
         body: Option<&serde_json::Value>,
     ) -> Result<T, GatewayError> {
-        let token = self.ensure_token().await?;
+        let store = self.token_store.inner.as_ref().ok_or_else(|| {
+            GatewayError::ConfigError(
+                "Feishu token store not initialized (call connect() first)".to_string(),
+            )
+        })?;
+        easybot_core::http::send_with_token_retry(store, is_feishu_token_invalid, |token| {
+            let method = method.clone();
+            let auth = format!("Bearer {token}");
+            Box::pin(async move { self.send_api_request_raw(&auth, method, path, body).await })
+        })
+        .await
+    }
+
+    /// 实际的飞书 API 请求（不管理 token）。token 被拒信号在 raw 层统一为
+    /// `GatewayError::Unauthorized`，由上层谓词触发刷新重试。
+    async fn send_api_request_raw<T: serde::de::DeserializeOwned>(
+        &self,
+        auth: &str,
+        method: reqwest::Method,
+        path: &str,
+        body: Option<&serde_json::Value>,
+    ) -> Result<T, GatewayError> {
         let client = self.client();
         let url = format!("{}{}", self.api_base_url(), path);
 
         let mut req = client
             .request(method.clone(), &url)
-            .header("Authorization", format!("Bearer {}", token));
+            .header("Authorization", auth);
         if let Some(b) = body {
             req = req.json(b);
         }
@@ -248,11 +261,27 @@ impl FeishuAdapter {
             .await
             .map_err(|e| GatewayError::Transient(format!("Feishu {} failed: {}", method, e)))?;
 
+        if resp.status() == reqwest::StatusCode::UNAUTHORIZED {
+            return Err(GatewayError::Unauthorized(format!(
+                "Feishu {} {}: 401 Unauthorized",
+                method, path
+            )));
+        }
+
         let result: FeishuApiResponse<T> = resp.json().await.map_err(|e| {
             GatewayError::Internal(format!("Feishu {} parse failed: {}", method, e))
         })?;
 
         if result.code != 0 {
+            if is_feishu_token_invalid_code(result.code) {
+                return Err(GatewayError::Unauthorized(format!(
+                    "Feishu API error ({} {}): {} (code {})",
+                    method,
+                    path,
+                    result.msg.unwrap_or_default(),
+                    result.code
+                )));
+            }
             return Err(GatewayError::Internal(format!(
                 "Feishu API error ({} {}): {} (code {})",
                 method,
@@ -271,13 +300,16 @@ impl FeishuAdapter {
     }
 
     /// 飞书 API GET 请求
-    async fn api_get<T: serde::de::DeserializeOwned>(&self, path: &str) -> Result<T, GatewayError> {
+    async fn api_get<T: serde::de::DeserializeOwned + Send>(
+        &self,
+        path: &str,
+    ) -> Result<T, GatewayError> {
         self.send_api_request::<T>(reqwest::Method::GET, path, None)
             .await
     }
 
     /// 飞书 API POST 请求
-    async fn api_post<T: serde::de::DeserializeOwned>(
+    async fn api_post<T: serde::de::DeserializeOwned + Send>(
         &self,
         path: &str,
         body: &serde_json::Value,
@@ -287,7 +319,7 @@ impl FeishuAdapter {
     }
 
     /// 飞书 API PUT 请求
-    async fn api_put<T: serde::de::DeserializeOwned>(
+    async fn api_put<T: serde::de::DeserializeOwned + Send>(
         &self,
         path: &str,
         body: &serde_json::Value,
@@ -296,18 +328,40 @@ impl FeishuAdapter {
             .await
     }
 
-    /// 飞书 API DELETE 请求（不要求 data 字段）
+    /// 飞书 API DELETE 请求（不要求 data 字段）。
+    ///
+    /// 与 `send_api_request` 同款 token 刷新重试包装。
     async fn api_delete(&self, path: &str) -> Result<(), GatewayError> {
-        let token = self.ensure_token().await?;
+        let store = self.token_store.inner.as_ref().ok_or_else(|| {
+            GatewayError::ConfigError(
+                "Feishu token store not initialized (call connect() first)".to_string(),
+            )
+        })?;
+        easybot_core::http::send_with_token_retry(store, is_feishu_token_invalid, |token| {
+            let auth = format!("Bearer {token}");
+            Box::pin(async move { self.api_delete_raw(&auth, path).await })
+        })
+        .await
+    }
+
+    /// 实际的飞书 API DELETE 请求（不管理 token）。
+    async fn api_delete_raw(&self, auth: &str, path: &str) -> Result<(), GatewayError> {
         let client = self.client();
         let url = format!("{}{}", self.api_base_url(), path);
 
         let resp = client
             .delete(&url)
-            .header("Authorization", format!("Bearer {}", token))
+            .header("Authorization", auth)
             .send()
             .await
             .map_err(|e| GatewayError::Transient(format!("Feishu DELETE failed: {}", e)))?;
+
+        if resp.status() == reqwest::StatusCode::UNAUTHORIZED {
+            return Err(GatewayError::Unauthorized(format!(
+                "Feishu DELETE {}: 401 Unauthorized",
+                path
+            )));
+        }
 
         let result: FeishuApiResponse<serde_json::Value> = resp
             .json()
@@ -315,6 +369,14 @@ impl FeishuAdapter {
             .map_err(|e| GatewayError::Internal(format!("Feishu DELETE parse failed: {}", e)))?;
 
         if result.code != 0 {
+            if is_feishu_token_invalid_code(result.code) {
+                return Err(GatewayError::Unauthorized(format!(
+                    "Feishu API error (DELETE {}): {} (code {})",
+                    path,
+                    result.msg.unwrap_or_default(),
+                    result.code
+                )));
+            }
             return Err(GatewayError::Internal(format!(
                 "Feishu API error (DELETE {}): {} (code {})",
                 path,
@@ -362,7 +424,7 @@ impl PlatformAdapter for FeishuAdapter {
     }
 
     async fn connect(&mut self) -> Result<ConnectResult, GatewayError> {
-        // 1. 获取配置并初始化 token store
+        // 1. 获取配置并构建 token store（fetch 闭包在此时冻结 app_id/app_secret/base_url）
         let config = self.config.as_ref().ok_or_else(|| {
             GatewayError::Internal("connect() called before init() — config not set".into())
         })?;
@@ -378,10 +440,27 @@ impl PlatformAdapter for FeishuAdapter {
         })?;
         let base_url = self.api_base_url();
 
-        // 获取 access token 验证凭证
-        self.token_store
-            .get(self.client(), app_id, app_secret, base_url)
-            .await?;
+        let client = self.client().clone();
+        let app_id_owned = app_id.to_string();
+        let app_secret_owned = app_secret.to_string();
+        let base_url_owned = base_url.to_string();
+        let fetch: TokenFetcher = Box::new(move || {
+            // 每次调用 clone 凭据供 async move 使用（刷新低频，clone 开销可忽略）
+            let client = client.clone();
+            let app_id = app_id_owned.clone();
+            let app_secret = app_secret_owned.clone();
+            let base_url = base_url_owned.clone();
+            Box::pin(async move {
+                feishu_fetch_access_token(&client, &app_id, &app_secret, &base_url).await
+            })
+        });
+        self.token_store.inner = Some(CachedTokenStore::new(
+            fetch,
+            Duration::from_secs(TOKEN_REFRESH_MARGIN),
+        ));
+
+        // 获取 access token 验证凭证（失败时 store 仍保留，connect 重试可复用）
+        self.token_store.get().await?;
 
         self.state = AdapterState::Connected;
         self.bot_info = Some(BotInfo {
@@ -869,7 +948,6 @@ impl FeishuAdapter {
                 let hb = hb_for_events.clone();
                 let eb = event_bus.clone();
                 let bot_id = app_id_owned.clone();
-                let secret = app_secret.clone();
                 let hc = feishu_http.clone();
                 let bu = feishu_base_url.clone();
                 let ts = shared_token_store.clone();
@@ -877,7 +955,6 @@ impl FeishuAdapter {
                 move |event_data| {
                     let eb = eb.clone();
                     let bot_id = bot_id.clone();
-                    let secret = secret.clone();
                     let hc = hc.clone();
                     let bu = bu.clone();
                     let ts = ts.clone();
@@ -885,16 +962,8 @@ impl FeishuAdapter {
                     let mi = mi.clone();
                     let hb = hb.clone();
                     async move {
-                        let sender_role = Self::resolve_feishu_role(
-                            &event_data,
-                            &hc,
-                            &bu,
-                            &ts,
-                            &bot_id,
-                            &secret,
-                            &rc,
-                        )
-                        .await;
+                        let sender_role =
+                            Self::resolve_feishu_role(&event_data, &hc, &bu, &ts, &rc).await;
                         event::handle_message_receive(event_data.into(), &eb, &bot_id, sender_role)
                             .await;
                         mi.fetch_add(1, Ordering::Relaxed);
@@ -963,9 +1032,16 @@ impl FeishuAdapter {
         });
     }
 
-    /// 上传媒体文件到飞书，返回 file_key
+    /// 上传媒体文件到飞书，返回 file_key。
+    ///
+    /// 先下载/解码文件内容，再通过 `send_with_token_retry` 携带 token 上传
+    /// （token 被拒时强制刷新并重试一次）。
     async fn upload_media(&self, media: &MediaAttachment) -> Result<String, GatewayError> {
-        let token = self.ensure_token().await?;
+        let store = self.token_store.inner.as_ref().ok_or_else(|| {
+            GatewayError::ConfigError(
+                "Feishu token store not initialized (call connect() first)".to_string(),
+            )
+        })?;
         let client = self.client();
         let url = format!("{}/im/v1/files", self.api_base_url());
 
@@ -1011,27 +1087,62 @@ impl FeishuAdapter {
             ));
         };
 
+        easybot_core::http::send_with_token_retry(store, is_feishu_token_invalid, move |token| {
+            // Part/Form 不可 Clone：每次尝试重建 multipart（重试仅在
+            // token 被拒时发生，克隆文件内容开销可接受）
+            let url = url.clone();
+            let file_data = file_data.clone();
+            let auth = format!("Bearer {token}");
+            Box::pin(async move {
+                self.upload_media_raw(
+                    &url,
+                    &auth,
+                    file_data,
+                    file_type,
+                    media.filename.as_deref().unwrap_or("file"),
+                    &media.mime_type,
+                )
+                .await
+            })
+        })
+        .await
+    }
+
+    /// 实际的飞书媒体上传请求（不管理 token）。token 被拒信号同 raw 层
+    /// 统一为 `GatewayError::Unauthorized`。
+    async fn upload_media_raw(
+        &self,
+        url: &str,
+        auth: &str,
+        file_data: Vec<u8>,
+        file_type: &str,
+        file_name: &str,
+        mime_type: &str,
+    ) -> Result<String, GatewayError> {
         // 使用 multipart 上传
         let file_part = reqwest::multipart::Part::bytes(file_data)
-            .file_name(media.filename.clone().unwrap_or_else(|| "file".to_string()))
-            .mime_str(&media.mime_type)
+            .file_name(file_name.to_string())
+            .mime_str(mime_type)
             .map_err(|e| GatewayError::Internal(format!("Invalid mime type: {}", e)))?;
-
         let form = reqwest::multipart::Form::new()
             .part("file", file_part)
             .text("file_type", file_type.to_string())
-            .text(
-                "file_name",
-                media.filename.clone().unwrap_or_else(|| "file".to_string()),
-            );
+            .text("file_name", file_name.to_string());
 
+        let client = self.client();
         let resp = client
-            .post(&url)
-            .header("Authorization", format!("Bearer {}", token))
+            .post(url)
+            .header("Authorization", auth)
             .multipart(form)
             .send()
             .await
             .map_err(|e| GatewayError::Transient(format!("Feishu upload failed: {}", e)))?;
+
+        if resp.status() == reqwest::StatusCode::UNAUTHORIZED {
+            return Err(GatewayError::Unauthorized(
+                "Feishu upload: 401 Unauthorized".to_string(),
+            ));
+        }
 
         let result: FeishuApiResponse<FeishuUploadData> = resp
             .json()
@@ -1039,6 +1150,13 @@ impl FeishuAdapter {
             .map_err(|e| GatewayError::Internal(format!("Feishu upload parse failed: {}", e)))?;
 
         if result.code != 0 {
+            if is_feishu_token_invalid_code(result.code) {
+                return Err(GatewayError::Unauthorized(format!(
+                    "Feishu upload error: {} (code {})",
+                    result.msg.unwrap_or_default(),
+                    result.code
+                )));
+            }
             return Err(GatewayError::Internal(format!(
                 "Feishu upload error: {} (code {})",
                 result.msg.unwrap_or_default(),
@@ -1061,8 +1179,6 @@ impl FeishuAdapter {
         client: &reqwest::Client,
         base_url: &str,
         token_store: &FeishuTokenStore,
-        app_id: &str,
-        app_secret: &str,
         role_cache: &Mutex<HashMap<String, (SenderRole, Instant)>>,
     ) -> Option<SenderRole> {
         // 只处理群聊消息
@@ -1093,17 +1209,14 @@ impl FeishuAdapter {
             }
         }
 
-        // 获取 token（通过共享 token store，与适配器实例共用缓存）
-        let token = token_store
-            .get(client, app_id, app_secret, base_url)
-            .await
-            .ok()?;
+        // 获取 token（通过共享 token store，与适配器实例共用缓存，自动刷新）
+        let auth = token_store.get().await.ok()?;
 
         // 使用获取群信息 API 查询群主和管理员列表（无需分页，一次调用即可）
         let chat_url = format!("{}/im/v1/chats/{}", base_url.trim_end_matches('/'), chat_id);
         let resp = client
             .get(&chat_url)
-            .header("Authorization", format!("Bearer {}", token))
+            .header("Authorization", auth)
             .send()
             .await
             .ok()?;

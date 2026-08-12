@@ -173,7 +173,7 @@ impl crate::QqAdapter {
             tracing::info!("QQ Gateway connected");
 
             // 尝试 RESUME（如果有之前的 session_id）或完整 Identify
-            let token_str = match token_store.get() {
+            let token_str = match token_store.get().await {
                 Ok(t) => t,
                 Err(e) => {
                     tracing::error!("QQ failed to get token: {}", e);
@@ -341,7 +341,7 @@ impl crate::QqAdapter {
         token_store: &QqTokenStore,
         base_url: &str,
     ) -> FetchGatewayResult {
-        let token = match token_store.get() {
+        let token = match token_store.get().await {
             Ok(t) => t,
             Err(e) => {
                 tracing::warn!("QQ fetch_gateway_url: token error: {}", e);
@@ -372,24 +372,20 @@ impl crate::QqAdapter {
             }
         };
         let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        // 任意状态码都先判 token 失效谓词（覆盖 HTTP 200 + code 11244 / 11242 的场景）。
+        // ★ 命中即致命鉴权错误——终止重试（原实现把 401 当瞬态无限重试、200+11244 解析失败也无限重试）。
+        if crate::auth::is_qq_token_invalid_response(status.as_u16(), &body) {
+            tracing::error!(
+                "QQ fetch_gateway_url: {} returned {} — body: {} \
+                 (token invalid/expired — stopping retries)",
+                url,
+                status,
+                body,
+            );
+            return FetchGatewayResult::AuthError(body);
+        }
         if !status.is_success() {
-            let body = resp.text().await.unwrap_or_default();
-            // 解析错误响应体，检测致命鉴权错误
-            if let Ok(err_body) = serde_json::from_str::<serde_json::Value>(&body)
-                && let Some(code) = err_body.get("code").and_then(|c| c.as_i64())
-                && code == 11244
-            {
-                // 11244 = "token not exist or expire" — 凭据无效，无需重试
-                tracing::error!(
-                    "QQ fetch_gateway_url: {} returned {} — body: {} \
-                     (code={}: token invalid or expired — stopping retries)",
-                    url,
-                    status,
-                    body,
-                    code,
-                );
-                return FetchGatewayResult::AuthError(body);
-            }
             tracing::warn!(
                 "QQ fetch_gateway_url: {} returned {} — body: {}",
                 url,
@@ -398,7 +394,7 @@ impl crate::QqAdapter {
             );
             return FetchGatewayResult::Transient;
         }
-        match resp.json::<crate::types::GatewayResponse>().await {
+        match serde_json::from_str::<crate::types::GatewayResponse>(&body) {
             Ok(data) => FetchGatewayResult::Success(data.url),
             Err(e) => {
                 tracing::warn!("QQ fetch_gateway_url: JSON parse failed: {}", e);

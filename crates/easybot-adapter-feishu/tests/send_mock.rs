@@ -10,10 +10,10 @@ use easybot_core::types::message::{
     OutboundMessage, ParseMode, SendInteractiveParams, SendMediaParams, SendTextParams,
 };
 use std::sync::Arc;
-use wiremock::matchers::{method, path};
+use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-/// 构建测试用的飞书适配器
+/// 构建测试用的飞书适配器（init + connect，token store 在 connect 时构建）
 async fn make_adapter(mock_port: u16) -> impl PlatformAdapter {
     let base_url = format!("http://127.0.0.1:{}", mock_port);
     let config = AdapterConfig {
@@ -29,6 +29,7 @@ async fn make_adapter(mock_port: u16) -> impl PlatformAdapter {
     let mut adapter = easybot_adapter_feishu::FeishuAdapter::new();
     let result = adapter.init(config).await.unwrap();
     assert!(result.ok, "init should succeed");
+    adapter.connect().await.unwrap();
     adapter
 }
 
@@ -159,11 +160,101 @@ async fn test_send_malformed_response() {
     assert!(!result.success, "send should fail with malformed response");
 }
 
+/// 回归测试：飞书 API 返回 code 99991663（tenant token 过期/非法）时，
+/// send 应主动刷新 token 并重试一次。
+#[tokio::test]
+async fn test_send_refreshes_token_on_99991663() {
+    let mock_server = MockServer::start().await;
+
+    // 第一次鉴权（connect 时）→ 旧 token。
+    // 注意：必须用 up_to_n_times(1) 让 mock 在命中一次后被"消费"，
+    // 否则后续刷新请求仍会匹配到它（expect 只做 shutdown 时的校验）。
+    Mock::given(method("POST"))
+        .and(path("/auth/v3/tenant_access_token/internal"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "code": 0,
+            "msg": "ok",
+            "tenant_access_token": "token-OLD",
+            "expire": 7200
+        })))
+        .up_to_n_times(1)
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    // 后续刷新（检测到 99991663 后主动刷新）→ 新 token
+    Mock::given(method("POST"))
+        .and(path("/auth/v3/tenant_access_token/internal"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "code": 0,
+            "msg": "ok",
+            "tenant_access_token": "token-NEW",
+            "expire": 7200
+        })))
+        .up_to_n_times(1)
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    // 旧 token 的发送请求 → code 99991663（tenant token expired）
+    Mock::given(method("POST"))
+        .and(path("/im/v1/messages"))
+        .and(header("Authorization", "Bearer token-OLD"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "code": 99991663,
+            "msg": "tenant token expired",
+        })))
+        .up_to_n_times(1)
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    // 新 token 的发送请求 → 成功
+    Mock::given(method("POST"))
+        .and(path("/im/v1/messages"))
+        .and(header("Authorization", "Bearer token-NEW"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(send_success_response()))
+        .up_to_n_times(1)
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let adapter = make_adapter(mock_server.address().port()).await;
+    let result = adapter.send(send_text_params()).await.unwrap();
+
+    assert!(
+        result.success,
+        "send should refresh token and retry once after 99991663, got: {:?}",
+        result.error
+    );
+    assert_eq!(result.message_id, Some("om_abc123xyz".to_string()));
+
+    mock_server.verify().await;
+}
+
+#[tokio::test]
+async fn test_send_before_connect_returns_error() {
+    // 未 connect() 时 token store 未初始化（inner=None），send 应优雅失败，
+    // 不 panic、不发网络请求。
+    let config = AdapterConfig {
+        enabled: Some(true),
+        token: Some("test-app-secret".into()),
+        api_key: None,
+        base_url: Some("http://127.0.0.1:1".into()),
+        extra: serde_json::json!({ "app_id": "test-app-id" }),
+    };
+    let mut adapter = easybot_adapter_feishu::FeishuAdapter::new();
+    adapter.init(config).await.unwrap();
+
+    let result = adapter.send(send_text_params()).await.unwrap();
+    assert!(!result.success, "send before connect should fail");
+}
+
 #[tokio::test]
 async fn test_token_refresh_failure() {
     let mock_server = MockServer::start().await;
 
-    // token 端点返回错误 → send 应失败
+    // token 端点返回错误 → connect 应失败
     Mock::given(method("POST"))
         .and(path("/auth/v3/tenant_access_token/internal"))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
@@ -174,10 +265,30 @@ async fn test_token_refresh_failure() {
         .mount(&mock_server)
         .await;
 
-    let adapter = make_adapter(mock_server.address().port()).await;
-    let result = adapter.send(send_text_params()).await.unwrap();
+    let base_url = format!("http://127.0.0.1:{}", mock_server.address().port());
+    let config = AdapterConfig {
+        enabled: Some(true),
+        token: Some("test-app-secret".into()),
+        api_key: None,
+        base_url: Some(base_url),
+        extra: serde_json::json!({ "app_id": "test-app-id" }),
+    };
+    let mut adapter = easybot_adapter_feishu::FeishuAdapter::new();
+    adapter.init(config).await.unwrap();
 
-    assert!(!result.success, "send should fail when token refresh fails");
+    // token 端点失败 → connect 失败（无法建立连接）
+    let connect_result = adapter.connect().await;
+    assert!(
+        connect_result.is_err(),
+        "connect should fail when token refresh fails"
+    );
+
+    // 连接失败后 send 也应优雅失败（token store 未初始化）
+    let send_result = adapter.send(send_text_params()).await.unwrap();
+    assert!(
+        !send_result.success,
+        "send after failed connect should fail gracefully"
+    );
 }
 
 // ── init 验证 ──

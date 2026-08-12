@@ -10,6 +10,7 @@ pub mod adapter;
 pub mod auth;
 pub mod bus;
 pub mod config;
+pub mod http;
 #[cfg(feature = "plugin-system")]
 pub mod plugin;
 pub mod session;

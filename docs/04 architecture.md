@@ -844,11 +844,13 @@ adapters:
   discord:
     token: "${DISCORD_BOT_TOKEN}"
   feishu:
-    token: "${FEISHU_APP_ID}"        # App ID
-    apiKey: "${FEISHU_APP_SECRET}"   # App Secret
+    token: "${FEISHU_APP_SECRET}"    # App Secret
+    extra:
+      app_id: "${FEISHU_APP_ID}"     # App ID
   qq:
-    token: "${QQ_APP_ID}"
-    apiKey: "${QQ_CLIENT_SECRET}"
+    token: "${QQ_CLIENT_SECRET}"     # Client Secret
+    extra:
+      app_id: "${QQ_APP_ID}"         # App ID
 
 webhooks:
   - name: "my-service"

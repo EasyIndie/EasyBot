@@ -44,8 +44,8 @@ use easybot_core::types::message::*;
 use tokio::sync::broadcast;
 use types::*;
 
-/// QQ API 基础 URL（正式环境）
-const QQ_API: &str = "https://api.sgroup.qq.com";
+/// QQ API 基础 URL（正式环境，官方统一地址 api.bot.qq.com）
+const QQ_API: &str = "https://api.bot.qq.com";
 /// QQ 鉴权 API 基础 URL（正式环境）
 const QQ_AUTH_API: &str = "https://bots.qq.com";
 
@@ -170,53 +170,33 @@ impl QqAdapter {
         })
     }
 
-    /// 获取鉴权头字符串：`QQBot {access_token}`
-    fn bot_token(&self) -> Result<String, GatewayError> {
-        self.token_store
-            .as_ref()
-            .ok_or_else(|| {
-                GatewayError::ConfigError(
-                    "Token store not initialized (call connect() first)".to_string(),
-                )
-            })?
-            .get()
-    }
-
-    /// 发送 QQ API 请求，检测 401 Unauthorized 时自动刷新 token 并重试一次
-    async fn send_api_request<T: serde::de::DeserializeOwned>(
+    /// 发送 QQ API 请求：token 无效/过期时经 core 公共机制刷新一次并重试一次。
+    /// （统一收敛 401 / code 11244 / 11242 的检测与刷新，见 auth::is_token_invalid_error）
+    async fn send_api_request<T: serde::de::DeserializeOwned + Send>(
         &self,
         method: reqwest::Method,
         path: &str,
         body: Option<&serde_json::Value>,
     ) -> Result<T, GatewayError> {
-        let token = self.bot_token()?;
-        let result = self
-            .send_api_request_raw(&token, method.clone(), path, body)
-            .await;
-
-        // Token expiry (HTTP 401) — refresh once and retry.
-        // SECURITY: Match the HTTP status in the formatted error message
-        // "QQ API error (METHOD path): STATUS - body" to avoid false positives
-        // from body content that happens to contain "401".
-        if let Err(GatewayError::Internal(msg)) = &result
-            && (msg.contains(": 401 ") || msg.contains(": 401 -"))
-        {
-            tracing::warn!(
-                "QQ API 返回 401 Unauthorized（token 可能已过期），尝试刷新 token 后重试"
-            );
-            if let Some(ref store) = self.token_store {
-                let _ = store.refresh().await;
-            }
-            let new_token = self.bot_token()?;
-            return self
-                .send_api_request_raw(&new_token, method, path, body)
-                .await;
-        }
-
-        result
+        let store = self.token_store.as_ref().ok_or_else(|| {
+            GatewayError::ConfigError(
+                "Token store not initialized (call connect() first)".to_string(),
+            )
+        })?;
+        easybot_core::http::send_with_token_retry(
+            &store.inner,
+            auth::is_token_invalid_error,
+            |token| {
+                let method = method.clone();
+                let auth = auth::qq_auth_header(&token);
+                // async move：auth/method 移入 future，借用 self/path/body
+                Box::pin(async move { self.send_api_request_raw(&auth, method, path, body).await })
+            },
+        )
+        .await
     }
 
-    /// 发送原始的 QQ API 请求（无 401 重试）
+    /// 发送原始的 QQ API 请求（无 token 重试）
     async fn send_api_request_raw<T: serde::de::DeserializeOwned>(
         &self,
         token: &str,
@@ -242,9 +222,11 @@ impl QqAdapter {
         if !resp.status().is_success() {
             let s = resp.status();
             let b = resp.text().await.unwrap_or_default();
-            return Err(GatewayError::Internal(format!(
-                "QQ API error ({} {}): {} - {}",
-                method, path, s, b
+            return Err(GatewayError::Internal(auth::qq_api_error_msg(
+                method.as_str(),
+                path,
+                s.as_u16(),
+                &b,
             )));
         }
         resp.json::<T>().await.map_err(|e| {
@@ -253,13 +235,16 @@ impl QqAdapter {
     }
 
     /// QQ API GET
-    async fn api_get<T: serde::de::DeserializeOwned>(&self, path: &str) -> Result<T, GatewayError> {
+    async fn api_get<T: serde::de::DeserializeOwned + Send>(
+        &self,
+        path: &str,
+    ) -> Result<T, GatewayError> {
         self.send_api_request(reqwest::Method::GET, path, None)
             .await
     }
 
     /// QQ API POST
-    async fn api_post<T: serde::de::DeserializeOwned>(
+    async fn api_post<T: serde::de::DeserializeOwned + Send>(
         &self,
         path: &str,
         body: &serde_json::Value,
@@ -269,7 +254,7 @@ impl QqAdapter {
     }
 
     /// QQ API PATCH
-    async fn api_patch<T: serde::de::DeserializeOwned>(
+    async fn api_patch<T: serde::de::DeserializeOwned + Send>(
         &self,
         path: &str,
         body: &serde_json::Value,
@@ -278,32 +263,26 @@ impl QqAdapter {
             .await
     }
 
-    /// QQ API DELETE（不期望 JSON body，仅验证状态码）
+    /// QQ API DELETE（不期望 JSON body，仅验证状态码）。
+    /// 与 send_api_request 同走 core 公共的"token 失效 → 刷新 → 重试一次"机制。
     async fn api_delete(&self, path: &str) -> Result<(), GatewayError> {
-        let token = self.bot_token()?;
-        let result = self.api_delete_raw(&token, path).await;
-
-        // Token expiry (HTTP 401) — refresh once and retry.
-        // SECURITY: Match the HTTP status in the formatted error message
-        // "QQ API error (METHOD path): STATUS - body" to avoid false positives
-        // from body content that happens to contain "401".
-        if let Err(GatewayError::Internal(msg)) = &result
-            && (msg.contains(": 401 ") || msg.contains(": 401 -"))
-        {
-            tracing::warn!(
-                "QQ API 返回 401 Unauthorized（token 可能已过期），尝试刷新 token 后重试"
-            );
-            if let Some(ref store) = self.token_store {
-                let _ = store.refresh().await;
-            }
-            let new_token = self.bot_token()?;
-            return self.api_delete_raw(&new_token, path).await;
-        }
-
-        result
+        let store = self.token_store.as_ref().ok_or_else(|| {
+            GatewayError::ConfigError(
+                "Token store not initialized (call connect() first)".to_string(),
+            )
+        })?;
+        easybot_core::http::send_with_token_retry(
+            &store.inner,
+            auth::is_token_invalid_error,
+            |token| {
+                let auth = auth::qq_auth_header(&token);
+                Box::pin(async move { self.api_delete_raw(&auth, path).await })
+            },
+        )
+        .await
     }
 
-    /// 发送原始 DELETE 请求（无 401 重试）
+    /// 发送原始 DELETE 请求（无 token 重试）
     async fn api_delete_raw(&self, token: &str, path: &str) -> Result<(), GatewayError> {
         let client = self.client();
         let url = format!("{}{}", self.api_base_url(), path);
@@ -316,9 +295,11 @@ impl QqAdapter {
         if !resp.status().is_success() {
             let s = resp.status();
             let b = resp.text().await.unwrap_or_default();
-            return Err(GatewayError::Internal(format!(
-                "QQ API error (DELETE {}): {} - {}",
-                path, s, b
+            return Err(GatewayError::Internal(auth::qq_api_error_msg(
+                "DELETE",
+                path,
+                s.as_u16(),
+                &b,
             )));
         }
         Ok(())
@@ -1529,13 +1510,6 @@ mod tests {
     }
 
     #[test]
-    fn test_bot_token_uninitialized() {
-        let adapter = QqAdapter::new();
-        // token_store 未设置时应返回错误
-        assert!(adapter.bot_token().is_err());
-    }
-
-    #[test]
     fn test_token_store_new_needs_refresh() {
         let store = QqTokenStore::new("app123".into(), "secret".into(), QQ_AUTH_API.to_string());
         // 新创建的 store 还没有 token，需要 refresh
@@ -1543,17 +1517,10 @@ mod tests {
     }
 
     #[test]
-    fn test_token_store_get_uninitialized_returns_err() {
-        let store = QqTokenStore::new("app123".into(), "secret".into(), QQ_AUTH_API.to_string());
-        // 未 refresh 前 get 应该返回错误
-        assert!(store.get().is_err());
-    }
-
-    #[test]
     fn test_token_store_clone() {
         let store = QqTokenStore::new("app123".into(), "secret".into(), QQ_AUTH_API.to_string());
         let cloned = store.clone();
-        // 两个实例共享同一个 Arc<Mutex> 状态
+        // 两个实例共享同一个 CachedTokenStore 状态
         assert!(store.needs_refresh());
         assert!(cloned.needs_refresh());
     }

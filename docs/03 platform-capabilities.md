@@ -138,7 +138,7 @@ Discord Components 格式（ActionRow + Button）：
 | **Telegram** | [Telegram Bot API](https://core.telegram.org/bots/api) | `https://api.telegram.org/bot` |
 | **Discord** | [Discord API v10](https://discord.com/developers/docs/intro) | `https://discord.com/api/v10` |
 | **飞书** | [larksuite-oapi-sdk-rs](https://crates.io/crates/larksuite-oapi-sdk-rs) | `https://open.feishu.cn/open-apis` |
-| **QQ** | [QQBot API](https://bot.q.qq.com/wiki/) | `https://api.sgroup.qq.com` (API) / `https://bots.qq.com` (Auth) |
+| **QQ** | [QQBot API](https://bot.q.qq.com/wiki/) | `https://api.bot.qq.com` (API) / `https://bots.qq.com` (Auth) |
 | **个人微信** | [iLink Bot API](https://ilinkai.weixin.qq.com) | `https://ilinkai.weixin.qq.com` |
 
 ---

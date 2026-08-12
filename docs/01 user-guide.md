@@ -984,7 +984,7 @@ deploy:
 
 | 错误 | 原因 | 解决 |
 |------|------|------|
-| `token invalid or expired (11244)` | QQ Token 过期 | 自动刷新（超过 1 次需到 QQ 开放平台重新生成） |
+| `token invalid or expired (11244)` | QQ Token 过期/不存在 | 自动刷新并重试一次；若持续，检查 `QQ_APP_ID` / `QQ_CLIENT_SECRET` 是否正确 |
 | `401 Unauthorized` | API Key 无效或已过期 | 在管理后台检查对应业务 Key状态并按需轮换 |
 | `PrivilegedGatewayIntent` | Discord 未启用 Gateway Intents | 开发者后台开启 MESSAGE CONTENT INTENT |
 | 适配器启动失败 | 平台凭据无效 | 检查 `.env` 中的令牌 |

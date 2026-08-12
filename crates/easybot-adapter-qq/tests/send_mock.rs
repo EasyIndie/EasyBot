@@ -3,7 +3,7 @@
 //! 使用 wiremock 模拟 QQ API，验证 connect() 和 send() 方法正确构造请求并解析响应。
 //! QQ 适配器有两个独立的 API 端点：
 //!   - 鉴权端点: {auth_base_url}/app/getAppAccessToken（默认 https://bots.qq.com）
-//!   - 业务端点: {base_url}/...（默认 https://api.sgroup.qq.com）
+//!   - 业务端点: {base_url}/...（默认 https://api.bot.qq.com）
 //!     测试中通过 config.base_url 和 config.extra["auth_base_url"] 将两者指向 wiremock。
 
 use easybot_core::types::adapter::{AdapterConfig, AdapterState, PlatformAdapter};
@@ -12,7 +12,7 @@ use easybot_core::types::message::{
     ParseMode, SendInteractiveParams, SendMediaParams, SendTextParams,
 };
 use std::sync::Arc;
-use wiremock::matchers::{method, path};
+use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 fn send_text_params() -> SendTextParams {
@@ -216,6 +216,149 @@ async fn test_send_message_success() {
     assert!(result.success);
     assert_eq!(result.message_id, Some("msg_abc123".to_string()));
     assert_eq!(adapter.state(), AdapterState::Connected);
+}
+
+/// 回归测试：QQ API 以 HTTP 500 + 业务错误码 11244
+/// （"token not exist or expire"）返回 token 失效时，send 应主动刷新 token 并重试一次。
+#[tokio::test]
+async fn test_send_refreshes_token_on_error_11244() {
+    let mock_server = MockServer::start().await;
+
+    // 第一次鉴权（connect 时）→ 旧 token。
+    // 注意：必须用 up_to_n_times(1) 让 mock 在命中一次后被"消费"，
+    // 否则后续刷新请求仍会匹配到它（expect 只做 shutdown 时的校验）。
+    Mock::given(method("POST"))
+        .and(path("/app/getAppAccessToken"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "access_token": "mock-access-token-OLD",
+            "expires_in": 7200
+        })))
+        .up_to_n_times(1)
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    // 后续刷新（检测到 11244 后主动刷新）→ 新 token
+    Mock::given(method("POST"))
+        .and(path("/app/getAppAccessToken"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "access_token": "mock-access-token-NEW",
+            "expires_in": 7200
+        })))
+        .up_to_n_times(1)
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    mock_qq_bot_info(&mock_server).await;
+
+    // 旧 token 的发送请求 → 返回 HTTP 500 + code 11244（token not exist or expire）
+    Mock::given(method("POST"))
+        .and(path("/channels/qq-chat-123/messages"))
+        .and(header("Authorization", "QQBot mock-access-token-OLD"))
+        .respond_with(ResponseTemplate::new(500).set_body_json(serde_json::json!({
+            "message": "token not exist or expire",
+            "code": 11244,
+            "err_code": 11244,
+            "trace_id": "test-trace-11244"
+        })))
+        .up_to_n_times(1)
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    // 新 token 的发送请求 → 成功
+    Mock::given(method("POST"))
+        .and(path("/channels/qq-chat-123/messages"))
+        .and(header("Authorization", "QQBot mock-access-token-NEW"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": "msg_after_refresh",
+            "timestamp": "2026-06-20T12:00:00+00:00"
+        })))
+        .up_to_n_times(1)
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let mut adapter = easybot_adapter_qq::QqAdapter::new();
+    adapter
+        .init(qq_config_with_auth(mock_server.address().port()))
+        .await
+        .unwrap();
+    adapter.connect().await.unwrap();
+
+    let result = adapter.send(send_text_params()).await.unwrap();
+    assert!(
+        result.success,
+        "send should refresh token and retry once after 11244, got: {:?}",
+        result.error
+    );
+    assert_eq!(result.message_id, Some("msg_after_refresh".to_string()));
+}
+
+/// 回归测试：即使刷新后仍返回 11244（凭据确实无效），send 也只重试一次并返回错误，
+/// 不做无限重试。
+#[tokio::test]
+async fn test_send_gives_up_after_refresh_still_11244() {
+    let mock_server = MockServer::start().await;
+
+    // 首次鉴权 → token A
+    Mock::given(method("POST"))
+        .and(path("/app/getAppAccessToken"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "access_token": "token-a",
+            "expires_in": 7200
+        })))
+        .up_to_n_times(1)
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    // 后续每次刷新都返回 token B
+    Mock::given(method("POST"))
+        .and(path("/app/getAppAccessToken"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "access_token": "token-b",
+            "expires_in": 7200
+        })))
+        .expect(1..)
+        .mount(&mock_server)
+        .await;
+
+    mock_qq_bot_info(&mock_server).await;
+
+    // 任何 token 的发送请求都返回 11244。
+    // up_to_n_times(2) 限制最多 2 次（首次 + 刷新后重试一次），
+    // expect(2) 校验确实发生了重试——若无限重试会在此处失败。
+    Mock::given(method("POST"))
+        .and(path("/channels/qq-chat-123/messages"))
+        .respond_with(ResponseTemplate::new(500).set_body_json(serde_json::json!({
+            "message": "token not exist or expire",
+            "code": 11244,
+            "err_code": 11244
+        })))
+        .up_to_n_times(2)
+        .expect(2)
+        .mount(&mock_server)
+        .await;
+
+    let mut adapter = easybot_adapter_qq::QqAdapter::new();
+    adapter
+        .init(qq_config_with_auth(mock_server.address().port()))
+        .await
+        .unwrap();
+    adapter.connect().await.unwrap();
+
+    let result = adapter.send(send_text_params()).await.unwrap();
+    assert!(!result.success, "send should fail when token stays invalid");
+    assert!(
+        result
+            .error
+            .as_ref()
+            .is_some_and(|e| e.contains("11244") || e.contains("token not exist or expire")),
+        "error should mention token invalid, got: {:?}",
+        result.error
+    );
 }
 
 #[tokio::test]
