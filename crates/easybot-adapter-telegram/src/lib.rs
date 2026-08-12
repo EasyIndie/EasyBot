@@ -450,16 +450,21 @@ impl TelegramAdapter {
 
             // 429 Too Many Requests: 返回 RateLimited（含 retry_after），由上层处理，
             // 不再在调用路径内同步 sleep（会阻塞事件循环并掩盖限流语义）。
-            if api_resp.error_code == Some(429)
-                && let Some(retry_after) = api_resp.parameters.as_ref().and_then(|p| p.retry_after)
-            {
+            // 无 parameters.retry_after 时仍映射 RateLimited（retry_after_ms=0，
+            // 与统一约定一致），而非落到 Internal(500)——429 语义就是限流，
+            // 与是否携带 retry_after 无关。
+            if api_resp.error_code == Some(429) {
+                let retry_after_ms = api_resp
+                    .parameters
+                    .as_ref()
+                    .and_then(|p| p.retry_after)
+                    .map(|ra| (ra as u64) * 1000)
+                    .unwrap_or(0);
                 tracing::warn!(
-                    "Telegram API 429 rate limited, retry_after {}s",
-                    retry_after
+                    "Telegram API 429 rate limited, retry_after {}ms",
+                    retry_after_ms
                 );
-                return Err(GatewayError::RateLimited {
-                    retry_after_ms: (retry_after as u64) * 1000,
-                });
+                return Err(GatewayError::RateLimited { retry_after_ms });
             }
 
             Err(err)
@@ -1360,7 +1365,11 @@ impl PlatformAdapter for TelegramAdapter {
         if let Some(cache_time) = params.cache_time {
             body["cache_time"] = serde_json::Value::Number(cache_time.into());
         }
-        // answerCallbackQuery 失败（如 callback 已过期 401/400）为瞬态错误，可重试
+        // answerCallbackQuery 失败由 api_call 映射：429 → RateLimited（可重试）；
+        // 其余（含 400/401）→ Internal(500)。注意：过期/无效的 callback_query_id 是
+        // **终态-良性**错误——已过期的回调永远无法再应答，重试无意义（客户端应忽略，
+        // 而非依赖该错误触发重试）。此处不吞错误：非法 query_id 也可能是调用方传错
+        // 参数，返回错误有助于定位。
         self.api_call::<serde_json::Value>("answerCallbackQuery", Some(body))
             .await?;
         Ok(())

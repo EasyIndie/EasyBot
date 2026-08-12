@@ -1218,9 +1218,11 @@ impl PlatformAdapter for WeChatAdapter {
             }
         };
 
-        // W3: 使用了过期 context_token 且收到空响应 {}（无 ret/errmsg/message_id/seq）——
-        // iLink 对过期 token 有时返回空对象而非 -14，此时回复已静默丢失。
-        // 结合 W6 双字段容错，未走 -14 降级路径时让失败可见，不把空 {} 盲目当成功。
+        // W3（修正）：空响应 {} 是 iLink 文档化的成功响应，无论 token 是否过期都视为成功。
+        // 原先的实现把"过期 token + 空 {}"判为失败（retryable=true），但空 {} 表示 API 已
+        // 接收发送（与 -14 的 token 失效语义不同），且 CONTEXT_TOKEN_TTL_MS=60s 是保守值、
+        // 真实有效期 60-160s——过期窗口内发送的多数消息实际已投递 → 误报失败触发上游重试
+        // → 用户收到重复消息。此处仅在 token 过期时打 WARN 提示歧义，不报失败、不触发重试。
         if ctx_stale && !used_retry_without_token {
             let empty_success = resp.message_id.is_none()
                 && resp.msg_id_str.is_none()
@@ -1229,20 +1231,11 @@ impl PlatformAdapter for WeChatAdapter {
                 && resp.seq.is_none()
                 && resp.ret.is_none();
             if empty_success {
-                self.errors.fetch_add(1, Ordering::Relaxed);
-                let fail = SendResult::fail(
-                    "WeChat send 返回空响应且 context_token 可能已过期，消息未确认送达".to_string(),
-                    true,
+                tracing::warn!(
+                    "WeChat send 返回空响应 {{}} 且 context_token 已过期（TTL={}ms，真实有效期更长）：\
+                     空响应按成功处理（iLink 文档语义），若消息实际未到达请人工核对",
+                    CONTEXT_TOKEN_TTL_MS,
                 );
-                if let Some(bus) = &self.event_bus {
-                    bus.publish_send_result(
-                        easybot_core::types::event::event_types::MESSAGE_FAILED,
-                        "wechat",
-                        &params.chat_id,
-                        &fail,
-                    );
-                }
-                return Ok(fail);
             }
         }
 
@@ -1471,7 +1464,8 @@ impl PlatformAdapter for WeChatAdapter {
             }
         };
 
-        // W3: 过期 token + 空响应 {} → 静默丢失，让失败可见（同 send()）
+        // W3（修正）：同 send()——空响应 {} 按成功处理，过期 token 时仅打 WARN 提示歧义。
+        // 误报失败（retryable=true）会让已投递的消息被上游重试 → 用户收到重复消息。
         if ctx_stale && !used_retry_without_token {
             let empty_success = resp.message_id.is_none()
                 && resp.msg_id_str.is_none()
@@ -1480,21 +1474,11 @@ impl PlatformAdapter for WeChatAdapter {
                 && resp.seq.is_none()
                 && resp.ret.is_none();
             if empty_success {
-                self.errors.fetch_add(1, Ordering::Relaxed);
-                let fail = SendResult::fail(
-                    "WeChat send_media 返回空响应且 context_token 可能已过期，消息未确认送达"
-                        .to_string(),
-                    true,
+                tracing::warn!(
+                    "WeChat send_media 返回空响应 {{}} 且 context_token 已过期（TTL={}ms）：\
+                     空响应按成功处理（iLink 文档语义），若媒体消息实际未到达请人工核对",
+                    CONTEXT_TOKEN_TTL_MS,
                 );
-                if let Some(bus) = &self.event_bus {
-                    bus.publish_send_result(
-                        easybot_core::types::event::event_types::MESSAGE_FAILED,
-                        "wechat",
-                        &params.chat_id,
-                        &fail,
-                    );
-                }
-                return Ok(fail);
             }
         }
 
@@ -1598,6 +1582,14 @@ async fn longpoll_loop(
     loop {
         tokio::select! {
             _ = cancel_rx.recv() => {
+                // W7（修正）：停止前落盘最后一批脏 token，避免丢失 stop 前 <10s
+                // 捕获的 context_token（此前 cancel 路径直接 break，脏位从不写盘）。
+                if tokens_dirty.swap(false, Ordering::Relaxed) {
+                    let tokens_snapshot = context_tokens.read().await.clone();
+                    tokio::task::spawn_blocking(move || {
+                        save_context_tokens(&tokens_snapshot);
+                    });
+                }
                 tracing::info!("个人微信长轮询已停止");
                 break;
             }

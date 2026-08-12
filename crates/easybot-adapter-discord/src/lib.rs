@@ -13,7 +13,7 @@ mod types;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::OnceLock;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -35,6 +35,11 @@ use types::*;
 
 /// Discord REST API 基础 URL (v10)
 const DISCORD_API: &str = "https://discord.com/api/v10";
+
+/// 分片流结束后自愈重连的初始退避
+const SHARD_RECONNECT_INITIAL: Duration = Duration::from_secs(5);
+/// 分片自愈重连退避上限
+const SHARD_RECONNECT_MAX: Duration = Duration::from_secs(60);
 
 /// Discord 适配器
 pub struct DiscordAdapter {
@@ -502,10 +507,17 @@ impl DiscordAdapter {
 
         // 安静连接 liveness 定时器：与网关事件并行，60s 无事件也维持心跳，
         // 避免健康监控在 120s 后把健康连接误判为 Down 反复强杀重建。
-        // 该定时器绑定在本任务生命周期内（随任务取消/结束而 drop），
-        // 不是独立的无条件 beat 定时器。
         let mut liveness = tokio::time::interval(Duration::from_secs(60));
         liveness.tick().await; // skip the immediate first tick
+
+        // 连接状态标志（on Ready 置位 / 断流或接收错误时清位）：
+        // 仅在连接存活时维持 liveness 心跳（仿飞书 ws_connected 门控）。
+        // 断连/卡住的重连循环中不再无条件 beat → 心跳过期 → health 转 Degraded/Down
+        // → 健康监测器介入。无条件 beat（"任务存活即证明连接健康"）会掩盖死连接，
+        // 是 CLAUDE.md 明确禁止的模式。
+        let connected = Arc::new(AtomicBool::new(false));
+        // 分片流结束后的自愈重连退避（指数 5s → 60s，成功连接后复位）
+        let mut reconnect_delay = SHARD_RECONNECT_INITIAL;
 
         loop {
             tokio::select! {
@@ -515,8 +527,10 @@ impl DiscordAdapter {
                     return;
                 }
                 _ = liveness.tick() => {
-                    // 无事件（安静连接）也保持 liveness 心跳，任务存活即证明连接健康
-                    heartbeat.beat();
+                    // 仅连接存活时维持 liveness：任务存活不代表连接健康。
+                    if connected.load(Ordering::Relaxed) {
+                        heartbeat.beat();
+                    }
                 }
                 event = shard.next_event(EventTypeFlags::all()) => {
                     match event {
@@ -621,10 +635,31 @@ impl DiscordAdapter {
                                 other,
                                 &event_bus,
                                 &bot_user_id,
+                                &connected,
                                 &heartbeat,
                             ) {
-                                EventAction::Continue => {}
-                                EventAction::Stop => return,
+                                EventAction::Continue => {
+                                    // 连接恢复（Ready/事件）→ 复位重连退避
+                                    if connected.load(Ordering::Relaxed) {
+                                        reconnect_delay = SHARD_RECONNECT_INITIAL;
+                                    }
+                                }
+                                EventAction::Reconnect => {
+                                    // 流结束（None）→ 自愈：handle_gateway_event 已清位
+                                    // 连接标志，此处退避后重建分片。不再静默退出任务——
+                                    // 死分片会被幸存分片 + liveness 计时器掩盖（共享心跳
+                                    // 永不 Down → 监测器永不介入）。自愈重连让分片永不静默死亡。
+                                    heartbeat.record_failure(); // A4：卡死重连计入连续失败
+                                    tracing::warn!(
+                                        shard = shard_id.number(),
+                                        delay_ms = reconnect_delay.as_millis() as u64,
+                                        "Discord shard stream ended, reconnecting"
+                                    );
+                                    tokio::time::sleep(reconnect_delay).await;
+                                    reconnect_delay =
+                                        (reconnect_delay * 2).min(SHARD_RECONNECT_MAX);
+                                    shard = Shard::new(shard_id, token.clone(), intents);
+                                }
                             }
                         }
                     }
@@ -639,8 +674,8 @@ impl DiscordAdapter {
 enum EventAction {
     /// 继续事件循环
     Continue,
-    /// 停止事件循环（流已结束）
-    Stop,
+    /// 网关流已结束（None）：分片任务应自愈重连，而非静默退出
+    Reconnect,
 }
 
 /// 处理单个 Discord Gateway 事件
@@ -657,26 +692,36 @@ fn handle_gateway_event<E: std::fmt::Display>(
     event: Option<Result<Event, E>>,
     _event_bus: &EventBus,
     _bot_user_id: &str,
+    connected: &AtomicBool,
     heartbeat: &Heartbeat,
 ) -> EventAction {
     match event {
         Some(Ok(Event::Ready(_))) => {
+            connected.store(true, Ordering::Relaxed);
             heartbeat.beat();
             tracing::info!("Discord Gateway connected");
             EventAction::Continue
         }
         Some(Err(e)) => {
-            tracing::warn!(error = %e, "Discord Gateway error, shard will auto-reconnect");
-            heartbeat.beat(); // SDK 正在内部重连，告知健康监测器任务存活
+            connected.store(false, Ordering::Relaxed);
+            // A4：卡死重试循环检测——接收错误计入连续失败。不再无条件 beat：
+            // 无条件 beat 会让"任务活着但连接已死"的卡死循环看起来健康，
+            // 永不触发健康监测器介入。twilight 内部重连成功后下一次 Ready
+            // 会重新置位连接标志并复位失败计数（beat_success）。
+            heartbeat.record_failure();
+            tracing::warn!(error = %e, "Discord Gateway receive error, awaiting internal reconnect");
             EventAction::Continue
         }
         Some(_) => {
+            // 其他网关事件意味着连接存活
+            connected.store(true, Ordering::Relaxed);
             heartbeat.beat();
             EventAction::Continue
         }
         None => {
+            connected.store(false, Ordering::Relaxed);
             tracing::info!("Discord Gateway stream ended");
-            EventAction::Stop
+            EventAction::Reconnect
         }
     }
 }
@@ -866,6 +911,14 @@ impl PlatformAdapter for DiscordAdapter {
 
     fn heartbeat_success_age_ms(&self) -> Option<i64> {
         Some(self.heartbeat.last_success_age_ms())
+    }
+
+    // A4：卡死重试循环检测——分片任务在 Err/流结束路径调用 record_failure()，
+    // 此处把共享心跳的连续失败数暴露给 health_status()。连续失败达到阈值
+    // （DEFAULT_FAILURE_LOOP_THRESHOLD）→ health 转 Down → 健康监测器介入
+    // （retry_transport 重建全部网关任务），而非让"活着但永远失败"的循环无限继续。
+    fn heartbeat_failure_count(&self) -> Option<u32> {
+        Some(self.heartbeat.consecutive_failures())
     }
 
     async fn health(&self) -> HealthReport {
@@ -1931,6 +1984,7 @@ mod tests {
     fn test_handle_event_ready_updates_heartbeat() {
         let event_bus = EventBus::new();
         let heartbeat = Heartbeat::new();
+        let connected = Arc::new(AtomicBool::new(false));
         // 先等待一点时间让 heartbeat 变"旧"
         std::thread::sleep(Duration::from_millis(5));
 
@@ -1938,10 +1992,12 @@ mod tests {
             Some(Ok(make_ready_event())),
             &event_bus,
             "bot_id",
+            &connected,
             &heartbeat,
         );
 
         assert_eq!(action, EventAction::Continue);
+        assert!(connected.load(Ordering::Relaxed), "Ready 应置位连接标志");
         assert!(
             heartbeat.age_ms() < 100,
             "Heartbeat should be fresh after Ready (age: {}ms)",
@@ -1953,28 +2009,37 @@ mod tests {
     // 不再通过 handle_gateway_event 间接测试（该分支已清理，MessageCreate 在 gateway_shard_loop 处理）。
 
     #[test]
-    fn test_handle_event_error_continues() {
+    fn test_handle_event_error_continues_and_records_failure() {
         let event_bus = EventBus::new();
         let heartbeat = Heartbeat::new();
+        let connected = Arc::new(AtomicBool::new(true));
 
         let action = handle_gateway_event(
             Some(Err("simulated gateway error")),
             &event_bus,
             "bot_id",
+            &connected,
             &heartbeat,
         );
 
         assert_eq!(action, EventAction::Continue);
+        // A4：接收错误应计入连续失败（供卡死循环检测），并清位连接标志
+        assert_eq!(heartbeat.consecutive_failures(), 1);
+        assert!(!connected.load(Ordering::Relaxed), "接收错误应清位连接标志");
     }
 
     #[test]
-    fn test_handle_event_none_stops() {
+    fn test_handle_event_none_reconnects() {
         let event_bus = EventBus::new();
         let heartbeat = Heartbeat::new();
+        let connected = Arc::new(AtomicBool::new(true));
 
-        let action = handle_gateway_event::<&str>(None, &event_bus, "bot_id", &heartbeat);
+        let action =
+            handle_gateway_event::<&str>(None, &event_bus, "bot_id", &connected, &heartbeat);
 
-        assert_eq!(action, EventAction::Stop);
+        // F2：流结束 → Reconnect（分片自愈重连），而非静默退出
+        assert_eq!(action, EventAction::Reconnect);
+        assert!(!connected.load(Ordering::Relaxed), "流结束应清位连接标志");
     }
 
     // ── send_media base64 大小校验（D6） ──
