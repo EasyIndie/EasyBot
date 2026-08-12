@@ -15,9 +15,22 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
+use crate::plugin_scaffold::{ScaffoldOptions, scaffold};
+
 /// `easybot plugin` 子命令
 #[derive(Subcommand)]
 pub enum PluginCmd {
+    /// 创建插件工程脚手架（生成独立可构建的适配器项目）
+    New {
+        /// 插件名（kebab-case，如 my-adapter；同时用作平台名与 Cargo 包名）
+        name: String,
+        /// 目标父目录（默认当前目录；工程建在 <target-dir>/<name>/）
+        #[arg(long)]
+        target_dir: Option<PathBuf>,
+        /// 作者署名（写入 plugin.yaml / LICENSE）
+        #[arg(long)]
+        author: Option<String>,
+    },
     /// 列出已安装插件
     List,
     /// 搜索市场目录（catalog.json，多注册源合并去重）
@@ -69,6 +82,21 @@ pub enum PluginCmd {
 
 /// 分发到各子命令处理器
 pub async fn run(cmd: &PluginCmd, dir: Option<String>) -> anyhow::Result<()> {
+    // 脚手架不依赖市场/宿主状态，先于 manager 构造处理（避免无谓加载配置）。
+    if let PluginCmd::New {
+        name,
+        target_dir,
+        author,
+    } = cmd
+    {
+        scaffold(&ScaffoldOptions {
+            name: name.clone(),
+            target_dir: target_dir.clone(),
+            author: author.clone(),
+        })?;
+        return Ok(());
+    }
+
     let home = easybot_core::config::resolve_home(dir.map(PathBuf::from));
     let paths = easybot_core::config::EasyBotPaths::new(home.clone())?;
     easybot_core::config::load_env(&paths)?;
@@ -83,6 +111,7 @@ pub async fn run(cmd: &PluginCmd, dir: Option<String>) -> anyhow::Result<()> {
     .await;
 
     match cmd {
+        PluginCmd::New { .. } => unreachable!("handled before manager construction"),
         PluginCmd::List => list_plugins(&manager).await,
         PluginCmd::Search { query } => search_catalog(&manager, query.as_deref()).await,
         PluginCmd::Info { name } => show_info(&manager, name).await,

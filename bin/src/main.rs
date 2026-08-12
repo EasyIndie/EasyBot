@@ -15,6 +15,10 @@ use std::sync::Arc;
 
 #[cfg(feature = "plugin-system")]
 mod plugin_cli;
+#[cfg(feature = "plugin-system")]
+mod plugin_scaffold;
+#[cfg(feature = "plugin-system")]
+mod plugin_scaffold_template;
 
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
