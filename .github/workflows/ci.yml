@@ -8,9 +8,6 @@ on:
       - "**.md"
   pull_request:
     branches: [main]
-    paths-ignore:
-      - "docs/**"
-      - "**.md"
   merge_group:
     branches: [main]
 
@@ -59,7 +56,7 @@ jobs:
         run: bash scripts/ci-step.sh "CLI binary build" cargo build -p easybot-bin --bin easybot --features "default,plugin-system" --locked
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@6a1bd70eaac3c8bdf093356838d7ee09fda951cf # v2
+        uses: taiki-e/install-action@6c6fd71fe4fb72c3697d269963d0e15df8adedad # v2
         with:
           tool: cargo-nextest
 
@@ -74,17 +71,21 @@ jobs:
 
   # ── Feature matrix: validate edge feature combinations ─────────────
   feature-check:
+    name: feature-check (${{ matrix.label }})
     runs-on: ubuntu-latest
     strategy:
       matrix:
         include:
-          - features: "--no-default-features"
+          - label: minimal
+            features: "--no-default-features"
             protoc: "auto"
             cache-key: "feature-minimal"
-          - features: "--no-default-features --features adapter-telegram,adapter-discord"
+          - label: chat
+            features: "--no-default-features --features adapter-telegram,adapter-discord"
             protoc: "auto"
             cache-key: "feature-chat"
-          - features: "--no-default-features --features adapter-feishu,adapter-qq,adapter-wechat"
+          - label: platform
+            features: "--no-default-features --features adapter-feishu,adapter-qq,adapter-wechat"
             protoc: "auto"
             cache-key: "feature-platform"
       fail-fast: false
