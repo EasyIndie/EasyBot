@@ -898,8 +898,9 @@ document.getElementById('config-save-btn').addEventListener('click', async () =>
 // ─── Sessions Tab ──────────────────────────────
 
 // 构造会话显示名称
-// 优先 chat_name（群名/频道名），其次 user_name（发送者昵称），最后根据 chat_type 构造回退
+// 优先用户自定义名，其次 chat_name（群名/频道名）、user_name（发送者昵称），最后根据 chat_type 构造回退
 function getDisplayName(s) {
+  if (s.custom_name) return s.custom_name;
   if (s.source?.chat_name) return s.source.chat_name;
   if (s.source?.user_name) return s.source.user_name;
   const labels = { 'Dm': '用户', 'Group': '群组', 'Channel': '频道', 'Thread': '话题' };
@@ -933,8 +934,12 @@ function renderSessionRow(s) {
     <td><span class="badge ${chatTypeBadgeClass(s.source?.chat_type)}">${escapeHtml(String(s.source?.chat_type || '-'))}</span></td>
     <td style="max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px;color:var(--text-secondary)" title="${escapeHtml(String(s.last_message || ''))}">${escapeHtml(String(s.last_message || '-'))}</td>
     <td style="font-size:12px;color:var(--text-muted)">${new Date(s.created_at).toLocaleString()}</td>
-    <td><button class="btn btn-sm btn-danger session-delete">删除</button></td>`;
+    <td>
+      <button class="btn btn-sm session-rename">改名</button>
+      <button class="btn btn-sm btn-danger session-delete">删除</button>
+    </td>`;
   tr.querySelector('.session-key-copy').addEventListener('click', event => copyKey(event.currentTarget, s.key));
+  tr.querySelector('.session-rename').addEventListener('click', event => renameSession(s, event.currentTarget));
   tr.querySelector('.session-delete').addEventListener('click', event => deleteSession(s.key, event.currentTarget));
   return tr;
 }
@@ -1028,6 +1033,32 @@ async function deleteSession(key, button) {
     }
   } catch (e) {
     showToast('删除失败: ' + e.message, 'error');
+  } finally {
+    endAction(actionKey, button);
+  }
+}
+
+// 会话改名：非空自定义名覆盖展示；清空则撤销自定义名，回退自动推导链
+async function renameSession(session, button) {
+  const key = session.key;
+  const actionKey = `session-rename:${key}`;
+  if (!beginAction(actionKey, button, '保存中...')) return;
+  const input = prompt('为会话输入新名称（留空并确定 = 恢复自动名称）', session.custom_name || '');
+  if (input === null) { endAction(actionKey, button); return; }
+  const trimmed = input.trim();
+  try {
+    const data = await api('/api/v1/sessions/' + encodeURIComponent(key), {
+      method: 'PUT',
+      body: { custom_name: trimmed }
+    });
+    // 用返回的完整会话重建该行（自动名回退/自定义名都正确显示）
+    const row = document.querySelector(`tr[data-session-key="${CSS.escape(key)}"]`);
+    if (row && data.session) {
+      row.replaceWith(renderSessionRow(data.session));
+    }
+    showToast(trimmed ? '已更新会话名称' : '已恢复自动名称', 'success');
+  } catch (e) {
+    showToast('改名失败: ' + e.message, 'error');
   } finally {
     endAction(actionKey, button);
   }
@@ -1239,7 +1270,7 @@ async function loadTargetCatalog(subjectId) {
     .values()]
     .map(session => {
       const key = `${session.platform}:${session.chat_id}`;
-      const sessionName = session.source?.chat_name ? String(session.source.chat_name) : '';
+      const sessionName = session.custom_name ? String(session.custom_name) : (session.source?.chat_name ? String(session.source.chat_name) : '');
       const actions = targetGrantActions(grants, session.platform, session.chat_id);
       return {
         key,

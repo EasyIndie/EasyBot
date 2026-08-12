@@ -1682,6 +1682,86 @@ async fn test_sessions_list_empty() {
     assert!(body["sessions"].is_array(), "sessions should be an array");
 }
 
+#[tokio::test]
+async fn test_session_rename_roundtrip() {
+    use easybot_core::types::message::ChatType;
+    use easybot_core::types::session::SessionSource;
+
+    let (state, key, addr) = test_server().await;
+    let client = authed_client(&key);
+    let session_key = "telegram:rename-user";
+    state
+        .session_manager
+        .get_or_create(
+            session_key,
+            SessionSource {
+                platform: "telegram".into(),
+                chat_id: "rename-user".into(),
+                chat_name: Some("Auto Name".into()),
+                chat_type: ChatType::Dm,
+                user_id: Some("subject-1".into()),
+                user_name: Some("Peer".into()),
+                is_bot: false,
+                user_username: None,
+                user_role: None,
+            },
+        )
+        .await;
+    let put = |name: &str| {
+        client
+            .put(url(&addr, &format!("/api/v1/sessions/{session_key}")))
+            .json(&serde_json::json!({ "custom_name": name }))
+            .send()
+    };
+
+    // 1. 设置自定义名 → 200，返回的会话与 manager 状态一致
+    let resp = put("My Renamed Session").await.unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["session"]["custom_name"], "My Renamed Session");
+    assert_eq!(
+        state
+            .session_manager
+            .get(session_key)
+            .unwrap()
+            .custom_name
+            .as_deref(),
+        Some("My Renamed Session")
+    );
+
+    // 2. 清空（空字符串）→ 200，custom_name 回退为 null
+    let resp = put("").await.unwrap();
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().await.unwrap();
+    assert!(body["session"]["custom_name"].is_null());
+
+    // 3. 不存在的会话 → 404
+    let resp = client
+        .put(url(&addr, "/api/v1/sessions/telegram:does-not-exist"))
+        .json(&serde_json::json!({ "custom_name": "x" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), 404);
+    let body: Value = resp.json().await.unwrap();
+    assert_eq!(body["error"], "NOT_FOUND");
+
+    // 4. 超长（>128）→ 400
+    let resp = put(&"a".repeat(129)).await.unwrap();
+    assert_eq!(resp.status(), 400);
+
+    // 5. /chats 优先显示自定义名
+    assert_eq!(put("客服群").await.unwrap().status(), 200);
+    let chats = client
+        .get(url(&addr, "/api/v1/chats/telegram/rename-user"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(chats.status(), 200);
+    let chats_body: Value = chats.json().await.unwrap();
+    assert_eq!(chats_body["name"], "客服群");
+}
+
 // ── 配置端点 ──
 
 #[tokio::test]

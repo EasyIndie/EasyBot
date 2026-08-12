@@ -413,7 +413,7 @@ impl crate::QqAdapter {
     }
 
     /// 将 QQ 群消息 author.member_role 字符串映射为 SenderRole。
-    fn parse_member_role(member_role: Option<&str>) -> Option<SenderRole> {
+    pub(crate) fn parse_member_role(member_role: Option<&str>) -> Option<SenderRole> {
         match member_role {
             Some("owner") => Some(SenderRole::Owner),
             Some("admin") => Some(SenderRole::Admin),
@@ -603,6 +603,14 @@ impl crate::QqAdapter {
                 let ts = Self::parse_timestamp(&msg_event.timestamp);
                 let openid = msg_event.group_openid.clone();
                 let member_id = msg_event.author.member_openid.clone();
+                let member_name = msg_event
+                    .author
+                    .username
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| member_id.clone());
                 let role = Self::parse_member_role(msg_event.author.member_role.as_deref());
                 let is_bot = msg_event.author.bot.unwrap_or(false);
                 // 旧协议 GROUP_AT_MESSAGE_CREATE 无 message_type 字段
@@ -616,7 +624,7 @@ impl crate::QqAdapter {
                     text: msg_event.content,
                     sender: MessageSender {
                         id: member_id.clone(),
-                        name: Some(member_id.clone()),
+                        name: Some(member_name.clone()),
                         username: None,
                         avatar_url: None,
                         is_bot,
@@ -675,6 +683,14 @@ impl crate::QqAdapter {
                 let ts = Self::parse_timestamp(&msg_event.timestamp);
                 let openid = msg_event.group_openid.clone();
                 let member_id = msg_event.author.member_openid.clone();
+                let member_name = msg_event
+                    .author
+                    .username
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| member_id.clone());
                 let role = Self::parse_member_role(msg_event.author.member_role.as_deref());
                 let is_bot = msg_event.author.bot.unwrap_or(false);
                 let mentions: Option<Vec<MentionInfo>> = if msg_event.mentions.is_empty() {
@@ -706,7 +722,7 @@ impl crate::QqAdapter {
                     text: msg_event.content,
                     sender: MessageSender {
                         id: member_id.clone(),
-                        name: Some(member_id.clone()),
+                        name: Some(member_name.clone()),
                         username: None,
                         avatar_url: None,
                         is_bot,

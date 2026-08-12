@@ -8,10 +8,12 @@ use axum::{
     http::StatusCode,
 };
 use easybot_core::auth::target_actions;
+use easybot_core::session::SessionMutation;
 use easybot_core::storage::MessageFilter;
 use easybot_core::types::error::GatewayError;
 use easybot_core::types::session::SessionFilter;
 use serde::Deserialize;
+use utoipa::ToSchema;
 
 async fn require_session_target(
     state: &AppState,
@@ -127,6 +129,99 @@ pub async fn get_session(
     }
 }
 
+/// 更新会话（用户自定义显示名）
+#[utoipa::path(
+    put,
+    path = "/api/v1/sessions/{key}",
+    tag = "Sessions",
+    params(
+        ("key" = String, Path, description = "Session key in 'platform:chatId' format")
+    ),
+    request_body = UpdateSessionRequest,
+    responses(
+        (status = 200, description = "Session updated", body = serde_json::Value),
+        (status = 400, description = "Invalid custom_name"),
+        (status = 404, description = "Session not found"),
+    )
+)]
+pub async fn update_session(
+    State(state): State<AppState>,
+    Extension(actor): Extension<easybot_core::auth::AuthInfo>,
+    Path(key): Path<String>,
+    Json(req): Json<UpdateSessionRequest>,
+) -> Result<(StatusCode, Json<serde_json::Value>), ApiError> {
+    // 1. 会话必须存在（同时提取 platform/chat_id 用于 target 权限检查）
+    let Some(session) = state.session_manager.get(&key) else {
+        return Ok((
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "error": "NOT_FOUND",
+                "message": format!("Session '{}' not found", key),
+            })),
+        ));
+    };
+    // 2. 权限：改名属于会话管理操作（与删除会话同级）
+    require_session_target(
+        &state,
+        &actor,
+        &session.platform,
+        &session.chat_id,
+        target_actions::SESSIONS_MANAGE,
+    )
+    .await?;
+    // 3. 校验：custom_name 必填；trim 后空 = 清空（回退自动推导链）；非空 ≤128 字符
+    let Some(raw) = req.custom_name else {
+        return Err(ApiError(GatewayError::InvalidRequest(
+            "custom_name is required".into(),
+        )));
+    };
+    let custom_name = {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            None
+        } else if trimmed.chars().count() > 128 {
+            return Err(ApiError(GatewayError::InvalidRequest(
+                "custom_name exceeds 128 characters".into(),
+            )));
+        } else {
+            Some(trimmed.to_string())
+        }
+    };
+    // 4. 应用变更（并发删除竞态 → update 返回 None → 404）
+    let Some(updated) = state
+        .session_manager
+        .update(&key, SessionMutation::new().with_custom_name(custom_name))
+        .await
+    else {
+        return Ok((
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "error": "NOT_FOUND",
+                "message": format!("Session '{}' not found", key),
+            })),
+        ));
+    };
+    // 5. 审计
+    state
+        .auth_manager
+        .record_audit(
+            &actor.id,
+            "privacy.session.renamed",
+            &format!("session:{key}"),
+            serde_json::json!({"custom_name": updated.custom_name}),
+        )
+        .await
+        .map_err(|error| ApiError(GatewayError::Internal(error)))?;
+    // 6. 返回更新后的会话（前端据此重建该行）
+    Ok((
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "ok": true,
+            "session": serde_json::to_value(updated).unwrap_or_default(),
+        })),
+    ))
+}
+
 /// 删除会话
 #[utoipa::path(
     delete,
@@ -239,6 +334,14 @@ pub struct ExportQuery {
     pub before: Option<i64>,
     pub offset: Option<usize>,
     pub delivery_offset: Option<usize>,
+}
+
+/// 更新会话请求（当前仅支持自定义显示名）
+#[derive(Deserialize, ToSchema)]
+pub struct UpdateSessionRequest {
+    /// 自定义显示名。非空时优先于自动推导名称展示；传空字符串清空并回退自动推导链。
+    #[schema(example = "公司客服群")]
+    pub custom_name: Option<String>,
 }
 
 /// Export one page of all personal data associated with a session.

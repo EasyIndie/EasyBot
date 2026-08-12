@@ -110,7 +110,7 @@ mod tests {
         });
 
         let event: FeishuMessageReceiveEvent = serde_json::from_value(json).unwrap();
-        assert_eq!(event.sender.sender_id.open_id, "ou_abc123");
+        assert_eq!(event.sender.sender_id.open_id.as_deref(), Some("ou_abc123"));
         assert_eq!(event.sender.sender_type, "user");
         assert_eq!(event.message.message_id, "om_xxx111");
         assert_eq!(event.message.chat_id, "oc_5a64b50e");
@@ -171,7 +171,7 @@ mod tests {
         });
 
         let event: FeishuMessageReceiveEvent = serde_json::from_value(json).unwrap();
-        assert_eq!(event.sender.sender_id.open_id, "ou_min");
+        assert_eq!(event.sender.sender_id.open_id.as_deref(), Some("ou_min"));
         assert_eq!(event.sender.sender_type, "app");
         assert_eq!(event.message.msg_type, "text");
     }
@@ -214,7 +214,10 @@ pub struct FeishuMessageSender {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct FeishuSenderId {
-    pub open_id: String,
+    /// 应用内唯一 ID。部分移动端投递可能缺失（openclaw PR #26703 同款问题），
+    /// 解析时需回退 user_id，避免整条事件被丢弃。
+    #[serde(default)]
+    pub open_id: Option<String>,
     pub user_id: Option<String>,
 }
 

@@ -200,6 +200,7 @@ struct SessionRow {
     metadata: String,
     last_message: Option<String>,
     last_message_at: Option<i64>,
+    custom_name: Option<String>,
 }
 
 impl SessionRow {
@@ -229,6 +230,7 @@ impl SessionRow {
             metadata,
             last_message: self.last_message,
             last_message_at: self.last_message_at,
+            custom_name: self.custom_name,
         })
     }
 }
@@ -248,6 +250,7 @@ fn row_to_session(row: &sqlx::sqlite::SqliteRow) -> Result<SessionRow, sqlx::Err
         metadata: row.try_get("metadata")?,
         last_message: row.try_get("last_message")?,
         last_message_at: row.try_get("last_message_at")?,
+        custom_name: row.try_get("custom_name")?,
     })
 }
 
@@ -273,15 +276,16 @@ impl SessionStore for SqliteSessionStore {
         let reset_policy = format!("{:?}", session.reset_policy);
 
         sqlx::query(
-            "INSERT INTO sessions (key, platform, chat_id, thread_id, created_at, updated_at, source_json, reset_policy, metadata, last_message, last_message_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            "INSERT INTO sessions (key, platform, chat_id, thread_id, created_at, updated_at, source_json, reset_policy, metadata, last_message, last_message_at, custom_name)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(key) DO UPDATE SET
                 updated_at = excluded.updated_at,
                 source_json = excluded.source_json,
                 reset_policy = excluded.reset_policy,
                 metadata = excluded.metadata,
                 last_message = excluded.last_message,
-                last_message_at = excluded.last_message_at"
+                last_message_at = excluded.last_message_at,
+                custom_name = excluded.custom_name"
         )
         .bind(&session.key)
         .bind(&session.platform)
@@ -294,6 +298,7 @@ impl SessionStore for SqliteSessionStore {
         .bind(&metadata)
         .bind(&session.last_message)
         .bind(session.last_message_at)
+        .bind(&session.custom_name)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -301,7 +306,7 @@ impl SessionStore for SqliteSessionStore {
 
     async fn get_session(&self, key: &str) -> Result<Option<Session>, StoreError> {
         let row = sqlx::query(
-            "SELECT key, platform, chat_id, thread_id, created_at, updated_at, source_json, reset_policy, metadata, last_message, last_message_at
+            "SELECT key, platform, chat_id, thread_id, created_at, updated_at, source_json, reset_policy, metadata, last_message, last_message_at, custom_name
              FROM sessions WHERE key = ?"
         )
         .bind(key)
@@ -327,7 +332,7 @@ impl SessionStore for SqliteSessionStore {
 
     async fn list_sessions(&self, filter: &SessionFilter) -> Result<Vec<Session>, StoreError> {
         let mut builder = sqlx::QueryBuilder::new(
-            "SELECT key, platform, chat_id, thread_id, created_at, updated_at, source_json, reset_policy, metadata, last_message, last_message_at \
+            "SELECT key, platform, chat_id, thread_id, created_at, updated_at, source_json, reset_policy, metadata, last_message, last_message_at, custom_name \
              FROM sessions WHERE 1=1",
         );
 
@@ -385,7 +390,7 @@ impl SessionStore for SqliteSessionStore {
 
     async fn load_all_sessions(&self) -> Result<Vec<Session>, StoreError> {
         let rows = sqlx::query(
-            "SELECT key, platform, chat_id, thread_id, created_at, updated_at, source_json, reset_policy, metadata, last_message, last_message_at
+            "SELECT key, platform, chat_id, thread_id, created_at, updated_at, source_json, reset_policy, metadata, last_message, last_message_at, custom_name
              FROM sessions"
         )
         .fetch_all(&self.pool)
@@ -974,6 +979,7 @@ mod tests {
             metadata: serde_json::json!({}),
             last_message: None,
             last_message_at: None,
+            custom_name: None,
         }
     }
 
@@ -997,6 +1003,29 @@ mod tests {
         assert_eq!(loaded.key, "tg:1");
         assert_eq!(loaded.platform, "telegram");
         assert_eq!(loaded.chat_id, "1");
+        assert_eq!(loaded.custom_name, None, "custom_name defaults to None");
+    }
+
+    #[tokio::test]
+    async fn test_session_custom_name_roundtrip() {
+        let pool = create_test_pool().await;
+        let store = SqliteSessionStore::new(pool);
+
+        // 设置自定义名 → 读取
+        let mut session = make_test_session("tg:1", "telegram", "1");
+        session.custom_name = Some("公司客服群".to_string());
+        store.upsert_session(&session).await.unwrap();
+        let loaded = store.get_session("tg:1").await.unwrap().unwrap();
+        assert_eq!(loaded.custom_name.as_deref(), Some("公司客服群"));
+
+        // 清空自定义名 → 读取为 None
+        session.custom_name = None;
+        store.upsert_session(&session).await.unwrap();
+        let loaded = store.get_session("tg:1").await.unwrap().unwrap();
+        assert_eq!(
+            loaded.custom_name, None,
+            "cleared custom_name should round-trip to None"
+        );
     }
 
     #[tokio::test]
@@ -1416,6 +1445,19 @@ mod tests {
                 created_at INTEGER NOT NULL, expires_at INTEGER, last_used_at INTEGER,
                 revoked INTEGER NOT NULL DEFAULT 0, permissions TEXT NOT NULL DEFAULT '[]',
                 hash TEXT NOT NULL
+            )",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        // v1 库同样具备 sessions 表（v3 迁移会为它添加 custom_name 列）
+        sqlx::query(
+            "CREATE TABLE sessions (
+                key TEXT PRIMARY KEY, platform TEXT NOT NULL, chat_id TEXT NOT NULL,
+                thread_id TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+                source_json TEXT NOT NULL, reset_policy TEXT NOT NULL,
+                metadata TEXT NOT NULL DEFAULT '{}', last_message TEXT,
+                last_message_at INTEGER
             )",
         )
         .execute(&pool)

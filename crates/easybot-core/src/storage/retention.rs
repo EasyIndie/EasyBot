@@ -170,6 +170,7 @@ mod tests {
             metadata: serde_json::json!({}),
             last_message: None,
             last_message_at: None,
+            custom_name: None,
         }
     }
 

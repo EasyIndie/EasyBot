@@ -201,11 +201,17 @@ pub struct QqGroupMessageAuthor {
     /// 是否为机器人账号
     #[serde(default)]
     pub bot: Option<bool>,
+    /// 群内昵称（群消息事件携带，用于会话显示；缺失/空串时回退 member_openid）
+    #[serde(default)]
+    pub username: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct QqC2cMessageAuthor {
     pub user_openid: String,
+    /// C2C 事件中该字段恒为空（隐私限制），仅防御性保留以备协议演进
+    #[serde(default)]
+    pub username: Option<String>,
 }
 
 /// 发送消息请求体

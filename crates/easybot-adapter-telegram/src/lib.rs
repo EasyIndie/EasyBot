@@ -489,6 +489,8 @@ impl TelegramAdapter {
         // 重连后从上次持久化的 offset 继续，避免重复消息风暴
         let mut offset: i64 = last_offset.load(Ordering::Relaxed);
         let mut poll_errors: u32 = 0;
+        // 连续 409 冲突次数（区别于 poll_errors：冲突需单独计数以升级日志级别）
+        let mut conflict_count: u32 = 0;
         tracing::info!("Telegram long polling started (initial offset={})", offset);
 
         loop {
@@ -501,6 +503,7 @@ impl TelegramAdapter {
                     match result {
                         Ok(updates) => {
                             poll_errors = 0;
+                            conflict_count = 0;
                             heartbeat.beat_success(); // stream-health: successful poll
 
                             for update in updates {
@@ -570,6 +573,33 @@ impl TelegramAdapter {
                                 heartbeat.record_error(e.to_string());
                                 break;
                             }
+                            // 409 Conflict = 同一 token 被另一个 getUpdates 实例轮询
+                            //（或 bot 已设置 webhook）。对方停止后重试会自愈，但期间
+                            // 无法接收消息——从第 2 次起升级为 ERROR 提示，并刻意不
+                            // beat_success()，让消息流心跳 120s 后过期 → 健康状态显示
+                            // Degraded（不触发重连，重连对冲突无济于事）。
+                            if let GatewayError::Conflict(msg) = &e {
+                                conflict_count += 1;
+                                if conflict_count == 1 {
+                                    tracing::warn!(
+                                        "Telegram getUpdates conflict (1st): {} — likely another \
+                                         instance polling this bot; retrying",
+                                        e
+                                    );
+                                } else {
+                                    tracing::error!(
+                                        "Telegram getUpdates conflict persisted ({} consecutive): {} \
+                                         — another instance is polling this bot token (or a webhook \
+                                         is set); message reception degraded until it stops",
+                                        conflict_count, msg
+                                    );
+                                }
+                                heartbeat.beat(); // 仅保持存活 → 保持 Connected，不进 Down
+                                let delay = easybot_core::util::backoff_with_jitter(conflict_count);
+                                tokio::time::sleep(delay).await;
+                                continue;
+                            }
+
                             poll_errors += 1;
                             let delay = easybot_core::util::backoff_with_jitter(poll_errors);
                             tracing::warn!("Telegram polling error (attempt {}): {} — retrying in {:?}", poll_errors, e, delay);
@@ -634,6 +664,10 @@ impl TelegramAdapter {
                     "Telegram polling 403: {}",
                     desc
                 ))),
+                // 409 = 同一 token 存在另一个 getUpdates 轮询实例（或 bot 已设置
+                // webhook）。不是普通的瞬态错误——重试本身不会修复，需单独识别以便
+                // 轮询循环升级为可见错误。
+                Some(409) => Err(GatewayError::Conflict(desc)),
                 _ => Err(GatewayError::Transient(desc)),
             }
         }
@@ -969,6 +1003,12 @@ impl PlatformAdapter for TelegramAdapter {
         Some(self.heartbeat.age_ms())
     }
 
+    /// 消息流健康基于"最近一次成功轮询"，而非存活心跳。
+    ///
+    /// 这样持久 409 冲突期间（轮询存活但一直收不到消息）心跳仅靠 `beat()`
+    /// 保持存活 → 120s 后 `health_status()` 返回 `Degraded`（前端可见），
+    /// 而不是"看着 Healthy、实际死着"。默认实现委托给 `heartbeat_age_ms()`
+    /// 会导致存活即健康，掩盖该场景。
     fn heartbeat_success_age_ms(&self) -> Option<i64> {
         Some(self.heartbeat.last_success_age_ms())
     }
@@ -2234,5 +2274,33 @@ mod tests {
 
         // 401 → AuthFailed（永久），绝不能误判为 Transient
         assert!(matches!(err, GatewayError::AuthFailed(_)));
+    }
+
+    #[tokio::test]
+    async fn test_poll_once_409_is_conflict() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(wiremock::matchers::path("/bottest-token/getUpdates"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "ok": false,
+                "error_code": 409,
+                "description": "Conflict: terminated by other getUpdates request; \
+                                make sure that only one bot instance is running"
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let base = format!("http://127.0.0.1:{}/bot", mock_server.address().port());
+        let client = reqwest::Client::new();
+        let mut offset = 0;
+        let err = TelegramAdapter::poll_once(&client, "test-token", &base, &mut offset)
+            .await
+            .unwrap_err();
+
+        // 409 → Conflict（区别于 Transient），轮询循环据此升级为可见错误
+        assert!(matches!(err, GatewayError::Conflict(_)));
     }
 }

@@ -30,7 +30,7 @@ use sqlx::{PgPool, Sqlite, SqlitePool, Transaction};
 /// 当前二进制所期望的数据库 schema 版本。
 ///
 /// 每次新增/修改表结构时 +1，并追加 `MIGRATIONS` 条目。
-pub const SCHEMA_VERSION: i64 = 2;
+pub const SCHEMA_VERSION: i64 = 3;
 
 /// 版本追踪表（两种后端通用）
 const VERSION_TABLE_SQL: &str = "
@@ -79,6 +79,14 @@ pub static MIGRATIONS: &[Migration] = &[
         sql_postgres: V2_POSTGRES,
         rollback_sqlite: Some(V2_ROLLBACK_SQLITE),
         rollback_postgres: Some(V2_ROLLBACK_POSTGRES),
+    },
+    Migration {
+        version: 3,
+        description: "User-customizable session display names",
+        sql_sqlite: V3_SQLITE,
+        sql_postgres: V3_POSTGRES,
+        rollback_sqlite: Some(V3_ROLLBACK_SQLITE),
+        rollback_postgres: Some(V3_ROLLBACK_POSTGRES),
     },
     // ── 后续版本在此追加 ──
     // Migration { version: 2, description: "Add webhook_url to sessions", ... }
@@ -541,6 +549,15 @@ DROP TABLE IF EXISTS api_key_rotation_transitions;
 ALTER TABLE api_keys DROP COLUMN IF EXISTS requests_per_minute;
 ALTER TABLE api_keys DROP COLUMN IF EXISTS subject_id;
 ";
+
+/// v3: 用户自定义会话显示名（非空时优先于 source.chat_name 展示）
+const V3_SQLITE: &str = "ALTER TABLE sessions ADD COLUMN custom_name TEXT;";
+
+const V3_POSTGRES: &str = "ALTER TABLE sessions ADD COLUMN IF NOT EXISTS custom_name TEXT;";
+
+const V3_ROLLBACK_SQLITE: &str = "ALTER TABLE sessions DROP COLUMN custom_name;";
+
+const V3_ROLLBACK_POSTGRES: &str = "ALTER TABLE sessions DROP COLUMN IF EXISTS custom_name;";
 
 // ══════════════════════════════════════════════════════════════════
 // SQLite 迁移函数
@@ -1035,5 +1052,64 @@ mod tests {
         // 回滚到相同版本应报错
         let result = rollback_to(&pool, SCHEMA_VERSION).await;
         assert!(result.is_err(), "Rollback to same version should fail");
+    }
+
+    async fn has_sessions_custom_name_column(pool: &SqlitePool) -> bool {
+        sqlx::query_scalar(
+            "SELECT COUNT(*) > 0 FROM pragma_table_info('sessions') WHERE name = 'custom_name'",
+        )
+        .fetch_one(pool)
+        .await
+        .unwrap_or(false)
+    }
+
+    #[tokio::test]
+    async fn test_migration_v3_custom_name_column() {
+        let pool = create_test_pool().await;
+
+        // 前向迁移到 SCHEMA_VERSION=3，custom_name 列应存在
+        run_migrations(&pool).await.unwrap();
+        assert_eq!(get_current_version(&pool).await.unwrap(), SCHEMA_VERSION);
+        assert!(
+            has_sessions_custom_name_column(&pool).await,
+            "custom_name column should exist after v3"
+        );
+
+        // 回滚到 v2 → 列消失
+        rollback_to(&pool, 2).await.unwrap();
+        assert!(
+            !has_sessions_custom_name_column(&pool).await,
+            "custom_name should be dropped on rollback to v2"
+        );
+
+        // 再次前向迁移 → 列回来
+        run_migrations(&pool).await.unwrap();
+        assert_eq!(get_current_version(&pool).await.unwrap(), SCHEMA_VERSION);
+        assert!(
+            has_sessions_custom_name_column(&pool).await,
+            "custom_name should be re-added on re-migration"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_migration_v3_upgrade_from_v2() {
+        let pool = create_test_pool().await;
+
+        // 构造真实 v2 库：先迁移到 v3 再回滚 v3，schema 与 v1+v2 完全一致
+        run_migrations(&pool).await.unwrap();
+        rollback_to(&pool, 2).await.unwrap();
+        assert_eq!(get_current_version(&pool).await.unwrap(), 2);
+        assert!(
+            !has_sessions_custom_name_column(&pool).await,
+            "v2 schema should not have custom_name"
+        );
+
+        // 升级：运行迁移 → 仅补 v3，custom_name 列出现
+        run_migrations(&pool).await.unwrap();
+        assert_eq!(get_current_version(&pool).await.unwrap(), SCHEMA_VERSION);
+        assert!(
+            has_sessions_custom_name_column(&pool).await,
+            "v2 → v3 upgrade should add custom_name column"
+        );
     }
 }
