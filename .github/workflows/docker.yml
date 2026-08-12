@@ -6,15 +6,8 @@ on:
     paths: [Dockerfile, .dockerignore, Cargo.toml, Cargo.lock, "crates/**", "bin/**"]
   pull_request:
     branches: [main]
-    paths:
-      - Dockerfile
-      - .dockerignore
-      - "deploy/**"
-      - "compose*.yml"
-      - "scripts/test-container-*.sh"
-      - "scripts/verify-container-image.sh"
-      - ".github/actions/docker-setup/**"
-      - ".github/workflows/docker.yml"
+  merge_group:
+    branches: [main]
 
 permissions:
   contents: read
@@ -29,7 +22,7 @@ concurrency:
 jobs:
   # ── PR 验证：仅编译 release mode + amd64 ──
   build-pr:
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -51,7 +44,7 @@ jobs:
 
   # ── amd64: 原生 x64 构建 ──
   build-amd64:
-    if: github.event_name != 'pull_request'
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -79,7 +72,7 @@ jobs:
 
   # ── arm64: 原生 ARM 构建（GitHub 原生 ARM runner） ──
   build-arm64:
-    if: github.event_name != 'pull_request'
+    if: github.event_name == 'push'
     runs-on: ubuntu-24.04-arm
     permissions:
       contents: read
@@ -108,7 +101,7 @@ jobs:
   # ── Merge: 组合 multi-arch manifest 并打标签推送 ──
   merge:
     needs: [build-amd64, build-arm64]
-    if: github.event_name != 'pull_request'
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       contents: read

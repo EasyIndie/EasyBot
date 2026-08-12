@@ -6,10 +6,10 @@ on:
     - cron: "0 2 * * 1"
   push:
     branches: [main]
-    paths: [Cargo.lock]
   pull_request:
     branches: [main]
-    paths: [Cargo.lock]
+  merge_group:
+    branches: [main]
 
 permissions:
   contents: read
