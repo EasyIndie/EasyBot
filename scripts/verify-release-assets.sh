@@ -15,7 +15,12 @@ fi
 
 if [ -n "$REPOSITORY" ]; then
   command -v gh >/dev/null 2>&1 || { echo "gh is required for attestation verification" >&2; exit 1; }
-  find . -type f -name 'easybot-*' ! -name '*.spdx.json' -print0 | while IFS= read -r -d '' artifact; do
+  # Only platform binaries carry provenance/SBOM attestations. The deploy-kit
+  # tarball and version.json are checksum-only assets and must be excluded.
+  find . -type f -name 'easybot-*' \
+    ! -name '*.spdx.json' \
+    ! -name '*.tar.gz' \
+    ! -name '*.json' -print0 | while IFS= read -r -d '' artifact; do
     gh attestation verify "$artifact" -R "$REPOSITORY"
   done
 fi
