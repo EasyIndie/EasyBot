@@ -34,6 +34,7 @@ use parking_lot::Mutex;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use easybot_core::bus::EventBus;
@@ -50,6 +51,12 @@ const QQ_API: &str = "https://api.bot.qq.com";
 const QQ_AUTH_API: &str = "https://bots.qq.com";
 /// chat_id → ChatType 路由缓存上限（对齐 CLAUDE.md：适配器缓存必须有大小上限）
 const CHAT_TYPE_CACHE_LIMIT: usize = 10_000;
+/// (group_openid, member_openid) → 群成员详情缓存上限
+const MEMBER_CACHE_LIMIT: usize = 10_000;
+/// 群成员详情正缓存 TTL（10 分钟）
+const MEMBER_CACHE_TTL_SECS: u64 = 600;
+/// 群成员详情负缓存 TTL（30 秒，失败风暴防护）
+const MEMBER_CACHE_NEGATIVE_TTL_SECS: u64 = 30;
 
 use auth::QqTokenStore;
 
@@ -74,6 +81,9 @@ pub struct QqAdapter {
     /// Used to route outbound messages directly to the correct endpoint.
     /// Bounded LRU cache: 超限时逐出最久未活跃条目（而非全量清空）。
     chat_types: Arc<Mutex<ChatTypeCache>>,
+    /// (group_openid, member_openid) → 群成员详情缓存（昵称/角色）。
+    /// TTL 淘汰 + 容量上限：把成员详情 API 调用从"每条群消息一次"摊薄到 TTL 窗口。
+    member_cache: Arc<Mutex<MemberDetailCache>>,
 }
 
 /// chat_id → ChatType 路由缓存，带 LRU 逐出上限。
@@ -118,6 +128,61 @@ impl ChatTypeCache {
     #[cfg(test)]
     pub(crate) fn len(&self) -> usize {
         self.map.len()
+    }
+}
+
+/// 群成员详情缓存条目
+struct MemberCacheEntry {
+    username: Option<String>,
+    role: Option<String>,
+    expires_at: Instant,
+}
+
+/// (group_openid, member_openid) → 群成员详情缓存，带 TTL 淘汰 + 容量上限。
+///
+/// 用于 `enrich_source`：把成员详情 API 调用从"每条群消息一次"摊薄到 TTL 窗口；
+/// 失败结果也短缓存（负缓存）避免失败风暴。对齐 CLAUDE.md 缓存约束。
+pub(crate) struct MemberDetailCache {
+    map: HashMap<(String, String), MemberCacheEntry>,
+    limit: usize,
+}
+
+impl MemberDetailCache {
+    pub(crate) fn new(limit: usize) -> Self {
+        Self {
+            map: HashMap::new(),
+            limit,
+        }
+    }
+
+    /// 取条目，过期视为未命中
+    fn get(&self, key: &(String, String)) -> Option<&MemberCacheEntry> {
+        self.map.get(key).filter(|e| e.expires_at > Instant::now())
+    }
+
+    fn insert(&mut self, key: (String, String), entry: MemberCacheEntry) {
+        self.map.insert(key, entry);
+        self.evict();
+    }
+
+    /// 超限时先清过期条目，仍超限则逐出最早过期的一条，保证容量有界
+    fn evict(&mut self) {
+        if self.map.len() <= self.limit {
+            return;
+        }
+        let now = Instant::now();
+        self.map.retain(|_, e| e.expires_at > now);
+        if self.map.len() <= self.limit {
+            return;
+        }
+        if let Some(oldest) = self
+            .map
+            .iter()
+            .min_by_key(|(_, e)| e.expires_at)
+            .map(|(k, _)| k.clone())
+        {
+            self.map.remove(&oldest);
+        }
     }
 }
 
@@ -186,6 +251,7 @@ impl QqAdapter {
             bot_user_id: None,
             token_store: None,
             chat_types: Arc::new(Mutex::new(ChatTypeCache::new(CHAT_TYPE_CACHE_LIMIT))),
+            member_cache: Arc::new(Mutex::new(MemberDetailCache::new(MEMBER_CACHE_LIMIT))),
         }
     }
 
@@ -212,7 +278,7 @@ impl QqAdapter {
     fn client(&self) -> &reqwest::Client {
         self.http_client.get_or_init(|| {
             reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(15))
+                .timeout(Duration::from_secs(15))
                 .build()
                 .expect("Failed to create HTTP client")
         })
@@ -1504,29 +1570,70 @@ impl PlatformAdapter for QqAdapter {
         if source.chat_type == ChatType::Group {
             let group_openid = &source.chat_id;
             let member_openid = source.user_id.as_ref()?;
+            let key = (group_openid.clone(), member_openid.clone());
+
+            // 命中缓存（含负缓存：失败后 30s 内不重试）直接复用结果
+            {
+                let cache = self.member_cache.lock();
+                if let Some(entry) = cache.get(&key) {
+                    let mut enriched = source.clone();
+                    if let Some(nick) = &entry.username {
+                        enriched.user_name = Some(nick.clone());
+                    }
+                    if let Some(role_str) = &entry.role {
+                        enriched.user_role = Self::parse_member_role(Some(role_str));
+                    }
+                    return Some(enriched);
+                }
+            }
+
             let path = format!("/v2/groups/{}/members/{}", group_openid, member_openid);
             match self.api_get::<serde_json::Value>(&path).await {
                 Ok(member_info) => {
-                    let mut enriched = source.clone();
-                    // 尝试从响应中提取用户昵称
-                    if let Some(nick) = member_info
-                        .get("nickname")
+                    // 实际字段为 username / member_role（旧代码误读 nickname/role，从未生效）
+                    let username = member_info
+                        .get("username")
+                        .or_else(|| member_info.get("nickname"))
                         .and_then(|v| v.as_str())
-                        .map(|s| s.to_string())
-                    {
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .map(|s| s.to_string());
+                    let role = member_info
+                        .get("member_role")
+                        .or_else(|| member_info.get("role"))
+                        .and_then(|v| v.as_str())
+                        .filter(|s| !s.is_empty())
+                        .map(|s| s.to_string());
+                    self.member_cache.lock().insert(
+                        key,
+                        MemberCacheEntry {
+                            username: username.clone(),
+                            role: role.clone(),
+                            expires_at: Instant::now() + Duration::from_secs(MEMBER_CACHE_TTL_SECS),
+                        },
+                    );
+                    let mut enriched = source.clone();
+                    if let Some(nick) = username {
                         enriched.user_name = Some(nick);
                     }
-                    // 尝试提取角色
-                    if let Some(role_str) = member_info.get("role").and_then(|v| v.as_str()) {
-                        enriched.user_role = match role_str {
-                            "admin" => Some(SenderRole::Admin),
-                            "owner" => Some(SenderRole::Owner),
-                            _ => Some(SenderRole::Member),
-                        };
+                    if let Some(role_str) = role {
+                        enriched.user_role = Self::parse_member_role(Some(&role_str));
                     }
                     Some(enriched)
                 }
-                Err(_) => None,
+                Err(_) => {
+                    // 负缓存：失败短缓存，避免失败风暴
+                    self.member_cache.lock().insert(
+                        key,
+                        MemberCacheEntry {
+                            username: None,
+                            role: None,
+                            expires_at: Instant::now()
+                                + Duration::from_secs(MEMBER_CACHE_NEGATIVE_TTL_SECS),
+                        },
+                    );
+                    None
+                }
             }
         } else {
             None
@@ -1814,7 +1921,7 @@ mod tests {
             "id": "gmsg001",
             "group_openid": "GROUP_OPENID_001",
             "content": "@bot hello group",
-            "author": {"member_openid": "MEMBER_001", "member_role": "admin"},
+            "author": {"member_openid": "MEMBER_001", "member_role": "admin", "username": "小明"},
             "timestamp": "2026-06-01T12:00:00+00:00"
         });
         let payload = GatewayPayload {
@@ -1841,8 +1948,9 @@ mod tests {
         );
         if let Some(e) = event {
             assert_eq!(e.data["chat_type"], "Group");
-            assert_eq!(e.data["chat_type"], "Group");
             assert_eq!(e.data["chat_id"], "GROUP_OPENID_001");
+            // author.username 群昵称应作为 sender.name 展示
+            assert_eq!(e.data["sender"]["name"], "小明");
         }
         assert_eq!(messages_in.load(Ordering::Relaxed), 1);
     }
@@ -1858,7 +1966,7 @@ mod tests {
             "id": "ROBOT1.0_gmsg001",
             "group_openid": "GROUP_OPENID_NEW001",
             "content": "@bot hello everyone",
-            "author": {"member_openid": "MEMBER_002"},
+            "author": {"member_openid": "MEMBER_002", "username": "小红"},
             "timestamp": "2026-06-01T12:00:00+00:00",
             "mentions": [
                 {"is_you": true, "scope": "single", "username": "EasyBot"}
@@ -1890,11 +1998,12 @@ mod tests {
         );
         if let Some(e) = event {
             assert_eq!(e.data["chat_type"], "Group");
-            assert_eq!(e.data["chat_type"], "Group");
             assert_eq!(e.data["chat_id"], "GROUP_OPENID_NEW001");
             assert_eq!(e.data["mentioned"], true);
             // metadata contains mentions info
             assert!(e.data["mentions"].is_array());
+            // 群昵称作为 sender.name 展示
+            assert_eq!(e.data["sender"]["name"], "小红");
         }
         assert_eq!(messages_in.load(Ordering::Relaxed), 1);
     }
@@ -1910,7 +2019,8 @@ mod tests {
             "id": "ROBOT1.0_gmsg002",
             "group_openid": "GROUP_OPENID_NEW002",
             "content": "just a regular message",
-            "author": {"member_openid": "MEMBER_003"},
+            // username 为空串时应回退到 member_openid
+            "author": {"member_openid": "MEMBER_003", "username": ""},
             "timestamp": "2026-06-01T12:01:00+00:00",
             "mentions": [],
             "message_type": 0
@@ -1941,6 +2051,8 @@ mod tests {
             assert_eq!(e.data["chat_type"], "Group");
             assert_eq!(e.data["chat_id"], "GROUP_OPENID_NEW002");
             assert_eq!(e.data["mentioned"], false);
+            // 空串昵称回退到 member_openid
+            assert_eq!(e.data["sender"]["name"], "MEMBER_003");
         }
         assert_eq!(messages_in.load(Ordering::Relaxed), 1);
     }

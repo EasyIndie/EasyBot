@@ -151,7 +151,18 @@ pub async fn handle_message_receive(
     // 在移出字段前序列化原始数据（用于 metadata，使用 to_string 避免 Value 树）
     let raw_payload = serde_json::to_string(&receive_event).ok();
 
-    let sender_id = receive_event.sender.sender_id.open_id;
+    // 部分移动端投递可能缺 open_id，回退 user_id；两者皆无则丢弃（无法标识发送者）。
+    let sender_id = receive_event
+        .sender
+        .sender_id
+        .open_id
+        .clone()
+        .or_else(|| receive_event.sender.sender_id.user_id.clone())
+        .filter(|s| !s.is_empty());
+    let Some(sender_id) = sender_id else {
+        tracing::warn!("飞书消息缺少 sender open_id/user_id，丢弃事件");
+        return;
+    };
     let message = receive_event.message;
 
     // 解析消息内容
@@ -497,5 +508,32 @@ mod tests {
         // 时间戳应回退为当前时间
         let now = chrono::Utc::now().timestamp_millis();
         assert!(msg.timestamp > 0 && msg.timestamp <= now);
+    }
+
+    #[tokio::test]
+    async fn test_sender_open_id_missing_falls_back_to_user_id() {
+        let bus = EventBus::new();
+        let mut rx = bus.subscribe("message.inbound");
+
+        // 部分移动端投递缺少 open_id，仅有 user_id：不应丢弃事件
+        let mut data = make_event_data("p2p", "text", r#"{"text":"fallback-id"}"#);
+        if let Some(sender) = data.get_mut("sender")
+            && let Some(sender_id) = sender.get_mut("sender_id")
+            && let Some(obj) = sender_id.as_object_mut()
+        {
+            obj.remove("open_id");
+            obj.insert("user_id".to_string(), serde_json::json!("u_emp_001"));
+        }
+        handle_message_receive(data, &bus, "bot_id", None).await;
+
+        let event = tokio::time::timeout(std::time::Duration::from_secs(1), rx.recv())
+            .await
+            .expect("event should still be published")
+            .expect("no error");
+
+        let msg: InboundMessage = serde_json::from_value(event.data).unwrap();
+        // 发送者 id 回退到 user_id
+        assert_eq!(msg.sender.id, "u_emp_001");
+        assert_eq!(msg.chat_type, ChatType::Dm);
     }
 }

@@ -39,6 +39,15 @@ const ROLE_CACHE_LIMIT: usize = 10_000;
 /// 角色缓存 TTL（秒），过期后惰性淘汰 + 插入时主动淘汰
 const ROLE_CACHE_TTL_SECS: u64 = 30;
 
+/// 用户昵称缓存容量上限（防止无界增长，参考 ROLE_CACHE_LIMIT 模式）
+const USER_NAME_CACHE_LIMIT: usize = 10_000;
+
+/// 用户昵称缓存 TTL（秒）。
+///
+/// 把 contact/v3/users 查询从"每条消息一次"摊薄到 TTL 窗口（飞书频控
+/// 1000 次/min、50 次/s）；失败/无名字结果也短缓存（负缓存）防失败风暴。
+const USER_NAME_CACHE_TTL_SECS: u64 = 30;
+
 /// 事件去重器：按 `header.event_id` 记录最近处理过的事件，TTL 内重复事件丢弃。
 ///
 /// 平台在超时未收到 ACK 时会重推事件（慢 handler 触发），需幂等去重。
@@ -203,6 +212,9 @@ pub struct FeishuAdapter {
     http_client: std::sync::OnceLock<reqwest::Client>,
     /// 共享的 access token 存储（适配器 + WebSocket 后台任务共用）
     token_store: FeishuTokenStore,
+    /// open_id → 昵称 缓存（含负缓存）。
+    /// 把 contact/v3/users 调用摊薄到 TTL 窗口，避免 p2p/群消息每条都打联系人 API。
+    user_name_cache: Mutex<HashMap<String, (Option<String>, Instant)>>,
 }
 
 impl FeishuAdapter {
@@ -233,6 +245,7 @@ impl FeishuAdapter {
             heartbeat: Heartbeat::new(),
             http_client: std::sync::OnceLock::new(),
             token_store: FeishuTokenStore::new(),
+            user_name_cache: Mutex::new(HashMap::new()),
         }
     }
 
@@ -914,33 +927,56 @@ impl PlatformAdapter for FeishuAdapter {
         source: &easybot_core::types::session::SessionSource,
     ) -> Option<easybot_core::types::session::SessionSource> {
         let mut enriched = source.clone();
+        let is_p2p = source.chat_type == ChatType::Dm;
 
-        // 通过飞书群信息 API 获取群名称
+        // 群名：通过飞书群信息 API 获取。
+        // p2p 单聊的 `/im/v1/chats/{chat_id}` 不返回 name、也不含对端信息（单聊无群名），
+        // 跳过该调用省一半请求；p2p 会话名由下方对端用户昵称填充。
         // 注意：api_base_url() 已含 /open-apis 前缀，path 不能重复带前缀
-        let chat_id = &source.chat_id;
-        let chat_path = format!("/im/v1/chats/{}", chat_id);
-        if let Ok(chat_info) = self.api_get::<serde_json::Value>(&chat_path).await
-            && let Some(name) = chat_info
-                .get("data")
-                .and_then(|d| d.get("name"))
-                .and_then(|v| v.as_str())
-                .map(|s| s.to_string())
-        {
-            enriched.chat_name = Some(name);
-        }
-
-        // 通过飞书联系人 API 查询用户信息
-        if let Some(user_id) = &source.user_id {
-            let user_path = format!("/contact/v3/users/{}", user_id);
-            if let Ok(user_info) = self.api_get::<serde_json::Value>(&user_path).await
-                && let Some(name) = user_info
+        if !is_p2p {
+            let chat_id = &source.chat_id;
+            let chat_path = format!("/im/v1/chats/{}", chat_id);
+            if let Ok(chat_info) = self.api_get::<serde_json::Value>(&chat_path).await
+                && let Some(name) = chat_info
                     .get("data")
-                    .and_then(|d| d.get("user"))
-                    .and_then(|u| u.get("name"))
+                    .and_then(|d| d.get("name"))
                     .and_then(|v| v.as_str())
+                    .filter(|s| !s.is_empty())
                     .map(|s| s.to_string())
             {
-                enriched.user_name = Some(name);
+                enriched.chat_name = Some(name);
+            }
+        }
+
+        // 用户昵称：通过飞书联系人 API 查询（p2p 时 user_id = 对端用户 open_id）。
+        // 命中缓存（含负缓存）直接复用，避免每条消息都打联系人 API。
+        if let Some(user_id) = &source.user_id {
+            let cached = self.user_name_cached(user_id);
+            let name = match cached {
+                Some(name) => name,
+                None => {
+                    let user_path = format!("/contact/v3/users/{}", user_id);
+                    let name = match self.api_get::<serde_json::Value>(&user_path).await {
+                        Ok(user_info) => user_info
+                            .get("data")
+                            .and_then(|d| d.get("user"))
+                            .and_then(|u| u.get("name"))
+                            .and_then(|v| v.as_str())
+                            .filter(|s| !s.is_empty())
+                            .map(|s| s.to_string()),
+                        Err(_) => None,
+                    };
+                    // 缓存结果（失败/无名字也短缓存，负缓存防失败风暴）
+                    self.cache_user_name(user_id, name.clone());
+                    name
+                }
+            };
+            if let Some(name) = &name {
+                enriched.user_name = Some(name.clone());
+                if is_p2p {
+                    // DM 用对端用户名作为会话名，让只读 chat_name 的消费方（如 /chats 端点）也能展示
+                    enriched.chat_name = Some(name.clone());
+                }
             }
         }
 
@@ -951,6 +987,42 @@ impl PlatformAdapter for FeishuAdapter {
 // ── 辅助方法 ──
 
 impl FeishuAdapter {
+    /// 查询用户昵称缓存。返回 `Some(name)` 表示命中（`name=None` 为负缓存：最近查询失败/无名字）；
+    /// `None` 表示未缓存，需要调 API。
+    fn user_name_cached(&self, user_id: &str) -> Option<Option<String>> {
+        let cache = self
+            .user_name_cache
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        if let Some((name, expiry)) = cache.get(user_id)
+            && expiry.elapsed() < Duration::from_secs(USER_NAME_CACHE_TTL_SECS)
+        {
+            return Some(name.clone());
+        }
+        None
+    }
+
+    /// 写入用户昵称缓存。超限时先清过期条目，仍超限则逐出最早过期的一项（近似 FIFO），
+    /// 保证容量有界（对齐 CLAUDE.md 缓存约束）。
+    fn cache_user_name(&self, user_id: &str, name: Option<String>) {
+        let mut cache = self
+            .user_name_cache
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        cache.insert(user_id.to_string(), (name, Instant::now()));
+        if cache.len() > USER_NAME_CACHE_LIMIT {
+            cache.retain(|_, (_, t)| t.elapsed() < Duration::from_secs(USER_NAME_CACHE_TTL_SECS));
+        }
+        if cache.len() > USER_NAME_CACHE_LIMIT
+            && let Some(oldest) = cache
+                .iter()
+                .min_by(|a, b| a.1.1.cmp(&b.1.1))
+                .map(|(k, _)| k.clone())
+        {
+            cache.remove(&oldest);
+        }
+    }
+
     /// Cancel the old WebSocket task (if any) and spawn a new one.
     ///
     /// Used by both `connect()` (first connection) and `retry_transport()`
