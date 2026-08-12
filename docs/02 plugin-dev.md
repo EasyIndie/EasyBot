@@ -338,7 +338,8 @@ declare_plugin!(MyAdapter, MyAdapter::new);
 | 方法 | 说明 |
 |------|------|
 | `is_connected()` | 检查是否处于 Connected 状态 |
-| `heartbeat_age_ms()` | 返回上次心跳距今的毫秒数 |
+| `heartbeat_age_ms()` | 返回上次心跳距今的毫秒数（存活心跳） |
+| `heartbeat_success_age_ms()` | 返回上次**成功心跳**距今的毫秒数（成功消息流）；默认与存活心跳一致，覆盖后可在"活着但收不到消息"时上报 Degraded |
 | `health_status()` | 综合连接状态和心跳延迟计算健康等级 |
 
 ### 可选覆盖（有默认实现）
@@ -355,6 +356,9 @@ declare_plugin!(MyAdapter, MyAdapter::new);
 | `send_draft()` | 发送流式草稿 |
 | `list_chats()` | 列出聊天列表 |
 | `enrich_source()` | 富化会话来源信息 |
+| `answer_callback_query()` | 应答内联键盘回调（需 `AnswerCallbackParams`） |
+| `cursor_state()` | 返回当前游标状态（重启后交还，由 `AdapterManager` 保存/恢复） |
+| `restore_cursor_state()` | 恢复上次保存的游标状态 |
 
 ---
 
@@ -429,6 +433,9 @@ Recovery flows (auto, managed by AdapterManager health monitor):
   Failed --(backoff retry via full stop+start)--> Connecting --> Connected
   any state --stop()--> Stopped
 ```
+
+- **游标持久化**：适配器通过 `cursor_state()` / `restore_cursor_state()` 提供滚动游标（如 Telegram `last_offset`、飞书/QQ 事件游标），`AdapterManager` 在 stop/restart 时保存并恢复，重启后不丢消息、不重复消费。
+- **心跳语义**：`heartbeat()` 表示"后台任务存活且正在重试"，不要求消息成功。健康监测器追踪连续失败次数并据此退避；需要区分"存活"与"实际收到消息"的适配器应覆盖 `heartbeat_success_age_ms()`。
 
 ---
 

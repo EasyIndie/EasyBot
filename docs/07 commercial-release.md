@@ -12,6 +12,18 @@ git push origin v0.1.0
 
 工作流会拒绝标签与 `Cargo.toml` 或 CHANGELOG 不一致的发布。失败后可以重新运行工作流或删除未完成的 GitHub Release，但不得删除、移动或复用已公开的 Git 标签；需要修复时发布新的补丁版本。
 
+## 发布执行步骤（机械流程）
+
+以下为从 `0.0.X` 发布到 `0.0.Y` 的完整机械步骤（`v0.0.33` 验证）。版本号同步涉及 20+ 文件，改错会破坏发布门禁：
+
+1. **CHANGELOG**：`[Unreleased]` 下新增 `[0.0.Y] - YYYY-MM-DD` 条目（Keep a Changelog，中文）。
+2. **版本号同步**：`Cargo.toml`（`version`）、`Cargo.lock`（`cargo update --workspace`）、`compose.quickstart.yml`、`crates/easybot-api/src/routes/update.rs`（`#[schema(example)]`）、`crates/easybot-api/tests/routes.rs`（`current_version` 断言）、`routes__health_response.snap`、`openapi_v1_contract.snap`（`version`+`example`）、`docs/01 user-guide.md`（health JSON/下载 URL/时间戳行）、`docs/other/windows-deployment.md`（版本要求）。`deploy-kit/deploy.sh` 注释示例按约定指向**下一个**版本。
+3. **前置构建**：`cargo build -p mock-adapter`（集成测试依赖）+ `cargo build`（CLI 测试硬编码 `target/debug/easybot`）。`cargo clean` 或全新检出后必做。
+4. **预检**：`bash scripts/release-preflight.sh`。**不要管道到 `tail`**（会吞退出码）；用 `> /tmp/log 2>&1; echo EXIT_CODE=$?`。门禁含 Actions 40 位 SHA 固定（`test-actions-pinning.sh`）、openapi 快照、`--init`、bash -n、版本/CHANGELOG/必需文件检查。
+5. **测试**：`cargo test --workspace --features "default,plugin-system" --locked` + `cargo fmt --all --check`。注意 APFS 共享空间：构建前检查磁盘，满盘会被误判为测试失败。
+6. **提交**（3 个）：`docs: align documentation with current implementation` / `ci: pin <action> action to commit SHA` / `release: bump v0.0.X → v0.0.Y`。
+7. **推送**：打 `v0.0.Y` 标签并推 main + 标签，触发 `release.yml`；推送后确认 CI 通过。
+
 ## 发布产物
 
 每个平台发布包应包含：

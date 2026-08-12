@@ -136,8 +136,10 @@ init(config) → connect() → send()/... → disconnect()
 | `/messages/batch-send` | POST | Multi-target send |
 | `/messages/{id}` | PUT/DELETE | Edit/delete message |
 | `/messages` | GET | History (`?platform=` filter) |
+| `/callbacks/answer` | POST | Answer inline-keyboard callback |
 | `/sessions` | GET | List active |
-| `/sessions/{key}` | GET/DELETE | Details / delete |
+| `/sessions/{key}` | GET/PUT/DELETE | Details / rename (custom_name) / delete |
+| `/sessions/{key}/export` | GET | Export session data |
 | `/chats/{p}[/{chat_id}]` | GET | List / info |
 | `/config` | GET/PUT | Get / hot-reload |
 | `/ws` | GET | WebSocket stream (Auth: JSON frame `{"token":"..."}`) |

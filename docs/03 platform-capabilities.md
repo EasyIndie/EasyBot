@@ -81,6 +81,7 @@ Discord Components 格式（ActionRow + Button）：
 - **消息过滤**: 无过滤。私信（`p2p`）和群聊（`group`）消息均接收
 - **集群模式**: 事件仅随机推送到**其中一个**连接客户端，多实例部署需注意此限制
 - **全量群消息**: 需申请 `im:message.group_msg` 敏感权限（默认 `im:message.group_at_msg:readonly` 仅 @消息）
+- **会话命名**: 私聊（p2p）会话以对端用户名为名（`user_name_cache`，容量 10,000 + TTL 淘汰），减少 `label(id)` 回退显示
 - **Outbound**: Text / Image / Audio / Video / Document / Interactive Card / Markdown / Edit / Delete
 
 ### QQ
@@ -163,7 +164,9 @@ Discord Components 格式（ActionRow + Button）：
 2. **完整重连**（`reconnect_adapter()`）— 传输重试耗尽或适配器实例已消失时，完整 stop + start（含鉴权），指数退避 5s→300s
 3. **慢重试** — 完整重连失败 20 次后，30 分钟间隔慢重试
 
-错误分类：永久错误（鉴权失败 401/403）→ 立即 Failed，不浪费重试机会；瞬态错误（网络超时/DNS）→ 分级重试。
+错误分类：永久错误（鉴权失败 401/403）→ 立即 Failed，不浪费重试机会；瞬态错误（网络超时/DNS）→ 分级重试。健康监测器对每个适配器追踪**连续失败计数**并据此计算退避间隔（`compute_backoff`）。
+
+**重连无法解决的冲突单独处理**：以 Telegram 为例，getUpdates 持续返回 **409 Conflict**（另一实例轮询同一 token，或已设置 Webhook）时，重启适配器无法解决——冲突被映射为 `GatewayError::Conflict`，第 1 次仅告警（正常重启重叠可自愈），连续第 2 次起升级为 ERROR 并提示可操作建议；冲突路径保留存活心跳但**跳过成功心跳**，使消息流心跳老化、健康等级上报 **Degraded**（`/adapters`、`/health`、管理后台可见），而不是保持 Healthy。Telegram 通过 `heartbeat_success_age_ms()` 以实际成功轮询计算心跳年龄，>120s 无成功消息同样上报 Degraded。
 
 | 平台 | 自动重连 | 重连延迟 | 实现方式 |
 |------|---------|---------|---------|

@@ -85,8 +85,11 @@ EasyBot 是连接 **IM 平台**与**业务系统**之间的独立中间层服务
 | PUT | `/messages/{message_id}` | 编辑消息 | ✅ |
 | DELETE | `/messages/{message_id}` | 删除消息 | ✅ |
 | GET | `/messages` | 消息历史（支持 `?sessionKey=`、`?platform=` 过滤） | ✅ |
+| POST | `/callbacks/answer` | 应答内联键盘回调 | ✅ |
 | GET | `/sessions` | 会话列表 | ✅ |
 | GET | `/sessions/{key}` | 会话详情 | ✅ |
+| PUT | `/sessions/{key}` | 重命名会话（自定义显示名 `custom_name`） | ✅ |
+| GET | `/sessions/{key}/export` | 导出会话数据 | ✅ |
 | DELETE | `/sessions/{key}` | 删除会话 | ✅ |
 | GET | `/chats/{platform}` | 聊天列表 | ✅ |
 | GET | `/chats/{platform}/{chat_id}` | 聊天详情 | ✅ |
@@ -352,6 +355,7 @@ Response 409: 运行组件使用一致启动快照；配置变更需审阅并重
 | `FORBIDDEN` | 403 | 无权限 |
 | `PLATFORM_NOT_FOUND` | 404 | 平台未配置 |
 | `CHAT_NOT_FOUND` | 404 | 目标聊天不存在 |
+| `CONFLICT` | 409 | 平台返回冲突（如 Telegram getUpdates 被另一实例/Webhook 占用） |
 | `ADAPTER_NOT_CONNECTED` | 503 | 适配器未连接 |
 | `MESSAGE_TOO_LONG` | 400 | 消息超长 |
 | `RATE_LIMITED` | 429 | 平台限流 |
@@ -661,6 +665,7 @@ interface Session {
   chatId: string;
   threadId?: string;
   source: SessionSource;
+  customName?: string;      // 用户自定义显示名（v3 迁移），非空时覆盖自动名
   createdAt: number;
   updatedAt: number;
   resetPolicy: ResetPolicy;
@@ -669,9 +674,10 @@ interface Session {
 ```
 
 - 内存中使用 DashMap 存储
-- 数据库持久化（SQLite / PostgreSQL）
+- 数据库持久化（SQLite / PostgreSQL），`custom_name` 经 `SessionMutation` 三态（不变更/清除/设置）upsert
 - 按 TTL 定期清理（默认 session 365 天，message 90 天）
 - 支持异步富化（adapter.enrich_source）
+- 显示名推导链：`custom_name → chat_name → user_name → label(id)`；`PUT /sessions/{key}` 重命名（需 `SESSIONS_MANAGE`，审计 `privacy.session.renamed`）
 
 ### 4.6 适配器管理器
 

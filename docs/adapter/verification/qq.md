@@ -151,7 +151,7 @@ curl -s -H "Authorization: Bearer $API_KEY" \
 | `getAppAccessToken` | ✅ | 通过 AppID + clientSecret 获取 access_token |
 | REST API `QQBot {token}` 鉴权 | ✅ | `/users/@me` 认证成功 |
 | Gateway Identify `QQBot {token}` | ✅ | Gateway Ready 事件收到 |
-| Token 定时刷新 | ✅ | 每 3500s 自动刷新 |
+| Token 定时刷新 | ✅ | 每 3500s 定时刷新 + 拒收时按需强制刷新（core 单飞行，见"关键实现细节"） |
 | **适配器管理** | | |
 | 自动启动 | ✅ | REST API 认证 → Gateway WebSocket 连接 |
 | 停止适配器 | ✅ | `POST /adapters/qq/stop` → `Stopped` |
@@ -265,6 +265,7 @@ curl -s -X POST http://127.0.0.1:8080/api/v1/messages/send \
 | TLS 方案 | `native-tls`（系统 CA 证书） |
 | 支持的消息类型 | Text (0), Image (2), Markdown |
 | 支持的能力 | Text, Image, Markdown, Interactive, Group, Thread, MessageEdit, MessageDelete, ChatList |
+| 会话命名 | 群聊解析成员昵称富化会话名（成员详情有界缓存，避免重复查询），减少 `label(id)` 回退显示 |
 | 默认 Intents | `AT_MESSAGE \| C2C_MESSAGE \| GROUP_AT_MESSAGE` |
 | 入站事件类型 | `AT_MESSAGE_CREATE` / `GROUP_AT_MESSAGE_CREATE` / `GROUP_MESSAGE_CREATE` (2026 新版) / `C2C_MESSAGE_CREATE` |
 | 新字段 `mentioned` | 频道/旧版群@ → `Some(true)`, 新版全量群 → `Some(bool)`, C2C → `None` |

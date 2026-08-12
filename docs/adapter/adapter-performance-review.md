@@ -141,6 +141,10 @@ if let Ok(cache) = admin_cache.try_lock() {  // 争用时会静默跳过
 
 这是 Telegram 适配器的核心 API 调用模式，但在 `poll_once` 中也有近似的反序列化逻辑——本质上是对同一 Telegram API 响应结构的处理在两处重复实现。
 
+### 2.5 409 Conflict 已升级为可见的 Degraded（2026-08-12 修复）
+
+getUpdates 持续返回 **409 Conflict**（另一实例轮询同一 token，或已设置 Webhook）此前被归类为通用瞬态错误无限重试，心跳仍保持 Healthy 而实际收不到消息。现在 `poll_once` 将 API `error_code` 409 映射为 `GatewayError::Conflict`；轮询循环统计连续冲突次数——第 1 次维持 WARN（正常重启重叠，自愈），第 2 次起升级为 ERROR 并输出可操作提示。冲突路径保留存活 beat 但跳过 `beat_success()`，使消息流心跳老化、`health_status()` 上报 **Degraded**；适配器覆盖 `heartbeat_success_age_ms()` 以实际成功轮询计算心跳年龄，>120s 轮询停滞同样上报 Degraded。因重启无法解决外部实例冲突，刻意保持 Degraded 而非 Down（健康监测器仅对 Down 重连）。
+
 ## 3. Discord 适配器
 
 **文件**: `crates/easybot-adapter-discord/src/lib.rs` (1643 行)

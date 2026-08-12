@@ -41,6 +41,8 @@
 - ⚙️ **热重载配置** — 运行时更新配置无需重启
 - 🛡️ **资源管理** — 自动 TTL 清理、WAL checkpoint、有界通道、适配器缓存上限，长期运行不泄漏
 - 💾 **灾难恢复** — SQLite/PostgreSQL 备份、校验与恢复工具，SQLite 在线一致性快照
+- 🏷️ **会话显示名** — 平台无法可靠命名的会话可由操作者通过 `PUT /sessions/{key}` 自定义显示名（`custom_name`）；QQ 自动解析群成员昵称、飞书私聊以对端用户名命名，减少回退显示
+- 🔘 **回调应答** — 统一的 `POST /callbacks/answer` 应答内联键盘回调
 
 ---
 
@@ -300,8 +302,11 @@ QQ_CLIENT_SECRET=your_secret
 | `/messages/{message_id}` | PUT | 编辑消息 |
 | `/messages/{message_id}` | DELETE | 删除消息 |
 | `/messages` | GET | 消息历史（支持 `?platform=` 过滤） |
+| `/callbacks/answer` | POST | 应答内联键盘回调 |
 | `/sessions` | GET | 活跃会话列表 |
 | `/sessions/{key}` | GET | 会话详情 |
+| `/sessions/{key}` | PUT | 重命名会话（自定义显示名 `custom_name`） |
+| `/sessions/{key}/export` | GET | 导出会话数据 |
 | `/sessions/{key}` | DELETE | 删除会话 |
 | `/chats/{platform}` | GET | 获取平台聊天列表 |
 | `/chats/{platform}/{chat_id}` | GET | 获取聊天详情 |
@@ -309,6 +314,12 @@ QQ_CLIENT_SECRET=your_secret
 | `/config` | PUT | 热更新配置 |
 | `/ws` | GET | WebSocket 实时事件流（连接后发送 `{"token":"..."}` 认证） |
 | `/metrics` | GET | Prometheus 指标 |
+| `/system` | GET | 系统信息（CPU、内存） |
+| `/system/update-check` | GET | 检查可用更新 |
+| `/logs` | GET | 实时日志流（环形缓冲 5000 条） |
+| `/api-keys/types` | GET | 查看 API Key 类型 |
+| `/api-keys/{id}` | DELETE | 吊销 API Key |
+| `/api-keys/{id}/purge` | DELETE | 彻底删除 API Key |
 | `/swagger` | GET | Swagger UI (OpenAPI 文档浏览器) |
 | `/openapi.json` | GET | OpenAPI 3.1 JSON schema |
 
@@ -350,7 +361,7 @@ impl PlatformAdapter for MyAdapter {
 }
 ```
 
-详见 [插件开发指南](docs/PLUGIN_DEV.md)。
+详见 [插件开发指南](docs/02%20plugin-dev.md)。
 
 ---
 

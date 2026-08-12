@@ -101,6 +101,7 @@ adapters:
 | 群聊消息权限 | 默认 `group_at_msg:readonly`（仅 @消息）；全量需 `group_msg` 敏感权限 |
 | 字段名 | `message_type`（非 `msg_type`）|
 | Token 刷新 | ✅ 自动刷新（300s 提前量，单飞行）；被拒（HTTP 401 / code 99991663/99991665/20013/20005）→ 强制刷新重试一次 |
+| 会话命名 | 私聊（p2p）会话以对端用户名为名（`user_name_cache`：容量 10,000 + TTL 淘汰），减少 `label(id)` 回退显示 |
 | 能力声明 | Text、Image、Audio、Video、Document、Interactive、Markdown、Group、MessageEdit、MessageDelete |
 
 ### Token 失效处理（2026 协议）
