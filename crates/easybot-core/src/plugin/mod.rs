@@ -20,6 +20,10 @@
 pub mod loader;
 #[cfg(feature = "plugin-system")]
 pub mod manifest;
+#[cfg(feature = "plugin-system")]
+pub mod registry;
+#[cfg(feature = "plugin-system")]
+pub mod signing;
 
 #[cfg(feature = "plugin-system")]
 pub use loader::*;

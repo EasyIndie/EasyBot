@@ -1,0 +1,16 @@
+[package]
+name = "easybot-plugin-sign"
+description = "EasyBot 插件签名工具（发布者 CI 使用）"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+easybot-core = { path = "../easybot-core", features = ["plugin-system"] }
+clap.workspace = true
+anyhow.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+
+[lints]
+workspace = true

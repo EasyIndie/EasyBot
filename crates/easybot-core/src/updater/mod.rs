@@ -8,7 +8,7 @@
 
 mod compact;
 mod download;
-mod github;
+pub mod github;
 mod precheck;
 mod replace;
 pub mod types;

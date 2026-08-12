@@ -10,6 +10,7 @@ members = [
     "crates/easybot-adapter-qq",
     "crates/easybot-adapter-wechat",
     "crates/easybot-plugin-sdk",
+    "crates/easybot-plugin-sign",
     "tests/plugins/mock-adapter",
     "tests/integration",
     "tests/e2e",
@@ -70,6 +71,7 @@ argon2 = "0.5"
 hmac = "0.13"
 sha2 = "0.11"
 base64 = "0.23"
+ed25519-dalek = { version = "2", features = ["pkcs8", "rand_core"] }
 
 # 可观测性
 prometheus = { version = "0.14", features = ["process"] }
