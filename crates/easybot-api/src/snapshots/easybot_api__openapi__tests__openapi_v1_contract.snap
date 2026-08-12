@@ -10,7 +10,7 @@ expression: "ApiDoc::openapi()"
     "license": {
       "name": "GPL-3.0"
     },
-    "version": "0.0.32"
+    "version": "0.0.33"
   },
   "servers": [
     {
@@ -6410,7 +6410,7 @@ expression: "ApiDoc::openapi()"
           },
           "current_version": {
             "type": "string",
-            "example": "0.0.32"
+            "example": "0.0.33"
           },
           "last_checked": {
             "type": [

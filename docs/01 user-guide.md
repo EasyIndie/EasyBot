@@ -90,7 +90,7 @@ curl http://localhost:8080/api/v1/health
 ```json
 {
   "status": "healthy",
-  "version": "0.0.32",
+  "version": "0.0.33",
   "uptime": 12,
   "adapters": { "total": 1, "connected": 1 },
   "sessions": { "active": 0 }
@@ -231,10 +231,10 @@ vim ~/.easybot/.env
 
 ```bash
 # Linux (x86_64)
-curl -LO https://github.com/EasyIndie/EasyBot/releases/download/v0.0.32/easybot-x86_64-unknown-linux-musl
+curl -LO https://github.com/EasyIndie/EasyBot/releases/download/v0.0.33/easybot-x86_64-unknown-linux-musl
 
 # macOS (Apple Silicon)
-curl -LO https://github.com/EasyIndie/EasyBot/releases/download/v0.0.32/easybot-aarch64-apple-darwin
+curl -LO https://github.com/EasyIndie/EasyBot/releases/download/v0.0.33/easybot-aarch64-apple-darwin
 
 chmod +x easybot-*
 ./easybot-x86_64-unknown-linux-musl --init --dir ~/.easybot
@@ -538,7 +538,7 @@ curl http://localhost:8080/api/v1/health
 ```json
 {
   "status": "healthy",
-  "version": "0.0.32",
+  "version": "0.0.33",
   "uptime": 3600,
   "adapters": { "total": 5, "connected": 3 },
   "sessions": { "active": 42 }
@@ -629,8 +629,11 @@ API Key 列表中的“调试”按钮可选择活跃 Target，并使用待测 K
 | `/messages/{id}` | PUT | 编辑消息 |
 | `/messages/{id}` | DELETE | 删除消息 |
 | `/messages` | GET | 消息历史 |
+| `/callbacks/answer` | POST | 应答内联键盘回调 |
 | `/sessions` | GET | 会话列表 |
 | `/sessions/{key}` | GET | 会话详情 |
+| `/sessions/{key}` | PUT | 重命名会话（自定义显示名 `custom_name`） |
+| `/sessions/{key}/export` | GET | 导出会话数据 |
 | `/sessions/{key}` | DELETE | 删除会话 |
 | `/chats/{platform}` | GET | 聊天列表 |
 | `/chats/{platform}/{chat_id}` | GET | 聊天详情 |
@@ -646,6 +649,18 @@ API Key 列表中的“调试”按钮可选择活跃 Target，并使用待测 K
 | `/swagger` | GET | Swagger UI |
 | `/openapi.json` | GET | OpenAPI 3.1 Schema |
 | `/ws` | GET | WebSocket 实时事件流 |
+
+**会话显示名（display name）：**
+
+会话的显示名按以下链条自动推导，平台无法可靠命名的会话可被操作者覆盖：
+
+```
+custom_name（用户自定义） → chat_name（平台聊天名） → user_name（对端用户名） → label(id)（最终回退）
+```
+
+- 各平台自动富化：QQ 解析群成员昵称、飞书私聊以对端用户名命名、Telegram/Discord 使用平台提供的会话标题/成员名。
+- 调用 `PUT /api/v1/sessions/{key}` 传入 `custom_name` 即可覆盖显示名（需 `SESSIONS_MANAGE` 权限，记录审计事件 `privacy.session.renamed`）；传空字符串或纯空白则清除自定义名并回退自动推导链。`custom_name` 最长 128 字符。
+- 管理后台会话表、发送页目标选择器与 `/chats` 端点优先展示自定义名。
 
 ### 7.3 发送消息
 
@@ -864,6 +879,7 @@ easybot --debug
 ### 9.3 功能
 
 - **适配器概览** — 所有平台适配器的实时状态
+- **会话管理** — 查看/删除会话，并可为平台无法可靠命名的会话**重命名显示名**（`custom_name`，需 `SESSIONS_MANAGE` 权限）
 - **API Key 与 Target Grant 管理** — 创建、轮换、吊销凭据，并按 Subject 管理平台/会话授权
 - **实时日志** — 最近 5000 条运行日志（环形缓冲）
 - **系统信息** — CPU、内存、运行时间
@@ -1090,4 +1106,4 @@ docker compose pull && docker compose up -d
 
 ---
 
-*最后更新：2026-08-08 · EasyBot v0.0.32*
+*最后更新：2026-08-12 · EasyBot v0.0.33*

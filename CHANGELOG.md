@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.33] - 2026-08-12
+
+### Added
+
+- **用户自定义会话显示名（`custom_name`）** — 新增 `PUT /api/v1/sessions/{key}`
+  重命名接口，操作者可为平台无法可靠命名的会话设置自己的显示名。核心层
+  `Session.custom_name` 新增列（SQLite/PostgreSQL **v3 迁移**，含回滚 SQL）、
+  `SessionMutation.custom_name` 三态语义（不变更/清除/设置）、经 `SessionStore`
+  upsert 持久化；API 层需 `SESSIONS_MANAGE` 权限，并记录审计事件
+  `privacy.session.renamed`；空/trim 后为空的名字清除自定义名并回退自动推导链
+  `custom_name → chat_name → user_name → label(id)`，仅非空自定义名覆盖显示。
+  管理后台会话表新增重命名按钮；发送页目标选择器与 `/chats` 端点优先展示自定义名。
+- **QQ / 飞书会话名自动增强** — QQ 解析群成员昵称并修正 `enrich_source` 字段接线
+  （成员详情有界缓存避免重复查询）；飞书私聊会话以对端用户名命名（`user_name`
+  缓存 + TTL 淘汰）。两者减少会话显示对 `chat_type_label(id)` 回退的依赖。
+- **回调应答 API** — 新增 `POST /api/v1/callbacks/answer`（内联键盘回调应答），
+  基于新的 `PlatformAdapter::answer_callback_query` trait 与 `AnswerCallbackParams`，
+  按 `MESSAGES_SEND` 目标权限校验，OpenAPI 契约同步更新。
+
+### Changed
+
+- **平台令牌刷新收敛到核心 `CachedTokenStore`** — 将各适配器重复的"缓存 + 单飞刷新
+  + 拒收重试"机制抽取为 `easybot-core` 的 `CachedTokenStore` 与
+  `send_with_token_retry`（token 拒收时恰好一次刷新、至多两次请求调用），QQ 与飞书
+  统一接入，未来适配器无需重复实现。QQ：三个重复的 token 失效判定合并为
+  `is_qq_token_invalid_response`（401 / 11244 / 11242），网关拉取先读 body，使
+  HTTP 200 + code 11244 能正常终止而非无限重试；`qq_fetch_access_token` 将 100001
+  归类为瞬态（原为永久停用）、100016/100007/10004 归类为凭据错误；默认 API 域由
+  `api.sgroup.qq.com` 改为官方 `api.bot.qq.com`。飞书：替换原 `FeishuTokenStore` 为
+  `CachedTokenStore` 包装，修复了缺失的 token 拒收→刷新→重试潜在缺陷，失效判定码
+  99991663/99991665/20013/20005（排除 99991661 缺头与 99991664 app-access-token），
+  HTTP 401 以 `Unauthorized` 呈现，`upload_media` 补重试。
+- **五平台协议审查修复（54 项）** — Telegram/Discord/飞书/QQ/微信协议审查统一修复。
+  核心：`cursor_state` 游标持久化（`AdapterManager` 保存/恢复）、心跳连续失败计数与
+  失败循环阈值判定。适配器：Telegram 401 永久鉴权失败、429 `RateLimited`、
+  callback_query 入站发布、`last_offset` 持久化；Discord 心跳 connected 门控、
+  分片流自愈重连；微信空响应按成功处理、stop 时 flush 未持久化的 `context_token`。
+  API：`POST /callbacks/answer` 路由 + 权限映射。
+
+### Fixed
+
+- **Telegram getUpdates 409 升级为可见 Degraded** — 持续 409 Conflict（另一实例轮询
+  同一 token，或已设置 webhook）此前被归类为通用瞬态错误无限重试，心跳仍保持
+  Healthy 而实际收不到消息。现在 `poll_once` 将 409 映射为 `GatewayError::Conflict`，
+  连续冲突计数：第 1 次维持 WARN（正常重启重叠，可自愈），第 2 次起升级为 ERROR 并
+  给出可操作提示；冲突路径保留存活 beat 但跳过 `beat_success()`，使消息流心跳老化、
+  `health_status()` 上报 Degraded（`/adapters`、`/health`、管理后台可见）。Telegram
+  通过 `heartbeat_success_age_ms()` 追踪实际成功轮询，>120s 轮询停滞同样上报
+  Degraded（非 Down——外部实例冲突无法靠重连解决，健康监测器仅对 Down 介入）。
+- **Telegram 429 无 retry_after 映射修正** — 429 无 `retry_after` 时映射
+  `RateLimited(0)` 而非 `Internal(500)`。
+
 ## [0.0.32] - 2026-08-08
 
 ### Fixed
