@@ -825,13 +825,99 @@ fn inspect_signature(
     (true, valid, Some(sig.publisher))
 }
 
+/// 生产模式签名扫描：返回所有"未验签"插件 `(name, reason)`
+///
+/// 判定为已验证（不加入结果）当且仅当：
+/// 1. 有 `plugin.yaml` + `plugin.sig.json`
+/// 2. 库文件存在且验签通过
+/// 3. 签名发布者的公钥受信任（配置 `trusted_publishers` 精确匹配 ∪ 用户 `.trust`）
+///
+/// 跳过点目录与非插件目录（松散文件如误放的 `.so` 不算插件）。缺清单/缺库/缺签名/
+/// 验签失败/发布者未信任均计为未验证。供 `bin/main.rs` 生产门禁调用——dev 恒
+/// lenient，不调用此函数。同步于 [`PluginManager::install`] 的验签+信任语义。
+pub fn scan_unverified(
+    plugins_dir: &Path,
+    config: &PluginConfig,
+    trust_store: &TrustStore,
+) -> Vec<(String, String)> {
+    let mut unverified: Vec<(String, String)> = Vec::new();
+    let Ok(entries) = std::fs::read_dir(plugins_dir) else {
+        return unverified; // 目录不存在 → 无插件
+    };
+    for entry in entries.flatten() {
+        let dir = entry.path();
+        if !dir.is_dir() {
+            continue;
+        }
+        let Some(name) = dir.file_name().and_then(|n| n.to_str()).map(str::to_string) else {
+            continue;
+        };
+        if name.starts_with('.') {
+            continue; // .marketplace / .trust 等
+        }
+
+        let manifest = match std::fs::read_to_string(dir.join("plugin.yaml"))
+            .map_err(|_| "missing plugin.yaml".to_string())
+            .and_then(|content| {
+                parse_manifest_yaml(&content).map_err(|e| format!("invalid plugin.yaml: {e}"))
+            }) {
+            Ok(m) => m,
+            Err(reason) => {
+                unverified.push((name, reason));
+                continue;
+            }
+        };
+        let lib_path = match manifest.library_path(&dir) {
+            Ok(lp) => lp,
+            Err(e) => {
+                unverified.push((name, format!("invalid library path: {e}")));
+                continue;
+            }
+        };
+        if !lib_path.exists() {
+            unverified.push((name, format!("missing library {}", lib_path.display())));
+            continue;
+        }
+
+        let sig = match PluginSignature::from_file(&dir.join("plugin.sig.json"))
+            .map_err(|_| "missing or invalid plugin.sig.json".to_string())
+        {
+            Ok(s) => s,
+            Err(reason) => {
+                unverified.push((name, reason));
+                continue;
+            }
+        };
+        if let Err(e) = sig.verify_library(&lib_path) {
+            unverified.push((name, format!("signature verification failed: {e}")));
+            continue;
+        }
+
+        // 发布者公钥受信任（配置 `trusted_publishers` 精确匹配 ∪ 用户 `.trust`）
+        let trusted = config
+            .trusted_publishers
+            .get(&sig.publisher)
+            .is_some_and(|pk| pk == &sig.public_key)
+            || trust_store.is_trusted(&sig.publisher, &sig.public_key);
+        if !trusted {
+            unverified.push((
+                name,
+                format!("publisher '{}' is not trusted", sig.publisher),
+            ));
+        }
+    }
+    unverified
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::plugin::registry::types::{
         PluginArtifact, PluginCatalog, PluginRegistryError, PluginRequirements,
     };
-    use crate::plugin::signing::{encode_public_key, generate_keypair, sign_artifact};
+    use crate::plugin::signing::{
+        SIGNATURE_SCHEMA_VERSION, encode_public_key, generate_keypair, sign_artifact,
+    };
     use async_trait::async_trait;
 
     /// 内存注册表（无网络）：返回固定目录/版本/产物字节
@@ -1145,6 +1231,90 @@ mod tests {
         manager.set_enabled("slack", true).await.unwrap();
         let listed = manager.list_installed().await;
         assert!(listed[0].enabled);
+
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn test_scan_unverified_detects_unsigned_tampered_and_untrusted() {
+        let home = temp_home("scan");
+        let plugins = home.join("plugins");
+        std::fs::create_dir_all(&plugins).unwrap();
+
+        // 空目录 + 松散文件 + 点目录 → 不报告
+        std::fs::write(plugins.join("stray.so"), b"junk").unwrap();
+        std::fs::create_dir_all(plugins.join(".marketplace")).unwrap();
+        let empty = scan_unverified(&plugins, &PluginConfig::default(), &TrustStore::default());
+        assert!(empty.is_empty(), "{empty:?}");
+
+        // 已签名 + 配置 trusted_publishers 受信任 → 通过
+        let (signing, verifying) = generate_keypair();
+        let pk = encode_public_key(&verifying);
+        let mut cfg = PluginConfig::default();
+        cfg.trusted_publishers.insert("pub-a".into(), pk.clone());
+        let trusted_dir = plugins.join("trusted-plugin");
+        std::fs::create_dir_all(&trusted_dir).unwrap();
+        std::fs::write(
+            trusted_dir.join("plugin.yaml"),
+            "name: trusted-plugin\nsdk_version: 1\nlibrary: libtrusted.so\n",
+        )
+        .unwrap();
+        std::fs::write(trusted_dir.join("libtrusted.so"), b"plugin-bytes").unwrap();
+        let sig = PluginSignature {
+            schema_version: SIGNATURE_SCHEMA_VERSION,
+            name: "trusted-plugin".into(),
+            version: "1.0.0".into(),
+            publisher: "pub-a".into(),
+            artifact: "libtrusted.so".into(),
+            signature: sign_artifact(b"plugin-bytes", &signing),
+            public_key: pk.clone(),
+        };
+        sig.write_to(&trusted_dir.join("plugin.sig.json")).unwrap();
+        assert!(scan_unverified(&plugins, &cfg, &TrustStore::default()).is_empty());
+
+        // 未签名插件 → 报告缺签名
+        let unsigned_dir = plugins.join("unsigned-plugin");
+        std::fs::create_dir_all(&unsigned_dir).unwrap();
+        std::fs::write(
+            unsigned_dir.join("plugin.yaml"),
+            "name: unsigned-plugin\nsdk_version: 1\n",
+        )
+        .unwrap();
+        let out = scan_unverified(&plugins, &cfg, &TrustStore::default());
+        let (name, reason) = out.iter().find(|(n, _)| n == "unsigned-plugin").unwrap();
+        assert_eq!(name, "unsigned-plugin");
+        assert!(reason.contains("sig"), "{reason}");
+
+        // 已签名但发布者未受信任 → 报告（用独立密钥对，签名本身有效）
+        let (other_signing, other_verifying) = generate_keypair();
+        let untrusted_dir = plugins.join("untrusted-plugin");
+        std::fs::create_dir_all(&untrusted_dir).unwrap();
+        std::fs::write(
+            untrusted_dir.join("plugin.yaml"),
+            "name: untrusted-plugin\nsdk_version: 1\nlibrary: libu.so\n",
+        )
+        .unwrap();
+        std::fs::write(untrusted_dir.join("libu.so"), b"plugin-bytes").unwrap();
+        let sig = PluginSignature {
+            schema_version: SIGNATURE_SCHEMA_VERSION,
+            name: "untrusted-plugin".into(),
+            version: "1.0.0".into(),
+            publisher: "pub-b".into(),
+            artifact: "libu.so".into(),
+            signature: sign_artifact(b"plugin-bytes", &other_signing),
+            public_key: encode_public_key(&other_verifying),
+        };
+        sig.write_to(&untrusted_dir.join("plugin.sig.json"))
+            .unwrap();
+        let out = scan_unverified(&plugins, &cfg, &TrustStore::default());
+        let (_, reason) = out.iter().find(|(n, _)| n == "untrusted-plugin").unwrap();
+        assert!(reason.contains("not trusted"), "{reason}");
+
+        // 篡改库文件 → 验签失败
+        std::fs::write(untrusted_dir.join("libu.so"), b"tampered-bytes").unwrap();
+        let out = scan_unverified(&plugins, &cfg, &TrustStore::default());
+        let (_, reason) = out.iter().find(|(n, _)| n == "untrusted-plugin").unwrap();
+        assert!(reason.contains("verification failed"), "{reason}");
 
         let _ = std::fs::remove_dir_all(&home);
     }

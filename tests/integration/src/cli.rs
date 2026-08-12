@@ -173,18 +173,24 @@ fn test_cli_unknown_flag() {
 }
 
 #[test]
-fn test_production_rejects_unsigned_dynamic_plugins() {
+fn test_production_rejects_unverified_plugins() {
     let dir = tempfile::tempdir().expect("failed to create temp dir");
     let init = Command::new(easybot_bin())
         .args(["--init", "--dir", dir.path().to_str().unwrap()])
         .output()
         .unwrap();
     assert!(init.status.success());
+
+    // 未签名插件目录（plugin.yaml + 库文件，无 plugin.sig.json）——生产门禁应拒绝
+    let plugin_dir = dir.path().join("plugins").join("my-plugin");
+    std::fs::create_dir_all(&plugin_dir).unwrap();
     std::fs::write(
-        dir.path().join("plugins").join("untrusted.so"),
-        b"not-a-plugin",
+        plugin_dir.join("plugin.yaml"),
+        "name: my-plugin\nsdk_version: 1\nlibrary: libmy_plugin.so\n",
     )
     .unwrap();
+    std::fs::write(plugin_dir.join("libmy_plugin.so"), b"not-a-plugin").unwrap();
+
     let output = Command::new(easybot_bin())
         .args(["--production", "--dir", dir.path().to_str().unwrap()])
         .env("EASYBOT_ADMIN_PASSWORD", "a-production-password")
@@ -193,7 +199,88 @@ fn test_production_rejects_unsigned_dynamic_plugins() {
         .unwrap();
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("refuses dynamic plugins"), "{stderr}");
+    assert!(stderr.contains("refuses"), "{stderr}");
+    assert!(stderr.contains("my-plugin"), "{stderr}");
+    assert!(stderr.contains("unverified"), "{stderr}");
+}
+
+#[test]
+fn test_production_allows_verified_trusted_plugins() {
+    use easybot_core::plugin::signing::{
+        PluginSignature, SIGNATURE_SCHEMA_VERSION, encode_public_key, generate_keypair,
+        sign_artifact,
+    };
+
+    let dir = tempfile::tempdir().expect("failed to create temp dir");
+    let init = Command::new(easybot_bin())
+        .args(["--init", "--dir", dir.path().to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(init.status.success());
+
+    // 生成发布者密钥对，并把公钥登记进配置 trustedPublishers（配置侧信任）
+    let (signing, verifying) = generate_keypair();
+    let pk = encode_public_key(&verifying);
+    let port = find_free_port();
+    let local_yaml =
+        format!("server:\n  port: {port}\nplugins:\n  trustedPublishers:\n    testpub: \"{pk}\"\n");
+    std::fs::write(dir.path().join("gateway.local.yaml"), local_yaml).unwrap();
+
+    // 签名插件目录：plugin.yaml + 库文件 + 合法 plugin.sig.json
+    let plugin_dir = dir.path().join("plugins").join("signed-plugin");
+    std::fs::create_dir_all(&plugin_dir).unwrap();
+    std::fs::write(
+        plugin_dir.join("plugin.yaml"),
+        "name: signed-plugin\nsdk_version: 1\nlibrary: libsigned.so\n",
+    )
+    .unwrap();
+    let lib = b"fake-dylib-bytes";
+    std::fs::write(plugin_dir.join("libsigned.so"), lib).unwrap();
+    let sig = PluginSignature {
+        schema_version: SIGNATURE_SCHEMA_VERSION,
+        name: "signed-plugin".into(),
+        version: "1.0.0".into(),
+        publisher: "testpub".into(),
+        artifact: "libsigned.so".into(),
+        signature: sign_artifact(lib, &signing),
+        public_key: pk,
+    };
+    sig.write_to(&plugin_dir.join("plugin.sig.json"))
+        .expect("failed to write plugin.sig.json");
+
+    // 生产启动应放行（服务器阻塞，用 spawn + kill 验证不因插件门禁退出）
+    let mut child = Command::new(easybot_bin())
+        .args(["--production", "--dir", dir.path().to_str().unwrap()])
+        .env("EASYBOT_ADMIN_PASSWORD", "a-production-password")
+        .env("EASYBOT_ALLOW_PLAINTEXT", "true")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("failed to start easybot --production");
+
+    // Let it run briefly; a spurious gate refusal would exit non-zero
+    std::thread::sleep(std::time::Duration::from_millis(1200));
+    match child.try_wait() {
+        Ok(Some(status)) => {
+            let mut stderr = String::new();
+            child
+                .stderr
+                .take()
+                .unwrap()
+                .read_to_string(&mut stderr)
+                .unwrap();
+            panic!("production gate refused a verified+trusted plugin (status {status}): {stderr}");
+        }
+        Ok(None) => {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        Err(e) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("failed to check easybot status: {e}");
+        }
+    }
 }
 
 #[test]

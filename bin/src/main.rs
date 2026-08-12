@@ -295,11 +295,8 @@ async fn main() -> anyhow::Result<()> {
                 errors.join("\n- ")
             );
         }
-        if std::fs::read_dir(&paths.plugins_dir).is_ok_and(|mut entries| entries.next().is_some()) {
-            anyhow::bail!(
-                "production mode refuses dynamic plugins because plugin signatures and publisher trust are not implemented; empty {} or isolate the plugin in a separate service",
-                paths.plugins_dir.display()
-            );
+        if let Err(reason) = scan_plugins_for_production(&config, &paths) {
+            anyhow::bail!("{reason}");
         }
         tracing::info!("Production readiness configuration check passed");
     }
@@ -941,6 +938,58 @@ async fn load_plugin_adapters(
     _event_bus: Arc<easybot_core::bus::EventBus>,
 ) {
     tracing::info!("Plugin system not enabled (compile with --features plugin-system to enable)");
+}
+
+/// 生产模式插件门禁：签名扫描
+///
+/// 取代旧的"目录非空即拒绝"。prod 启动时逐个插件目录验签 + 检查发布者公钥信任；
+/// 全部通过（或无插件）则放行。有未验签插件且 `!allow_untrusted` → 拒绝并提示
+/// 走市场重装或设 `plugins.allowUntrusted: true`。dev 恒 lenient，不调用此函数。
+#[cfg(feature = "plugin-system")]
+fn scan_plugins_for_production(
+    config: &easybot_core::types::config::GatewayConfig,
+    paths: &easybot_core::config::EasyBotPaths,
+) -> Result<(), String> {
+    use easybot_core::plugin::signing::trust::TrustStore;
+
+    let trust_store = TrustStore::load(&paths.plugins_dir.join(".trust"));
+    let unverified =
+        easybot_core::plugin::scan_unverified(&paths.plugins_dir, &config.plugins, &trust_store);
+    if unverified.is_empty() {
+        return Ok(());
+    }
+    if config.plugins.allow_untrusted {
+        for (name, reason) in &unverified {
+            tracing::warn!(
+                "plugin {name} is unverified ({reason}); allow_untrusted=true permits it in production"
+            );
+        }
+        return Ok(());
+    }
+    let details: Vec<String> = unverified
+        .iter()
+        .map(|(name, reason)| format!("- {name}: {reason}"))
+        .collect();
+    Err(format!(
+        "production mode refuses {} unverified plugin(s):\n{}\nReinstall via `easybot plugin install <name>` (requires a trusted publisher), or set `plugins.allowUntrusted: true` to override",
+        unverified.len(),
+        details.join("\n")
+    ))
+}
+
+/// 插件系统未启用时的生产门禁（保持旧的"非空即拒绝"语义）
+#[cfg(not(feature = "plugin-system"))]
+fn scan_plugins_for_production(
+    _config: &easybot_core::types::config::GatewayConfig,
+    paths: &easybot_core::config::EasyBotPaths,
+) -> Result<(), String> {
+    if std::fs::read_dir(&paths.plugins_dir).is_ok_and(|mut entries| entries.next().is_some()) {
+        return Err(format!(
+            "production mode refuses dynamic plugins because the plugin-system feature is not enabled; empty {} or rebuild with --features plugin-system",
+            paths.plugins_dir.display()
+        ));
+    }
+    Ok(())
 }
 
 /// 注册单个内置适配器的宏
