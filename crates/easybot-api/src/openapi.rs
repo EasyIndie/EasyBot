@@ -146,6 +146,7 @@ impl Modify for SecurityAddon {
         routes::messages::message_history,
         routes::sessions::list_sessions,
         routes::sessions::get_session,
+        routes::sessions::update_session,
         routes::sessions::delete_session,
         routes::sessions::export_session_data,
         routes::chats::list_chats,
@@ -252,6 +253,7 @@ impl Modify for SecurityAddon {
             easybot_core::types::session::Session,
             easybot_core::types::session::SessionSource,
             easybot_core::types::session::ResetPolicy,
+            routes::sessions::UpdateSessionRequest,
             // Adapter
             easybot_core::types::adapter::AdapterConfig,
             easybot_core::types::adapter::AdapterStatusSummary,

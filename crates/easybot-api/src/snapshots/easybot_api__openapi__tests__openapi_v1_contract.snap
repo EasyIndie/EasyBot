@@ -2853,6 +2853,100 @@ expression: "ApiDoc::openapi()"
           }
         }
       },
+      "put": {
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "更新会话（用户自定义显示名）",
+        "operationId": "update_session",
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "description": "Session key in 'platform:chatId' format",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateSessionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Session updated",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid custom_name"
+          },
+          "401": {
+            "description": "Missing, invalid, expired, or revoked API key",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "API key lacks the required permission",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Session not found"
+          },
+          "429": {
+            "description": "Global, IP, or subject quota exceeded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Internal operation failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Durable metering, quota, storage, or adapter unavailable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
       "delete": {
         "tags": [
           "Sessions"
@@ -6078,6 +6172,13 @@ expression: "ApiDoc::openapi()"
             "format": "int64",
             "description": "创建时间戳（毫秒）"
           },
+          "custom_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "用户自定义会话显示名（非空时优先于 source.chat_name 展示；空/None 时回退自动推导链）"
+          },
           "key": {
             "type": "string",
             "description": "会话键，格式 \"platform:chatId\" 或 \"platform:chatId:threadId\""
@@ -6346,6 +6447,20 @@ expression: "ApiDoc::openapi()"
           "update_available": {
             "type": "boolean",
             "description": "是否有可用更新"
+          }
+        }
+      },
+      "UpdateSessionRequest": {
+        "type": "object",
+        "description": "更新会话请求（当前仅支持自定义显示名）",
+        "properties": {
+          "custom_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "自定义显示名。非空时优先于自动推导名称展示；传空字符串清空并回退自动推导链。",
+            "example": "公司客服群"
           }
         }
       },

@@ -50,6 +50,7 @@ struct SessionRow {
     metadata: serde_json::Value,
     last_message: Option<String>,
     last_message_at: Option<i64>,
+    custom_name: Option<String>,
 }
 
 impl SessionRow {
@@ -77,6 +78,7 @@ impl SessionRow {
             metadata: self.metadata,
             last_message: self.last_message,
             last_message_at: self.last_message_at,
+            custom_name: self.custom_name,
         })
     }
 }
@@ -96,6 +98,7 @@ fn row_to_session(row: &sqlx::postgres::PgRow) -> Result<SessionRow, sqlx::Error
         metadata: row.try_get("metadata")?,
         last_message: row.try_get("last_message")?,
         last_message_at: row.try_get("last_message_at")?,
+        custom_name: row.try_get("custom_name")?,
     })
 }
 
@@ -121,15 +124,16 @@ impl SessionStore for PgSessionStore {
         let reset_policy = format!("{:?}", session.reset_policy);
 
         sqlx::query(
-            "INSERT INTO sessions (key, platform, chat_id, thread_id, created_at, updated_at, source_json, reset_policy, metadata, last_message, last_message_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+            "INSERT INTO sessions (key, platform, chat_id, thread_id, created_at, updated_at, source_json, reset_policy, metadata, last_message, last_message_at, custom_name)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
              ON CONFLICT (key) DO UPDATE SET
                 updated_at = EXCLUDED.updated_at,
                 source_json = EXCLUDED.source_json,
                 reset_policy = EXCLUDED.reset_policy,
                 metadata = EXCLUDED.metadata,
                 last_message = EXCLUDED.last_message,
-                last_message_at = EXCLUDED.last_message_at"
+                last_message_at = EXCLUDED.last_message_at,
+                custom_name = EXCLUDED.custom_name"
         )
         .bind(&session.key)
         .bind(&session.platform)
@@ -142,6 +146,7 @@ impl SessionStore for PgSessionStore {
         .bind(&metadata)
         .bind(&session.last_message)
         .bind(session.last_message_at)
+        .bind(&session.custom_name)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -149,7 +154,7 @@ impl SessionStore for PgSessionStore {
 
     async fn get_session(&self, key: &str) -> Result<Option<Session>, StoreError> {
         let row = sqlx::query(
-            "SELECT key, platform, chat_id, thread_id, created_at, updated_at, source_json, reset_policy, metadata, last_message, last_message_at
+            "SELECT key, platform, chat_id, thread_id, created_at, updated_at, source_json, reset_policy, metadata, last_message, last_message_at, custom_name
              FROM sessions WHERE key = $1"
         )
         .bind(key)
@@ -183,7 +188,7 @@ impl SessionStore for PgSessionStore {
 
     async fn list_sessions(&self, filter: &SessionFilter) -> Result<Vec<Session>, StoreError> {
         let mut builder = sqlx::QueryBuilder::new(
-            "SELECT key, platform, chat_id, thread_id, created_at, updated_at, source_json, reset_policy, metadata, last_message, last_message_at \
+            "SELECT key, platform, chat_id, thread_id, created_at, updated_at, source_json, reset_policy, metadata, last_message, last_message_at, custom_name \
              FROM sessions WHERE 1=1",
         );
 
@@ -220,7 +225,7 @@ impl SessionStore for PgSessionStore {
 
     async fn load_all_sessions(&self) -> Result<Vec<Session>, StoreError> {
         let rows = sqlx::query(
-            "SELECT key, platform, chat_id, thread_id, created_at, updated_at, source_json, reset_policy, metadata, last_message, last_message_at
+            "SELECT key, platform, chat_id, thread_id, created_at, updated_at, source_json, reset_policy, metadata, last_message, last_message_at, custom_name
              FROM sessions"
         )
         .fetch_all(&self.pool)
@@ -780,6 +785,7 @@ mod tests {
             metadata: serde_json::json!({}),
             last_message: None,
             last_message_at: None,
+            custom_name: None,
         }
     }
 

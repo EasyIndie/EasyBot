@@ -188,6 +188,7 @@ impl Server {
             (&Method::DELETE, _) if route_path.starts_with("/sessions/") => {
                 Permission::SessionsManage
             }
+            (&Method::PUT, _) if route_path.starts_with("/sessions/") => Permission::SessionsManage,
             (&Method::GET, _) if route_path.starts_with("/sessions") => Permission::SessionsRead,
             (&Method::GET, _) if route_path.starts_with("/adapters") => Permission::AdaptersRead,
             // WebSocket upgrade
@@ -457,6 +458,7 @@ pub fn create_router(state: AppState) -> Router {
         // 会话
         .route("/sessions", get(routes::sessions::list_sessions))
         .route("/sessions/{key}", get(routes::sessions::get_session))
+        .route("/sessions/{key}", put(routes::sessions::update_session))
         .route("/sessions/{key}", delete(routes::sessions::delete_session))
         .route(
             "/sessions/{key}/export",

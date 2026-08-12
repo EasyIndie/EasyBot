@@ -36,6 +36,9 @@ pub struct Session {
     /// 最近一条消息的时间戳（毫秒）
     #[serde(default)]
     pub last_message_at: Option<i64>,
+    /// 用户自定义会话显示名（非空时优先于 source.chat_name 展示；空/None 时回退自动推导链）
+    #[serde(default)]
+    pub custom_name: Option<String>,
 }
 
 /// 会话来源

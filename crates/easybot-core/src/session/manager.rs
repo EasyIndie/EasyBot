@@ -89,6 +89,7 @@ impl SessionManager {
                     metadata: serde_json::json!({}),
                     last_message: None,
                     last_message_at: None,
+                    custom_name: None,
                 };
                 vacant.insert(session.clone());
                 // 持久化新会话
@@ -280,6 +281,10 @@ impl SessionManager {
                 }
                 session.metadata = meta;
             }
+            // 自定义显示名：Some(None)=清空（回退自动推导链），Some(Some(name))=设值
+            if let Some(name) = mutation.custom_name {
+                session.custom_name = name;
+            }
             let cloned = session.clone();
             // 持久化更新
             if let Some(ref store) = self.store
@@ -305,6 +310,8 @@ impl Default for SessionManager {
 pub struct SessionMutation {
     pub reset_policy: Option<ResetPolicy>,
     pub metadata: Option<serde_json::Value>,
+    /// 自定义显示名变更。外层 None=不改；Some(None)=清空（回退自动推导链）；Some(Some(name))=设值。
+    pub custom_name: Option<Option<String>>,
 }
 
 impl SessionMutation {
@@ -319,6 +326,11 @@ impl SessionMutation {
 
     pub fn with_metadata(mut self, meta: serde_json::Value) -> Self {
         self.metadata = Some(meta);
+        self
+    }
+
+    pub fn with_custom_name(mut self, name: Option<String>) -> Self {
+        self.custom_name = Some(name);
         self
     }
 }
@@ -438,5 +450,49 @@ mod tests {
         r.unwrap();
         // 验证最终的 state 一致
         assert!(mgr.count() >= 1, "should have at least 1 session");
+    }
+
+    #[tokio::test]
+    async fn test_update_custom_name() {
+        let mgr = SessionManager::new();
+        mgr.get_or_create("telegram:12345", make_source("telegram", "12345"))
+            .await;
+
+        // 设置自定义名
+        let updated = mgr
+            .update(
+                "telegram:12345",
+                SessionMutation::new().with_custom_name(Some("公司客服群".to_string())),
+            )
+            .await
+            .expect("session should exist");
+        assert_eq!(updated.custom_name.as_deref(), Some("公司客服群"));
+        assert_eq!(
+            mgr.get("telegram:12345").unwrap().custom_name.as_deref(),
+            Some("公司客服群"),
+            "custom_name should be persisted in manager state"
+        );
+
+        // 清空自定义名（Some(None)）→ 回退自动推导链
+        let updated = mgr
+            .update(
+                "telegram:12345",
+                SessionMutation::new().with_custom_name(None),
+            )
+            .await
+            .expect("session should exist");
+        assert_eq!(
+            updated.custom_name, None,
+            "clearing sets custom_name back to None"
+        );
+
+        // 不存在的会话 → None
+        let missing = mgr
+            .update(
+                "telegram:nope",
+                SessionMutation::new().with_custom_name(Some("x".into())),
+            )
+            .await;
+        assert!(missing.is_none());
     }
 }

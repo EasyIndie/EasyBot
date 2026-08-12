@@ -55,7 +55,7 @@ pub async fn list_chats(
         .map(|s| {
             serde_json::json!({
                 "chatId": s.chat_id,
-                "name": s.source.chat_name,
+                "name": s.custom_name.clone().or(s.source.chat_name.clone()),
                 "type": format!("{:?}", s.source.chat_type),
             })
         })
@@ -106,7 +106,7 @@ pub async fn get_chat(
     match state.session_manager.get(&key) {
         Some(session) => Ok(Json(serde_json::json!({
             "chatId": session.chat_id,
-            "name": session.source.chat_name,
+            "name": session.custom_name.clone().or(session.source.chat_name.clone()),
             "type": format!("{:?}", session.source.chat_type),
             "available": true,
         }))),

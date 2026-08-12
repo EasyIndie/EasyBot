@@ -7,7 +7,7 @@ expression: json
     "connected": 0,
     "total": 0
   },
-  "schema_version": 2,
+  "schema_version": 3,
   "sessions": {
     "active": 0
   },
