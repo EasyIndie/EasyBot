@@ -1,0 +1,53 @@
+# EasyBot 插件开发联调示例（dev 循环）
+#
+# 场景：你在写一个插件，想在一个「干净的 EasyBot 容器」里反复验证——
+#   build（cargo build --release）→ 装入容器 plugins 目录 → 看宿主加载日志 → 改代码 → 重来。
+#
+# 用法：
+#   1. 先在插件工程里编译产物：
+#        cd my-adapter && cargo build --release
+#   2. 起容器（把 ./my-adapter 挂进容器 plugins 目录）：
+#        docker compose -f docs/docker-compose.plugin-dev.yml up
+#   3. 看宿主日志（-f 跟随），确认插件加载成功：
+#        日志里应出现：Loaded plugin 'my-adapter' (My Adapter) from ...
+#   4. 改代码 → 重新 cargo build --release → 容器内文件即变，重启容器即可：
+#        docker compose -f docs/docker-compose.plugin-dev.yml restart
+#
+# 说明：
+#   - 本示例偏**开发**：挂载整个插件工程、plugins 目录可写、跟随日志、开 --debug。
+#     生产加固请收紧（read_only、cap_drop、非 root、最小挂载），见 docs/SECURITY.md。
+#   - 容器内 EASYBOT_HOME=/var/lib/easybot，插件目录默认 {config_dir}/plugins。
+#   - --debug 与 dev 环境（未设 --production）使未签名插件也能加载；生产模式会做签名扫描。
+#   - 平台凭据用 *_FILE 或环境变量注入（对齐 compose.quickstart.yml 约定）。
+
+services:
+  easybot:
+    image: ${EASYBOT_IMAGE:-ghcr.io/easyindie/easybot:latest}
+    pull_policy: always
+    restart: unless-stopped
+    command: ["easybot", "--debug"]   # --debug 打开宿主 debug 日志（插件加载信息在此）
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      # 宿主数据（DB / 会话 / 配置）——插件安装也写这里
+      - easybot_data:/var/lib/easybot
+      # 关键：把你的插件工程挂进容器 plugins 目录（目录名 = 插件名）
+      - ./my-adapter:/var/lib/easybot/plugins/my-adapter:ro
+      # 可选：自定义配置覆盖镜像内置默认配置
+      # - ./gateway.local.yaml:/var/lib/easybot/gateway.local.yaml:ro
+    environment:
+      - EASYBOT_HOME=/var/lib/easybot
+      - EASYBOT_ALLOW_PLAINTEXT=true      # release 构建的硬性启动要求（HTTP 监听置于可信反向代理后）
+      - EASYBOT_ADMIN_PASSWORD            # 管理后台密码（或 *_FILE）
+      # 平台凭据（插件 init 时通过 AdapterConfig 读取；对应插件平台名注入 env）
+      # - MY_PLATFORM_TOKEN=xxx
+      # - MY_PLATFORM_TOKEN_FILE=/run/secrets/my_token
+    # 开发便利：跟随日志、看到插件加载行
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+volumes:
+  easybot_data:

@@ -361,7 +361,7 @@ impl PlatformAdapter for MyAdapter {
 }
 ```
 
-详见 [插件开发指南](docs/02%20plugin-dev.md)。
+详见 [插件快速上手](docs/plugin-quickstart.md)、[插件开发完整指南](docs/plugin-guide.md) 与 [插件方法论](docs/plugin-methodology.md)。
 
 ---
 

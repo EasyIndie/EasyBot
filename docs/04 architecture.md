@@ -763,7 +763,7 @@ EasyBot 启动
 - `declare_plugin!()` 宏：一行声明入口函数
 - 核心类型（`InboundMessage`、`SendResult`、`GatewayError` 等）
 
-详见 `docs/02 plugin-dev.md`。
+详见 `docs/plugin-guide.md`（完整参考）与 `docs/plugin-methodology.md`（方法论）。
 
 ---
 
