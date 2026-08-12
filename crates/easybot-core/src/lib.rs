@@ -9,6 +9,7 @@
 pub mod adapter;
 pub mod auth;
 pub mod bus;
+pub mod cache;
 pub mod config;
 pub mod http;
 #[cfg(feature = "plugin-system")]

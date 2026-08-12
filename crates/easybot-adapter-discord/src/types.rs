@@ -42,6 +42,19 @@ pub(crate) struct DiscordGuild {
     pub owner: Option<bool>,
 }
 
+/// GET /gateway/bot 响应 — 用于获取推荐 Gateway 分片数
+#[derive(Debug, Deserialize)]
+pub(crate) struct DiscordGatewayBot {
+    pub url: String,
+    #[serde(default = "default_shard_count")]
+    pub shards: u32,
+}
+
+/// /gateway/bot 未返回 shards 字段时的兜底值
+fn default_shard_count() -> u32 {
+    1
+}
+
 /// 附件对象
 #[derive(Debug, Deserialize)]
 pub(crate) struct DiscordAttachment {

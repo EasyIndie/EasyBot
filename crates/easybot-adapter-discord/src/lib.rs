@@ -59,6 +59,8 @@ pub struct DiscordAdapter {
     guild_owner_cache: Arc<Mutex<HashMap<String, String>>>,
     /// Guild 名称缓存（从 Ready 事件中填充），用于入站消息的 chat_name
     guild_name_cache: Arc<Mutex<HashMap<String, String>>>,
+    /// Gateway 分片数（由 GET /gateway/bot 动态获取，失败回退 1）
+    shard_count: u32,
 }
 
 impl DiscordAdapter {
@@ -127,6 +129,7 @@ impl DiscordAdapter {
             bot_user_id: None,
             guild_owner_cache: Arc::new(Mutex::new(HashMap::new())),
             guild_name_cache: Arc::new(Mutex::new(HashMap::new())),
+            shard_count: 1,
         }
     }
 
@@ -190,7 +193,17 @@ impl DiscordAdapter {
 
             let status = resp.status();
             if status.is_success() {
-                return resp.json().await.map_err(|e| {
+                let bytes = resp.bytes().await.map_err(|e| {
+                    GatewayError::Internal(format!("Discord API body read failed: {}", e))
+                })?;
+                let parsed = if bytes.is_empty() {
+                    // 2xx 且 body 为空（如 /channels/{id}/typing 返回 200 无内容）：
+                    // 不要求 JSON 解析，以 null 值反序列化（serde_json::Value 场景）
+                    serde_json::from_slice::<T>(b"null")
+                } else {
+                    serde_json::from_slice::<T>(&bytes)
+                };
+                return parsed.map_err(|e| {
                     GatewayError::Internal(format!("Discord API JSON parse failed: {}", e))
                 });
             }
@@ -214,12 +227,26 @@ impl DiscordAdapter {
 
             let error_text = resp.text().await.unwrap_or_default();
             let safe_error: String = error_text.chars().take(256).collect();
-            return Err(GatewayError::Internal(format!(
-                "Discord API {} {}: {}",
-                status.as_u16(),
-                endpoint,
-                safe_error
-            )));
+            let code = status.as_u16();
+            // 分类错误：401/403 → 凭据问题（Permanent）；5xx → Discord 服务端故障（Transient）
+            let err = match code {
+                401 => GatewayError::Unauthorized(format!(
+                    "Discord API 401 {}: {}",
+                    endpoint, safe_error
+                )),
+                403 => {
+                    GatewayError::Forbidden(format!("Discord API 403 {}: {}", endpoint, safe_error))
+                }
+                _ if code >= 500 => GatewayError::Transient(format!(
+                    "Discord API {} {}: {}",
+                    code, endpoint, safe_error
+                )),
+                _ => GatewayError::Internal(format!(
+                    "Discord API {} {}: {}",
+                    code, endpoint, safe_error
+                )),
+            };
+            return Err(err);
         }
 
         // 429 重试耗尽后仍被限流 —— 瞬态，健康监控应退避重试。
@@ -227,6 +254,33 @@ impl DiscordAdapter {
             "Discord API rate limited on {} after retry",
             endpoint,
         )))
+    }
+
+    /// 查询 /gateway/bot 获取推荐分片数；失败回退 None（调用方使用单分片）。
+    ///
+    /// Discord 对超过 ~2500 个 guild 的机器人强制要求多分片，`GET /gateway/bot`
+    /// 返回服务端根据当前 guild 数计算的 `shards` 字段，据此动态分片可避免
+    /// 单分片超限被 Discord 拒连（错误码 4010）。
+    async fn fetch_shard_count(&self) -> Option<u32> {
+        match self
+            .api_call::<DiscordGatewayBot>(reqwest::Method::GET, "/gateway/bot", None)
+            .await
+        {
+            Ok(info) => {
+                let n = info.shards.max(1);
+                if n > 1 {
+                    tracing::info!("Discord Gateway: using {} shards", n);
+                }
+                Some(n)
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "Discord: failed to fetch gateway shard count, falling back to 1 shard: {}",
+                    e,
+                );
+                None
+            }
+        }
     }
 
     /// 将 Discord 消息转换为网关 InboundMessage
@@ -376,6 +430,48 @@ impl DiscordAdapter {
         (primary_type, Some(media_list))
     }
 
+    /// 构建 Discord Message Components（键盘行 → Action Row / Button）
+    fn build_components(keyboard: &InlineKeyboard) -> Vec<serde_json::Value> {
+        keyboard
+            .rows
+            .iter()
+            .map(|row| {
+                let buttons: Vec<serde_json::Value> = row
+                    .buttons
+                    .iter()
+                    .map(|btn| {
+                        if let Some(ref url) = btn.url {
+                            // Link 按钮 (style=5)
+                            serde_json::json!({
+                                "type": 2,
+                                "style": 5,
+                                "label": btn.text,
+                                "url": url,
+                            })
+                        } else {
+                            // 回调按钮 (style=1, Primary)
+                            let custom_id = btn
+                                .callback_data
+                                .clone()
+                                .unwrap_or_else(|| btn.text.clone());
+                            serde_json::json!({
+                                "type": 2,
+                                "style": 1,
+                                "label": btn.text,
+                                "custom_id": custom_id,
+                            })
+                        }
+                    })
+                    .collect();
+
+                serde_json::json!({
+                    "type": 1,
+                    "components": buttons,
+                })
+            })
+            .collect()
+    }
+
     /// Gateway Shard 事件循环（使用 twilight-gateway SDK）
     #[allow(clippy::too_many_arguments)]
     async fn gateway_shard_loop(
@@ -387,6 +483,7 @@ impl DiscordAdapter {
         guild_owner_cache: Arc<Mutex<HashMap<String, String>>>,
         guild_name_cache: Arc<Mutex<HashMap<String, String>>>,
         messages_in: Arc<AtomicU64>,
+        shard_id: ShardId,
     ) {
         // 限制并发 guild owner 查询数，避免大量 tokio::spawn 在启动时爆炸
         let guild_fetch_permits = Arc::new(Semaphore::new(5));
@@ -394,10 +491,21 @@ impl DiscordAdapter {
             | Intents::DIRECT_MESSAGES
             | Intents::MESSAGE_CONTENT
             | Intents::GUILDS;
-        let mut shard = Shard::new(ShardId::ONE, token.clone(), intents);
+        let mut shard = Shard::new(shard_id, token.clone(), intents);
         let http_client = reqwest::Client::new();
 
-        tracing::info!("Discord Gateway connecting...");
+        tracing::info!(
+            "Discord Gateway connecting (shard {}/{} total)...",
+            shard_id.number(),
+            shard_id.total(),
+        );
+
+        // 安静连接 liveness 定时器：与网关事件并行，60s 无事件也维持心跳，
+        // 避免健康监控在 120s 后把健康连接误判为 Down 反复强杀重建。
+        // 该定时器绑定在本任务生命周期内（随任务取消/结束而 drop），
+        // 不是独立的无条件 beat 定时器。
+        let mut liveness = tokio::time::interval(Duration::from_secs(60));
+        liveness.tick().await; // skip the immediate first tick
 
         loop {
             tokio::select! {
@@ -405,6 +513,10 @@ impl DiscordAdapter {
                     tracing::info!("Discord Gateway cancelled");
                     shard.close(CloseFrame::NORMAL);
                     return;
+                }
+                _ = liveness.tick() => {
+                    // 无事件（安静连接）也保持 liveness 心跳，任务存活即证明连接健康
+                    heartbeat.beat();
                 }
                 event = shard.next_event(EventTypeFlags::all()) => {
                     match event {
@@ -472,6 +584,7 @@ impl DiscordAdapter {
                             }
                         }
                         Some(Ok(Event::GuildUpdate(guild))) => {
+                            heartbeat.beat(); // 事件驱动的 liveness 更新
                             if let Ok(mut cache) = guild_owner_cache.try_lock() {
                                 const GUILD_CACHE_LIMIT: usize = 5_000;
                                 if cache.len() > GUILD_CACHE_LIMIT {
@@ -492,6 +605,7 @@ impl DiscordAdapter {
                             }
                         }
                         Some(Ok(Event::GuildCreate(guild))) => {
+                            heartbeat.beat(); // 事件驱动的 liveness 更新
                             if let GuildCreate::Available(g) = &*guild
                                 && let Ok(mut cache) = guild_name_cache.try_lock()
                             {
@@ -594,17 +708,33 @@ impl DiscordAdapter {
                 }
             };
 
-            let (cancel_tx, cancel_rx) = broadcast::channel(1);
+            let (cancel_tx, _cancel_rx) = broadcast::channel(1);
             self.cancel_tx = Some(cancel_tx);
-            let eb = event_bus.clone();
-            let hb = self.heartbeat.clone();
-            let goc = self.guild_owner_cache.clone();
-            let gnc = self.guild_name_cache.clone();
-            let mi = self.messages_in.clone();
+            let cancel_sender = self
+                .cancel_tx
+                .as_ref()
+                .expect("cancel_tx was just set")
+                .clone();
+            // 动态分片：每个 shard 一个独立 gateway 任务，共享同一个 cancel 信号
+            let shards = self.shard_count.max(1);
+            for shard_index in 0..shards {
+                let cancel_rx = cancel_sender.subscribe();
+                let shard_id = ShardId::new(shard_index, shards);
+                let eb = event_bus.clone();
+                let hb = self.heartbeat.clone();
+                let goc = self.guild_owner_cache.clone();
+                let gnc = self.guild_name_cache.clone();
+                let mi = self.messages_in.clone();
+                let token = token.clone();
+                let bot_id = bot_id.clone();
 
-            tokio::spawn(async move {
-                Self::gateway_shard_loop(token, eb, bot_id, cancel_rx, hb, goc, gnc, mi).await;
-            });
+                tokio::spawn(async move {
+                    Self::gateway_shard_loop(
+                        token, eb, bot_id, cancel_rx, hb, goc, gnc, mi, shard_id,
+                    )
+                    .await;
+                });
+            }
         }
     }
 }
@@ -658,16 +788,20 @@ impl PlatformAdapter for DiscordAdapter {
         {
             Ok(u) => u,
             Err(e) => {
-                // 网络层失败（Transient）→ 重连应重试；401/403 等凭据问题 → 永久停用。
+                // 仅 401/403/鉴权类错误 → 永久凭据失败（不重试）；
+                // 5xx/429/网络等 Transient → 退避重试；其余未知 → 回退启发式。
                 return Ok(match &e {
+                    GatewayError::Unauthorized(_)
+                    | GatewayError::Forbidden(_)
+                    | GatewayError::AuthFailed(_) => ConnectResult::failed(
+                        format!("Discord auth failed: {}", e),
+                        Some(ConnectErrorKind::Permanent),
+                    ),
                     GatewayError::Transient(_) => ConnectResult::failed(
                         format!("Discord API request failed: {}", e),
                         Some(ConnectErrorKind::Transient),
                     ),
-                    _ => ConnectResult::failed(
-                        format!("Discord auth failed: {}", e),
-                        Some(ConnectErrorKind::Permanent),
-                    ),
+                    _ => ConnectResult::failed(format!("Discord API request failed: {}", e), None),
                 });
             }
         };
@@ -679,14 +813,21 @@ impl PlatformAdapter for DiscordAdapter {
             id: bot_id.clone(),
         };
 
+        // 动态获取 Gateway 分片数（失败回退单分片，不阻塞连接）
+        if let Some(shards) = self.fetch_shard_count().await {
+            self.shard_count = shards;
+        }
+
         self.state = AdapterState::Connected;
         self.bot_info = Some(bot_info.clone());
         self.bot_user_id = Some(bot_id.clone());
+        self.heartbeat.record_connection();
 
         tracing::info!(
-            "Discord adapter connected: {} (id={})",
+            "Discord adapter connected: {} (id={}, shards={})",
             bot_info.name,
             bot_info.id,
+            self.shard_count,
         );
 
         // Step 2: 启动 Gateway WebSocket 连接（如果配置了 EventBus）
@@ -742,9 +883,13 @@ impl PlatformAdapter for DiscordAdapter {
     }
 
     async fn send(&self, params: SendTextParams) -> Result<SendResult, GatewayError> {
-        let body = serde_json::json!({
+        let mut body = serde_json::json!({
             "content": params.message.text,
         });
+        // 透传回复引用（message_reference），与其它平台 reply_to 语义一致
+        if let Some(ref reply_to) = params.reply_to {
+            body["message_reference"] = serde_json::json!({"message_id": reply_to});
+        }
 
         let endpoint = format!("/channels/{}/messages", params.chat_id);
 
@@ -758,7 +903,14 @@ impl PlatformAdapter for DiscordAdapter {
             }
             Err(e) => {
                 self.errors.fetch_add(1, Ordering::Relaxed);
-                SendResult::fail(e.to_string(), true)
+                // 仅 429/网络瞬态错误可重试；400/403/404 等永久错误不可重试
+                let retryable = matches!(
+                    e,
+                    GatewayError::Transient(_)
+                        | GatewayError::RateLimited { .. }
+                        | GatewayError::RequestTimeout(_)
+                );
+                SendResult::fail(e.to_string(), retryable)
             }
         };
         if let Some(bus) = &self.event_bus {
@@ -851,6 +1003,29 @@ impl PlatformAdapter for DiscordAdapter {
         // Resolve file data and filename from base64 data or URL
         let (file_data, filename, content_type) = if let Some(data_b64) = &params.media.data {
             use base64::Engine;
+            // SECURITY: 解码前按 base64 长度估算解码后大小，超过 8MB 能力上限直接拒绝，
+            // 避免解码大 base64 字符串占用过多内存。
+            const MAX_MEDIA_BYTES: usize = 8 * 1024 * 1024;
+            let decoded_len_est = data_b64.len().div_ceil(4) * 3; // ceil(len/4)*3 ≈ 解码后最大字节数
+            if decoded_len_est > MAX_MEDIA_BYTES {
+                self.errors.fetch_add(1, Ordering::Relaxed);
+                let fail = SendResult::fail(
+                    format!(
+                        "Rejected base64 media: ~{} bytes exceeds {} limit",
+                        decoded_len_est, MAX_MEDIA_BYTES
+                    ),
+                    false,
+                );
+                if let Some(bus) = &self.event_bus {
+                    bus.publish_send_result(
+                        event_types::MESSAGE_FAILED,
+                        "discord",
+                        &params.chat_id,
+                        &fail,
+                    );
+                }
+                return Ok(fail);
+            }
             let decoded = base64::engine::general_purpose::STANDARD
                 .decode(data_b64)
                 .map_err(|e| GatewayError::Internal(format!("Base64 decode failed: {}", e)))?;
@@ -861,11 +1036,23 @@ impl PlatformAdapter for DiscordAdapter {
                 .unwrap_or_else(|| "file".to_string());
             (decoded, fname, params.media.mime_type.clone())
         } else if let Some(file_url) = &params.media.url {
-            let resp = client
-                .get(file_url)
-                .send()
-                .await
-                .map_err(|e| GatewayError::Internal(format!("Download failed: {}", e)))?;
+            // 网络层失败 → SendResult::fail(retryable=true)，与 send/send_interactive 约定一致
+            let resp = match client.get(file_url).send().await {
+                Ok(r) => r,
+                Err(e) => {
+                    self.errors.fetch_add(1, Ordering::Relaxed);
+                    let fail = SendResult::fail(format!("Media download failed: {}", e), true);
+                    if let Some(bus) = &self.event_bus {
+                        bus.publish_send_result(
+                            event_types::MESSAGE_FAILED,
+                            "discord",
+                            &params.chat_id,
+                            &fail,
+                        );
+                    }
+                    return Ok(fail);
+                }
+            };
             let ct = resp
                 .headers()
                 .get("content-type")
@@ -877,22 +1064,47 @@ impl PlatformAdapter for DiscordAdapter {
             if let Some(content_length) = resp.content_length()
                 && content_length > MAX_DOWNLOAD_BYTES
             {
-                return Err(GatewayError::Internal(format!(
-                    "Rejected media download: {} bytes exceeds {} limit",
-                    content_length, MAX_DOWNLOAD_BYTES
-                )));
+                self.errors.fetch_add(1, Ordering::Relaxed);
+                let fail = SendResult::fail(
+                    format!(
+                        "Rejected media download: {} bytes exceeds {} limit",
+                        content_length, MAX_DOWNLOAD_BYTES
+                    ),
+                    false,
+                );
+                if let Some(bus) = &self.event_bus {
+                    bus.publish_send_result(
+                        event_types::MESSAGE_FAILED,
+                        "discord",
+                        &params.chat_id,
+                        &fail,
+                    );
+                }
+                return Ok(fail);
             }
-            let data = resp
-                .bytes()
-                .await
-                .map_err(|e| GatewayError::Internal(format!("Download read failed: {}", e)))?;
+            let data = match resp.bytes().await {
+                Ok(d) => d.to_vec(),
+                Err(e) => {
+                    self.errors.fetch_add(1, Ordering::Relaxed);
+                    let fail = SendResult::fail(format!("Media download read failed: {}", e), true);
+                    if let Some(bus) = &self.event_bus {
+                        bus.publish_send_result(
+                            event_types::MESSAGE_FAILED,
+                            "discord",
+                            &params.chat_id,
+                            &fail,
+                        );
+                    }
+                    return Ok(fail);
+                }
+            };
             let fname = params
                 .media
                 .filename
                 .clone()
                 .or_else(|| file_url.split('/').next_back().map(|s| s.to_string()))
                 .unwrap_or_else(|| "file".to_string());
-            (data.to_vec(), fname, ct)
+            (data, fname, ct)
         } else {
             let fail = SendResult::fail("No media data or URL provided".to_string(), false);
             if let Some(bus) = &self.event_bus {
@@ -946,13 +1158,29 @@ impl PlatformAdapter for DiscordAdapter {
             .part("payload_json", payload_part)
             .part("files[0]", file_part);
 
-        let resp = client
+        // 网络层失败 → SendResult::fail(retryable=true)，与 send/send_interactive 约定一致
+        let resp = match client
             .post(&url)
             .header("Authorization", self.auth_header())
             .multipart(form)
             .send()
             .await
-            .map_err(|e| GatewayError::Internal(format!("Discord API upload failed: {}", e)))?;
+        {
+            Ok(r) => r,
+            Err(e) => {
+                self.errors.fetch_add(1, Ordering::Relaxed);
+                let fail = SendResult::fail(format!("Discord API upload failed: {}", e), true);
+                if let Some(bus) = &self.event_bus {
+                    bus.publish_send_result(
+                        event_types::MESSAGE_FAILED,
+                        "discord",
+                        &params.chat_id,
+                        &fail,
+                    );
+                }
+                return Ok(fail);
+            }
+        };
 
         let status = resp.status();
         if !status.is_success() {
@@ -1023,50 +1251,16 @@ impl PlatformAdapter for DiscordAdapter {
     ) -> Result<SendResult, GatewayError> {
         // 构建 Discord Message Components
         // 每行 → 一个 Action Row (type=1)，每个按钮 → Button (type=2)
-        let components: Vec<serde_json::Value> = params
-            .keyboard
-            .rows
-            .iter()
-            .map(|row| {
-                let buttons: Vec<serde_json::Value> = row
-                    .buttons
-                    .iter()
-                    .map(|btn| {
-                        if let Some(ref url) = btn.url {
-                            // Link 按钮 (style=5)
-                            serde_json::json!({
-                                "type": 2,
-                                "style": 5,
-                                "label": btn.text,
-                                "url": url,
-                            })
-                        } else {
-                            // 回调按钮 (style=1, Primary)
-                            let custom_id = btn
-                                .callback_data
-                                .clone()
-                                .unwrap_or_else(|| btn.text.clone());
-                            serde_json::json!({
-                                "type": 2,
-                                "style": 1,
-                                "label": btn.text,
-                                "custom_id": custom_id,
-                            })
-                        }
-                    })
-                    .collect();
+        let components = Self::build_components(&params.keyboard);
 
-                serde_json::json!({
-                    "type": 1,
-                    "components": buttons,
-                })
-            })
-            .collect();
-
-        let body = serde_json::json!({
+        let mut body = serde_json::json!({
             "content": params.text,
             "components": components,
         });
+        // 透传回复引用（message_reference）
+        if let Some(ref reply_to) = params.reply_to {
+            body["message_reference"] = serde_json::json!({"message_id": reply_to});
+        }
 
         let endpoint = format!("/channels/{}/messages", params.chat_id);
 
@@ -1080,7 +1274,14 @@ impl PlatformAdapter for DiscordAdapter {
             }
             Err(e) => {
                 self.errors.fetch_add(1, Ordering::Relaxed);
-                SendResult::fail(e.to_string(), true)
+                // 仅 429/网络瞬态错误可重试；400/403/404 等永久错误不可重试
+                let retryable = matches!(
+                    e,
+                    GatewayError::Transient(_)
+                        | GatewayError::RateLimited { .. }
+                        | GatewayError::RequestTimeout(_)
+                );
+                SendResult::fail(e.to_string(), retryable)
             }
         };
         if let Some(bus) = &self.event_bus {
@@ -1177,9 +1378,13 @@ impl PlatformAdapter for DiscordAdapter {
     }
 
     async fn edit_message(&self, params: EditMessageParams) -> Result<EditResult, GatewayError> {
-        let body = serde_json::json!({
+        let mut body = serde_json::json!({
             "content": params.message.text,
         });
+        // 透传键盘（components）更新，与 send_interactive 一致
+        if let Some(ref keyboard) = params.keyboard {
+            body["components"] = serde_json::Value::Array(Self::build_components(keyboard));
+        }
 
         let endpoint = format!(
             "/channels/{}/messages/{}",
@@ -1221,7 +1426,7 @@ impl PlatformAdapter for DiscordAdapter {
             .header("Authorization", self.auth_header())
             .send()
             .await
-            .map_err(|e| GatewayError::Internal(format!("Discord API delete failed: {}", e)))?;
+            .map_err(|e| GatewayError::Transient(format!("Discord API delete failed: {}", e)))?;
 
         let status = resp.status();
         if status.is_success() {
@@ -1770,5 +1975,173 @@ mod tests {
         let action = handle_gateway_event::<&str>(None, &event_bus, "bot_id", &heartbeat);
 
         assert_eq!(action, EventAction::Stop);
+    }
+
+    // ── send_media base64 大小校验（D6） ──
+
+    #[tokio::test]
+    async fn test_send_media_base64_too_large() {
+        use base64::Engine;
+        let adapter = DiscordAdapter::new();
+        // 构造一个解码后超过 8MB 的 base64 数据（解码前按长度估算即应被拒绝）
+        let big = vec![0u8; 8 * 1024 * 1024 + 1];
+        let data_b64 = base64::engine::general_purpose::STANDARD.encode(&big);
+        let params = SendMediaParams {
+            chat_id: "123".to_string(),
+            text: None,
+            media: MediaAttachment {
+                media_type: MediaType::Image,
+                url: None,
+                data: Some(data_b64),
+                mime_type: "image/png".to_string(),
+                filename: Some("big.png".to_string()),
+                caption: None,
+                thumbnail_url: None,
+                file_size: None,
+                duration: None,
+            },
+            reply_to: None,
+        };
+        let result = adapter.send_media(params).await.unwrap();
+        assert!(!result.success, "oversized base64 media should be rejected");
+        assert!(!result.retryable, "size rejection should not be retryable");
+        let err = result.error.unwrap_or_default();
+        assert!(
+            err.contains("limit"),
+            "error should mention the size limit, got: {}",
+            err
+        );
+    }
+
+    // ── 动态分片（D8） ──
+
+    #[tokio::test]
+    async fn test_fetch_shard_count_uses_gateway_bot() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/gateway/bot"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "url": "wss://gateway.discord.gg",
+                "shards": 3,
+                "session_start_limit": {
+                    "total": 16,
+                    "remaining": 16,
+                    "reset_after": 14400000,
+                    "max_concurrency": 1
+                }
+            })))
+            .expect(1..)
+            .mount(&mock_server)
+            .await;
+
+        let mut adapter = DiscordAdapter::new();
+        adapter
+            .init(AdapterConfig {
+                enabled: Some(true),
+                token: Some("t".to_string()),
+                api_key: None,
+                base_url: Some(format!("http://127.0.0.1:{}", mock_server.address().port())),
+                extra: serde_json::json!({}),
+            })
+            .await
+            .unwrap();
+
+        let shards = adapter.fetch_shard_count().await;
+        assert_eq!(shards, Some(3), "should read shards from /gateway/bot");
+
+        mock_server.verify().await;
+    }
+
+    #[tokio::test]
+    async fn test_connect_sets_shard_count_from_gateway_bot() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/users/@me"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": "12345",
+                "username": "TestBot",
+                "global_name": "Test Bot",
+                "bot": true
+            })))
+            .mount(&mock_server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/gateway/bot"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "url": "wss://gateway.discord.gg",
+                "shards": 2,
+                "session_start_limit": {
+                    "total": 16,
+                    "remaining": 16,
+                    "reset_after": 14400000,
+                    "max_concurrency": 1
+                }
+            })))
+            .mount(&mock_server)
+            .await;
+
+        let mut adapter = DiscordAdapter::new();
+        adapter
+            .init(AdapterConfig {
+                enabled: Some(true),
+                token: Some("t".to_string()),
+                api_key: None,
+                base_url: Some(format!("http://127.0.0.1:{}", mock_server.address().port())),
+                extra: serde_json::json!({}),
+            })
+            .await
+            .unwrap();
+
+        let result = adapter.connect().await.unwrap();
+        assert!(result.ok, "connect should succeed");
+        assert_eq!(
+            adapter.shard_count, 2,
+            "shard_count should come from /gateway/bot"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_connect_falls_back_to_single_shard() {
+        // /gateway/bot 失败（404）→ 回退单分片，不阻塞连接
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let mock_server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/users/@me"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": "12345",
+                "username": "TestBot",
+                "global_name": "Test Bot",
+                "bot": true
+            })))
+            .mount(&mock_server)
+            .await;
+        // /gateway/bot 未 mock → wiremock 返回 404
+
+        let mut adapter = DiscordAdapter::new();
+        adapter
+            .init(AdapterConfig {
+                enabled: Some(true),
+                token: Some("t".to_string()),
+                api_key: None,
+                base_url: Some(format!("http://127.0.0.1:{}", mock_server.address().port())),
+                extra: serde_json::json!({}),
+            })
+            .await
+            .unwrap();
+
+        let result = adapter.connect().await.unwrap();
+        assert!(
+            result.ok,
+            "connect should succeed despite /gateway/bot failing"
+        );
+        assert_eq!(adapter.shard_count, 1, "should fall back to single shard");
     }
 }

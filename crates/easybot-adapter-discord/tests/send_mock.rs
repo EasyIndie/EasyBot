@@ -2,10 +2,15 @@
 //!
 //! 使用 wiremock 模拟 Discord REST API，验证 send() 方法正确构造请求并解析响应。
 
-use easybot_core::types::adapter::{AdapterConfig, AdapterState, PlatformAdapter};
+use std::sync::Arc;
+use std::time::Duration;
+
+use easybot_core::types::adapter::{
+    AdapterConfig, AdapterState, ConnectErrorKind, PlatformAdapter,
+};
 use easybot_core::types::message::{
-    EditMessageParams, MediaAttachment, MediaType, OutboundMessage, ParseMode, SendMediaParams,
-    SendTextParams,
+    Button, EditMessageParams, InlineKeyboard, KeyboardRow, MediaAttachment, MediaType,
+    OutboundMessage, ParseMode, SendMediaParams, SendTextParams,
 };
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -150,6 +155,85 @@ async fn test_send_http_500() {
 }
 
 #[tokio::test]
+async fn test_send_http_400_not_retryable() {
+    // 400 等永久错误不应标记为可重试
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/channels/98765/messages"))
+        .respond_with(ResponseTemplate::new(400).set_body_string("Bad Request"))
+        .expect(1..)
+        .mount(&mock_server)
+        .await;
+
+    let adapter = make_adapter(mock_server.address().port()).await;
+    let result = adapter.send(send_text_params()).await.unwrap();
+
+    assert!(!result.success, "send should fail with 400");
+    assert!(!result.retryable, "400 should not be retryable");
+
+    mock_server.verify().await;
+}
+
+#[tokio::test]
+async fn test_send_http_500_retryable() {
+    // 服务端 5xx 是瞬态错误，应标记为可重试
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/channels/98765/messages"))
+        .respond_with(ResponseTemplate::new(500).set_body_string("Internal Server Error"))
+        .expect(1..)
+        .mount(&mock_server)
+        .await;
+
+    let adapter = make_adapter(mock_server.address().port()).await;
+    let result = adapter.send(send_text_params()).await.unwrap();
+
+    assert!(!result.success, "send should fail with 500");
+    assert!(result.retryable, "5xx should be retryable");
+
+    mock_server.verify().await;
+}
+
+#[tokio::test]
+async fn test_send_with_reply_to_includes_message_reference() {
+    // send() 应透传 reply_to → message_reference（D5）
+    let mock_server = MockServer::start().await;
+
+    let captured_body = Arc::new(std::sync::Mutex::new(None::<serde_json::Value>));
+    let captured = captured_body.clone();
+
+    Mock::given(method("POST"))
+        .and(path("/channels/98765/messages"))
+        .and(move |req: &wiremock::Request| {
+            if let Ok(body) = serde_json::from_slice::<serde_json::Value>(&req.body) {
+                *captured.lock().unwrap() = Some(body);
+            }
+            true
+        })
+        .respond_with(ResponseTemplate::new(200).set_body_json(success_response()))
+        .expect(1..)
+        .mount(&mock_server)
+        .await;
+
+    let adapter = make_adapter(mock_server.address().port()).await;
+    let mut params = send_text_params();
+    params.reply_to = Some("42".to_string());
+    let result = adapter.send(params).await.unwrap();
+    assert!(result.success);
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let body = captured_body.lock().unwrap().take().unwrap();
+    assert_eq!(
+        body["message_reference"]["message_id"], "42",
+        "reply_to should be passed through as message_reference"
+    );
+
+    mock_server.verify().await;
+}
+
+#[tokio::test]
 async fn test_send_malformed_response() {
     let mock_server = MockServer::start().await;
 
@@ -267,6 +351,60 @@ async fn test_connect_no_token_returns_config_error() {
     );
 }
 
+#[tokio::test]
+async fn test_connect_http_500_is_not_permanent() {
+    // 服务端 5xx 属于瞬态故障（可重试），不应被误判为永久凭据失败。
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("GET"))
+        .and(path("/users/@me"))
+        .respond_with(ResponseTemplate::new(500).set_body_string("Internal Server Error"))
+        .expect(1..)
+        .mount(&mock_server)
+        .await;
+
+    let mut adapter = make_adapter(mock_server.address().port()).await;
+    let result = adapter.connect().await.unwrap();
+
+    assert!(!result.ok, "connect should fail with HTTP 500");
+    assert!(
+        result.error_kind != Some(ConnectErrorKind::Permanent),
+        "5xx must not be treated as a permanent credential failure"
+    );
+    assert_eq!(
+        result.error_kind,
+        Some(ConnectErrorKind::Transient),
+        "5xx should be classified transient"
+    );
+
+    mock_server.verify().await;
+}
+
+// ── send_typing() 测试 ──
+
+#[tokio::test]
+async fn test_send_typing_empty_body() {
+    // Discord /channels/{id}/typing 返回 200 + 空 body，不应因 JSON 解析失败报错。
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/channels/98765/typing"))
+        .respond_with(ResponseTemplate::new(200)) // 空 body
+        .expect(1..)
+        .mount(&mock_server)
+        .await;
+
+    let adapter = make_adapter(mock_server.address().port()).await;
+    let result = adapter.send_typing("98765").await;
+
+    assert!(
+        result.is_ok(),
+        "send_typing with empty 200 body should succeed"
+    );
+
+    mock_server.verify().await;
+}
+
 // ── edit_message() 测试 ──
 
 #[tokio::test]
@@ -331,6 +469,69 @@ async fn test_edit_message_not_found() {
         .unwrap();
 
     assert!(!result.success, "edit should fail for nonexistent message");
+
+    mock_server.verify().await;
+}
+
+#[tokio::test]
+async fn test_edit_message_with_keyboard_updates_components() {
+    // edit_message 应透传 keyboard → components（D5）
+    let mock_server = MockServer::start().await;
+
+    let captured_body = Arc::new(std::sync::Mutex::new(None::<serde_json::Value>));
+    let captured = captured_body.clone();
+
+    Mock::given(method("PATCH"))
+        .and(path("/channels/98765/messages/msg-001"))
+        .and(move |req: &wiremock::Request| {
+            if let Ok(body) = serde_json::from_slice::<serde_json::Value>(&req.body) {
+                *captured.lock().unwrap() = Some(body);
+            }
+            true
+        })
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": "msg-001",
+            "channel_id": "98765",
+            "content": "edited",
+            "timestamp": "2024-01-15T10:30:00Z",
+            "author": {"id": "1", "username": "Bot", "bot": true}
+        })))
+        .expect(1..)
+        .mount(&mock_server)
+        .await;
+
+    let adapter = make_adapter(mock_server.address().port()).await;
+    let result = adapter
+        .edit_message(EditMessageParams {
+            chat_id: "98765".to_string(),
+            message_id: "msg-001".to_string(),
+            message: OutboundMessage {
+                text: "edited content".to_string(),
+                parse_mode: ParseMode::None,
+            },
+            keyboard: Some(InlineKeyboard {
+                rows: vec![KeyboardRow {
+                    buttons: vec![Button {
+                        text: "Yes".to_string(),
+                        callback_data: Some("yes".to_string()),
+                        url: None,
+                    }],
+                }],
+            }),
+        })
+        .await
+        .unwrap();
+
+    assert!(result.success, "edit should succeed");
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let body = captured_body.lock().unwrap().take().unwrap();
+    let row = &body["components"][0];
+    assert_eq!(row["type"], 1, "row should be an Action Row");
+    assert_eq!(
+        row["components"][0]["custom_id"], "yes",
+        "keyboard should be passed through as components"
+    );
 
     mock_server.verify().await;
 }

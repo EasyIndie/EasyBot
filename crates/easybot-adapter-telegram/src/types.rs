@@ -37,6 +37,30 @@ pub(crate) struct TelegramUpdate {
     /// 群组成员变更事件（管理员升/降级等）
     #[serde(default)]
     pub chat_member: Option<TelegramChatMemberUpdated>,
+    /// 行内键盘按钮回调（callback_query）
+    #[serde(default)]
+    pub callback_query: Option<TelegramCallbackQuery>,
+}
+
+/// 按钮回调查询（inline keyboard 被点击时由 Telegram 推送）
+#[derive(Debug, Serialize, Deserialize)]
+pub(crate) struct TelegramCallbackQuery {
+    /// 回调查询唯一 ID（用于 answerCallbackQuery）
+    pub id: String,
+    /// 点击按钮的用户
+    pub from: TelegramUser,
+    /// 触发回调的消息（消息被删除/内联消息时可能为空）
+    #[serde(default)]
+    pub message: Option<Box<TelegramMessage>>,
+    /// 内联消息 ID（对应 inline_message_id 发送的消息）
+    #[serde(default)]
+    pub inline_message_id: Option<String>,
+    /// 聊天实例标识（Telegram 内部校验用）
+    #[serde(default)]
+    pub chat_instance: Option<String>,
+    /// 按钮的 callback_data
+    #[serde(default)]
+    pub data: Option<String>,
 }
 
 /// getChatAdministrators 返回的管理员条目 / chat_member 事件中的成员信息

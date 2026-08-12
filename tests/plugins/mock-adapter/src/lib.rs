@@ -84,6 +84,36 @@ impl PlatformAdapter for MockAdapter {
         })
     }
 
+    async fn send_media(&self, params: SendMediaParams) -> Result<SendResult, GatewayError> {
+        // 模拟媒体发送：媒体类型携带在 message_id 中便于测试断言
+        Ok(SendResult {
+            success: true,
+            message_id: Some(format!(
+                "mock-media-{:?}-{}",
+                params.media.media_type,
+                params.media.filename.as_deref().unwrap_or("")
+            )),
+            timestamp: None,
+            error: None,
+            error_code: None,
+            retryable: false,
+        })
+    }
+
+    async fn send_interactive(
+        &self,
+        _params: SendInteractiveParams,
+    ) -> Result<SendResult, GatewayError> {
+        Ok(SendResult {
+            success: true,
+            message_id: Some("mock-interactive-1".into()),
+            timestamp: None,
+            error: None,
+            error_code: None,
+            retryable: false,
+        })
+    }
+
     async fn get_chat_info(&self, _chat_id: &str) -> Result<ChatInfo, GatewayError> {
         Err(GatewayError::capability_not_supported("get_chat_info"))
     }

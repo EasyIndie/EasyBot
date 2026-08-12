@@ -46,6 +46,10 @@ pub struct AdapterManager {
     /// API/frontend display (transient vs permanent, retry count, next retry).
     /// Cleared on successful connect and on stop().
     reconnect_info: RwLock<HashMap<String, ReconnectInfo>>,
+    /// Persisted cursor state per platform (e.g. Telegram getUpdates offset),
+    /// captured when an adapter is stopped/replaced and restored before the
+    /// next connect — avoids duplicate-message storms after adapter recreation.
+    cursor_states: RwLock<HashMap<String, serde_json::Value>>,
     /// Cancel sender for the health monitor background task.
     monitor_cancel_tx: RwLock<Option<broadcast::Sender<()>>>,
     /// Weak self-reference for background tasks.  Initialised by calling
@@ -211,6 +215,7 @@ impl AdapterManager {
             configs: RwLock::new(HashMap::new()),
             last_connect_error_kind: RwLock::new(HashMap::new()),
             reconnect_info: RwLock::new(HashMap::new()),
+            cursor_states: RwLock::new(HashMap::new()),
             monitor_cancel_tx: RwLock::new(None),
             self_weak: RwLock::new(None),
         }
@@ -328,6 +333,12 @@ impl AdapterManager {
                 "Adapter '{}' is already connecting",
                 platform_name
             )));
+        }
+
+        // 恢复上次停止/重连前持久化的游标状态（如 Telegram offset），
+        // 避免适配器重建后重复拉取历史消息。
+        if let Some(saved) = self.cursor_states.read().await.get(&platform_name).cloned() {
+            adapter.restore_cursor_state(saved).await;
         }
 
         // 设置 Connecting 状态（get_status / list_statuses 立即可见）
@@ -525,6 +536,13 @@ impl AdapterManager {
             if let Err(e) = adapter.disconnect().await {
                 warn!("Error disconnecting adapter '{}': {}", platform, e);
             }
+            // 持久化游标状态（如 Telegram offset），下次 start 时恢复
+            if let Some(state) = adapter.cursor_state().await {
+                self.cursor_states
+                    .write()
+                    .await
+                    .insert(platform.to_string(), state);
+            }
             // 更新状态缓存，否则 get_status 仍返回旧状态
             {
                 let mut statuses = self.statuses.write().await;
@@ -582,6 +600,19 @@ impl AdapterManager {
             .get(platform)
             .ok_or_else(|| GatewayError::AdapterNotConnected(platform.to_string()))?;
         adapter.send_interactive(params).await
+    }
+
+    /// 应答按钮回调（关闭按钮加载态）
+    pub async fn answer_callback_query(
+        &self,
+        platform: &str,
+        params: crate::types::message::AnswerCallbackParams,
+    ) -> Result<(), GatewayError> {
+        let adapters = self.adapters.read().await;
+        let adapter = adapters
+            .get(platform)
+            .ok_or_else(|| GatewayError::AdapterNotConnected(platform.to_string()))?;
+        adapter.answer_callback_query(params).await
     }
 
     /// 编辑消息
@@ -829,6 +860,9 @@ impl AdapterManager {
             if let Err(e) = adapter.disconnect().await {
                 warn!("Error disconnecting adapter '{}': {}", name, e);
             }
+            if let Some(state) = adapter.cursor_state().await {
+                self.cursor_states.write().await.insert(name.clone(), state);
+            }
             self.publish_event(
                 event_types::ADAPTER_DISCONNECTED,
                 serde_json::json!({
@@ -1072,6 +1106,12 @@ impl AdapterManager {
                                         self.adapters.write().await.remove(platform.as_str())
                                     {
                                         let _ = adapter.disconnect().await;
+                                        if let Some(state) = adapter.cursor_state().await {
+                                            self.cursor_states
+                                                .write()
+                                                .await
+                                                .insert(platform.clone(), state);
+                                        }
                                     }
                                     self.set_status_failed(platform, &msg).await;
                                     self.publish_event(

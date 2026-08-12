@@ -38,6 +38,12 @@ pub struct FeishuUploadData {
     pub file_key: Option<String>,
 }
 
+/// 上传图片响应数据（`/im/v1/images`）
+#[derive(Debug, Deserialize)]
+pub struct FeishuImageUploadData {
+    pub image_key: Option<String>,
+}
+
 /// 群聊信息
 #[derive(Debug, Deserialize)]
 pub struct FeishuChatInfo {

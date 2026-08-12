@@ -12,7 +12,7 @@ use easybot_core::types::message::{
     ParseMode, SendInteractiveParams, SendMediaParams, SendTextParams,
 };
 use std::sync::Arc;
-use wiremock::matchers::{header, method, path};
+use wiremock::matchers::{body_partial_json, header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 fn send_text_params() -> SendTextParams {
@@ -997,4 +997,114 @@ async fn test_send_media_group_no_text_uses_direct_upload() {
             .is_some_and(|d| !d.is_empty()),
         "Upload body must contain base64 file_data"
     );
+}
+
+/// Regression: send_media to an UNKNOWN chat that turns out to be a group.
+///
+/// The msg_type: 2 cascade hits the group endpoint and gets 40034011
+/// (无效 markdown content) / 40034127 (无 markdown 模板权限). These must
+/// downgrade to group file upload (upload + msg_type: 7), not fail.
+#[tokio::test]
+async fn test_send_media_unknown_group_downgrades_on_40034011() {
+    let mock_server = MockServer::start().await;
+    mock_qq_token(&mock_server).await;
+    mock_qq_bot_info(&mock_server).await;
+
+    let group_id = "GROUP_OPENID_UNKNOWN_001";
+    let file_url = format!("{}/photo.png", mock_server.uri());
+
+    // Serve the media file for resolve_upload_media (URL download path)
+    use base64::Engine;
+    let png_bytes = base64::engine::general_purpose::STANDARD
+        .decode(TEST_PNG_B64)
+        .unwrap();
+    Mock::given(method("GET"))
+        .and(path("/photo.png"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("Content-Type", "image/png")
+                .set_body_bytes(png_bytes),
+        )
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    // Cascade step 1: channel endpoint → 404 (chat_id is not a channel)
+    Mock::given(method("POST"))
+        .and(path(format!("/channels/{}/messages", group_id)))
+        .respond_with(ResponseTemplate::new(404))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    // Cascade step 2: group endpoint with msg_type:2 → 40034011 (markdown error)
+    Mock::given(method("POST"))
+        .and(path(format!("/v2/groups/{}/messages", group_id)))
+        .and(body_partial_json(serde_json::json!({"msg_type": 2})))
+        .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
+            "code": 40034011,
+            "message": "无效 markdown content",
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    // Downgrade path: group file upload (srv_send_msg=false) → file_info
+    Mock::given(method("POST"))
+        .and(path(format!("/v2/groups/{}/files", group_id)))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "file_uuid": "downgrade_file_uuid",
+            "file_info": "downgrade_file_info",
+            "ttl": 86400,
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    // Downgrade path: msg_type:7 send → success
+    Mock::given(method("POST"))
+        .and(path(format!("/v2/groups/{}/messages", group_id)))
+        .and(body_partial_json(serde_json::json!({"msg_type": 7})))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": "downgrade_media_msg",
+            "timestamp": "2026-07-06T12:00:00+00:00"
+        })))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let mut adapter = easybot_adapter_qq::QqAdapter::new();
+    adapter
+        .init(qq_config_with_auth(mock_server.address().port()))
+        .await
+        .unwrap();
+    adapter.connect().await.unwrap();
+
+    // NOTE: do NOT set_chat_type — simulate an uncached group (first outbound)
+    let result = adapter
+        .send_media(SendMediaParams {
+            chat_id: group_id.to_string(),
+            media: MediaAttachment {
+                media_type: MediaType::Image,
+                url: Some(file_url),
+                data: None,
+                mime_type: "image/png".to_string(),
+                filename: Some("photo.png".to_string()),
+                caption: None,
+                thumbnail_url: None,
+                file_size: None,
+                duration: None,
+            },
+            text: Some("Group photo".to_string()),
+            reply_to: None,
+        })
+        .await
+        .unwrap();
+
+    assert!(
+        result.success,
+        "Unknown group media should downgrade to group file upload, got: {:?}",
+        result.error
+    );
+    assert_eq!(result.message_id, Some("downgrade_media_msg".to_string()));
 }

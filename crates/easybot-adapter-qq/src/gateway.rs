@@ -6,7 +6,6 @@
 
 use parking_lot::Mutex;
 use std::borrow::Cow;
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
@@ -19,6 +18,7 @@ use tokio::sync::broadcast;
 use tokio_tungstenite::MaybeTlsStream;
 use tokio_tungstenite::tungstenite::Message;
 
+use crate::ChatTypeCache;
 use crate::auth::QqTokenStore;
 
 impl crate::QqAdapter {
@@ -42,11 +42,15 @@ impl crate::QqAdapter {
         mut cancel_rx: broadcast::Receiver<()>,
         messages_in: Arc<AtomicU64>,
         heartbeat: easybot_core::types::adapter::Heartbeat,
-        chat_types: Arc<Mutex<HashMap<String, ChatType>>>,
+        chat_types: Arc<Mutex<ChatTypeCache>>,
+        intents_override: Option<u32>,
     ) {
         let mut reconnect_attempts: u32 = 0;
         let mut seq: u64 = 0;
         let mut session_id: Option<String> = None;
+        // 默认订阅保守集（群/C2C + 私域频道消息）；公域机器人可通过
+        // config.extra["intents"] 覆盖为 PUBLIC_GUILD_MESSAGES | GROUP_AND_C2C_EVENT。
+        let intents = intents_override.unwrap_or(crate::types::intents::DEFAULT);
         loop {
             // 每次重连前刷新 access token
             if token_store.needs_refresh()
@@ -215,9 +219,7 @@ impl crate::QqAdapter {
                     "op": 2,
                     "d": {
                         "token": token_str,
-                        "intents": crate::types::intents::AT_MESSAGE
-                            | crate::types::intents::C2C_MESSAGE
-                            | crate::types::intents::GROUP_AT_MESSAGE,
+                        "intents": intents,
                         "shard": [0, 1],
                     }
                 });
@@ -502,7 +504,7 @@ impl crate::QqAdapter {
         event_bus: &EventBus,
         bot_id: &str,
         messages_in: &AtomicU64,
-        chat_types: &Arc<Mutex<HashMap<String, ChatType>>>,
+        chat_types: &Arc<Mutex<ChatTypeCache>>,
     ) {
         let data = match payload.d.as_ref() {
             Some(d) => d,
@@ -568,15 +570,10 @@ impl crate::QqAdapter {
                     metadata: serde_json::to_string(&data).ok(),
                 };
 
-                // Track chat type for direct outbound routing, with size cap
-                {
-                    let mut ct = chat_types.lock();
-                    ct.insert(inbound.chat_id.clone(), inbound.chat_type);
-                    const CHAT_TYPE_CACHE_LIMIT: usize = 10_000;
-                    if ct.len() > CHAT_TYPE_CACHE_LIMIT {
-                        ct.clear();
-                    }
-                }
+                // Track chat type for direct outbound routing (LRU 逐出)
+                chat_types
+                    .lock()
+                    .insert(inbound.chat_id.clone(), inbound.chat_type);
 
                 let event = GatewayEvent::new(
                     easybot_core::types::event::event_types::MESSAGE_INBOUND,
@@ -643,15 +640,10 @@ impl crate::QqAdapter {
                     metadata: serde_json::to_string(&data).ok(),
                 };
 
-                // Track chat type for direct outbound routing, with size cap
-                {
-                    let mut ct = chat_types.lock();
-                    ct.insert(inbound.chat_id.clone(), inbound.chat_type);
-                    const CHAT_TYPE_CACHE_LIMIT: usize = 10_000;
-                    if ct.len() > CHAT_TYPE_CACHE_LIMIT {
-                        ct.clear();
-                    }
-                }
+                // Track chat type for direct outbound routing (LRU 逐出)
+                chat_types
+                    .lock()
+                    .insert(inbound.chat_id.clone(), inbound.chat_type);
 
                 let event = GatewayEvent::new(
                     easybot_core::types::event::event_types::MESSAGE_INBOUND,
@@ -743,15 +735,10 @@ impl crate::QqAdapter {
                     }),
                 };
 
-                // Track chat type for direct outbound routing, with size cap
-                {
-                    let mut ct = chat_types.lock();
-                    ct.insert(inbound.chat_id.clone(), inbound.chat_type);
-                    const CHAT_TYPE_CACHE_LIMIT: usize = 10_000;
-                    if ct.len() > CHAT_TYPE_CACHE_LIMIT {
-                        ct.clear();
-                    }
-                }
+                // Track chat type for direct outbound routing (LRU 逐出)
+                chat_types
+                    .lock()
+                    .insert(inbound.chat_id.clone(), inbound.chat_type);
 
                 let event = GatewayEvent::new(
                     easybot_core::types::event::event_types::MESSAGE_INBOUND,
@@ -813,15 +800,10 @@ impl crate::QqAdapter {
                     metadata: serde_json::to_string(&data).ok(),
                 };
 
-                // Track chat type for direct outbound routing, with size cap
-                {
-                    let mut ct = chat_types.lock();
-                    ct.insert(inbound.chat_id.clone(), inbound.chat_type);
-                    const CHAT_TYPE_CACHE_LIMIT: usize = 10_000;
-                    if ct.len() > CHAT_TYPE_CACHE_LIMIT {
-                        ct.clear();
-                    }
-                }
+                // Track chat type for direct outbound routing (LRU 逐出)
+                chat_types
+                    .lock()
+                    .insert(inbound.chat_id.clone(), inbound.chat_type);
 
                 let event = GatewayEvent::new(
                     easybot_core::types::event::event_types::MESSAGE_INBOUND,

@@ -138,6 +138,7 @@ impl Modify for SecurityAddon {
         routes::adapters::adapter_status,
         routes::messages::send_message,
         routes::messages::batch_send,
+        routes::messages::answer_callback,
         routes::messages::list_deliveries,
         routes::messages::reconcile_delivery,
         routes::messages::edit_message,

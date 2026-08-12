@@ -509,6 +509,91 @@ pub async fn send_message(
     Ok(response)
 }
 
+/// 应答按钮回调请求
+#[derive(Deserialize, Serialize, ToSchema)]
+pub struct AnswerCallbackRequest {
+    /// 平台标识，如 "telegram"
+    #[schema(example = "telegram")]
+    pub platform: String,
+    /// 回调所在聊天 ID（用于权限校验，来自 callback.received 事件的 chat_id）
+    #[schema(example = "123456789")]
+    pub chat_id: String,
+    /// 回调 ID（来自 callback.received 事件的 id）
+    #[schema(example = "callback_id_123")]
+    pub callback_id: String,
+    /// 通知文本（显示在按钮上方，可选）
+    pub text: Option<String>,
+    /// 可选跳转 URL（Telegram 特有）
+    pub url: Option<String>,
+    /// 以 alert 方式展示（默认 toast）
+    pub show_alert: Option<bool>,
+    /// 缓存应答时长（秒，Telegram 特有）
+    pub cache_time: Option<u32>,
+}
+
+/// 应答按钮回调
+///
+/// 收到 `callback.received` 事件后调用，关闭按钮加载态。
+/// Telegram 要求在收到 callback 后约 10s 内应答，否则按钮保持旋转。
+#[utoipa::path(
+    post,
+    path = "/api/v1/callbacks/answer",
+    tag = "Messages",
+    request_body = AnswerCallbackRequest,
+    responses(
+        (status = 200, description = "Callback answered"),
+        (status = 401, description = "Unauthorized"),
+        (status = 404, description = "Adapter not connected / platform not found"),
+    )
+)]
+pub async fn answer_callback(
+    State(state): State<AppState>,
+    Extension(actor): Extension<easybot_core::auth::AuthInfo>,
+    Json(req): Json<AnswerCallbackRequest>,
+) -> Result<Response, ApiError> {
+    if req.platform.is_empty() || req.platform.len() > MAX_PLATFORM_LENGTH {
+        return Err(api_error(GatewayError::InvalidRequest(
+            "platform must be 1-32 bytes".into(),
+        )));
+    }
+    if req.chat_id.is_empty() || req.chat_id.len() > MAX_CHAT_ID_LENGTH {
+        return Err(api_error(GatewayError::InvalidRequest(
+            "chat_id must be 1-256 bytes".into(),
+        )));
+    }
+    if req.callback_id.is_empty() || req.callback_id.len() > MAX_REPLY_ID_LENGTH {
+        return Err(api_error(GatewayError::InvalidRequest(
+            "callback_id must be 1-256 bytes".into(),
+        )));
+    }
+    // 校验动作权限（answer 视为对目标聊天的一次 send 级操作）
+    require_target_action(
+        &state,
+        &actor,
+        &req.platform,
+        &req.chat_id,
+        target_actions::MESSAGES_SEND,
+    )
+    .await?;
+
+    state
+        .adapter_manager
+        .answer_callback_query(
+            &req.platform,
+            AnswerCallbackParams {
+                callback_id: req.callback_id.clone(),
+                text: req.text.clone(),
+                url: req.url.clone(),
+                show_alert: req.show_alert,
+                cache_time: req.cache_time,
+            },
+        )
+        .await
+        .map_err(api_error)?;
+
+    Ok(Json(serde_json::json!({ "success": true })).into_response())
+}
+
 /// 批量发送消息
 ///
 /// 向多个目标发送相同的文本消息。每个目标格式为 "platform:chatId"。

@@ -7,8 +7,8 @@ use std::time::Duration;
 
 use easybot_core::types::adapter::{AdapterConfig, AdapterState, PlatformAdapter};
 use easybot_core::types::message::{
-    Button, InlineKeyboard, KeyboardRow, MediaAttachment, MediaType, OutboundMessage, ParseMode,
-    SendInteractiveParams, SendMediaParams, SendTextParams,
+    AnswerCallbackParams, Button, InlineKeyboard, KeyboardRow, MediaAttachment, MediaType,
+    OutboundMessage, ParseMode, SendInteractiveParams, SendMediaParams, SendTextParams,
 };
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -932,5 +932,53 @@ async fn test_send_interactive_with_reply_to() {
 
     tokio::time::sleep(Duration::from_millis(100)).await;
     let body = captured_body.lock().unwrap().take().unwrap();
-    assert_eq!(body["reply_to_message_id"], "42");
+    // Telegram 要求 reply_to_message_id 为 Integer，不是字符串
+    assert!(
+        body["reply_to_message_id"].is_number(),
+        "reply_to_message_id must be a JSON number, got: {}",
+        body["reply_to_message_id"]
+    );
+    assert_eq!(body["reply_to_message_id"].as_i64(), Some(42));
+}
+
+#[tokio::test]
+async fn test_answer_callback_query_success() {
+    let mock_server = MockServer::start().await;
+
+    let captured_body = Arc::new(std::sync::Mutex::new(None::<serde_json::Value>));
+    let captured = captured_body.clone();
+
+    Mock::given(method("POST"))
+        .and(path("/bottest-token/answerCallbackQuery"))
+        .and(move |req: &wiremock::Request| {
+            if let Ok(body) = serde_json::from_slice::<serde_json::Value>(&req.body) {
+                *captured.lock().unwrap() = Some(body);
+            }
+            true
+        })
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_raw(r#"{"ok": true, "result": true}"#, "application/json"),
+        )
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let adapter = make_adapter(mock_server.address().port()).await;
+    adapter
+        .answer_callback_query(AnswerCallbackParams {
+            callback_id: "cb_123".to_string(),
+            text: Some("已处理".to_string()),
+            url: None,
+            show_alert: Some(true),
+            cache_time: Some(60),
+        })
+        .await
+        .unwrap();
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let body = captured_body.lock().unwrap().take().unwrap();
+    assert_eq!(body["callback_query_id"], "cb_123");
+    assert_eq!(body["show_alert"], serde_json::Value::Bool(true));
+    assert_eq!(body["cache_time"], serde_json::Value::Number(60.into()));
 }

@@ -1,6 +1,6 @@
 # EasyBot TODO — 待办事项清单
 
-> 最后更新: 2026-07-08
+> 最后更新: 2026-08-12
 
 ---
 
@@ -80,13 +80,28 @@
 | **个人微信** | send_interactive | 仅 5 种消息类型，无 keyboard/button |
 | **个人微信** | list_chats | 无聊天列表端点 |
 | **个人微信** | 群聊支持 | 入站消息可识别群聊（通过 `group_id`），发送群聊消息取决于 iLink Bot API 权限 |
+| **个人微信** | context_token 协议级刷新 | iLink Bot API 无官方刷新端点，采用保守降级路径（过期仍试一次 + 失败兜底重登） |
 | **飞书** | ChatList | 平台 API 限制 |
 | **飞书** | Streaming | 平台 API 限制 |
 | **飞书** | TypingIndicator | 平台 API 限制 |
+| **飞书** | sticker 出站 | 无官方贴纸发送通道，`send_media(Sticker)` → `CapabilityNotSupported` |
 | **QQ** | Audio/Video/Document | 平台 API 限制 |
 | **QQ** | Streaming | 平台 API 限制 |
 | **Telegram** | ChatList | 平台 API 限制 |
 | **Telegram** | Thread | 平台 API 限制 |
+
+---
+
+## 待办 — 适配器协议审查遗留缺口（2026-08-12）
+
+五平台适配器协议审查（Telegram/Discord/飞书/QQ/微信）后整理的功能缺口。下表中"平台限制"项已在"平台限制"节列出，此处仅登记可实现或需决策的项目。
+
+| 平台 | 缺口 | 状态 | 说明 |
+|------|------|------|------|
+| **Telegram** | album 出站（media group 多图） | 待实现 | `SendMediaParams` 目前仅支持单媒体出站，需扩展媒体模型支持一次发送多图 |
+| **飞书** | 视频封面上传 | 待决策 | 飞书视频消息支持 `cover` 参数，但 `SendMediaParams` 无封面字段承载；是否扩展媒体模型需决策 |
+| **QQ** | 公/私域机器人自动检测 | 待实现 | 无官方端点可运行时探测，目前公域机器人需手动 `config.extra.intents` |
+| **Discord** | >2500 guild 单分片拒连 | 待实现 | `/gateway/bot` 失败时回退单分片，超大服务器仍可能被 4010 拒连；大集群需完整分片协商 |
 
 ---
 

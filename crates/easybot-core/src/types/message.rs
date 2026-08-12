@@ -397,6 +397,28 @@ pub struct CallbackEvent {
     pub metadata: Option<serde_json::Value>,
 }
 
+/// 应答按钮回调参数
+///
+/// 平台（如 Telegram）要求收到 `callback.received` 后尽快应答，以关闭按钮加载态。
+/// `url` 仅 Telegram 支持（游戏/深度链接），其余字段按平台能力选择性透传。
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct AnswerCallbackParams {
+    /// 回调 ID（来自 [`CallbackEvent::id`]）
+    pub callback_id: String,
+    /// 通知文本（显示在按钮上方的提示，可选）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    /// 可选跳转 URL（Telegram 特有，仅对带 url 的回调有效）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    /// 以 alert 方式展示 text（默认 false = toast）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub show_alert: Option<bool>,
+    /// 缓存应答时长（秒，Telegram 特有）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_time: Option<u32>,
+}
+
 /// 聊天信息
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct ChatInfo {
