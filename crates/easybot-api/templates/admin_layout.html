@@ -42,6 +42,7 @@
   <button class="tab-btn" data-tab="config" role="tab" aria-selected="false">⚙️ Config</button>
   <button class="tab-btn" data-tab="sessions" role="tab" aria-selected="false">💬 Sessions</button>
   <button class="tab-btn" data-tab="messages" role="tab" aria-selected="false">✉️ Messages</button>
+  <button class="tab-btn" data-tab="plugins" role="tab" aria-selected="false">🧩 Plugins</button>
   <button class="tab-btn" data-tab="apikeys" role="tab" aria-selected="false">🔑 API Key</button>
 </nav>
 
@@ -166,6 +167,12 @@
     <div class="table-wrapper"><table><thead><tr><th>时间</th><th>平台</th><th>Chat</th><th>角色</th><th>类型</th><th>消息</th><th style="width:70px">操作</th></tr></thead><tbody id="msg-list"></tbody></table></div>
     <div style="text-align:center;margin-top:12px"><button class="btn" id="msg-load-more" style="display:none">加载更多</button></div>
   </div>
+</section>
+
+<!-- Tab: Plugins -->
+<section class="tab-content" id="tab-plugins" role="tabpanel" aria-label="插件管理">
+  <div id="plugins-loading" class="loading">加载中...</div>
+  <div id="plugins-content" style="display:none"></div>
 </section>
 
 <!-- Tab: API Keys -->
