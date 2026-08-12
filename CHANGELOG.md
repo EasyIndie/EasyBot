@@ -7,6 +7,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **插件市场（P6）** — 通过 GitHub Releases 分发第三方适配器插件，`easybot plugin`
+  子命令 + REST API + 管理后台完整管理：
+  - **安装流水线** — `easybot plugin install [publisher/]name`：按宿主 6-target
+    triple 匹配产物 → ABI 预检（`sdk_version`）→ `requires.easybot` semver range
+    校验 → 信任确认 → 下载 → SHA256 比对 + ed25519 验签 → 原子落位（含合成
+    `plugin.yaml` + `plugin.sig.json`）。`--file <dir>` 离线安装走同流水线跳过下载。
+  - **多注册表（Taps）** — `plugins.registries` 列表合并多源 catalog，插件名支持
+    `publisher/name` 限定，5min 缓存。
+  - **信任管理（VS Code 1.97 语义）** — 信任按**发布者**粒度存 `plugins/.trust`；
+    `--yes` 不自动信任，显式 `plugin trust <publisher> --public-key <k>` 才加入。
+  - **更新语义** — `plugin update` 显式触发、默认 pin 当前版本，`--latest`/`--channel`
+    才跨版本（防更新攻击）。
+  - **启停语义** — `disable` 立即 stop+unregister；`enable` 下次启动生效（v1 不做热
+    dlopen）；孤儿会话/消息由现有 TTL 保留策略兜底。
+  - **CLI** — `easybot plugin new/list/search/info/install/uninstall/enable/disable/
+    update/trust/inspect`。
+  - **REST API** — `GET /plugins`（含加载失败清单）、`GET /plugins/catalog`、
+    `POST /plugins/install`、`DELETE /plugins/{name}`、
+    `POST /plugins/{name}/enable|disable`（`PluginsRead`/`PluginsManage` 权限）。
+  - **管理后台** — 🧩 Plugins tab：已装表（含失败行与原因）、市场目录（发布者徽标 +
+    搜索）、安装/卸载/启停、首次第三方信任确认。
+
+- **生产模式插件签名门禁（行为变更）** — `--production` / `EASYBOT_ENV=production`
+  启动时扫描 `plugins/` 目录，未签名插件且未设 `plugins.allowUntrusted: true` 则拒绝
+  启动。此前手放的未签名插件在生产模式可加载；现在需走市场安装（带签名）或显式
+  `allowUntrusted`。dev 环境不受影响（lenient：有签名验、无签名 warn）。
+
+- **开发者工作流（DX）** —
+  - **脚手架** — `easybot plugin new <name>` 生成独立可构建的插件工程（SDK git tag
+    依赖，无需 clone 主仓），含 `src/lib.rs` 骨架、`plugin.yaml`、单元测试、
+    PluginTestHost 集成测试、`plugin-publish.yml` 发布模板。
+  - **测试宿主** — SDK `testing` feature 提供 `PluginTestHost` 内存宿主，离线跑通
+    `attach → init → connect → send → 事件流`，配 `recv_event`/`inbound_text` 等构造器。
+  - **发布者 CI 模板** — `.github/workflows/plugin-publish.yml`（自包含，仅公开 action
+    + 40 位 SHA 固定）：6-target 交叉编译 + gitleaks 扫描 + `easybot-plugin-sign`
+    ed25519 签名 + 组装 `easybot-plugin.json` + Release。
+  - **示例** — `plugins/example-hello-adapter/` 入门 echo 适配器（workspace 成员，
+    CI 持续编译验证脚手架产出形状）。
+  - **文档** — `docs/02 plugin-dev.md` 重拆为 `docs/plugin-quickstart.md`（15 分钟教程）、
+    `docs/plugin-guide.md`（完整参考）、`docs/plugin-methodology.md`（方法论）；新建
+    `docs/SECURITY.md`（信任模型）与 `docs/docker-compose.plugin-dev.yml`（Docker 联调）。
+
+- **`easybot-plugin-sign` 独立工具** — `gen-keypair` / `sign`（ed25519），仅发布者
+  CI 使用，主程序不持私钥。
+
+### Changed
+
+- **`plugin.yaml` 支持 `enabled` 字段** — `Option<bool>`，缺省启用，向后兼容。
+- **`PluginLoader` 支持 `PluginLoadPolicy`** — lenient（dev 默认）/ strict（prod），
+  新增 `DisabledPlugin` / `SignatureVerificationFailed` 错误变体，加载时对 `plugin.sig.json`
+  重新验签。
+- **`AdapterRegistry::unregister`** — 卸载/禁用插件时移除平台工厂。
+- **配置** — `GatewayConfig` 新增 `plugins:` 段（`directory` / `autoLoad` /
+  `verifySignatures` / `allowUntrusted` / `trustedPublishers` / `registries`），
+  `easybot --init` 展开默认值。
+
 ## [0.0.33] - 2026-08-12
 
 ### Added

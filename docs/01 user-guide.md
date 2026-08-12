@@ -38,6 +38,7 @@
 | **适配器热插拔** | 运行时启停任意平台适配器，不影响其他平台 |
 | **热重载配置** | 修改配置文件后每 60 秒自动生效，无需重启 |
 | **插件扩展** | 通过动态库加载第三方适配器，无需 fork 主仓库 |
+| **插件市场** | GitHub Releases 分发 + ed25519 签名校验 + 多注册表 + 信任管理（`easybot plugin ...`） |
 
 ### 1.3 适用场景
 
@@ -352,6 +353,19 @@ logging:
 #     secret: "your-secret"
 #     events: ["message.inbound"]
 #     platforms: ["telegram"]
+
+# ── 插件（市场 + DX） ──
+plugins:
+  directory: "plugins"               # 插件目录（默认 {config_dir}/plugins）
+  autoLoad: true                     # 启动自动加载
+  verifySignatures: true             # 校验 ed25519 签名
+  allowUntrusted: false              # 生产模式允许未签名/未信任插件
+  trustedPublishers: {}              # 发布者公钥（官方内置；`plugin trust` 或 PR 登记）
+  registries:                        # 插件注册源（Taps：官方 + 社区）
+    - name: "official"
+      kind: "github"
+      owner: "EasyIndie"
+      repo: "easybot-marketplace"
 ```
 
 ### 4.5 本地覆盖（gateway.local.yaml）
@@ -479,7 +493,7 @@ easybot --debug
 ### 6.1 命令行参数
 
 ```bash
-easybot [OPTIONS]
+easybot [OPTIONS] [COMMAND]
 
 选项:
   -c, --config <FILE>   配置文件路径（.env / gateway.local.yaml 仍从 --dir 目录解析）
@@ -488,7 +502,21 @@ easybot [OPTIONS]
   -d, --debug           调试模式（DEBUG 级别日志）
   -V, --version         显示版本号
   -h, --help            显示帮助信息
+
+插件子命令（plugin-system）:
+  easybot plugin new <name>                # 脚手架：生成独立可构建的插件工程
+  easybot plugin list                      # 列出已安装插件
+  easybot plugin search <query>            # 搜索市场目录（catalog.json，多注册源合并）
+  easybot plugin info <name>               # 插件详情（已装 + 市场版本）
+  easybot plugin install <name>            # 安装（支持 publisher/name；--yes 接受信任确认；--file 离线）
+  easybot plugin uninstall <name>          # 卸载
+  easybot plugin enable|disable <name>     # 启停（disable 立即停，enable 下次启动生效）
+  easybot plugin update <name>             # 更新（默认 pin 当前版本；--latest 跨版本）
+  easybot plugin trust <pub> --public-key <k>   # 信任发布者
+  easybot plugin inspect <name>            # 检查插件（清单/签名/加载错误）
 ```
+
+> 插件安装/信任/更新等完整语义见 `docs/plugin-quickstart.md` 与 `docs/SECURITY.md`。
 
 ### 6.2 Makefile 命令
 
@@ -644,6 +672,12 @@ API Key 列表中的“调试”按钮可选择活跃 Target，并使用待测 K
 | `/api-keys/{id}/purge` | DELETE | 彻底删除 API Key |
 | `/subjects/{subject_id}/target-grants` | GET/POST | 查询/创建 Subject 的目标授权 |
 | `/subjects/{subject_id}/target-grants/{grant_id}` | DELETE | 删除目标授权 |
+| `/plugins` | GET | 已安装插件（含加载失败清单与原因） |
+| `/plugins/catalog` | GET | 市场目录（`?query=` 搜索，5min 缓存） |
+| `/plugins/install` | POST | 安装插件（body: `publisher/name` + `channel`；首次未信任发布者返回 `needsTrustConfirmation`） |
+| `/plugins/{name}` | DELETE | 卸载插件 |
+| `/plugins/{name}/enable` | POST | 启用插件（下次启动生效） |
+| `/plugins/{name}/disable` | POST | 禁用插件（立即停止适配器） |
 | `/metrics` | GET | Prometheus 指标 |
 | `/logs` | GET | 实时日志流（环形缓冲 5000 条） |
 | `/swagger` | GET | Swagger UI |
@@ -884,6 +918,7 @@ easybot --debug
 - **实时日志** — 最近 5000 条运行日志（环形缓冲）
 - **系统信息** — CPU、内存、运行时间
 - **配置查看** — 当前生效的配置
+- **🧩 插件管理** — 已装插件列表（含加载失败行与原因）、市场目录（发布者徽标 + 搜索）、安装/卸载/启停、首次安装第三方发布者的信任确认
 
 ---
 
@@ -968,6 +1003,7 @@ deploy:
 - 容器：`cap_drop: ALL`、只读根文件系统、`no-new-privileges`
 - 密钥：文件权限 chmod 600、日志输出自动掩码
 - 认证：Argon2 哈希存储 API Key
+- **插件**：生产模式强制 ed25519 签名校验——只装官方市场或已 `plugin trust` 的发布者；**签名证作者 ≠ 代码安全**，插件无沙箱以宿主权限运行，建议容器化兜底（详见 `docs/SECURITY.md`）。未签名/未信任插件需设 `plugins.allowUntrusted: true` 才可加载。
 
 ---
 
@@ -1005,13 +1041,19 @@ deploy:
 | `PrivilegedGatewayIntent` | Discord 未启用 Gateway Intents | 开发者后台开启 MESSAGE CONTENT INTENT |
 | 适配器启动失败 | 平台凭据无效 | 检查 `.env` 中的令牌 |
 | 生产环境 TLS 检查失败 | Release build 未配置 TLS | 设置 `EASYBOT_ALLOW_PLAINTEXT=true` 或配置反向代理 |
+| 生产拒绝未签名插件 | 手放的插件未验签 | `easybot plugin install` 重装（带签名），或设 `plugins.allowUntrusted: true` |
+| `Signature verification failed` | 插件签名不匹配/发布者不受信任 | `plugin trust <publisher>` 或走市场重装 |
+| `ABI version mismatch` | 插件用旧版 SDK 编译 | 用当前 SDK 重编插件 |
 
 ### 12.3 调试命令
 
 ```bash
 easybot --debug                              # 启用 DEBUG 日志
+easybot plugin inspect <name>                # 检查插件（清单/签名状态/加载错误）
+easybot plugin list                          # 查看已装插件加载状态
 curl http://localhost:8080/api/v1/logs       # 查看实时日志
 curl http://localhost:8080/api/v1/adapters   # 查看适配器状态
+curl http://localhost:8080/api/v1/plugins    # 查看插件加载状态（含失败原因）
 ```
 
 ### 12.4 获取帮助
