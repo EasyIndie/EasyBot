@@ -144,6 +144,12 @@ impl __EASYBOT_STRUCT_NAME__ {
     /// 若平台需要非默认初始化，可在此注入 HTTP client 等依赖——测试用 wiremock
     /// 替换（见 docs/plugin-methodology.md「传输可注入」）。
     pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl Default for __EASYBOT_STRUCT_NAME__ {
+    fn default() -> Self {
         Self {
             state: AdapterState::Created,
             event_bus: None,
