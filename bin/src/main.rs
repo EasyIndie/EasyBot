@@ -13,6 +13,9 @@ use easybot_core::PlatformAdapter;
 use easybot_core::types::event::{GatewayEvent, event_types};
 use std::sync::Arc;
 
+#[cfg(feature = "plugin-system")]
+mod plugin_cli;
+
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
@@ -62,6 +65,12 @@ enum Commands {
         /// Skip confirmation prompt
         #[arg(long)]
         yes: bool,
+    },
+    /// 插件市场与管理（安装/更新/信任/检查；需 plugin-system 特性）
+    #[cfg(feature = "plugin-system")]
+    Plugin {
+        #[command(subcommand)]
+        cmd: plugin_cli::PluginCmd,
     },
 }
 
@@ -128,6 +137,10 @@ async fn main() -> anyhow::Result<()> {
         }
         Some(Commands::Rollback { yes }) => {
             return handle_rollback(cli.dir.clone(), *yes).await;
+        }
+        #[cfg(feature = "plugin-system")]
+        Some(Commands::Plugin { cmd }) => {
+            return plugin_cli::run(cmd, cli.dir.clone()).await;
         }
         None => {}
     }

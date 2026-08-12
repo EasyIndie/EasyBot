@@ -29,7 +29,7 @@ use super::registry::PluginRegistry;
 use super::registry::github::GitHubRegistry;
 use super::registry::types::{PluginChannel, PluginSource, PluginVersionMeta};
 use super::signing::trust::TrustStore;
-use super::signing::{PluginSignature, SigningError, verify_artifact};
+use super::signing::{PluginSignature, SigningError, parse_public_key, verify_artifact};
 use crate::adapter::AdapterManager;
 use crate::bus::EventBus;
 use crate::types::config::PluginConfig;
@@ -459,11 +459,14 @@ impl PluginManager {
     }
 
     /// 显式信任发布者（写入 `{plugins_dir}/.trust`）
+    ///
+    /// 先校验公钥格式（ed25519 base64），防止坏数据进 `.trust`。
     pub async fn trust_publisher(
         &self,
         publisher: &str,
         public_key_b64: &str,
     ) -> Result<(), SigningError> {
+        parse_public_key(public_key_b64)?;
         let mut trust = self.trust_store.write().await;
         trust.add(publisher, public_key_b64);
         trust.save(&self.trust_path)

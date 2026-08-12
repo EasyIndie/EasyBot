@@ -284,6 +284,122 @@ fn test_production_allows_verified_trusted_plugins() {
 }
 
 #[test]
+fn test_plugin_cli_offline_install_trust_inspect() {
+    use easybot_core::plugin::signing::{
+        PluginSignature, SIGNATURE_SCHEMA_VERSION, encode_public_key, generate_keypair,
+        sign_artifact,
+    };
+
+    let dir = tempfile::tempdir().expect("failed to create temp dir");
+    let dir_arg = dir.path().to_str().unwrap();
+    let init = Command::new(easybot_bin())
+        .args(["--init", "--dir", dir_arg])
+        .output()
+        .unwrap();
+    assert!(init.status.success());
+
+    // 空目录 list
+    let out = Command::new(easybot_bin())
+        .args(["--dir", dir_arg, "plugin", "list"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    assert!(String::from_utf8_lossy(&out.stdout).contains("No plugins installed"));
+
+    // 非法公钥 → 拒绝信任
+    let bad = Command::new(easybot_bin())
+        .args([
+            "--dir",
+            dir_arg,
+            "plugin",
+            "trust",
+            "pub-a",
+            "--public-key",
+            "not-a-key",
+        ])
+        .output()
+        .unwrap();
+    assert!(!bad.status.success(), "invalid key should be rejected");
+
+    // 生成发布者密钥对并信任
+    let (signing, verifying) = generate_keypair();
+    let pk = encode_public_key(&verifying);
+    let ok = Command::new(easybot_bin())
+        .args([
+            "--dir",
+            dir_arg,
+            "plugin",
+            "trust",
+            "pub-a",
+            "--public-key",
+            &pk,
+        ])
+        .output()
+        .unwrap();
+    assert!(ok.status.success(), "valid key should be trusted");
+    let trust_path = dir.path().join("plugins").join(".trust");
+    assert!(trust_path.exists());
+    assert!(
+        std::fs::read_to_string(&trust_path)
+            .unwrap()
+            .contains("pub-a")
+    );
+
+    // 离线安装：签名插件源目录 → install --file
+    let src = dir.path().join("plugin-src");
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::write(
+        src.join("plugin.yaml"),
+        "name: myplugin\nsdk_version: 1\nlibrary: libmyplugin.so\n",
+    )
+    .unwrap();
+    let lib = b"fake-dylib-bytes";
+    std::fs::write(src.join("libmyplugin.so"), lib).unwrap();
+    let sig = PluginSignature {
+        schema_version: SIGNATURE_SCHEMA_VERSION,
+        name: "myplugin".into(),
+        version: "1.0.0".into(),
+        publisher: "pub-a".into(),
+        artifact: "libmyplugin.so".into(),
+        signature: sign_artifact(lib, &signing),
+        public_key: pk,
+    };
+    sig.write_to(&src.join("plugin.sig.json")).unwrap();
+
+    let inst = Command::new(easybot_bin())
+        .args([
+            "--dir",
+            dir_arg,
+            "plugin",
+            "install",
+            "myplugin",
+            "--file",
+            src.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(inst.status.success(), "offline install should succeed");
+    assert!(String::from_utf8_lossy(&inst.stdout).contains("Installed"));
+
+    // list / inspect 反映已装插件
+    let list = Command::new(easybot_bin())
+        .args(["--dir", dir_arg, "plugin", "list"])
+        .output()
+        .unwrap();
+    let list_out = String::from_utf8_lossy(&list.stdout);
+    assert!(list_out.contains("myplugin"), "{list_out}");
+    assert!(list_out.contains("valid"), "{list_out}");
+
+    let insp = Command::new(easybot_bin())
+        .args(["--dir", dir_arg, "plugin", "inspect", "myplugin"])
+        .output()
+        .unwrap();
+    let insp_out = String::from_utf8_lossy(&insp.stdout);
+    assert!(insp_out.contains("signature: valid"), "{insp_out}");
+    assert!(insp_out.contains("pub-a"), "{insp_out}");
+}
+
+#[test]
 fn test_cli_short_flags() {
     let dir = tempfile::tempdir().expect("failed to create temp dir");
     let dir_path = dir.path().to_str().unwrap();
