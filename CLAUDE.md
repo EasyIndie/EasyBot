@@ -188,6 +188,18 @@ init(config) → connect() → send()/... → disconnect()
 | Heartbeat 语义 | 心跳表示"后台任务存活且正在重试"，不要求消息一定成功。各适配器在错误重试路径中调用 `heartbeat.beat()`（如 `polling_loop` 错误分支、`gateway_loop` 重连循环）。**禁止**使用独立定时器无条件 beat（飞书已修复）。心跳过期 120s → `HealthStatus::Degraded` → 健康监测器介入。 |
 | WeChat iLink API | v2 协议（与官方 openclaw-weixin SDK 一致），`channel_version: "2.2.0"` 常量 `CHANNEL_VERSION`。`message_id` 字段兼容整数和字符串（`deserialize_flexible_id`）。`sendmessage` 请求需 `message_type: 2, message_state: 2`。`getupdates` 需 `base_info.channel_version`。 |
 
+## 发布流程
+
+收到"发布新版本"请求时直接按此固定流程执行（v0.0.33 验证；治理原则见 `docs/07 commercial-release.md`）：
+
+1. **文档对齐**：CHANGELOG.md 在 `[Unreleased]` 下新增 `[0.0.X]` 条目（Keep a Changelog，中文）；README/CLAUDE/docs 与代码实现对齐。
+2. **版本同步**：`Cargo.toml`（version）+ `Cargo.lock`（`cargo update --workspace`）+ `compose.quickstart.yml`（EASYBOT_IMAGE 注释）+ `crates/easybot-api/src/routes/update.rs`（`#[schema(example)]`）+ `crates/easybot-api/tests/routes.rs`（current_version）+ 两个快照（health + openapi 的 version/example）+ `deploy-kit/deploy.sh`（注释→**下一**版本）+ `docs/01 user-guide.md`（版本引用）+ `docs/other/windows-deployment.md`（版本要求）。
+3. **前置构建**：`cargo build -p mock-adapter` + `cargo build`（CLI 测试硬编码找 `target/debug/easybot`）。`cargo clean` 后必做。
+4. **预检**：`bash scripts/release-preflight.sh`。**禁止 `| tail`**（管道吞掉退出码）——用 `> /tmp/log 2>&1; echo EXIT_CODE=$?`。含 Actions 40 位 SHA 固定门禁。
+5. **测试**：`cargo test --workspace --features "default,plugin-system" --locked` + `cargo fmt --all --check`。注意 APFS 磁盘空间：全量编译可打满共享容器，满盘表现为空输出 + exit 1，不是测试失败。
+6. **提交**（3 个）：`docs: align documentation with current implementation` / `ci: pin <action> action to commit SHA` / `release: bump v0.0.X → v0.0.Y`。
+7. **推送**：`git push origin main` + `git push origin v0.0.Y` 触发 `release.yml`（要求 Cargo.toml 版本==标签、CHANGELOG 有条目、标签时工作树干净）；推送后必须 `gh api` 确认 CI 通过，失败立即修复。
+
 ## Known Gaps
 
 Full checklist: `docs/TODO.md`. P4 deferred items:
