@@ -1,0 +1,1151 @@
+//! 插件管理器
+//!
+//! 编排插件生命周期：安装/更新/卸载/启停，市场目录查询，发布者信任。
+//!
+//! # 信任语义（对齐 VS Code 1.97）
+//!
+//! - 首次安装**未受信任**发布者的插件需确认（`install` 返回 `needs_trust`，
+//!   CLI/UI 弹确认后带 `trust: true` 重试）
+//! - `--yes` / `trust: true` 跳过确认，但**不自动**加入 `.trust`
+//!   （显式 `plugin trust <publisher>` 才写入 `{plugins_dir}/.trust`）
+//! - 信任 = 配置 `trusted_publishers`（官方内置 + 覆盖） ∪ 用户 `.trust`，
+//!   按**发布者**粒度，公钥指纹匹配
+//!
+//! # 事务性
+//!
+//! 安装：解析 → ABI/requires 预检 → 下载（sha256）→ 验签 → 全部通过后
+//! 原子 `rename` 进 `plugins/{name}/`（临时目录与目标同文件系统）。
+//! 安装/卸载/启停经内部 `Mutex` 串行化，与启动 `load_all` 互斥。
+
+use super::error::PluginManagerError;
+use super::install::{
+    build_signature, check_abi, check_easybot_range, default_library_name, parse_manifest_yaml,
+    pick_version, place_installed, resolve_source, split_qualified, synthesize_manifest,
+    validate_name,
+};
+use super::loader::{PluginError, PluginLoadResult, PluginLoader};
+use super::manifest::PluginManifest;
+use super::registry::PluginRegistry;
+use super::registry::github::GitHubRegistry;
+use super::registry::types::{PluginChannel, PluginSource, PluginVersionMeta};
+use super::signing::trust::TrustStore;
+use super::signing::{PluginSignature, SigningError, verify_artifact};
+use crate::adapter::AdapterManager;
+use crate::bus::EventBus;
+use crate::types::config::PluginConfig;
+use crate::updater::types::{current_target_triple, is_newer_than};
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use tokio::sync::{Mutex, RwLock};
+
+/// 已安装插件（API/UI 展示用）
+#[derive(Debug, Clone)]
+pub struct InstalledPlugin {
+    pub name: String,
+    pub display_name: Option<String>,
+    pub description: Option<String>,
+    pub version: String,
+    pub sdk_version: u32,
+    pub enabled: bool,
+    /// 是否存在 `plugin.sig.json`
+    pub signed: bool,
+    /// 签名是否通过校验（`None` = 未签名无法校验）
+    pub signature_valid: Option<bool>,
+    /// 发布者标识（签名文件优先，其次 manifest.author）
+    pub publisher: Option<String>,
+    /// 已加载时的平台名（未加载为 `None`）
+    pub platform: Option<String>,
+    /// 加载失败原因（未加载且非禁用时）
+    pub load_error: Option<String>,
+}
+
+/// 安装请求
+#[derive(Debug, Clone)]
+pub struct InstallRequest {
+    /// 插件限定名（`publisher/name` 或裸 `name`）
+    pub qualified: String,
+    /// 发布渠道（默认 stable）
+    pub channel: PluginChannel,
+    /// 接受发布者信任确认（跳过 `needs_trust`；**不自动**写入 `.trust`）
+    pub trust: bool,
+    /// 允许降级安装（默认拒绝）
+    pub allow_downgrade: bool,
+    /// 离线安装源目录（含 `plugin.yaml` + 库文件 + 可选 `plugin.sig.json`）
+    pub file: Option<PathBuf>,
+}
+
+impl Default for InstallRequest {
+    fn default() -> Self {
+        Self {
+            qualified: String::new(),
+            channel: PluginChannel::Stable,
+            trust: false,
+            allow_downgrade: false,
+            file: None,
+        }
+    }
+}
+
+/// 安装结果
+#[derive(Debug, Clone)]
+pub struct InstallOutcome {
+    pub name: String,
+    pub publisher: String,
+    pub version: String,
+    /// 需要用户确认发布者信任（未受信任且未给 `trust`）——非错误，UI 弹确认后重试
+    pub needs_trust: bool,
+    /// 是否为升级（覆盖已安装版本）
+    pub upgraded: bool,
+}
+
+/// 更新选项
+#[derive(Debug, Clone, Default)]
+pub struct UpdateOptions {
+    /// 跨到最新版本（默认 pin 当前版本）
+    pub latest: bool,
+    /// 渠道（默认 stable；`latest` 时按此渠道选最新）
+    pub channel: Option<PluginChannel>,
+}
+
+/// 市场插件详情
+#[derive(Debug, Clone)]
+pub struct PluginInfo {
+    pub source: PluginSource,
+    pub versions: Vec<PluginVersionMeta>,
+    pub installed_version: Option<String>,
+}
+
+/// 插件管理器
+pub struct PluginManager {
+    plugins_dir: PathBuf,
+    /// 注册源（多源合并，Taps 模型）；热重载时经 `set_registries` 重建
+    registries: RwLock<Vec<Arc<dyn PluginRegistry>>>,
+    trust_store: Arc<RwLock<TrustStore>>,
+    trust_path: PathBuf,
+    config: Arc<RwLock<PluginConfig>>,
+    loader: Arc<PluginLoader>,
+    adapter_manager: Arc<AdapterManager>,
+    event_bus: Arc<EventBus>,
+    /// 插件名 → 平台名（`load_all` 时记录，供 disable/uninstall 停止适配器）
+    platforms: RwLock<HashMap<String, String>>,
+    /// 插件名 → 加载失败原因
+    load_failures: RwLock<HashMap<String, String>>,
+    /// 串行化安装/卸载/启停/更新（与启动 `load_all` 互斥）
+    op_lock: Arc<Mutex<()>>,
+}
+
+impl PluginManager {
+    /// 创建插件管理器（dev 用 lenient 加载策略；生产门禁在 `bin` 层单独扫描）
+    pub async fn new(
+        plugins_dir: PathBuf,
+        config: Arc<RwLock<PluginConfig>>,
+        adapter_manager: Arc<AdapterManager>,
+        event_bus: Arc<EventBus>,
+    ) -> Self {
+        let trust_path = plugins_dir.join(".trust");
+        let trust_store = Arc::new(RwLock::new(TrustStore::load(&trust_path)));
+        let loader = Arc::new(PluginLoader::new(plugins_dir.clone()));
+        let cfg = config.read().await;
+        let registries = build_registries(&cfg);
+        drop(cfg);
+        Self {
+            plugins_dir,
+            registries: RwLock::new(registries),
+            trust_store,
+            trust_path,
+            config,
+            loader,
+            adapter_manager,
+            event_bus,
+            platforms: RwLock::new(HashMap::new()),
+            load_failures: RwLock::new(HashMap::new()),
+            op_lock: Arc::new(Mutex::new(())),
+        }
+    }
+
+    /// 按配置重建注册源（热重载 `plugins.registries` 后调用）
+    pub async fn set_registries(&self, config: &PluginConfig) {
+        *self.registries.write().await = build_registries(config);
+    }
+
+    /// 直接替换注册源列表（测试注入 / 运行时自定义）
+    pub async fn set_registry_sources(&self, regs: Vec<Arc<dyn PluginRegistry>>) {
+        *self.registries.write().await = regs;
+    }
+
+    pub fn plugins_dir(&self) -> &Path {
+        &self.plugins_dir
+    }
+
+    pub fn loader(&self) -> &PluginLoader {
+        &self.loader
+    }
+
+    pub fn trust_store(&self) -> &Arc<RwLock<TrustStore>> {
+        &self.trust_store
+    }
+
+    /// 将已加载插件注册为适配器工厂（启动时 `load_all` 后调用）
+    pub async fn register_loaded(&self) {
+        self.loader
+            .register_all(self.adapter_manager.registry(), self.event_bus.clone())
+            .await;
+    }
+
+    /// 扫描并加载全部插件，记录 插件名 → 平台名 映射与加载失败原因
+    pub async fn load_all(&self) -> (Vec<PluginLoadResult>, Vec<(PathBuf, PluginError)>) {
+        let (named, failed) = self.loader.load_all_with_names().await;
+
+        let mut platforms = HashMap::new();
+        for (dir_name, result) in &named {
+            platforms.insert(dir_name.clone(), result.platform_name.clone());
+        }
+        let mut failures = HashMap::new();
+        for (path, err) in &failed {
+            if let Some(name) = path.file_name().map(|n| n.to_string_lossy().into_owned())
+                && !name.starts_with('.')
+            {
+                failures.insert(name, err.to_string());
+            }
+        }
+
+        *self.platforms.write().await = platforms;
+        *self.load_failures.write().await = failures;
+        (
+            named.into_iter().map(|(_, result)| result).collect(),
+            failed,
+        )
+    }
+
+    /// 列出已安装插件（含签名状态与加载失败原因，无需 dlopen）
+    pub async fn list_installed(&self) -> Vec<InstalledPlugin> {
+        let mut out = Vec::new();
+        let entries = match std::fs::read_dir(&self.plugins_dir) {
+            Ok(entries) => entries,
+            Err(_) => return out,
+        };
+        let platforms = self.platforms.read().await;
+        let failures = self.load_failures.read().await;
+
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+            let name = match path.file_name().map(|n| n.to_string_lossy().into_owned()) {
+                Some(n) => n,
+                None => continue,
+            };
+            if name.starts_with('.') {
+                continue;
+            }
+            let manifest_path = path.join("plugin.yaml");
+            if !manifest_path.exists() {
+                continue;
+            }
+
+            // 清单解析（失败仍展示，标 load_error）
+            let manifest = match parse_manifest_yaml(
+                &std::fs::read_to_string(&manifest_path).unwrap_or_default(),
+            ) {
+                Ok(m) => m,
+                Err(e) => {
+                    out.push(InstalledPlugin {
+                        name,
+                        display_name: None,
+                        description: None,
+                        version: String::new(),
+                        sdk_version: 0,
+                        enabled: true,
+                        signed: path.join("plugin.sig.json").exists(),
+                        signature_valid: None,
+                        publisher: None,
+                        platform: None,
+                        load_error: Some(format!("manifest parse error: {e}")),
+                    });
+                    continue;
+                }
+            };
+
+            // 签名状态（读文件验签，不 dlopen）
+            let (signed, signature_valid, publisher) = inspect_signature(&path, &manifest);
+
+            out.push(InstalledPlugin {
+                name: manifest.name.clone(),
+                display_name: manifest.display_name.clone(),
+                description: manifest.description.clone(),
+                version: manifest.version.clone(),
+                sdk_version: manifest.sdk_version,
+                enabled: manifest.is_enabled(),
+                signed,
+                signature_valid,
+                publisher: publisher.or_else(|| manifest.author.clone()),
+                platform: platforms.get(&manifest.name).cloned(),
+                load_error: failures.get(&manifest.name).cloned(),
+            });
+        }
+        out
+    }
+
+    /// 搜索市场目录（多源合并；`query` 过滤名称/描述/标签）
+    pub async fn search_catalog(&self, query: Option<&str>) -> Vec<PluginSource> {
+        let regs = self.registries.read().await.clone();
+        let mut all = Vec::new();
+        for reg in &regs {
+            match reg.catalog().await {
+                Ok(catalog) => all.extend(catalog.plugins),
+                Err(e) => tracing::warn!("plugin catalog fetch failed: {e}"),
+            }
+        }
+        // 按 publisher/name 去重（首源优先）
+        let mut seen = HashSet::new();
+        all.retain(|p| seen.insert(format!("{}/{}", p.publisher, p.name)));
+
+        if let Some(q) = query.map(|s| s.trim()).filter(|s| !s.is_empty()) {
+            let q = q.to_lowercase();
+            all.retain(|p| {
+                p.name.to_lowercase().contains(&q)
+                    || p.display_name
+                        .as_deref()
+                        .unwrap_or("")
+                        .to_lowercase()
+                        .contains(&q)
+                    || p.description
+                        .as_deref()
+                        .unwrap_or("")
+                        .to_lowercase()
+                        .contains(&q)
+                    || p.tags.iter().any(|t| t.to_lowercase().contains(&q))
+            });
+        }
+        all
+    }
+
+    /// 市场插件详情（源码条目 + 版本列表 + 已装版本）
+    pub async fn plugin_info(&self, qualified: &str) -> Result<PluginInfo, PluginManagerError> {
+        let (publisher, name) = split_qualified(qualified);
+        validate_name(&name)?;
+        let regs = self.registries.read().await.clone();
+        let (registry, source) = resolve_source(&regs, publisher.as_deref(), &name).await?;
+        let versions = registry.versions_for(&source, 50).await?;
+        let installed = self.read_installed_manifest(&name).await?;
+        Ok(PluginInfo {
+            source,
+            versions,
+            installed_version: installed.map(|m| m.version),
+        })
+    }
+
+    /// 安装插件（市场下载 或 离线 `--file`）
+    pub async fn install(&self, req: InstallRequest) -> Result<InstallOutcome, PluginManagerError> {
+        let _guard = self.op_lock.lock().await;
+
+        if let Some(file) = &req.file {
+            return self.install_from_file(file, &req).await;
+        }
+
+        let (publisher, name) = split_qualified(&req.qualified);
+        validate_name(&name)?;
+
+        let regs = self.registries.read().await.clone();
+        let (registry, source) = resolve_source(&regs, publisher.as_deref(), &name).await?;
+        let versions = registry.versions_for(&source, 50).await?;
+        let meta = pick_version(&versions, req.channel).ok_or_else(|| {
+            PluginManagerError::Other(format!(
+                "no '{}' release of plugin '{}' found",
+                channel_label(req.channel),
+                name
+            ))
+        })?;
+
+        self.install_meta(
+            registry,
+            &source,
+            meta,
+            req.trust,
+            req.allow_downgrade,
+            false,
+        )
+        .await
+    }
+
+    /// 更新插件（默认 pin 当前版本；`--latest`/`--channel` 跨版本）
+    pub async fn update(
+        &self,
+        name: &str,
+        opts: UpdateOptions,
+    ) -> Result<InstallOutcome, PluginManagerError> {
+        let _guard = self.op_lock.lock().await;
+        let installed = self
+            .read_installed_manifest(name)
+            .await?
+            .ok_or_else(|| PluginManagerError::NotFound(name.to_string()))?;
+
+        let regs = self.registries.read().await.clone();
+        let (registry, source) = resolve_source(&regs, None, name).await?;
+        let versions = registry.versions_for(&source, 50).await?;
+        let channel = opts.channel.unwrap_or(PluginChannel::Stable);
+
+        let meta = if opts.latest {
+            let m = pick_version(&versions, channel).ok_or_else(|| {
+                PluginManagerError::Other(format!(
+                    "no '{}' release of plugin '{}' found",
+                    channel_label(channel),
+                    name
+                ))
+            })?;
+            if m.version == installed.version {
+                return Err(PluginManagerError::AlreadyInstalled(name.to_string()));
+            }
+            m
+        } else {
+            // 默认 pin 当前版本：重新拉取同版本产物（重建/修复刷新）
+            versions
+                .iter()
+                .find(|v| v.version == installed.version)
+                .ok_or_else(|| PluginManagerError::VersionNotFound {
+                    name: name.to_string(),
+                    version: installed.version.clone(),
+                })?
+        };
+
+        // 已装插件更新：信任视为已授予（保持原信任）；不降级
+        self.install_meta(registry, &source, meta, true, false, true)
+            .await
+    }
+
+    /// 卸载插件（停止+注销运行中的适配器后删除目录）
+    pub async fn uninstall(&self, name: &str) -> Result<(), PluginManagerError> {
+        let _guard = self.op_lock.lock().await;
+        validate_name(name)?;
+        let dir = self.plugins_dir.join(name);
+        if !dir.exists() {
+            return Err(PluginManagerError::NotFound(name.to_string()));
+        }
+
+        if let Some(platform) = self.platforms.read().await.get(name).cloned() {
+            self.stop_adapter(name, &platform).await?;
+        }
+        std::fs::remove_dir_all(&dir)?;
+        Ok(())
+    }
+
+    /// 启用/禁用插件
+    ///
+    /// 禁用：写 `enabled:false` 并立即 stop+unregister（适配器停止）。
+    /// 启用：写回 `true`，**下次启动生效**（v1 避免热 dlopen）。
+    pub async fn set_enabled(&self, name: &str, enabled: bool) -> Result<bool, PluginManagerError> {
+        let _guard = self.op_lock.lock().await;
+        let dir = self.plugins_dir.join(name);
+        let manifest_path = dir.join("plugin.yaml");
+        if !manifest_path.exists() {
+            return Err(PluginManagerError::NotFound(name.to_string()));
+        }
+        let content = std::fs::read_to_string(&manifest_path)?;
+        let mut manifest = parse_manifest_yaml(&content)?;
+        manifest.enabled = Some(enabled);
+
+        // temp + rename 原子改写（防半写损坏清单）
+        let yaml = serde_yaml::to_string(&manifest)?;
+        let tmp = dir.join("plugin.yaml.tmp");
+        std::fs::write(&tmp, yaml)?;
+        std::fs::rename(&tmp, &manifest_path)?;
+
+        if !enabled && let Some(platform) = self.platforms.read().await.get(name).cloned() {
+            self.stop_adapter(name, &platform).await?;
+        }
+        Ok(enabled)
+    }
+
+    /// 显式信任发布者（写入 `{plugins_dir}/.trust`）
+    pub async fn trust_publisher(
+        &self,
+        publisher: &str,
+        public_key_b64: &str,
+    ) -> Result<(), SigningError> {
+        let mut trust = self.trust_store.write().await;
+        trust.add(publisher, public_key_b64);
+        trust.save(&self.trust_path)
+    }
+
+    /// 读取已安装插件的清单（未安装返回 `None`）
+    pub async fn read_installed_manifest(
+        &self,
+        name: &str,
+    ) -> Result<Option<PluginManifest>, PluginManagerError> {
+        let dir = self.plugins_dir.join(name);
+        let manifest_path = dir.join("plugin.yaml");
+        if !manifest_path.exists() {
+            return Ok(None);
+        }
+        let content = std::fs::read_to_string(&manifest_path)?;
+        Ok(Some(parse_manifest_yaml(&content)?))
+    }
+
+    /// 离线安装：本地目录（`plugin.yaml` + 库 + 可选签名）走同一验签/ABI 流水线，仅跳过下载
+    async fn install_from_file(
+        &self,
+        dir: &Path,
+        req: &InstallRequest,
+    ) -> Result<InstallOutcome, PluginManagerError> {
+        let manifest_path = dir.join("plugin.yaml");
+        if !manifest_path.exists() {
+            return Err(PluginManagerError::NotFound(format!(
+                "manifest not found: {}",
+                manifest_path.display()
+            )));
+        }
+        let content = std::fs::read_to_string(&manifest_path)?;
+        let manifest = parse_manifest_yaml(&content)?;
+        validate_name(&manifest.name)?;
+        check_abi(&manifest.name, manifest.sdk_version)?;
+
+        let lib_path = manifest
+            .library_path(dir)
+            .map_err(PluginManagerError::Other)?;
+        if !lib_path.exists() {
+            return Err(PluginManagerError::Loader(PluginError::LibraryNotFound(
+                lib_path,
+            )));
+        }
+
+        // 验签 + 信任（有 plugin.sig.json 时）
+        let mut signature: Option<PluginSignature> = None;
+        let sig_path = dir.join("plugin.sig.json");
+        if sig_path.exists() {
+            let sig = PluginSignature::from_file(&sig_path)?;
+            sig.verify_library(&lib_path)?;
+
+            let trusted = self
+                .is_publisher_trusted(&sig.publisher, &sig.public_key)
+                .await;
+            if !trusted {
+                if !req.trust {
+                    return Ok(InstallOutcome {
+                        name: manifest.name.clone(),
+                        publisher: sig.publisher.clone(),
+                        version: manifest.version.clone(),
+                        needs_trust: true,
+                        upgraded: false,
+                    });
+                }
+                self.trust_store
+                    .write()
+                    .await
+                    .add(&sig.publisher, &sig.public_key);
+                self.save_trust().await?;
+            }
+            signature = Some(sig);
+        } else if !self.config.read().await.allow_untrusted {
+            return Err(PluginManagerError::SignatureRequired(manifest.name));
+        }
+
+        // 已安装 → 降级/同版本保护
+        let installed = self.read_installed_manifest(&manifest.name).await?;
+        if let Some(inst) = &installed
+            && !req.allow_downgrade
+            && is_newer_than(&inst.version, &manifest.version)
+        {
+            return Err(PluginManagerError::DowngradeNotAllowed {
+                name: manifest.name.clone(),
+                installed: inst.version.clone(),
+                available: manifest.version.clone(),
+            });
+        }
+
+        // 复制到 staging 后原子落位
+        let staging = self.marketplace_tmp().await?;
+        let library_file = manifest
+            .library
+            .clone()
+            .unwrap_or_else(|| default_library_name(&manifest.name, "host"));
+        let staging_lib = staging.join(&library_file);
+        if let Err(e) = std::fs::copy(&lib_path, &staging_lib) {
+            let _ = std::fs::remove_dir_all(&staging);
+            return Err(PluginManagerError::Io(e));
+        }
+
+        let result = place_installed(
+            &self.plugins_dir,
+            &manifest.name,
+            &staging,
+            &manifest,
+            signature.as_ref(),
+            installed.is_some(),
+        );
+        if result.is_err() {
+            let _ = std::fs::remove_dir_all(&staging);
+        }
+        result?;
+
+        Ok(InstallOutcome {
+            name: manifest.name.clone(),
+            publisher: manifest.author.clone().unwrap_or_default(),
+            version: manifest.version.clone(),
+            needs_trust: false,
+            upgraded: installed.is_some(),
+        })
+    }
+
+    /// 市场安装核心流水线（下载 + 验签 + 信任确认 + 原子落位）
+    #[allow(clippy::too_many_arguments)]
+    async fn install_meta(
+        &self,
+        registry: Arc<dyn PluginRegistry>,
+        source: &PluginSource,
+        meta: &PluginVersionMeta,
+        trust: bool,
+        allow_downgrade: bool,
+        allow_same_version: bool,
+    ) -> Result<InstallOutcome, PluginManagerError> {
+        let name = source.name.clone();
+
+        // 预检：ABI / requires.easybot / 平台产物
+        check_abi(&name, meta.sdk_version)?;
+        if let Some(req) = &meta.requires
+            && let Some(range) = &req.easybot
+            && !check_easybot_range(range, env!("CARGO_PKG_VERSION"))
+        {
+            return Err(PluginManagerError::EasyBotVersionRequirement {
+                name: name.clone(),
+                range: range.clone(),
+                current: env!("CARGO_PKG_VERSION").to_string(),
+            });
+        }
+        let triple = current_target_triple()?;
+        let artifact =
+            meta.artifacts
+                .get(triple)
+                .ok_or_else(|| PluginManagerError::UnsupportedPlatform {
+                    name: name.clone(),
+                    triple: triple.to_string(),
+                })?;
+
+        // 已安装 → 同版本/降级保护
+        let installed = self.read_installed_manifest(&name).await?;
+        if let Some(inst) = &installed {
+            if inst.version == meta.version && !allow_same_version {
+                return Err(PluginManagerError::AlreadyInstalled(name.clone()));
+            }
+            if !allow_downgrade && is_newer_than(&inst.version, &meta.version) {
+                return Err(PluginManagerError::DowngradeNotAllowed {
+                    name: name.clone(),
+                    installed: inst.version.clone(),
+                    available: meta.version.clone(),
+                });
+            }
+        }
+
+        // 下载 + 验签 + 信任确认（临时目录与 plugins_dir 同文件系统，rename 原子）
+        let staging = self.marketplace_tmp().await?;
+        let library_file = artifact
+            .library
+            .clone()
+            .unwrap_or_else(|| default_library_name(&name, triple));
+        let lib_path = staging.join(&library_file);
+
+        let mut signature: Option<PluginSignature> = None;
+        if let (Some(sig_b64), Some(pk_b64)) = (
+            artifact.signature.as_deref(),
+            artifact.public_key.as_deref(),
+        ) {
+            if let Err(e) = registry.download(artifact, &lib_path).await {
+                let _ = std::fs::remove_dir_all(&staging);
+                return Err(PluginManagerError::Registry(e));
+            }
+            let data = match std::fs::read(&lib_path) {
+                Ok(d) => d,
+                Err(e) => {
+                    let _ = std::fs::remove_dir_all(&staging);
+                    return Err(PluginManagerError::Io(e));
+                }
+            };
+            verify_artifact(&data, sig_b64, pk_b64).map_err(PluginManagerError::Signing)?;
+
+            // 信任确认（验签通过后才记录信任）
+            let trusted = self.is_publisher_trusted(&source.publisher, pk_b64).await;
+            if !trusted {
+                if !trust {
+                    let _ = std::fs::remove_dir_all(&staging);
+                    return Ok(InstallOutcome {
+                        name,
+                        publisher: source.publisher.clone(),
+                        version: meta.version.clone(),
+                        needs_trust: true,
+                        upgraded: installed.is_some(),
+                    });
+                }
+                self.trust_store
+                    .write()
+                    .await
+                    .add(&source.publisher, pk_b64);
+                self.save_trust().await?;
+            }
+            signature = Some(build_signature(
+                source,
+                meta,
+                &library_file,
+                sig_b64,
+                pk_b64,
+            ));
+        } else {
+            // 无签名/公钥：无法验签 → 按 allow_untrusted 决定
+            if let Err(e) = registry.download(artifact, &lib_path).await {
+                let _ = std::fs::remove_dir_all(&staging);
+                return Err(PluginManagerError::Registry(e));
+            }
+            if !self.config.read().await.allow_untrusted {
+                let _ = std::fs::remove_dir_all(&staging);
+                return Err(PluginManagerError::SignatureRequired(name));
+            }
+            tracing::warn!(
+                publisher = %source.publisher,
+                name = %name,
+                "installing unsigned plugin (plugins.allowUntrusted)"
+            );
+        }
+
+        let manifest = synthesize_manifest(source, meta, artifact);
+        let result = place_installed(
+            &self.plugins_dir,
+            &source.name,
+            &staging,
+            &manifest,
+            signature.as_ref(),
+            installed.is_some(),
+        );
+        if result.is_err() {
+            let _ = std::fs::remove_dir_all(&staging);
+        }
+        result?;
+
+        Ok(InstallOutcome {
+            name,
+            publisher: source.publisher.clone(),
+            version: meta.version.clone(),
+            needs_trust: false,
+            upgraded: installed.is_some(),
+        })
+    }
+
+    /// 发布者是否受信任：配置 `trusted_publishers`（公钥精确匹配） ∪ 用户 `.trust`
+    async fn is_publisher_trusted(&self, publisher: &str, public_key_b64: &str) -> bool {
+        let cfg = self.config.read().await;
+        if cfg
+            .trusted_publishers
+            .get(publisher)
+            .is_some_and(|pk| pk == public_key_b64)
+        {
+            return true;
+        }
+        drop(cfg);
+        self.trust_store
+            .read()
+            .await
+            .is_trusted(publisher, public_key_b64)
+    }
+
+    /// 停止并注销插件适配器（卸载/禁用时）
+    async fn stop_adapter(&self, name: &str, platform: &str) -> Result<(), PluginManagerError> {
+        self.adapter_manager
+            .stop(platform)
+            .await
+            .map_err(|e| PluginManagerError::StopFailed {
+                platform: platform.to_string(),
+                detail: e.to_string(),
+            })?;
+        self.adapter_manager.registry().unregister(platform).await;
+        self.loader.unload(platform).await;
+        self.platforms.write().await.remove(name);
+        Ok(())
+    }
+
+    /// 创建/清空安装暂存目录（plugins 目录内隐藏目录，rename 与目标同文件系统）
+    async fn marketplace_tmp(&self) -> Result<PathBuf, PluginManagerError> {
+        std::fs::create_dir_all(&self.plugins_dir)?;
+        let dir = self.plugins_dir.join(".marketplace");
+        if dir.exists() {
+            std::fs::remove_dir_all(&dir)?;
+        }
+        std::fs::create_dir_all(&dir)?;
+        Ok(dir)
+    }
+
+    async fn save_trust(&self) -> Result<(), PluginManagerError> {
+        self.trust_store
+            .read()
+            .await
+            .save(&self.trust_path)
+            .map_err(PluginManagerError::Signing)
+    }
+}
+
+/// 由配置构建注册源列表
+fn build_registries(config: &PluginConfig) -> Vec<Arc<dyn PluginRegistry>> {
+    let mut out: Vec<Arc<dyn PluginRegistry>> = Vec::new();
+    for rc in &config.registries {
+        match rc.kind.as_str() {
+            "github" => {
+                out.push(Arc::new(GitHubRegistry::with_catalog(&rc.owner, &rc.repo)));
+            }
+            other => {
+                tracing::warn!(kind = other, "unsupported plugin registry kind, skipping");
+            }
+        }
+    }
+    out
+}
+
+fn channel_label(channel: PluginChannel) -> &'static str {
+    match channel {
+        PluginChannel::Stable => "stable",
+        PluginChannel::Beta => "beta",
+    }
+}
+
+/// 读取插件目录的签名状态（读文件验签，不 dlopen）
+fn inspect_signature(
+    path: &Path,
+    manifest: &PluginManifest,
+) -> (bool, Option<bool>, Option<String>) {
+    let sig_path = path.join("plugin.sig.json");
+    if !sig_path.exists() {
+        return (false, None, None);
+    }
+    let sig = match PluginSignature::from_file(&sig_path) {
+        Ok(s) => s,
+        Err(_) => return (true, Some(false), None),
+    };
+    let lib_path = manifest.library_path(path).ok();
+    let valid = lib_path.map(|lp| match sig.verify_library(&lp) {
+        Ok(()) => true,
+        Err(_) => false,
+    });
+    (true, valid, Some(sig.publisher))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::plugin::registry::types::{
+        PluginArtifact, PluginCatalog, PluginRegistryError, PluginRequirements,
+    };
+    use crate::plugin::signing::{encode_public_key, generate_keypair, sign_artifact};
+    use async_trait::async_trait;
+
+    /// 内存注册表（无网络）：返回固定目录/版本/产物字节
+    struct TestRegistry {
+        catalog: PluginCatalog,
+        versions: Vec<PluginVersionMeta>,
+        artifact_bytes: Vec<u8>,
+    }
+
+    #[async_trait]
+    impl PluginRegistry for TestRegistry {
+        async fn catalog(&self) -> Result<PluginCatalog, PluginRegistryError> {
+            Ok(self.catalog.clone())
+        }
+        async fn versions_for(
+            &self,
+            _source: &PluginSource,
+            _limit: usize,
+        ) -> Result<Vec<PluginVersionMeta>, PluginRegistryError> {
+            Ok(self.versions.clone())
+        }
+        async fn download(
+            &self,
+            _artifact: &PluginArtifact,
+            dest: &Path,
+        ) -> Result<(), PluginRegistryError> {
+            std::fs::write(dest, &self.artifact_bytes)?;
+            Ok(())
+        }
+    }
+
+    fn temp_home(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("plugin-manager-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        dir
+    }
+
+    async fn manager_with(plugins_dir: PathBuf, registry: TestRegistry) -> Arc<PluginManager> {
+        let config = Arc::new(RwLock::new(PluginConfig::default()));
+        let manager = Arc::new(
+            PluginManager::new(
+                plugins_dir,
+                config,
+                Arc::new(AdapterManager::new()),
+                Arc::new(EventBus::new()),
+            )
+            .await,
+        );
+        manager.set_registry_sources(vec![Arc::new(registry)]).await;
+        manager
+    }
+
+    /// 构造一个已签名的插件版本元数据（产物字节 = b"plugin-bytes"）
+    fn signed_meta(
+        name: &str,
+        version: &str,
+        publisher: &str,
+        trusted: bool,
+    ) -> (PluginVersionMeta, TestRegistry, String) {
+        let (signing, verifying) = generate_keypair();
+        let pk_b64 = encode_public_key(&verifying);
+        let data = b"plugin-bytes".to_vec();
+        let sig = sign_artifact(&data, &signing);
+        let sha = crate::updater::github::sha256_hex_bytes(&data);
+        let triple = current_target_triple().unwrap().to_string();
+
+        let source = PluginSource {
+            name: name.into(),
+            publisher: publisher.into(),
+            owner: "EasyIndie".into(),
+            repo: format!("easybot-plugin-{name}"),
+            display_name: Some(name.to_string()),
+            description: Some("test".into()),
+            tags: vec![],
+            verified: trusted,
+        };
+        let artifact = PluginArtifact {
+            url: "https://example.test/lib.so".into(),
+            size: data.len() as u64,
+            sha256: sha.clone(),
+            signature: Some(sig),
+            public_key: Some(pk_b64.clone()),
+            library: Some(format!("lib{name}.so")),
+        };
+        let mut artifacts = HashMap::new();
+        artifacts.insert(triple, artifact);
+
+        let meta = PluginVersionMeta {
+            schema_version: 1,
+            name: name.into(),
+            version: version.into(),
+            sdk_version: 1,
+            publisher: publisher.into(),
+            tag: format!("v{version}"),
+            channel: PluginChannel::Stable,
+            requires: None,
+            deprecated: false,
+            artifacts,
+        };
+        let catalog = PluginCatalog {
+            schema_version: 1,
+            plugins: vec![source],
+        };
+        let registry = TestRegistry {
+            catalog,
+            versions: vec![meta.clone()],
+            artifact_bytes: data,
+        };
+        (meta, registry, pk_b64)
+    }
+
+    #[tokio::test]
+    async fn test_install_requires_trust_then_succeeds() {
+        let home = temp_home("install");
+        let plugins = home.join("plugins");
+        let (_, registry, pk_b64) = signed_meta("slack", "1.0.0", "easybot", false);
+        let manager = manager_with(plugins.clone(), registry).await;
+
+        // 未受信任发布者 → needs_trust（非错误）
+        let outcome = manager
+            .install(InstallRequest {
+                qualified: "easybot/slack".into(),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert!(outcome.needs_trust);
+        assert!(
+            !plugins.join("slack").exists(),
+            "trust not granted → no install"
+        );
+
+        // 用户显式 trust 后安装成功
+        let outcome = manager
+            .install(InstallRequest {
+                qualified: "easybot/slack".into(),
+                trust: true,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert!(!outcome.needs_trust);
+        assert!(!outcome.upgraded);
+
+        let dir = plugins.join("slack");
+        assert!(dir.join("plugin.yaml").exists());
+        assert!(dir.join("plugin.sig.json").exists());
+        assert!(dir.join("libslack.so").exists());
+        assert_eq!(
+            std::fs::read(dir.join("libslack.so")).unwrap(),
+            b"plugin-bytes"
+        );
+
+        // .trust 已记录该发布者（trust: true 也写入，因为安装成功且验签通过）
+        assert!(
+            manager
+                .trust_store()
+                .read()
+                .await
+                .is_trusted("easybot", &pk_b64)
+        );
+
+        // list_installed 展示签名有效
+        let listed = manager.list_installed().await;
+        assert_eq!(listed.len(), 1);
+        let p = &listed[0];
+        assert_eq!(p.name, "slack");
+        assert!(p.signed);
+        assert_eq!(p.signature_valid, Some(true));
+        assert_eq!(p.publisher.as_deref(), Some("easybot"));
+
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[tokio::test]
+    async fn test_install_downgrade_rejected_and_uninstall() {
+        let home = temp_home("uninstall");
+        let plugins = home.join("plugins");
+        let (_, registry, _pk) = signed_meta("slack", "1.0.0", "easybot", true);
+        let manager = manager_with(plugins.clone(), registry).await;
+        manager
+            .install(InstallRequest {
+                qualified: "easybot/slack".into(),
+                trust: true,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert!(plugins.join("slack").exists());
+
+        // 再次安装同版本 → AlreadyInstalled
+        let err = manager
+            .install(InstallRequest {
+                qualified: "slack".into(),
+                trust: true,
+                ..Default::default()
+            })
+            .await
+            .unwrap_err();
+        assert!(matches!(err, PluginManagerError::AlreadyInstalled(_)));
+
+        // 降级到 0.9.0 → 拒绝
+        let (_, reg_old, _) = signed_meta("slack", "0.9.0", "easybot", true);
+        let manager_old = manager_with(plugins.clone(), reg_old).await;
+        let err = manager_old
+            .install(InstallRequest {
+                qualified: "slack".into(),
+                trust: true,
+                ..Default::default()
+            })
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            PluginManagerError::DowngradeNotAllowed { .. }
+        ));
+
+        // 卸载
+        manager_old.uninstall("slack").await.unwrap();
+        assert!(!plugins.join("slack").exists());
+
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[tokio::test]
+    async fn test_update_pins_current_version_by_default() {
+        let home = temp_home("update");
+        let plugins = home.join("plugins");
+        let (_, registry, _) = signed_meta("slack", "1.0.0", "easybot", true);
+        let manager = manager_with(plugins.clone(), registry).await;
+        manager
+            .install(InstallRequest {
+                qualified: "slack".into(),
+                trust: true,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+
+        // 默认 pin 当前版本：同版本重拉（重建刷新），不跨版本
+        let outcome = manager
+            .update("slack", UpdateOptions::default())
+            .await
+            .unwrap();
+        assert_eq!(outcome.version, "1.0.0");
+        assert!(!outcome.needs_trust);
+
+        // 注册表只有 1.0.0 时 --latest 视为已最新
+        let err = manager
+            .update(
+                "slack",
+                UpdateOptions {
+                    latest: true,
+                    channel: None,
+                },
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(err, PluginManagerError::AlreadyInstalled(_)));
+
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[tokio::test]
+    async fn test_set_enabled_and_requires_easybot_gate() {
+        let home = temp_home("enabled");
+        let plugins = home.join("plugins");
+        let (mut meta, registry, _pk) = signed_meta("slack", "1.0.0", "easybot", true);
+        // requires 不满足 → 拒绝安装
+        meta.requires = Some(PluginRequirements {
+            easybot: Some(">=99.0.0".into()),
+        });
+        let manager = manager_with(
+            plugins.clone(),
+            TestRegistry {
+                catalog: registry.catalog,
+                versions: vec![meta],
+                artifact_bytes: registry.artifact_bytes,
+            },
+        )
+        .await;
+        let err = manager
+            .install(InstallRequest {
+                qualified: "slack".into(),
+                trust: true,
+                ..Default::default()
+            })
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            PluginManagerError::EasyBotVersionRequirement { .. }
+        ));
+
+        // 满足 requires 后安装，然后禁用/启用
+        let (_, registry, _) = signed_meta("slack", "1.0.0", "easybot", true);
+        let manager = manager_with(plugins.clone(), registry).await;
+        manager
+            .install(InstallRequest {
+                qualified: "slack".into(),
+                trust: true,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+
+        manager.set_enabled("slack", false).await.unwrap();
+        let listed = manager.list_installed().await;
+        assert!(!listed[0].enabled);
+
+        manager.set_enabled("slack", true).await.unwrap();
+        let listed = manager.list_installed().await;
+        assert!(listed[0].enabled);
+
+        let _ = std::fs::remove_dir_all(&home);
+    }
+}

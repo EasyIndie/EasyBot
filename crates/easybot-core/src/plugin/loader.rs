@@ -260,6 +260,21 @@ impl PluginLoader {
     ///
     /// 返回成功列表和失败列表。单插件失败不影响其他插件。
     pub async fn load_all(&self) -> (Vec<PluginLoadResult>, Vec<(PathBuf, PluginError)>) {
+        let (succeeded, failed) = self.load_all_with_names().await;
+        (
+            succeeded.into_iter().map(|(_, result)| result).collect(),
+            failed,
+        )
+    }
+
+    /// 同 [`load_all`](PluginLoader::load_all)，但附带每个插件的目录名
+    ///
+    /// 目录名与插件 `manifest.name` 一致（市场安装按此命名），
+    /// 供 [`PluginManager`](crate::plugin::manager::PluginManager)
+    /// 在 load 时建立 插件名 → 平台名 映射（disable/uninstall 时停止对应适配器）。
+    pub async fn load_all_with_names(
+        &self,
+    ) -> (Vec<(String, PluginLoadResult)>, Vec<(PathBuf, PluginError)>) {
         let mut succeeded = Vec::new();
         let mut failed = Vec::new();
 
@@ -277,9 +292,19 @@ impl PluginLoader {
 
         for entry in entries.flatten() {
             let path = entry.path();
-            if !path.is_dir() {
+            // 跳过非目录与隐藏目录（.marketplace 等内部暂存区不是插件）
+            if !path.is_dir()
+                || path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().starts_with('.'))
+                    .unwrap_or(false)
+            {
                 continue;
             }
+            let dir_name = path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
 
             match self.load_single(&path).await {
                 Ok(result) => {
@@ -289,7 +314,7 @@ impl PluginLoader {
                         result.display_name,
                         path.display()
                     );
-                    succeeded.push(result);
+                    succeeded.push((dir_name, result));
                 }
                 Err(e) => {
                     warn!("Failed to load plugin from {}: {}", path.display(), e);
@@ -507,6 +532,18 @@ impl PluginLoader {
                     .await;
             }
         }
+    }
+
+    /// 卸载一个已加载的插件（禁用/卸载时调用）
+    ///
+    /// 从 `loaded` 表中移除平台并释放其对 `Arc<Library>` 的引用。
+    /// 若运行中的适配器（或其工厂）仍持有该库的引用，库不会真正 unload，
+    /// 直到适配器停止且工厂从注册表注销。
+    ///
+    /// 返回该平台此前是否已加载。
+    pub async fn unload(&self, platform: &str) -> bool {
+        let mut loaded = self.loaded.write().await;
+        loaded.remove(platform).is_some()
     }
 }
 

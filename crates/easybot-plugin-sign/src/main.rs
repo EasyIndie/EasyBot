@@ -107,6 +107,7 @@ fn main() -> anyhow::Result<()> {
             let data = std::fs::read(&artifact)?;
 
             let signature = sign_artifact(&data, &key);
+            let public_key = encode_public_key(&key.verifying_key());
             let sha256: String = {
                 let mut hasher = sha2::Sha256::new();
                 hasher.update(&data);
@@ -136,6 +137,7 @@ fn main() -> anyhow::Result<()> {
                 "size": data.len(),
                 "sha256": sha256,
                 "signature": signature,
+                "public_key": public_key,
             });
             println!("{}", serde_json::to_string_pretty(&entry)?);
         }

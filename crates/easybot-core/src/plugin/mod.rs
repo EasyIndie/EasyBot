@@ -17,7 +17,13 @@
 //! 7. 注册到 `AdapterRegistry`
 
 #[cfg(feature = "plugin-system")]
+pub mod error;
+#[cfg(feature = "plugin-system")]
+pub mod install;
+#[cfg(feature = "plugin-system")]
 pub mod loader;
+#[cfg(feature = "plugin-system")]
+pub mod manager;
 #[cfg(feature = "plugin-system")]
 pub mod manifest;
 #[cfg(feature = "plugin-system")]
@@ -27,5 +33,7 @@ pub mod signing;
 
 #[cfg(feature = "plugin-system")]
 pub use loader::*;
+#[cfg(feature = "plugin-system")]
+pub use manager::*;
 #[cfg(feature = "plugin-system")]
 pub use manifest::*;

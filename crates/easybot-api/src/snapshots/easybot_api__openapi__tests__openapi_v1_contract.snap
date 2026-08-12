@@ -1,5 +1,6 @@
 ---
 source: crates/easybot-api/src/openapi.rs
+assertion_line: 366
 expression: "ApiDoc::openapi()"
 ---
 {
@@ -4970,6 +4971,10 @@ expression: "ApiDoc::openapi()"
             "$ref": "#/components/schemas/LoggingConfig",
             "description": "日志配置"
           },
+          "plugins": {
+            "$ref": "#/components/schemas/PluginConfig",
+            "description": "插件系统配置"
+          },
           "server": {
             "$ref": "#/components/schemas/ServerConfig",
             "description": "服务器配置"
@@ -5687,6 +5692,45 @@ expression: "ApiDoc::openapi()"
           "none"
         ]
       },
+      "PluginConfig": {
+        "type": "object",
+        "description": "插件系统配置（`plugins:` 段）",
+        "properties": {
+          "allowUntrusted": {
+            "type": "boolean",
+            "description": "允许未受信任发布者/未签名插件（生产门禁豁免；默认 false）。\n开启等同于信任全部插件，仅应在受控环境（离线部署/开发）使用。"
+          },
+          "autoLoad": {
+            "type": "boolean",
+            "description": "启动时自动加载插件"
+          },
+          "directory": {
+            "type": "string",
+            "description": "插件目录（相对配置目录或绝对路径；默认 `plugins`）"
+          },
+          "registries": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RegistryConfig"
+            },
+            "description": "插件注册源列表（Homebrew Taps 模型；官方市场为默认源）。\n多源目录合并查询，`publisher/name` 唯一限定插件。"
+          },
+          "trustedPublishers": {
+            "type": "object",
+            "description": "受信任发布者公钥（发布者标识 → base64 ed25519 验证公钥）。\n官方发布者公钥通过 PR 进主仓默认列表；用户可通过 `.trust` 文件\n追加对单个发布者的信任（`easybot plugin trust <publisher>`）。",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "verifySignatures": {
+            "type": "boolean",
+            "description": "校验插件签名。dev 下无签名仅告警；生产模式下强制要求签名。"
+          }
+        }
+      },
       "ProbeResponse": {
         "type": "object",
         "required": [
@@ -5830,6 +5874,32 @@ expression: "ApiDoc::openapi()"
           "action": {
             "type": "string",
             "description": "`cancel` for a created transition; `complete` for a prepared transition."
+          }
+        }
+      },
+      "RegistryConfig": {
+        "type": "object",
+        "description": "插件注册源（Taps 模型）",
+        "properties": {
+          "kind": {
+            "type": "string",
+            "description": "注册源类型（v1 仅 `github`；`static` 供离线目录桩扩展）"
+          },
+          "name": {
+            "type": "string",
+            "description": "注册源名称（用于日志/UI 展示）"
+          },
+          "owner": {
+            "type": "string",
+            "description": "GitHub 目录仓库所属组织/用户"
+          },
+          "repo": {
+            "type": "string",
+            "description": "GitHub 目录仓库名"
+          },
+          "url": {
+            "type": "string",
+            "description": "完整基础 URL（kind=github 时可选，默认 GitHub API）"
           }
         }
       },

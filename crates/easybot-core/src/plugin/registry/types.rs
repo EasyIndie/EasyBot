@@ -95,6 +95,13 @@ pub struct PluginArtifact {
     /// strict（prod）模式拒绝。
     #[serde(default)]
     pub signature: Option<String>,
+    /// base64 编码的 ed25519 验证公钥（随元数据分发，HTTPS 拉取）
+    ///
+    /// 安装时用这把公钥验签；发布者信任 = 公钥指纹 ∈ 配置
+    /// `trusted_publishers` ∪ 用户 `.trust`。公钥随元数据走 TLS，
+    /// 篡改元数据中的公钥即需伪造对应私钥签名，因此可信。
+    #[serde(default)]
+    pub public_key: Option<String>,
     /// 动态库文件名（相对插件目录）；缺省按平台规则推断
     #[serde(default)]
     pub library: Option<String>,

@@ -477,6 +477,27 @@ logging:
   level: "info"
   format: "text"
   output: "stdout"
+
+# ── 插件系统（插件市场 + 开发者工作流）──────────────────────────
+# 插件目录默认为 {config_dir}/plugins；可在 gateway.local.yaml 覆盖。
+# 生产模式（--production / EASYBOT_ENV=production）要求插件已签名且
+# 发布者受信任；未签名/未信任插件需 allowUntrusted: true 或从市场重装。
+plugins:
+  directory: "plugins"
+  autoLoad: true
+  verifySignatures: true
+  allowUntrusted: false
+  # 受信任发布者公钥（发布者标识 → base64 ed25519 公钥）。
+  # 官方发布者公钥随版本内置；社区发布者通过 PR 登记，或用户显式信任：
+  #   easybot plugin trust <publisher> --key "<base64 公钥>"
+  trustedPublishers: {}
+  # 插件注册源（Taps 模型）：可添加任意第三方目录仓库作为社区源。
+  # 官方市场为默认源（EasyIndie/easybot-marketplace）。
+  registries:
+    - name: "official"
+      kind: "github"
+      owner: "EasyIndie"
+      repo: "easybot-marketplace"
 "#
     .to_string()
 }

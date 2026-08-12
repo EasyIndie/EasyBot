@@ -6,15 +6,18 @@
 use std::path::Path;
 
 /// 插件清单（plugin.yaml）
-#[derive(Debug, Clone, serde::Deserialize)]
+///
+/// `Serialize` 用于市场安装时由 `PluginVersionMeta` 合成清单落位
+/// （字段保持与 `Deserialize` 相同的 key，保证回读一致）。
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct PluginManifest {
     /// 平台标识符，如 "my-custom-im"
     pub name: String,
     /// 人类可读的显示名称
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
     /// 功能描述
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     /// 插件版本
     #[serde(default = "default_version")]
@@ -22,14 +25,14 @@ pub struct PluginManifest {
     /// 所需 easybot-plugin-sdk ABI 版本（必填）
     pub sdk_version: u32,
     /// 作者信息
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub author: Option<String>,
     /// 动态库路径（相对于插件目录）。
     /// 不指定时按平台规则推断：lib{name}.so / lib{name}.dylib / {name}.dll
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub library: Option<String>,
     /// 是否启用。缺省启用（向后兼容：旧清单无此字段默认 true）
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub enabled: Option<bool>,
 }
 
