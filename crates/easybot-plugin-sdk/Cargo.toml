@@ -10,6 +10,13 @@ easybot-core = { path = "../easybot-core" }
 serde.workspace = true
 serde_json.workspace = true
 async-trait.workspace = true
+# PluginTestHost 仅在 testing feature 下引入
+tokio = { workspace = true, optional = true }
+
+[features]
+default = []
+# 测试宿主（PluginTestHost）：插件仓库以 `features = ["testing"]` 依赖 SDK 时启用
+testing = ["dep:tokio"]
 
 [lints]
 workspace = true

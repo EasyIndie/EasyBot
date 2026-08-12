@@ -7,6 +7,8 @@ license.workspace = true
 [dependencies]
 easybot-core = { path = "../crates/easybot-core" }
 easybot-api = { path = "../crates/easybot-api" }
+# 供 plugin 子命令（scaffold/inspect）读取 SDK 常量（EASYBOT_PLUGIN_ABI_VERSION）
+easybot-plugin-sdk = { path = "../crates/easybot-plugin-sdk" }
 easybot-adapter-telegram = { path = "../crates/easybot-adapter-telegram", optional = true }
 easybot-adapter-discord = { path = "../crates/easybot-adapter-discord", optional = true }
 easybot-adapter-feishu = { path = "../crates/easybot-adapter-feishu", optional = true }
@@ -33,7 +35,12 @@ adapter-discord = ["easybot-adapter-discord"]
 adapter-feishu = ["easybot-adapter-feishu"]
 adapter-qq = ["easybot-adapter-qq"]
 adapter-wechat = ["easybot-adapter-wechat"]
-plugin-system = ["easybot-core/plugin-system", "easybot-api/plugin-system"]
+plugin-system = [
+    "easybot-core/plugin-system",
+    "easybot-api/plugin-system",
+    # DX 测试宿主随 plugin-system 一并纳入 CI（否则 workspace 门禁不编译 SDK testing）
+    "easybot-plugin-sdk/testing",
+]
 
 [[bin]]
 name = "easybot"
