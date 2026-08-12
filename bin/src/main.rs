@@ -516,8 +516,48 @@ async fn main() -> anyhow::Result<()> {
     // 注册内置适配器
     register_builtin_adapters(&adapter_manager, event_bus.clone()).await;
 
-    // 加载并注册插件适配器
-    load_plugin_adapters(&adapter_manager, &paths, event_bus.clone()).await;
+    // 加载并注册插件适配器，构建插件管理器（市场管理 API 用）
+    //
+    // 加载顺序约束：插件适配器工厂必须在 `start_all()` 之前注册，否则自动检测/
+    // 健康监测遗漏插件适配器。`PluginManager::load_all` + `register_loaded` 即完成
+    // 注册；构造时必须先于 `start_all`（下方 tokio::spawn）。插件注册表/信任配置
+    // 变更需重启生效（v1 无热重载）。
+    #[cfg(feature = "plugin-system")]
+    let plugin_manager = {
+        use easybot_core::plugin::manager::PluginManager;
+        let manager = Arc::new(
+            PluginManager::new(
+                paths.plugins_dir.clone(),
+                Arc::new(tokio::sync::RwLock::new(config.plugins.clone())),
+                adapter_manager.clone(),
+                event_bus.clone(),
+            )
+            .await,
+        );
+        if paths.plugins_dir.exists() {
+            tracing::info!("Loading plugins from {}", paths.plugins_dir.display());
+            let (succeeded, failed) = manager.load_all().await;
+            manager.register_loaded().await;
+            for result in &succeeded {
+                tracing::info!(
+                    "Registered plugin adapter: {} ({})",
+                    result.platform_name,
+                    result.display_name
+                );
+            }
+            for (path, error) in &failed {
+                tracing::warn!("Failed to load plugin from {}: {}", path.display(), error);
+            }
+        } else {
+            tracing::info!(
+                "No plugins directory at {}, skipping plugin loading",
+                paths.plugins_dir.display()
+            );
+        }
+        Some(manager)
+    };
+    #[cfg(not(feature = "plugin-system"))]
+    let _plugin_manager: Option<()> = None;
 
     // 解析管理后台密码（优先级：EASYBOT_ADMIN_PASSWORD > gateway.yaml > 默认值）
     // ConfigManager.new() 内部也会应用此覆盖，确保热重载路径一致。
@@ -575,7 +615,9 @@ async fn main() -> anyhow::Result<()> {
 
     // 构建应用状态
     let server_config = config.server.clone();
-    let app_state = easybot_api::AppState::new(
+    // 仅在 plugin-system 构建下会可变（注入 plugin_manager）；禁用时无需 mut
+    #[allow(unused_mut)]
+    let mut app_state = easybot_api::AppState::new(
         event_bus.clone(),
         adapter_manager.clone(),
         session_manager,
@@ -587,6 +629,12 @@ async fn main() -> anyhow::Result<()> {
         log_collector,
         admin_password,
     );
+
+    // 注入插件管理器（/api/v1/plugins* 路由与市场管理用）
+    #[cfg(feature = "plugin-system")]
+    {
+        app_state.plugin_manager = plugin_manager;
+    }
 
     // ── 启动指标事件监听器（自动更新消息计数和适配器状态）──
     if let Some(ref metrics) = app_state.metrics {
@@ -898,59 +946,6 @@ async fn handle_init(cli: Cli) -> anyhow::Result<()> {
     }
 
     Ok(())
-}
-
-/// 加载并注册插件适配器
-#[cfg(feature = "plugin-system")]
-async fn load_plugin_adapters(
-    adapter_manager: &easybot_core::adapter::AdapterManager,
-    paths: &easybot_core::config::EasyBotPaths,
-    event_bus: Arc<easybot_core::bus::EventBus>,
-) {
-    use easybot_core::plugin::PluginLoader;
-
-    if !paths.plugins_dir.exists() {
-        tracing::info!(
-            "No plugins directory at {}, skipping plugin loading",
-            paths.plugins_dir.display()
-        );
-        return;
-    }
-
-    tracing::info!("Loading plugins from {}", paths.plugins_dir.display());
-    let loader = PluginLoader::new(paths.plugins_dir.clone());
-    let (succeeded, failed) = loader.load_all().await;
-
-    for result in &succeeded {
-        if let Some(factory) = loader
-            .get_factory(&result.platform_name, event_bus.clone())
-            .await
-        {
-            adapter_manager
-                .registry()
-                .register(&result.platform_name, &result.display_name, factory, &[])
-                .await;
-            tracing::info!(
-                "Registered plugin adapter: {} ({})",
-                result.platform_name,
-                result.display_name
-            );
-        }
-    }
-
-    for (path, error) in &failed {
-        tracing::warn!("Failed to load plugin from {}: {}", path.display(), error);
-    }
-}
-
-/// 插件系统未启用时的空实现
-#[cfg(not(feature = "plugin-system"))]
-async fn load_plugin_adapters(
-    _adapter_manager: &easybot_core::adapter::AdapterManager,
-    _paths: &easybot_core::config::EasyBotPaths,
-    _event_bus: Arc<easybot_core::bus::EventBus>,
-) {
-    tracing::info!("Plugin system not enabled (compile with --features plugin-system to enable)");
 }
 
 /// 生产模式插件门禁：签名扫描

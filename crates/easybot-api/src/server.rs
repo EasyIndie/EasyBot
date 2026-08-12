@@ -208,6 +208,17 @@ impl Server {
             (&Method::GET, _) if route_path == "/logs" => Permission::LogsRead,
             // Chats endpoints require adapters read
             (&Method::GET, _) if route_path.starts_with("/chats") => Permission::AdaptersRead,
+            // 插件管理（plugin-system 特性）
+            #[cfg(feature = "plugin-system")]
+            (&Method::GET, _) if route_path.starts_with("/plugins") => Permission::PluginsRead,
+            #[cfg(feature = "plugin-system")]
+            (_, _) if route_path.starts_with("/plugins/install") => Permission::PluginsManage,
+            #[cfg(feature = "plugin-system")]
+            (&Method::DELETE, _) if route_path.starts_with("/plugins/") => {
+                Permission::PluginsManage
+            }
+            #[cfg(feature = "plugin-system")]
+            (&Method::POST, _) if route_path.starts_with("/plugins/") => Permission::PluginsManage,
             _ => return next.run(req).await,
         };
 
@@ -517,6 +528,28 @@ pub fn create_router(state: AppState) -> Router {
             .post(routes::billing::create_billing_event)
             .layer(RequestBodyLimitLayer::new(16 * 1024)),
     );
+
+    // ── 插件管理（plugin-system 特性）──
+    #[cfg(feature = "plugin-system")]
+    let protected_routes = protected_routes
+        .route("/plugins", get(routes::plugins::list_plugins))
+        .route("/plugins/catalog", get(routes::plugins::catalog_plugins))
+        .route(
+            "/plugins/install",
+            post(routes::plugins::install_plugin).layer(RequestBodyLimitLayer::new(32 * 1024)),
+        )
+        .route(
+            "/plugins/{name}",
+            delete(routes::plugins::uninstall_plugin).layer(RequestBodyLimitLayer::new(4 * 1024)),
+        )
+        .route(
+            "/plugins/{name}/enable",
+            post(routes::plugins::enable_plugin).layer(RequestBodyLimitLayer::new(4 * 1024)),
+        )
+        .route(
+            "/plugins/{name}/disable",
+            post(routes::plugins::disable_plugin).layer(RequestBodyLimitLayer::new(4 * 1024)),
+        );
 
     // ── 指标端点（需认证：Prometheus 抓取可能不支持 Bearer token，
     // 生产环境建议通过反向代理 IP 白名单控制访问）──

@@ -33,7 +33,7 @@ adapter-discord = ["easybot-adapter-discord"]
 adapter-feishu = ["easybot-adapter-feishu"]
 adapter-qq = ["easybot-adapter-qq"]
 adapter-wechat = ["easybot-adapter-wechat"]
-plugin-system = ["easybot-core/plugin-system"]
+plugin-system = ["easybot-core/plugin-system", "easybot-api/plugin-system"]
 
 [[bin]]
 name = "easybot"

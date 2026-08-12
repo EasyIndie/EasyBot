@@ -96,6 +96,10 @@ pub struct AppState {
     pub log_collector: Arc<log_collector::LogCollector>,
     /// 管理后台登录密码
     pub admin_password: String,
+    /// 插件管理器（市场安装/管理；plugin-system 特性启用时可用）。
+    /// `None` 表示插件系统未启用或尚未注入。
+    #[cfg(feature = "plugin-system")]
+    pub plugin_manager: Option<Arc<easybot_core::plugin::manager::PluginManager>>,
 }
 
 impl AppState {
@@ -186,6 +190,8 @@ impl AppState {
             started_at: std::time::Instant::now(),
             log_collector,
             admin_password,
+            #[cfg(feature = "plugin-system")]
+            plugin_manager: None,
         }
     }
 }
