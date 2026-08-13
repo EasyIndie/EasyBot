@@ -20,9 +20,6 @@ mod plugin_scaffold;
 #[cfg(feature = "plugin-system")]
 mod plugin_scaffold_template;
 
-#[global_allocator]
-static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
-
 /// EasyBot 命令行参数
 #[derive(Parser)]
 #[command(name = "easybot", version, about = "EasyBot - IM Gateway Service")]
