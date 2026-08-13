@@ -1,6 +1,6 @@
 ---
 source: crates/easybot-api/src/openapi.rs
-assertion_line: 403
+assertion_line: 407
 expression: "ApiDoc::openapi()"
 ---
 {
@@ -6265,7 +6265,7 @@ expression: "ApiDoc::openapi()"
           },
           "trustedPublishers": {
             "type": "object",
-            "description": "受信任发布者公钥（发布者标识 → base64 ed25519 验证公钥）。\n官方发布者公钥通过 PR 进主仓默认列表；用户可通过 `.trust` 文件\n追加对单个发布者的信任（`easybot plugin trust <publisher>`）。",
+            "description": "受信任发布者公钥（发布者标识 → base64 ed25519 验证公钥）。\n官方发布者公钥随版本内置（`default_trusted_publishers`）；用户可通过\n`.trust` 文件追加对单个发布者的信任（`easybot plugin trust <publisher>`）。",
             "additionalProperties": {
               "type": "string"
             },
