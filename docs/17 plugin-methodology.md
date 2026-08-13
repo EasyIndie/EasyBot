@@ -1,6 +1,6 @@
 # EasyBot 适配器插件方法论（编码规范）
 
-> 插件作者必须遵守的标准，与内置适配器同一水平。这些约束不是「建议」——宿主长期运行的稳定性依赖它们（对齐 CLAUDE.md「资源管理指南」与「Key Patterns」）。快速上手见 [`plugin-quickstart.md`](plugin-quickstart.md)，API 参考见 [`plugin-guide.md`](plugin-guide.md)，安全边界见 [`docs/SECURITY.md`](SECURITY.md)。
+> 插件作者必须遵守的标准，与内置适配器同一水平。这些约束不是「建议」——宿主长期运行的稳定性依赖它们（对齐 CLAUDE.md「资源管理指南」与「Key Patterns」）。快速上手见 [`plugin-quickstart.md`](15%20plugin-quickstart.md)，API 参考见 [`plugin-guide.md`](16%20plugin-guide.md)，安全边界见 [`docs/18 plugin-security.md`](18%20plugin-security.md)。
 
 ---
 
@@ -114,7 +114,7 @@ let sem = Arc::new(Semaphore::new(16));
 | `enable` | 写回 `true`，**下次启动生效**（v1 不做热 dlopen） |
 | 卸载 | stop + unregister 后删目录；`stop` 失败则拒绝卸载 |
 | 孤儿数据 | 卸载/禁用后的会话/消息由现有 **TTL 保留策略**兜底，不级联删除 |
-| 市场配置（registries/trusted_publishers）变更 | 需重启生效；dev 热加载仅指插件本体，不含市场源配置 |
+| 市场配置（registries/trustedPublishers）变更 | 需重启生效；dev 热加载仅指插件本体，不含市场源配置 |
 | 插件升级后 ABI 不兼容 | `requires.easybot` / `sdk_version` 安装前拒；主程序更新时 `check_plugin_compatibility` 阻止 |
 
 ---
@@ -125,7 +125,7 @@ let sem = Arc::new(Semaphore::new(16));
 
 - 不得硬编码/日志输出凭据（对齐 no-hardcoded-credentials 约束）。
 - 安装第三方发布者插件前自行评估。
-- 生产隔离用**容器化兜底**：把 EasyBot（含插件）跑在容器里，限制可写文件系统与网络（见 `docs/docker-compose.plugin-dev.yml` 与 `docs/SECURITY.md`）。
+- 生产隔离用**容器化兜底**：把 EasyBot（含插件）跑在容器里，限制可写文件系统与网络（见 `docs/docker-compose.plugin-dev.yml` 与 `docs/18 plugin-security.md`）。
 
 ---
 

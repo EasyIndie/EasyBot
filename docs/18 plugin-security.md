@@ -28,8 +28,8 @@
 ### 生产模式门禁
 
 - **dev**：lenient——有签名则验，无签名 warn。
-- **生产**（`--production` / `EASYBOT_ENV=production`）：启动时扫描 `plugins/` 目录，发现未签名插件且未设 `plugins.allow_untrusted: true` → 拒绝启动，提示走市场重装或显式信任。
-- 这是**行为变更**：此前手放的未签名插件在生产模式可加载；现在必须 `plugin install`（带签名）或设 `allow_untrusted`。
+- **生产**（`--production` / `EASYBOT_ENV=production`）：启动时扫描 `plugins/` 目录，发现未签名插件且未设 `plugins.allowUntrusted: true` → 拒绝启动，提示走市场重装或显式信任。
+- 这是**行为变更**：此前手放的未签名插件在生产模式可加载；现在必须 `plugin install`（带签名）或设 `allowUntrusted`。
 
 ### 信任语义（对齐 VS Code 1.97）
 
@@ -42,11 +42,11 @@
 
 - `easybot-plugin-sign gen-keypair` 生成 ed25519 密钥对。
 - **私钥只存发布者 GitHub Actions secret**（`PUBLISHER_PRIVATE_KEY`），不进仓库、不进任何配置。
-- 公钥（verifying key）通过 PR 提交给 EasyBot 官方登记进 `trusted_publishers` 默认列表（maintainer 审核：源码审查 + gitleaks 扫描）后合入，随版本内置。v1 无证书链——官方仓库的维护权即信任根。
+- 公钥（verifying key）通过 PR 提交给 EasyBot 官方登记进 `trustedPublishers` 默认列表（maintainer 审核：源码审查 + gitleaks 扫描）后合入，随版本内置。v1 无证书链——官方仓库的维护权即信任根。
 
 ### 密钥泄露响应
 
-- 官方从 `trusted_publishers` 移除该发布者公钥 → 发布新版（内置列表更新）。
+- 官方从 `trustedPublishers` 移除该发布者公钥 → 发布新版（内置列表更新）。
 - 客户端更新后：该发布者插件验签失败 → 加载拒绝并标记。
 - **不自动卸载已装插件**（防供应链投毒机制被滥用为批量卸载工具），但启动时明确告警。
 

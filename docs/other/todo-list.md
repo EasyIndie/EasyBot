@@ -13,6 +13,7 @@
 | **P3 Multi-platform** | 100% ✅ | 五平台适配器全部完成（微信受限于 iLink Bot API） |
 | **P4 Production engineering** | 100% ✅ | TLS 由固定镜像的 Caddy 终止；API Key 已实施细粒度权限、审计、配额与商用发布门禁。真实上线仍需外部证据验收 |
 | **P5 Plugin System** | 100% ✅ | Plugin SDK、动态加载、开发者文档 |
+| **P6 Plugin Market** | 100% ✅ | GitHub Releases 分发、ed25519 签名、多注册表 Taps、信任语义、脚手架/DX、plugin-publish.yml |
 
 ---
 

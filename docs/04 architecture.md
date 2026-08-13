@@ -283,7 +283,7 @@ GET /health
 Response 200:
 {
   "status": "healthy",               // healthy | degraded
-  "version": "0.0.28",
+  "version": "0.0.34",
   "uptime": 86400,
   "adapters": { "total": 5, "connected": 4 },
   "sessions": { "active": 42 }
@@ -580,11 +580,13 @@ interface AdapterConfig {
 
 | 子模块 | 职责 |
 |---|---|
-| `registry/` | `PluginRegistry` trait（抽象）+ `GitHubRegistry`（catalog.json + Releases 的 `easybot-plugin.json`）+ `StaticRegistry` 桩（离线） |
-| `signing/` | ed25519 验签（`verify_artifact`）+ `TrustStore`（`{plugins_dir}/.trust` 用户信任状态） |
+| `manifest.rs` | `PluginManifest`（name/sdk_version/library/enabled）+ `library_path()` 安全校验 |
 | `loader.rs` | `PluginLoader`（libloading）+ `PluginLoadPolicy`（lenient=dev / strict=prod）+ 启动验签 |
+| `registry/` | `PluginRegistry` trait（抽象）+ `GitHubRegistry`（catalog.json + Releases 的 `easybot-plugin.json`） |
+| `signing/` | ed25519 验签（`verify_artifact`）+ `TrustStore`（`{plugins_dir}/.trust` 用户信任状态） |
 | `manager.rs` | `PluginManager` 编排：install/update/uninstall/enable/disable/list/search/info/trust |
 | `install.rs` | 安装流水线：triple 匹配 → ABI 预检 → `requires.easybot` semver → 信任确认 → 下载 → sha256+验签 → 原子落位 |
+| `error.rs` | `PluginManagerError` |
 
 ### 4.2 事件总线
 
@@ -724,7 +726,7 @@ interface AdapterManager {
 
 EasyBot 支持通过动态库加载第三方适配器插件。插件使用 Rust 编写并编译为 cdylib，通过 `libloading` 在运行时动态加载。除手动放入 `plugins/` 目录外，插件可经**插件市场**（GitHub Releases 分发）安装，每个版本按 6 target 发布产物，安装端按宿主 triple 下载。
 
-**信任模型**（详见 `docs/SECURITY.md`）：ed25519 签名校验解锁生产模式动态插件。**签名只证作者 + 完整性，不证代码安全**——插件无沙箱，以宿主权限进程内运行，生产隔离用容器化兜底。
+**信任模型**（详见 `docs/18 plugin-security.md`）：ed25519 签名校验解锁生产模式动态插件。**签名只证作者 + 完整性，不证代码安全**——插件无沙箱，以宿主权限进程内运行，生产隔离用容器化兜底。
 
 每个插件提供两个 C ABI 入口函数（`declare_plugin!` 宏生成）：
 
@@ -779,7 +781,7 @@ EasyBot 启动
 8. 自动检测凭据，若存在则启动适配器
 ```
 
-生产模式（`--production` / `EASYBOT_ENV=production`）在启动时**扫描签名**：存在未签名插件且未设 `plugins.allow_untrusted` → 拒绝启动。
+生产模式（`--production` / `EASYBOT_ENV=production`）在启动时**扫描签名**：存在未签名插件且未设 `plugins.allowUntrusted` → 拒绝启动。
 
 ### 5.4 插件 SDK 与开发工作流
 
@@ -796,7 +798,7 @@ EasyBot 启动
 - `plugin-publish.yml` CI 模板：6-target 交叉编译 + gitleaks 扫描 + ed25519 签名 + Release
 - 信任语义（VS Code 1.97）：`--yes` 不自动信任，显式 `plugin trust <publisher>` 才加入
 
-详见 `docs/plugin-quickstart.md`（快速上手）、`docs/plugin-guide.md`（完整参考）与 `docs/plugin-methodology.md`（方法论）。
+详见 `docs/15 plugin-quickstart.md`（快速上手）、`docs/16 plugin-guide.md`（完整参考）与 `docs/17 plugin-methodology.md`（方法论）。
 
 ---
 
@@ -828,7 +830,7 @@ IM 平台 → 平台 Token（Bot Token / App Secret）→ 适配器
 - 请求体大小限制：10 MB
 - WebSocket 帧大小限制：64 KB / 消息 256 KB
 - Content-Security-Policy、X-Frame-Options 等安全头
-- **插件签名**：ed25519 验签（生产模式强制）；签名只证作者 + 完整性，不证代码安全——插件无沙箱，以宿主权限运行，生产隔离用容器化兜底（`docs/SECURITY.md`）
+- **插件签名**：ed25519 验签（生产模式强制）；签名只证作者 + 完整性，不证代码安全——插件无沙箱，以宿主权限运行，生产隔离用容器化兜底（`docs/18 plugin-security.md`）
 
 ---
 
