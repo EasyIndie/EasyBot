@@ -53,14 +53,20 @@ impl PluginManifest {
         let lib = match self.library {
             Some(ref lib) => lib.clone(),
             None => {
-                // 按平台规则推断默认库文件名
-                let lib_name = format!("lib{}", self.name);
+                // 按平台规则推断默认库文件名。
+                //
+                // cargo 对 cdylib 的输出用 **下划线** crate 名（kebab-case 包名会
+                // 转下划线）：包 `hello-adapter` → `libhello_adapter.dylib`。
+                // 推导必须同样转下划线，否则 `cp target/release/libhello_adapter.*`
+                // 手动安装 / `install --file` 的库文件与推导名不匹配、加载找不到。
+                let crate_name = self.name.replace('-', "_");
+                let lib_name = format!("lib{}", crate_name);
                 if cfg!(target_os = "linux") {
                     format!("{}.so", lib_name)
                 } else if cfg!(target_os = "macos") {
                     format!("{}.dylib", lib_name)
                 } else if cfg!(target_os = "windows") {
-                    format!("{}.dll", self.name)
+                    format!("{}.dll", crate_name)
                 } else {
                     format!("{}.so", lib_name)
                 }
@@ -120,7 +126,7 @@ author: "EasyBot Contributors"
     }
 
     #[test]
-    fn test_default_library_path_linux() {
+    fn test_default_library_path_kebab_to_underscore() {
         let manifest = PluginManifest {
             name: "my-adapter".into(),
             display_name: None,
@@ -133,7 +139,8 @@ author: "EasyBot Contributors"
         };
         let dir = Path::new("/plugins/my-adapter");
         let path = manifest.library_path(dir).unwrap();
-        // Platform-dependent, but the name should contain "lib" prefix
+        // cargo cdylib 产物用下划线 crate 名（kebab 包名 → 下划线），推导名必须一致，
+        // 否则手动安装 / `--file` 落位的库文件找不到。
         let filename = path.file_name().unwrap().to_str().unwrap();
         assert!(
             filename.starts_with("lib"),
@@ -141,8 +148,14 @@ author: "EasyBot Contributors"
             filename
         );
         assert!(
-            filename.contains("my-adapter"),
-            "filename should contain plugin name"
+            filename.contains("my_adapter"),
+            "filename should use underscore crate name (cargo convention), got: {}",
+            filename
+        );
+        assert!(
+            !filename.contains("my-adapter"),
+            "filename must NOT contain kebab-case name, got: {}",
+            filename
         );
     }
 

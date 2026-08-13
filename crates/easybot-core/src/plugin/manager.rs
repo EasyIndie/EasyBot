@@ -558,11 +558,19 @@ impl PluginManager {
         }
 
         // 复制到 staging 后原子落位
+        //
+        // 缺省库名必须按**宿主 triple** 推导：`library_path()`（manifest.rs）已用
+        // `cfg!(target_os)` 解析出 `.dylib`/`.dll`/`.so`，落位名须与之一致，
+        // 否则加载期（libloading + 磁盘库验签）找不到正确扩展名的库。
+        // 曾传字面量 "host"——既不含 "windows" 也不含 "apple"，恒落入 `.so`
+        // 分支，macOS/Windows 上离线 `install --file` 落位错误、验签失效。
         let staging = self.marketplace_tmp().await?;
-        let library_file = manifest
-            .library
-            .clone()
-            .unwrap_or_else(|| default_library_name(&manifest.name, "host"));
+        let library_file = manifest.library.clone().unwrap_or_else(|| {
+            let triple = current_target_triple()
+                .map(|s| s.to_string())
+                .unwrap_or_else(|_| "unknown".to_string());
+            default_library_name(&manifest.name, &triple)
+        });
         let staging_lib = staging.join(&library_file);
         if let Err(e) = std::fs::copy(&lib_path, &staging_lib) {
             let _ = std::fs::remove_dir_all(&staging);

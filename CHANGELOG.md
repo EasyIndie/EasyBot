@@ -65,6 +65,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `verifySignatures` / `allowUntrusted` / `trustedPublishers` / `registries`），
   `easybot --init` 展开默认值。
 
+### Fixed
+
+- **`install --file` 缺省库名按宿主 triple 推导** — 此前传字面量 `"host"`（既不含
+  `windows` 也不含 `apple`），macOS/Windows 上离线安装落位为 `.so` 扩展名错误、
+  加载期重验签失效；现按 `current_target_triple()` 推导。
+- **缺省库名按下划线 crate 名推导** — cargo cdylib 产物是下划线 crate 名
+  （kebab-case 包名 → 下划线，如 `libhello_adapter.dylib`），推导（`manifest.library_path`
+  / `default_library_name`）与发布 CI 的 `library` 字段原先用连字符名，导致 kebab-case
+  插件手动安装 / `--file` 安装后加载找不到库；三者统一为下划线约定。
+
 ## [0.0.33] - 2026-08-12
 
 ### Added

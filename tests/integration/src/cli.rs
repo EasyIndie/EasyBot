@@ -353,21 +353,26 @@ fn test_plugin_cli_offline_install_trust_inspect() {
     );
 
     // 离线安装：签名插件源目录 → install --file
+    //
+    // 故意不写 `library` 字段——走 `install_from_file` 的缺省库名推导分支
+    // （`default_library_name` 按宿主 triple 落位；曾把 triple 写死为 "host"
+    // 恒落入 `.so` 分支，macOS/Windows 落位扩展名错误、加载期验签失效）。
+    // 库文件名按宿主平台推导，确保本测试在 mac/linux/windows 都能通过。
     let src = dir.path().join("plugin-src");
     std::fs::create_dir_all(&src).unwrap();
-    std::fs::write(
-        src.join("plugin.yaml"),
-        "name: myplugin\nsdk_version: 1\nlibrary: libmyplugin.so\n",
-    )
-    .unwrap();
+    std::fs::write(src.join("plugin.yaml"), "name: myplugin\nsdk_version: 1\n").unwrap();
     let lib = b"fake-dylib-bytes";
-    std::fs::write(src.join("libmyplugin.so"), lib).unwrap();
+    let lib_name = easybot_core::plugin::install::default_library_name(
+        "myplugin",
+        easybot_core::updater::types::current_target_triple().unwrap_or("unknown"),
+    );
+    std::fs::write(src.join(&lib_name), lib).unwrap();
     let sig = PluginSignature {
         schema_version: SIGNATURE_SCHEMA_VERSION,
         name: "myplugin".into(),
         version: "1.0.0".into(),
         publisher: "pub-a".into(),
-        artifact: "libmyplugin.so".into(),
+        artifact: lib_name.clone(),
         signature: sign_artifact(lib, &signing),
         public_key: pk,
     };

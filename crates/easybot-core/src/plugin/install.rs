@@ -169,13 +169,18 @@ pub fn place_installed(
 }
 
 /// 按平台规则推断缺省动态库文件名
+///
+/// 与 `manifest.library_path()` 一致：cargo cdylib 产物用下划线 crate 名
+/// （kebab-case 包名 → 下划线），推导名必须对齐，否则手动安装 / `--file`
+/// 落位的库文件找不到。
 pub fn default_library_name(name: &str, triple: &str) -> String {
+    let crate_name = name.replace('-', "_");
     if triple.contains("windows") {
-        format!("{name}.dll")
+        format!("{crate_name}.dll")
     } else if triple.contains("apple") {
-        format!("lib{name}.dylib")
+        format!("lib{crate_name}.dylib")
     } else {
-        format!("lib{name}.so")
+        format!("lib{crate_name}.so")
     }
 }
 
@@ -333,5 +338,28 @@ mod tests {
         assert!(matches!(err, PluginManagerError::AlreadyInstalled(n) if n == "demo"));
 
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn test_default_library_name_kebab_to_underscore() {
+        // cargo cdylib 产物用下划线 crate 名（kebab-case 包名转下划线），
+        // 推导名必须对齐，否则手动安装 / `--file` 落位的库文件找不到。
+        assert_eq!(
+            default_library_name("hello-adapter", "x86_64-apple-darwin"),
+            "libhello_adapter.dylib"
+        );
+        assert_eq!(
+            default_library_name("hello-adapter", "x86_64-unknown-linux-musl"),
+            "libhello_adapter.so"
+        );
+        assert_eq!(
+            default_library_name("hello-adapter", "x86_64-pc-windows-msvc"),
+            "hello_adapter.dll"
+        );
+        // 无连字符的插件名不受影响
+        assert_eq!(
+            default_library_name("myplugin", "x86_64-apple-darwin"),
+            "libmyplugin.dylib"
+        );
     }
 }

@@ -132,8 +132,11 @@ jobs:
           CRATE_FILE=$(printf '%s' "$PLUGIN_NAME" | tr '-' '_')
           RAW="target/${TRIPLE}/release/${PREFIX}${CRATE_FILE}.${EXT}"
           [ -f "$RAW" ] || { echo "未找到编译产物: $RAW" >&2; exit 1; }
-          # 磁盘上的库名（写入 easybot-plugin.json 的 library 字段，安装后按此名落位）
-          CLEAN="${PREFIX}${PLUGIN_NAME}.${EXT}"
+          # 磁盘上的库名（写入 easybot-plugin.json 的 library 字段，安装后按此名落位）。
+          # 必须用 CRATE_FILE（下划线）——cargo cdylib 产物是下划线 crate 名，宿主
+          # 端缺省推导（manifest.library_path / default_library_name）也按下划线，
+          # 落位名与推导名不一致会导致加载找不到库。
+          CLEAN="${PREFIX}${CRATE_FILE}.${EXT}"
           # Release asset 名：lib{name}-{triple}.{ext}（与 CLEAN 同字节，仅文件名带 triple）
           SUFFIXED="${CLEAN%.*}-${TRIPLE}.${EXT}"
           mkdir -p artifacts
