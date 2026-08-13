@@ -42,7 +42,7 @@ tests/host_test.rs          # PluginTestHost 集成测试（离线）
 
 | 字段 | 类型 | 必需 | 说明 |
 |------|------|------|------|
-| `name` | string | ✅ | 平台唯一标识（kebab-case，须与 `platform_name()` 一致），如 `"my-adapter"` |
+| `name` | string | ✅ | 平台唯一标识（kebab-case，须与 `platform_name()` 一致）。官方插件用 `easybot-xxx` 前缀，见[「命名规则」](#命名规则naming-convention），如 `"easybot-hello-adapter"` |
 | `display_name` | string | ❌ | 人类可读名字，默认用 `display_name()` |
 | `description` | string | ❌ | 功能描述 |
 | `version` | string | ❌ | 插件版本号 |
@@ -52,6 +52,25 @@ tests/host_test.rs          # PluginTestHost 集成测试（离线）
 | `enabled` | bool | ❌ | 缺省启用；`false` 时不加载（卸载/禁用语义见方法论「启停语义」） |
 
 > 市场安装时由宿主根据 `easybot-plugin.json` 元数据合成 `plugin.yaml`；手动安装则自己写。
+
+---
+
+## 命名规则（Naming Convention）
+
+**官方插件统一使用 `easybot-xxx` 前缀**（`xxx` 为平台/功能名，kebab-case）。同一名字贯穿下列所有层面，避免心智负担：
+
+| 层面 | 约定 | 示例 |
+|------|------|------|
+| 仓库名 | `easybot-xxx` | `EasyIndie/easybot-hello-adapter` |
+| `Cargo.toml [package].name` | `easybot-xxx` | `easybot-hello-adapter` |
+| cdylib 产物名 | Rust 用下划线连接 crate 名 → `libeasybot_xxx.{so,dylib,dll}` | `libeasybot_hello_adapter.dylib` |
+| `plugin.yaml` `name` | `easybot-xxx`（须与 `platform_name()` 一致） | `"easybot-hello-adapter"` |
+| `platform_name()` | `easybot-xxx`（宿主据此做会话 key、路由与展示） | `"easybot-hello-adapter"` |
+| 市场中的 name | `easybot-xxx`（安装/卸载/启用命令用此名，发布者为 GitHub 组织/用户） | `easybot plugin install EasyIndie/easybot-hello-adapter` |
+
+**社区/第三方插件**不强制该前缀，但建议遵循同一 kebab-case 规范，并通过 `publisher/name` 限定区分来源（如 `acme/weather-bot`）。
+
+> ⚠ **命名一经发布即对外稳定**：`platform_name()` 参与会话 key（`{platform}:{chatId}`）与路由；改名会导致旧会话无法归并、市场安装路径变化。官方插件在创建仓库/生成工程时就应确定名字，发布后不轻易变更。
 
 ---
 
@@ -101,7 +120,7 @@ declare_plugin!(MyAdapter, MyAdapter::new);
 
 | 方法 | 签名 | 说明 |
 |------|------|------|
-| `platform_name()` | `fn platform_name(&self) -> &str` | 唯一平台标识（kebab-case），如 `"my-adapter"` |
+| `platform_name()` | `fn platform_name(&self) -> &str` | 唯一平台标识（kebab-case），官方插件用 `easybot-xxx`（见「命名规则」） |
 | `display_name()` | `fn display_name(&self) -> &str` | 人类可读名称 |
 | `capabilities()` | `fn capabilities(&self) -> &[Capability]` | 能力列表 |
 | `init()` | `async fn init(&mut self, config: AdapterConfig) -> Result<InitResult, GatewayError>` | 校验配置、存凭据，**不建网络连接** |
@@ -378,7 +397,7 @@ run --dir ~/.easybot
 
 ## 完整示例
 
-- 入门（教程对照）：[`plugins/example-hello-adapter/`](../plugins/example-hello-adapter/) —— echo 适配器 + PluginTestHost 测试
+- 入门（教程对照）：独立样例仓库 [`EasyIndie/easybot-hello-adapter`](https://github.com/EasyIndie/easybot-hello-adapter) —— echo 适配器 + PluginTestHost 测试 + 插件开发指南
 - 高级参考（真实 HTTP + 鉴权 + 媒体/交互 + wiremock）：`plugins/example-slack-plugin/`
 - 内置适配器：`crates/easybot-adapter-{telegram,discord,feishu,qq,wechat}/` 是最好的一手参考
 - MockAdapter 源码：`tests/plugins/mock-adapter/src/lib.rs`

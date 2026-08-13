@@ -26,7 +26,12 @@ serde_json.workspace = true
 anyhow.workspace = true
 dirs.workspace = true
 rustls = { version = "0.23", features = ["aws-lc-rs"] }
-mimalloc = { version = "0.1", default-features = false }
+# ⚠ 禁用自定义全局分配器（FFI 分配器契约）：插件在进程内 dlopen，与宿主通过 FFI
+# 收发 String/Vec/Value 等堆所有权（宿主分配→插件 Drop，或插件分配→宿主 Drop），
+# 两侧必须共用同一全局分配器。**不要**在这里引入 mimalloc 等自定义 global_allocator：
+#   宿主 mimalloc + 插件系统 malloc → 交叉 free → SIGABRT
+#   插件各自静态链接 mimalloc     → 进程内两套 mimalloc 堆 → 析构死锁
+# 详见 docs/plugin-development-guide.md「FFI 分配器契约」。
 
 [features]
 default = ["adapter-telegram", "adapter-discord", "adapter-feishu", "adapter-qq", "adapter-wechat"]

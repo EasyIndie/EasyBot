@@ -11,7 +11,6 @@ members = [
     "crates/easybot-adapter-wechat",
     "crates/easybot-plugin-sdk",
     "crates/easybot-plugin-sign",
-    "plugins/example-hello-adapter",
     "tests/plugins/mock-adapter",
     "tests/integration",
     "tests/e2e",

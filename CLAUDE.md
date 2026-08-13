@@ -93,7 +93,7 @@ Plugins (easybot-plugin-sdk)  cdylib 适配器插件（市场分发 · ed25519 �
 | `crates/easybot-adapter-wechat` | 个人微信 iLink Bot API 长轮询（v2，channel_version=2.2.0） |
 | `crates/easybot-plugin-sdk` | Re-exports core types for plugins + `testing` feature (PluginTestHost) |
 | `crates/easybot-plugin-sign` | 发布者 ed25519 密钥对/签名工具（gen-keypair / sign，仅发布者 CI 用，主程序不持私钥） |
-| `plugins/example-hello-adapter` | 入门示例（echo 适配器，教程对照物，workspace 成员） |
+| `plugins/` | 官方入门样例已独立为 [`EasyIndie/easybot-hello-adapter`](https://github.com/EasyIndie/easybot-hello-adapter)（教学样例仓库，含插件开发指南，与主仓仅文档/链接互引）；本仓库仅保留 `example-slack-plugin` 高级参考（非 workspace 成员） |
 | `tests/` | Integration, e2e, mock-adapter, fixtures |
 
 ### Core Types (`easybot-core/src/types/`)
@@ -229,8 +229,10 @@ init(config) → connect() → send()/... → disconnect()
 | Plugin 多注册表 | `plugins.registries` 列表（Taps 模型：官方 + 社区源），catalog 合并去重，插件名支持 `publisher/name` 限定。市场不可达明确报错不崩；`plugin update --refresh` 强制清缓存。 |
 | Plugin 更新语义 | `plugin update` 显式触发（非自动），默认 **pin 当前版本**，`--latest`/`--channel beta` 才跨版本（防更新攻击）。`requires.easybot` 安装前校验兼容范围；主程序更新时 `check_plugin_compatibility`（`updater/precheck.rs`）阻止不兼容插件。 |
 | Plugin 跨平台分发 | 插件按 6 target triple 分别编译（Linux 两项必须 **musl**，宿主 musl-static glibc `.so` 无法 dlopen；macOS `MACOSX_DEPLOYMENT_TARGET` ≤ 宿主；Windows 可选 `crt-static`）。`plugin-publish.yml` 是**自包含**模板（只引用公开 action + 40 位 SHA 固定），copy 到插件仓库即用：6-target matrix + gitleaks 扫描 + sign + `easybot-plugin.json` + Release。 |
-| Plugin 脚手架 | `easybot plugin new <name>` 生成独立可构建工程（`bin/src/plugin_scaffold.rs` + `plugin_scaffold_template.rs`），SDK git tag 依赖由编译时版本常量生成（`v{CARGO_PKG_VERSION}`），离线可用。模板含 `[patch]` 本地联调注释。`plugins/example-hello-adapter/` 是 workspace 成员，CI 持续编译验证脚手架产出形状。 |
+| Plugin 脚手架 | `easybot plugin new <name>` 生成独立可构建工程（`bin/src/plugin_scaffold.rs` + `plugin_scaffold_template.rs`），SDK git tag 依赖由编译时版本常量生成（`v{CARGO_PKG_VERSION}`），离线可用。模板含 `[patch]` 本地联调注释。脚手架产出形状由独立样例仓库 [`EasyIndie/easybot-hello-adapter`](https://github.com/EasyIndie/easybot-hello-adapter) 持续编译验证（教学样例，含插件开发指南）。 |
 | Plugin 测试宿主 | SDK `testing` feature 提供 `PluginTestHost`（`crates/easybot-plugin-sdk/src/testing.rs`）：内存宿主模拟 attach/init/connect/send/事件流，离线跑通。传输可注入方法论：HTTP client 经构造器或 `init(config)` 注入，协议交互用 wiremock 替换。测试金字塔：单元 → PluginTestHost → wiremock → e2e。 |
+| Plugin 命名规则 | 官方插件统一 **`easybot-xxx`** 前缀，且同一个名字贯穿仓库名 / `Cargo.toml [package].name` / cdylib 产物（`libeasybot_xxx.{so,dylib,dll}`，Rust 下划线连 crate 名）/ `plugin.yaml` name / `platform_name()` / 市场安装名。命名一经发布即对外稳定（`platform_name()` 参与会话 key 与路由）。社区插件不强前缀，用 `publisher/name` 限定。详见 `docs/plugin-guide.md`「命名规则」。官方入门样例 = 独立仓库 [`EasyIndie/easybot-hello-adapter`](https://github.com/EasyIndie/easybot-hello-adapter)（教学用，含插件开发指南，与主仓仅文档/链接互引）。 |
+| Plugin FFI 分配器契约 | 插件在进程内 dlopen，与宿主通过 FFI 收发 String/Vec/Value 等**带堆所有权**的值（宿主构造→插件 Drop，或反向），两侧**必须共用同一全局分配器**。因此宿主**禁用自定义 `#[global_allocator]`**（`bin/Cargo.toml` 已移除 mimalloc 并注释警示）：宿主 mimalloc + 插件系统 malloc → 交叉 free → SIGABRT；插件各自静态链接 mimalloc → 进程内两套堆 → 析构死锁。插件侧同样**不要**声明 `#[global_allocator]`，保持默认。详见 `docs/plugin-methodology.md`「FFI 分配器契约」与独立样例仓库的[插件开发指南](https://github.com/EasyIndie/easybot-hello-adapter/blob/main/docs/plugin-development-guide.md)。 |
 
 ## 发布流程
 

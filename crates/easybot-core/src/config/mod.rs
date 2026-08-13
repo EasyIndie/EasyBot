@@ -488,9 +488,11 @@ plugins:
   verifySignatures: true
   allowUntrusted: false
   # 受信任发布者公钥（发布者标识 → base64 ed25519 公钥）。
-  # 官方发布者公钥随版本内置；社区发布者通过 PR 登记，或用户显式信任：
+  # 官方发布者公钥随版本内置（EasyIndie，与代码默认一致）；社区发布者
+  # 通过 PR 登记，或用户显式信任：
   #   easybot plugin trust <publisher> --public-key "<base64 公钥>"
-  trustedPublishers: {}
+  trustedPublishers:
+    EasyIndie: "rNLowg/ZHXoUKgbHiOfD55PIDT2f0F0EdyUaZnSldtg="
   # 插件注册源（Taps 模型）：可添加任意第三方目录仓库作为社区源。
   # 官方市场为默认源（EasyIndie/EasyBot-Plugins）。
   registries:

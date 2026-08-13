@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **FFI 分配器契约（行为变更）** — 移除宿主 `#[global_allocator]` mimalloc（`bin/`
+  的 `main.rs` / `Cargo.toml`），宿主与进程内 dlopen 的插件共用默认系统分配器。
+  此前宿主 mimalloc + 插件系统 malloc 时，跨 FFI 的 String/Vec/Value 所有权转移会
+  交叉 free → SIGABRT；插件各自静态链接 mimalloc 则进程内两套堆 → 析构死锁。
+  现在插件保持默认分配器即可安全收发消息。详见 `docs/plugin-methodology.md`
+  「FFI 分配器契约」。
+- **插件 FFI 分配器契约（宿主侧，`PluginAdapterProxy`）** — `PluginLoader::create_adapter()`
+  改为返回 `PluginAdapterProxy`：宿主只**借读**插件返回的 `Box<Box<dyn PlatformAdapter>>`
+  胖指针（`ptr::read` + `ManuallyDrop`，不取得所有权），代理 Drop 时调用插件的
+  `easybot_plugin_destroy`——**谁分配谁释放**。此前宿主 `Box::from_raw` 后用自己的
+  分配器释放插件分配的内存：macOS 两侧共享系统 libc 无感；**Linux 宿主是 musl-static**，
+  与插件 malloc 各一份堆，跨堆释放即 UB（SIGABRT / 堆损坏）。符号不变、无需 ABI bump，
+  向后兼容；加载路径经 `mock-adapter` 真实 cdylib 端到端验证。
+
+### Added
+
+- **插件命名规则** — 官方插件统一 `easybot-xxx` 前缀，且同一个名字贯穿仓库名 /
+  `[package].name` / cdylib 产物 / `plugin.yaml` name / `platform_name()` / 市场安装名。
+  详见 `docs/plugin-guide.md`「命名规则」。
+- **主仓与入门样例解耦** — 官方入门样例独立为
+  [`EasyIndie/easybot-hello-adapter`](https://github.com/EasyIndie/easybot-hello-adapter)
+  （教学样例仓库，含插件开发指南，与主仓仅文档/链接互引）；本仓库移除
+  `plugins/example-hello-adapter/`（workspace 成员已裁剪，Cargo.lock 同步清理）。
+
 ## [0.0.34] - 2026-08-13
 
 ### Added

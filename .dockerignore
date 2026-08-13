@@ -2,10 +2,9 @@ target/
 .git/
 .gitignore
 .claude/
-# 仓库内 workspace 成员需进入构建上下文（cargo workspace 解析其清单）；
-# 其余 plugins/（如 example-slack-plugin 独立示例）仍排除。
+# 插件入门样例已解耦为独立仓库（EasyIndie/easybot-hello-adapter，非 workspace 成员）；
+# example-slack-plugin 亦非 workspace 成员。整个 plugins/ 目录无需进入构建上下文。
 plugins/*
-!plugins/example-hello-adapter/
 docs/
 gateway.local.yaml
 .env
