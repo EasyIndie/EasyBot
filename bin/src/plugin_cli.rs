@@ -397,10 +397,10 @@ async fn load_merged_config(paths: &easybot_core::config::EasyBotPaths) -> Gatew
         .await
         .unwrap_or_default();
     if paths.local_config_file.exists()
-        && let Ok(local) = easybot_core::config::load_config(&paths.local_config_file).await
+        && let Ok(local_val) =
+            easybot_core::config::load_config_value(&paths.local_config_file).await
     {
         let base_val = serde_yaml::to_value(&config).unwrap_or_default();
-        let local_val = serde_yaml::to_value(&local).unwrap_or_default();
         let mut merged = base_val;
         easybot_core::config::merge_configs(&mut merged, local_val);
         if let Ok(c) = serde_yaml::from_value::<GatewayConfig>(merged) {

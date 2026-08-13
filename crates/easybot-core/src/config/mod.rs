@@ -126,13 +126,46 @@ pub async fn load_config(path: &Path) -> Result<GatewayConfig, crate::types::err
         crate::types::error::GatewayError::ConfigError(format!("failed to parse config: {}", e))
     })?;
 
-    // SECURITY: Validate webhook URLs
-    for wh in &config.webhooks {
-        validate_webhook_url(&wh.url)?;
-    }
+    validate_webhooks(&config)?;
 
     info!("Loaded config from {}", path.display());
     Ok(config)
+}
+
+/// 加载配置文件为原始 YAML Value（不反序列化为结构体）。
+///
+/// 供 `gateway.local.yaml` 等覆盖层在合并前使用：只解析环境变量引用、保持原始映射。
+/// 不要像 `load_config` 那样先反序列化进 `GatewayConfig` —— 缺失键会被 serde 默认值
+/// 补齐（例如 `server.host` 默认 `127.0.0.1`），再序列化回去就成了"显式字段"，
+/// 合并时会覆盖基础配置的同名键（2026-08-14 生产故障根因）。
+pub async fn load_config_value(
+    path: &Path,
+) -> Result<serde_yaml::Value, crate::types::error::GatewayError> {
+    let content = tokio::fs::read_to_string(path).await.map_err(|e| {
+        crate::types::error::GatewayError::ConfigError(format!(
+            "failed to read config file {}: {}",
+            path.display(),
+            e
+        ))
+    })?;
+
+    // 解析环境变量引用
+    let resolved = resolve_env_vars(&content);
+
+    serde_yaml::from_str(&resolved).map_err(|e| {
+        crate::types::error::GatewayError::ConfigError(format!("failed to parse config: {}", e))
+    })
+}
+
+/// 校验配置中的 webhook URL（防 SSRF）。
+///
+/// 基础配置在 `load_config` 加载时校验；`gateway.local.yaml` 合并后的最终配置也需
+/// 再次校验，因为本地覆盖可能新增 webhook。
+pub fn validate_webhooks(config: &GatewayConfig) -> Result<(), crate::types::error::GatewayError> {
+    for wh in &config.webhooks {
+        validate_webhook_url(&wh.url)?;
+    }
+    Ok(())
 }
 
 /// SECURITY: Validate webhook URL to prevent SSRF.
@@ -695,6 +728,72 @@ adapters:
             "expected Some(false), got {:?}",
             telegram_cfg.enabled
         );
+    }
+
+    #[test]
+    fn test_merge_local_raw_value_preserves_base_server_host() {
+        // 回归（2026-08-14 生产故障）：gateway.local.yaml 只写 adapters 时，不得把
+        // server.host 覆盖为结构体 serde 默认值 127.0.0.1。base 经 load_config 等价
+        // 反序列化（显式 server.host 0.0.0.0），local 经 load_config_value 等价原始
+        // Value 解析（不注入默认值），合并后 server.host 应保留 0.0.0.0。
+        let base: GatewayConfig = serde_yaml::from_str(
+            r#"
+server:
+  host: "0.0.0.0"
+  port: 8080
+"#,
+        )
+        .expect("base should parse");
+
+        // 模拟 load_config_value：仅解析为原始 Value，不反序列化结构体
+        let local: serde_yaml::Value = serde_yaml::from_str(
+            r#"
+adapters:
+  wechat:
+    enabled: false
+"#,
+        )
+        .expect("local should parse");
+
+        let base_val = serde_yaml::to_value(&base).unwrap();
+        let mut merged = base_val;
+        merge_configs(&mut merged, local);
+        let config: GatewayConfig = serde_yaml::from_value(merged).expect("merged should parse");
+
+        assert_eq!(
+            config.server.host, "0.0.0.0",
+            "base server.host 不得被默认值覆盖"
+        );
+        assert_eq!(config.server.port, 8080);
+        let wechat = config
+            .adapters
+            .get("wechat")
+            .expect("wechat adapter present");
+        assert_eq!(wechat.enabled, Some(false));
+    }
+
+    #[tokio::test]
+    async fn test_load_config_value_no_default_injection() {
+        // 回归：load_config_value 返回的原始 Value 只含文件里的键；若误用 load_config
+        // 反序列化会注入 serde 默认值（server.host=127.0.0.1），合并时覆盖基础配置。
+        let dir =
+            std::env::temp_dir().join(format!("easybot-config-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("gateway.local.yaml");
+        std::fs::write(&path, "adapters:\n  wechat:\n    enabled: false\n").unwrap();
+
+        let value = load_config_value(&path).await.expect("load should succeed");
+
+        assert!(
+            value.get("server").is_none(),
+            "原始 Value 不应注入 server 默认键: {value:?}"
+        );
+        assert_eq!(
+            value["adapters"]["wechat"]["enabled"],
+            serde_yaml::Value::Bool(false)
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

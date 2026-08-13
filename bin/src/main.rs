@@ -256,20 +256,30 @@ async fn main() -> anyhow::Result<()> {
 
     // 合并 gateway.local.yaml（存在时覆盖基础配置）
     if paths.local_config_file.exists() {
-        match easybot_core::config::load_config(&paths.local_config_file).await {
-            Ok(local_config) => {
+        match easybot_core::config::load_config_value(&paths.local_config_file).await {
+            Ok(local_val) => {
                 // 通过 YAML Value 进行递归合并
                 let base_val = serde_yaml::to_value(&config).unwrap_or_default();
-                let local_val = serde_yaml::to_value(&local_config).unwrap_or_default();
                 let mut merged = base_val.clone();
                 easybot_core::config::merge_configs(&mut merged, local_val);
                 match serde_yaml::from_value::<easybot_core::types::config::GatewayConfig>(merged) {
                     Ok(c) => {
-                        tracing::info!(
-                            "Merged local overrides from {}",
-                            paths.local_config_file.display()
-                        );
-                        config = c;
+                        // 合并后再次校验 webhook（本地覆盖可能新增 webhook）
+                        match easybot_core::config::validate_webhooks(&c) {
+                            Ok(()) => {
+                                tracing::info!(
+                                    "Merged local overrides from {}",
+                                    paths.local_config_file.display()
+                                );
+                                config = c;
+                            }
+                            Err(e) => {
+                                tracing::warn!(
+                                    "Merged local config failed webhook validation: {}. Using base config only.",
+                                    e
+                                );
+                            }
+                        }
                     }
                     Err(e) => {
                         tracing::warn!(
