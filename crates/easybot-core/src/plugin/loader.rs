@@ -11,7 +11,8 @@
 //!
 //! - `PluginLibrary` 通过 `Arc<Library>` 管理动态库生命周期
 //! - 工厂闭包捕获 `Arc<Library>`，确保适配器存活期间库不被卸载
-//! - 所有裸指针操作限制在 `create_adapter()` 方法内
+//! - 所有裸指针操作限制在 `create_adapter()` 与 [`PluginAdapterProxy::drop`]（回调
+//!   插件的 `easybot_plugin_destroy` 释放插件自有的内存）内
 //! - ABI 版本号在创建适配器前校验
 //!
 //! # 沙箱限制
@@ -38,9 +39,13 @@
 //! - 生产部署前审计插件源码
 //! - 参见 [SECURITY.md] 了解更多
 
+use async_trait::async_trait;
 use libloading::{Library, Symbol};
 use std::collections::HashMap;
+use std::ffi::c_void;
+use std::mem::ManuallyDrop;
 use std::path::{Path, PathBuf};
+use std::ptr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{info, warn};
@@ -50,7 +55,17 @@ use super::signing::PluginSignature;
 use super::signing::trust::PublisherTrust;
 use crate::adapter::{AdapterFactory, AdapterRegistry};
 use crate::bus::EventBus;
-use crate::types::adapter::PlatformAdapter;
+use crate::types::adapter::{
+    AdapterConfig, AdapterRuntimeConfig, AdapterState, AdapterStatusSummary, Capability,
+    ConnectResult, HealthReport, HealthStatus, InitResult, PlatformAdapter,
+};
+use crate::types::error::GatewayError;
+use crate::types::message::{
+    AnswerCallbackParams, ChatFilter, ChatInfo, DeleteResult, DraftResult, EditMessageParams,
+    EditResult, SendDraftParams, SendInteractiveParams, SendMediaParams, SendResult,
+    SendTextParams,
+};
+use crate::types::session::SessionSource;
 
 /// 插件加载错误
 #[derive(Debug, thiserror::Error)]
@@ -122,15 +137,27 @@ impl PluginLibrary {
         }
     }
 
-    /// 从插件创建适配器实例
+    /// 从插件创建适配器实例（包装为 [`PluginAdapterProxy`]）
     ///
     /// # Safety
     ///
-    /// 返回的 `Box<dyn PlatformAdapter>` 包含指向本库代码段的函数指针。
+    /// 返回的 `Box<dyn PlatformAdapter>` 内部是 [`PluginAdapterProxy`]，其 Drop 会调用
+    /// 插件的 `easybot_plugin_destroy`——**插件释放自己分配的内存**（见代理文档）。
     /// 本 `PluginLibrary` 实例必须比所有适配器存活得更久。
     pub unsafe fn create_adapter(&self) -> Result<Box<dyn PlatformAdapter>, PluginError> {
         unsafe {
-            let create: Symbol<unsafe extern "C" fn() -> *mut std::ffi::c_void> = self
+            // 先解析析构符号再 create：插件若缺 `easybot_plugin_destroy`，宁可报错
+            // 也不 create——否则无人能释放插件分配的实例。
+            let destroy: Symbol<unsafe extern "C" fn(*mut c_void)> = self
+                .inner
+                .get(b"easybot_plugin_destroy")
+                .map_err(|e| PluginError::SymbolNotFound {
+                    path: PathBuf::from("<plugin>"),
+                    symbol: "easybot_plugin_destroy".into(),
+                    detail: e.to_string(),
+                })?;
+
+            let create: Symbol<unsafe extern "C" fn() -> *mut c_void> = self
                 .inner
                 .get(b"easybot_plugin_create")
                 .map_err(|e| PluginError::SymbolNotFound {
@@ -139,18 +166,24 @@ impl PluginLibrary {
                     detail: e.to_string(),
                 })?;
 
-            let ptr = create();
-            if ptr.is_null() {
+            let raw_ptr = create();
+            if raw_ptr.is_null() {
                 return Err(PluginError::NullAdapter);
             }
 
-            // `Box<dyn PlatformAdapter>` 是胖指针（128 bits），不能直接存为 `*mut c_void`
-            // 插件方通过 `Box<Box<dyn PlatformAdapter>>` 做了一层包装（瘦指针）
-            // 这里解一层 Box 即可
-            let inner: Box<Box<dyn PlatformAdapter>> =
-                Box::from_raw(ptr as *mut Box<dyn PlatformAdapter>);
-            let adapter: Box<dyn PlatformAdapter> = *inner;
-            Ok(adapter)
+            // `Box<dyn PlatformAdapter>` 是胖指针（128 bits），插件方通过
+            // `Box<Box<dyn PlatformAdapter>>` 包成瘦指针传回。这里只**借读**内层
+            // 胖指针、不取得所有权（`ptr::read` 位拷贝 + `ManuallyDrop` 防宿主 drop）；
+            // 真正释放由插件的 `easybot_plugin_destroy` 完成（见 [`PluginAdapterProxy::Drop`]）。
+            let adapter: ManuallyDrop<Box<dyn PlatformAdapter>> =
+                ManuallyDrop::new(ptr::read(raw_ptr as *const Box<dyn PlatformAdapter>));
+
+            Ok(Box::new(PluginAdapterProxy {
+                lib: self.inner.clone(),
+                raw_ptr,
+                adapter,
+                destroy: *destroy,
+            }))
         }
     }
 
@@ -176,6 +209,183 @@ impl PluginLibrary {
             }
             Ok(())
         }
+    }
+}
+
+/// 插件适配器代理——宿主侧的安全包装。
+///
+/// # 为什么需要代理（FFI 分配器契约）
+///
+/// 插件在**插件进程内**用 `easybot_plugin_create` 分配 `Box<Box<dyn PlatformAdapter>>`
+/// 内存，宿主经 FFI 拿到裸指针。旧实现 `Box::from_raw` 后宿主直接 drop——宿主用
+/// **自己的**全局分配器去释放插件分配的内存。macOS（宿主/插件都动态链接系统 libc）
+/// 两侧恰好共用同一堆，无感；但 Linux 宿主是 **musl-static**（内置静态 musl malloc），
+/// 插件 malloc 是另一份堆——跨堆释放即 UB（SIGABRT / 堆损坏）。
+///
+/// 契约：**谁分配谁释放**。宿主只借读插件的胖指针（不拥有其内存），代理 Drop 时调用
+/// 插件的 `easybot_plugin_destroy`——插件用同一全局分配器释放自己创建的内存（自洽）。
+/// 代理持有 `Arc<Library>` 保证 .so 存活期间代理有效。
+///
+/// 与 SDK 测试（`ffi.rs`）中「只借读 + 手动 destroy」的用法一致，是同一契约的宿主侧落地。
+struct PluginAdapterProxy {
+    /// 保持动态库存活（Drop 时 `destroy` 仍需库内代码；纯生命周期守卫，不读取）
+    #[allow(dead_code)]
+    lib: Arc<Library>,
+    /// 插件 `easybot_plugin_create` 返回的裸指针（指向插件分配的 `Box<Box<dyn PlatformAdapter>>`）
+    raw_ptr: *mut c_void,
+    /// 借读自 `raw_ptr` 的胖指针（数据指针 + vtable）。宿主**不拥有**其内存，
+    /// 借 `ManuallyDrop` 防止宿主侧误 drop（double-free）。
+    adapter: ManuallyDrop<Box<dyn PlatformAdapter>>,
+    /// 插件导出的析构函数（插件侧释放自己的内存）
+    destroy: unsafe extern "C" fn(*mut c_void),
+}
+
+// SAFETY: 代理与 `Box<dyn PlatformAdapter>` 等价对待——底层插件适配器满足
+// `PlatformAdapter: Send + Sync`；裸指针 `raw_ptr` 仅在 Drop 时交给插件的
+// destroy（插件侧同一堆，自洽），不参与跨线程数据竞争。
+unsafe impl Send for PluginAdapterProxy {}
+unsafe impl Sync for PluginAdapterProxy {}
+
+impl Drop for PluginAdapterProxy {
+    fn drop(&mut self) {
+        // SAFETY: `raw_ptr` 由本插件的 `easybot_plugin_create` 返回；`destroy` 是
+        // 本插件导出的 `easybot_plugin_destroy`（幂等、接受空指针）。插件用同一
+        // 全局分配器释放自己分配的内存（alloc/free 自洽）；`lib` 的 Arc 保证本
+        // 调用执行期间 .so 不被卸载。
+        unsafe { (self.destroy)(self.raw_ptr) }
+    }
+}
+
+#[async_trait]
+impl PlatformAdapter for PluginAdapterProxy {
+    fn platform_name(&self) -> &str {
+        self.adapter.platform_name()
+    }
+
+    fn display_name(&self) -> &str {
+        self.adapter.display_name()
+    }
+
+    fn capabilities(&self) -> &[Capability] {
+        self.adapter.capabilities()
+    }
+
+    fn set_event_bus(&mut self, bus: Arc<EventBus>) {
+        self.adapter.set_event_bus(bus);
+    }
+
+    async fn init(&mut self, config: AdapterConfig) -> Result<InitResult, GatewayError> {
+        self.adapter.init(config).await
+    }
+
+    async fn connect(&mut self) -> Result<ConnectResult, GatewayError> {
+        self.adapter.connect().await
+    }
+
+    async fn disconnect(&mut self) -> Result<(), GatewayError> {
+        self.adapter.disconnect().await
+    }
+
+    fn state(&self) -> AdapterState {
+        self.adapter.state()
+    }
+
+    fn is_connected(&self) -> bool {
+        self.adapter.is_connected()
+    }
+
+    async fn retry_transport(&mut self) -> Result<bool, GatewayError> {
+        self.adapter.retry_transport().await
+    }
+
+    fn heartbeat_age_ms(&self) -> Option<i64> {
+        self.adapter.heartbeat_age_ms()
+    }
+
+    fn heartbeat_success_age_ms(&self) -> Option<i64> {
+        self.adapter.heartbeat_success_age_ms()
+    }
+
+    fn heartbeat_failure_count(&self) -> Option<u32> {
+        self.adapter.heartbeat_failure_count()
+    }
+
+    fn health_status(&self) -> HealthStatus {
+        self.adapter.health_status()
+    }
+
+    async fn health(&self) -> HealthReport {
+        self.adapter.health().await
+    }
+
+    async fn send(&self, params: SendTextParams) -> Result<SendResult, GatewayError> {
+        self.adapter.send(params).await
+    }
+
+    async fn send_media(&self, params: SendMediaParams) -> Result<SendResult, GatewayError> {
+        self.adapter.send_media(params).await
+    }
+
+    async fn send_interactive(
+        &self,
+        params: SendInteractiveParams,
+    ) -> Result<SendResult, GatewayError> {
+        self.adapter.send_interactive(params).await
+    }
+
+    async fn send_typing(&self, chat_id: &str) -> Result<(), GatewayError> {
+        self.adapter.send_typing(chat_id).await
+    }
+
+    async fn answer_callback_query(
+        &self,
+        params: AnswerCallbackParams,
+    ) -> Result<(), GatewayError> {
+        self.adapter.answer_callback_query(params).await
+    }
+
+    async fn send_draft(&self, params: SendDraftParams) -> Result<DraftResult, GatewayError> {
+        self.adapter.send_draft(params).await
+    }
+
+    async fn edit_message(&self, params: EditMessageParams) -> Result<EditResult, GatewayError> {
+        self.adapter.edit_message(params).await
+    }
+
+    async fn delete_message(
+        &self,
+        chat_id: &str,
+        message_id: &str,
+    ) -> Result<DeleteResult, GatewayError> {
+        self.adapter.delete_message(chat_id, message_id).await
+    }
+
+    async fn get_chat_info(&self, chat_id: &str) -> Result<ChatInfo, GatewayError> {
+        self.adapter.get_chat_info(chat_id).await
+    }
+
+    async fn list_chats(&self, filter: Option<ChatFilter>) -> Result<Vec<ChatInfo>, GatewayError> {
+        self.adapter.list_chats(filter).await
+    }
+
+    fn runtime_config(&self) -> AdapterRuntimeConfig {
+        self.adapter.runtime_config()
+    }
+
+    fn status_summary(&self) -> AdapterStatusSummary {
+        self.adapter.status_summary()
+    }
+
+    async fn enrich_source(&self, source: &SessionSource) -> Option<SessionSource> {
+        self.adapter.enrich_source(source).await
+    }
+
+    async fn cursor_state(&self) -> Option<serde_json::Value> {
+        self.adapter.cursor_state().await
+    }
+
+    async fn restore_cursor_state(&self, state: serde_json::Value) {
+        self.adapter.restore_cursor_state(state).await
     }
 }
 
