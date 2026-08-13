@@ -1,6 +1,6 @@
 //! GitHub Releases 注册表实现
 //!
-//! - 目录索引：从 `EasyIndie/EasyBot-Plugins`（可覆盖）仓库的 `catalog.json` 读取
+//! - 目录索引：从 `EasyIndie/EasyBot-Registry`（可覆盖）仓库的 `catalog.json` 读取
 //! - 版本查询：枚举插件仓库的 Releases，解析 `easybot-plugin.json` asset
 //! - 下载：流式下载并校验 `sha256`
 //!
@@ -19,7 +19,7 @@ use tokio::sync::Mutex;
 
 /// 官方市场目录仓库
 pub const DEFAULT_CATALOG_OWNER: &str = "EasyIndie";
-pub const DEFAULT_CATALOG_REPO: &str = "EasyBot-Plugins";
+pub const DEFAULT_CATALOG_REPO: &str = "EasyBot-Registry";
 
 /// 市场目录文件名（仓库默认分支根目录）
 const CATALOG_FILE: &str = "catalog.json";

@@ -302,7 +302,7 @@ plugins:
   registries:
     - kind: github
       owner: EasyIndie
-      repo: EasyBot-Plugins
+      repo: EasyBot-Registry
 ```
 
 ---
