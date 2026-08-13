@@ -494,12 +494,12 @@ plugins:
   trustedPublishers:
     EasyIndie: "rNLowg/ZHXoUKgbHiOfD55PIDT2f0F0EdyUaZnSldtg="
   # 插件注册源（Taps 模型）：可添加任意第三方目录仓库作为社区源。
-  # 官方市场为默认源（EasyIndie/EasyBot-Plugins）。
+  # 官方市场为默认源（EasyIndie/EasyBot-Registry）。
   registries:
     - name: "official"
       kind: "github"
       owner: "EasyIndie"
-      repo: "EasyBot-Plugins"
+      repo: "EasyBot-Registry"
 "#
     .to_string()
 }

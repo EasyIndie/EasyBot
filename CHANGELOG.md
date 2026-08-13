@@ -33,6 +33,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   （教学样例仓库，含插件开发指南，与主仓仅文档/链接互引）；本仓库移除
   `plugins/example-hello-adapter/`（workspace 成员已裁剪，Cargo.lock 同步清理）。
 
+### Changed
+
+- **市场目录仓库重命名** — `EasyIndie/EasyBot-Plugins` → `EasyIndie/EasyBot-Registry`。
+  默认注册源与 `DEFAULT_CATALOG_REPO` 同步更新；旧仓库名经 GitHub 301 重定向，
+  历史链接仍可用。安装/搜索/更新行为不变（`easybot plugin install <pub>/<name>`）。
+
 ## [0.0.34] - 2026-08-13
 
 ### Added

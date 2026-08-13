@@ -1,6 +1,6 @@
 //! GitHub Releases 注册表实现
 //!
-//! - 目录索引：从 `EasyIndie/EasyBot-Plugins`（可覆盖）仓库的 `catalog.json` 读取
+//! - 目录索引：从 `EasyIndie/EasyBot-Registry`（可覆盖）仓库的 `catalog.json` 读取
 //! - 版本查询：枚举插件仓库的 Releases，解析 `easybot-plugin.json` asset
 //! - 下载：流式下载并校验 `sha256`
 //!
@@ -19,7 +19,7 @@ use tokio::sync::Mutex;
 
 /// 官方市场目录仓库
 pub const DEFAULT_CATALOG_OWNER: &str = "EasyIndie";
-pub const DEFAULT_CATALOG_REPO: &str = "EasyBot-Plugins";
+pub const DEFAULT_CATALOG_REPO: &str = "EasyBot-Registry";
 
 /// 市场目录文件名（仓库默认分支根目录）
 const CATALOG_FILE: &str = "catalog.json";
@@ -305,17 +305,20 @@ mod tests {
             library: Some("libdemo.so".into()),
         };
 
-        // wiremock + hyper 1.x 在本机偶发"空 body 应答"竞争（实测 ~0.4%/请求），
-        // 恰好被 sha256 完整性校验捕获。生产行为正确（空 body → ChecksumMismatch）；
-        // 此处重试以容忍测试基建的瞬态，而不是掩盖产品缺陷。
+        // wiremock + hyper 1.x 在本机偶发"空 body 应答"竞争（实测 ~0.4%/请求，
+        // 但全量并行跑时大幅上升——曾有连败 4 次的记录），恰好被 sha256 完整性
+        // 校验捕获。生产行为正确（空 body → ChecksumMismatch）；此处重试以容忍
+        // 测试基建的瞬态，而不是掩盖产品缺陷（真 bug 会连败所有尝试次数）。
         let dest = std::env::temp_dir().join(format!("registry-dl-{}", std::process::id()));
         let mut attempt = 0;
         loop {
             let _ = std::fs::remove_file(&dest);
             match registry.download(&artifact, &dest).await {
                 Ok(()) => break,
-                Err(PluginRegistryError::ChecksumMismatch { .. }) if attempt < 3 => {
+                Err(PluginRegistryError::ChecksumMismatch { .. }) if attempt < 8 => {
                     attempt += 1;
+                    // 间隔让 wiremock/hyper 连接池从竞争态恢复，而非连续打空
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                     continue;
                 }
                 Err(e) => panic!("download+verify should pass: {e}"),
