@@ -1110,6 +1110,8 @@ pub async fn list_api_key_types() -> Json<ApiKeyTypesResponse> {
             "billingwrite",
             "logsread",
             "systemread",
+            "pluginsread",
+            "pluginsmanage",
         ],
     })
 }

@@ -1,0 +1,279 @@
+# EasyBot 插件发布模板（自包含，copy 到插件仓库即可用）
+#
+# 用法：
+#   1. 本机：easybot-plugin-sign gen-keypair  生成 ed25519 密钥对
+#   2. 私钥存入插件仓库的 GitHub Actions secret `PUBLISHER_PRIVATE_KEY`
+#   3. 公钥（PUBLIC_KEY 那行）通过 PR 提交给 EasyBot 官方登记 trusted_publishers，
+#      登记后客户端才能验签安装（签名只证作者与完整性，不证安全）
+#   4. 按需修改下方 env（CHANNEL / EASYBOT_REQUIRES / SDK_VERSION / SDK_TAG）
+#   5. 打 tag v1.0.0 推送 → 自动交叉编译 6 target + gitleaks 扫描 + 签名 + 发布
+#
+# 约束：
+#   - 本模板是「自包含」的——只能引用公开 GitHub Action（并固定 40 位 commit SHA），
+#     不能引用 EasyBot 仓库的内部 action（插件作者仓库里没有）。
+#   - 产物命名：{lib}{name}-{triple}.{so|dylib|dll}（Windows 无 lib 前缀）。
+#     同一 Release 下 6 个产物用 triple 后缀区分，安装端按宿主 triple 只下载匹配项。
+#   - Linux 产物必须 musl 静态编译（宿主 musl-static，glibc .so 无法 dlopen）。
+#   - sdkVersion 必须等于插件所依赖 SDK 的 EASYBOT_PLUGIN_ABI_VERSION（当前为 1）。
+#
+# v1.5 可选：在「Release」step 前追加 actions/attest@v4 为产物生成 GitHub
+# provenance（不改变 ed25519 信任锚，仅追加发布可溯源性；需 id-token: write）。
+
+name: Publish Plugin
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 插件版本（如 1.2.3；留空则取 git tag 或 Cargo.toml [package].version）
+        required: false
+        default: ''
+
+env:
+  # ── 发布者配置（按需修改） ──
+  # 插件名：留空则从 Cargo.toml [package].name 读取
+  PLUGIN_NAME: ""
+  # 发布渠道：stable | beta（beta 的 Release 标记为 prerelease）
+  CHANNEL: "stable"
+  # requires.easybot：兼容的最低 EasyBot 版本（semver range，客户端安装时校验）
+  EASYBOT_REQUIRES: ">=0.0.28"
+  # sdkVersion：必须与插件所依赖 SDK 的 EASYBOT_PLUGIN_ABI_VERSION 一致（当前为 1）。
+  # 更换 SDK git tag（ABI 变更）时必须同步更新。
+  SDK_VERSION: "1"
+  # SDK git 依赖 tag（形如 v0.0.34，用于安装 easybot-plugin-sign）。
+  # 留空则从 Cargo.toml 的 easybot-plugin-sdk 依赖自动读取。
+  # 注意：该 tag 对应的 EasyBot 版本必须已包含 easybot-plugin-sign 工具。
+  SDK_TAG: ""
+
+permissions:
+  contents: read
+
+jobs:
+  # ── 1. 交叉编译 6 target（公开 action，不引用仓库内部 action） ──
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux：必须 musl（zig cc 交叉编译，静态链接）
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            prefix: lib
+            extension: so
+            zigbuild: true
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-musl
+            prefix: lib
+            extension: so
+            zigbuild: true
+          # macOS：dyld；部署目标 ≤ 宿主（10.15 / 11.0）
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            prefix: lib
+            extension: dylib
+            zigbuild: false
+            macos-deployment-target: "10.15"
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            prefix: lib
+            extension: dylib
+            zigbuild: false
+            macos-deployment-target: "11.0"
+          # Windows：MSVC CRT；ARM 用原生 windows-11-arm runner
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            prefix: ""
+            extension: dll
+            zigbuild: false
+          - os: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            prefix: ""
+            extension: dll
+            zigbuild: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+
+      - name: Install cargo-zigbuild (musl)
+        if: ${{ matrix.zigbuild }}
+        uses: taiki-e/install-action@6c6fd71fe4fb72c3697d269963d0e15df8adedad # v2
+        with:
+          tool: cargo-zigbuild
+
+      - name: Build (musl — static linking)
+        if: ${{ matrix.zigbuild }}
+        run: cargo zigbuild --release --target ${{ matrix.target }}
+
+      - name: Build (native)
+        if: ${{ !matrix.zigbuild }}
+        env:
+          MACOSX_DEPLOYMENT_TARGET: ${{ matrix.macos-deployment-target }}
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Stage plugin artifacts
+        env:
+          EXT: ${{ matrix.extension }}
+          PREFIX: ${{ matrix.prefix }}
+          TRIPLE: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          # 插件名（缺省从 Cargo.toml [package].name 读取）
+          PLUGIN_NAME="${PLUGIN_NAME:-$(awk -F'"' '/^\[package\]/{p=1} p&&/^name *=/{gsub(/ /,"");print $2;exit}' Cargo.toml)}"
+          [ -n "$PLUGIN_NAME" ] || { echo "无法确定插件名（设置 env.PLUGIN_NAME 或 Cargo.toml [package].name）" >&2; exit 1; }
+          # Rust cdylib 产物文件名以下划线分隔（如 libmy_adapter.so）
+          CRATE_FILE=$(printf '%s' "$PLUGIN_NAME" | tr '-' '_')
+          RAW="target/${TRIPLE}/release/${PREFIX}${CRATE_FILE}.${EXT}"
+          [ -f "$RAW" ] || { echo "未找到编译产物: $RAW" >&2; exit 1; }
+          # 磁盘上的库名（写入 easybot-plugin.json 的 library 字段，安装后按此名落位）。
+          # 必须用 CRATE_FILE（下划线）——cargo cdylib 产物是下划线 crate 名，宿主
+          # 端缺省推导（manifest.library_path / default_library_name）也按下划线，
+          # 落位名与推导名不一致会导致加载找不到库。
+          CLEAN="${PREFIX}${CRATE_FILE}.${EXT}"
+          # Release asset 名：lib{name}-{triple}.{ext}（与 CLEAN 同字节，仅文件名带 triple）
+          SUFFIXED="${CLEAN%.*}-${TRIPLE}.${EXT}"
+          mkdir -p artifacts
+          cp "$RAW" "artifacts/${SUFFIXED}"
+          printf '{"triple":"%s","library":"%s","suffixed":"%s"}' \
+            "$TRIPLE" "$CLEAN" "$SUFFIXED" > artifacts/metadata.json
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
+        with:
+          name: artifact-${{ matrix.target }}
+          path: artifacts/
+          if-no-files-found: error
+
+  # ── 2. secret 扫描（VS Code 教训：含密钥即阻断发布） ──
+  secret-scan:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Gitleaks
+        uses: gitleaks/gitleaks-action@dcedce43c6f43de0b836d1fe38946645c9c638dc # v2
+
+  # ── 3. 签名 + 组装 easybot-plugin.json + 发布 ──
+  publish:
+    name: Sign and release
+    runs-on: ubuntu-latest
+    needs: [build, secret-scan]
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Resolve version, publisher & SDK tag
+        id: meta
+        run: |
+          set -euo pipefail
+          PLUGIN_NAME="${PLUGIN_NAME:-$(awk -F'"' '/^\[package\]/{p=1} p&&/^name *=/{gsub(/ /,"");print $2;exit}' Cargo.toml)}"
+          VERSION="${{ inputs.version }}"
+          if [ -z "$VERSION" ]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          fi
+          if [ -z "$VERSION" ]; then
+            VERSION=$(awk -F'"' '/^\[package\]/{p=1} p&&/^version *=/{gsub(/ /,"");print $2;exit}' Cargo.toml)
+          fi
+          [ -n "$VERSION" ] || { echo "无法确定版本（workflow_dispatch 传 version，或打 vX.Y.Z tag）" >&2; exit 1; }
+          TAG="v${VERSION}"
+          SDK_TAG="${SDK_TAG:-$(grep 'easybot-plugin-sdk' Cargo.toml | grep -oE '"[vV]?[0-9]+\.[0-9]+\.[0-9]+"' | tr -d '"' | head -1)}"
+          [ -n "$SDK_TAG" ] || { echo "无法从 Cargo.toml 读取 SDK tag（SDK_TAG 需为 vX.Y.Z 形式）" >&2; exit 1; }
+          echo "plugin-name=${PLUGIN_NAME}" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "sdk-tag=${SDK_TAG}" >> "$GITHUB_OUTPUT"
+          echo "publisher=${GITHUB_REPOSITORY_OWNER}" >> "$GITHUB_OUTPUT"
+
+      - name: Install easybot-plugin-sign
+        run: cargo install --git https://github.com/EasyIndie/EasyBot.git \
+          --tag "${{ steps.meta.outputs.sdk-tag }}" --locked easybot-plugin-sign
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v4
+        with:
+          path: downloads
+          pattern: artifact-*
+
+      - name: Sign artifacts (ed25519)
+        env:
+          PUBLISHER_PRIVATE_KEY: ${{ secrets.PUBLISHER_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          [ -n "$PUBLISHER_PRIVATE_KEY" ] || { echo "缺少 secret PUBLISHER_PRIVATE_KEY" >&2; exit 1; }
+          for dir in downloads/artifact-*/; do
+            triple=$(jq -r .triple "$dir/metadata.json")
+            library=$(jq -r .library "$dir/metadata.json")
+            suffixed=$(jq -r .suffixed "$dir/metadata.json")
+            easybot-plugin-sign sign --publisher "${{ steps.meta.outputs.publisher }}" \
+              --version "${{ steps.meta.outputs.version }}" \
+              --triple "$triple" --artifact "$dir/$suffixed" --library "$library" \
+              --name "${{ steps.meta.outputs.plugin-name }}" \
+              > "$dir/sign.json"
+            # 注入 release asset 名，供组装 easybot-plugin.json 的 url 字段
+            jq --arg suffixed "$suffixed" '. + {suffixed: $suffixed}' \
+              "$dir/sign.json" > "$dir/sign.tmp" && mv "$dir/sign.tmp" "$dir/sign.json"
+          done
+          # 断言所有产物的公钥一致（防止密钥配置错误导致部分产物无法验签）
+          first_pk=$(jq -r .public_key downloads/artifact-*/sign.json | head -1)
+          for f in downloads/artifact-*/sign.json; do
+            [ "$(jq -r .public_key "$f")" = "$first_pk" ] || { echo "产物公钥不一致: $f" >&2; exit 1; }
+          done
+
+      - name: Assemble easybot-plugin.json + checksums.txt
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          entries=()
+          for dir in downloads/artifact-*/; do
+            suffixed=$(jq -r .suffixed "$dir/metadata.json")
+            cp "$dir/$suffixed" release-assets/
+            entries+=("$(cat "$dir/sign.json")")
+          done
+          entries_json=$(printf '%s\n' "${entries[@]}" | jq -s .)
+          jq -n \
+            --argjson e "$entries_json" \
+            --arg name "${{ steps.meta.outputs.plugin-name }}" \
+            --arg version "${{ steps.meta.outputs.version }}" \
+            --argjson sdkVersion "$SDK_VERSION" \
+            --arg publisher "${{ steps.meta.outputs.publisher }}" \
+            --arg tag "${{ steps.meta.outputs.tag }}" \
+            --arg channel "$CHANNEL" \
+            --arg requires "$EASYBOT_REQUIRES" \
+            --arg base "https://github.com/${GITHUB_REPOSITORY}/releases/download/${{ steps.meta.outputs.tag }}" \
+            '{ schemaVersion: 1, name: $name, version: $version, sdkVersion: $sdkVersion,
+               publisher: $publisher, tag: $tag, channel: $channel,
+               requires: { easybot: $requires }, deprecated: false,
+               artifacts: ( $e | map( { (.triple): { url: ($base + "/" + .suffixed),
+                                                      size: .size, sha256: .sha256,
+                                                      signature: .signature, library: .library } } ) | add ) }' \
+            > easybot-plugin.json
+          jq -e '.artifacts | length > 0' easybot-plugin.json >/dev/null
+          ( cd release-assets && sha256sum * | sort ) > checksums.txt
+
+      - name: Release
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: ${{ steps.meta.outputs.plugin-name }} v${{ steps.meta.outputs.version }}
+          body: |
+            EasyBot 插件 `${{ steps.meta.outputs.plugin-name }}` v${{ steps.meta.outputs.version }}
+
+            - channel: `${{ env.CHANNEL }}`
+            - requires.easybot: `${{ env.EASYBOT_REQUIRES }}`
+            - sdkVersion: `${{ env.SDK_VERSION }}`
+
+            所有产物均经过 ed25519 签名。客户端安装时校验 sha256 + 签名，
+            只有通过校验才会落位加载。签名只证明作者与完整性，不证明代码安全。
+          files: |
+            easybot-plugin.json
+            checksums.txt
+            release-assets/*
+          prerelease: ${{ env.CHANNEL == 'beta' }}

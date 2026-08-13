@@ -17,5 +17,11 @@ sqlx.workspace = true
 tempfile = "3"
 ureq = "3"
 
+# 插件 CLI 集成测试需随 workspace 级 `--features plugin-system` 一并启用。
+# `cargo test --all`（pre-push hook）不带该 feature → 门控测试跳过；
+# CI 的 `--workspace --features "default,plugin-system"` 会传播到本 crate → 仍会运行。
+[features]
+plugin-system = ["easybot-core/plugin-system"]
+
 [lints]
 workspace = true

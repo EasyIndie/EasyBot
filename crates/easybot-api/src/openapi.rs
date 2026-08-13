@@ -108,199 +108,236 @@ impl Modify for SecurityAddon {
     }
 }
 
-/// EasyBot API 的 OpenAPI 文档定义
-#[derive(OpenApi)]
-#[openapi(
-    info(
-        title = "EasyBot API",
-        description = "EasyBot 即时通信网关服务 API\n\n\
-            EasyBot 是一个独立的 IM 网关服务，连接多个即时通信平台（Telegram、Discord 等），\n\
-            对外提供统一的 REST API 和 WebSocket 实时事件推送。\n\n\
-            ## 目标格式\n\
-            所有涉及消息发送的接口，目标格式为 `platform:chatId`，例如 `telegram:123456789`。\n\n\
-            ## 认证\n\
-            除 health/live/ready 与管理员密码登录外，REST API 请求需要携带 API Key。\n\
-            WebSocket 在连接后的第一条应用消息中发送 API Key，不使用 HTTP Bearer 握手。\n\
-            认证方式：在 HTTP Header 中添加 `Authorization: Bearer <api-key>`。\n\
-            在 Swagger UI 中点击右上角的 **Authorize** 按钮，输入 API Key（如 `eb_xxxxxxxx`）即可。",
-        version = env!("CARGO_PKG_VERSION"),
-        license(name = "GPL-3.0"),
-    ),
-    modifiers(&SecurityAddon),
-    servers((url = "/", description = "Current origin (HTTPS in production)")),
+/// 生成 EasyBot API 的 OpenAPI 文档定义
+///
+/// 用宏共享公共部分（info/paths/schemas/tags），并按 feature 追加插件路径
+/// （`routes::plugins` 模块本身 cfg-gated，无法在单个 `#[openapi]` 内条件引用）。
+/// 调用语法：`openapi_attrs! { paths(<插件路径>...) schemas(<插件 schema>...) }`，两组均允许为空。
+macro_rules! openapi_attrs {
+    (paths($($ppath:path),*) schemas($($pschema:path),*)) => {
+        #[derive(OpenApi)]
+        #[openapi(
+            info(
+                title = "EasyBot API",
+                description = "EasyBot 即时通信网关服务 API\n\n\
+                    EasyBot 是一个独立的 IM 网关服务，连接多个即时通信平台（Telegram、Discord 等），\n\
+                    对外提供统一的 REST API 和 WebSocket 实时事件推送。\n\n\
+                    ## 目标格式\n\
+                    所有涉及消息发送的接口，目标格式为 `platform:chatId`，例如 `telegram:123456789`。\n\n\
+                    ## 认证\n\
+                    除 health/live/ready 与管理员密码登录外，REST API 请求需要携带 API Key。\n\
+                    WebSocket 在连接后的第一条应用消息中发送 API Key，不使用 HTTP Bearer 握手。\n\
+                    认证方式：在 HTTP Header 中添加 `Authorization: Bearer <api-key>`。\n\
+                    在 Swagger UI 中点击右上角的 **Authorize** 按钮，输入 API Key（如 `eb_xxxxxxxx`）即可。",
+                version = env!("CARGO_PKG_VERSION"),
+                license(name = "GPL-3.0"),
+            ),
+            modifiers(&SecurityAddon),
+            servers((url = "/", description = "Current origin (HTTPS in production)")),
+            paths(
+                routes::health::health_check,
+                routes::health::live,
+                routes::health::ready,
+                routes::adapters::list_adapters,
+                routes::adapters::start_adapter,
+                routes::adapters::stop_adapter,
+                routes::adapters::adapter_status,
+                routes::messages::send_message,
+                routes::messages::batch_send,
+                routes::messages::answer_callback,
+                routes::messages::list_deliveries,
+                routes::messages::reconcile_delivery,
+                routes::messages::edit_message,
+                routes::messages::delete_message,
+                routes::messages::message_history,
+                routes::sessions::list_sessions,
+                routes::sessions::get_session,
+                routes::sessions::update_session,
+                routes::sessions::delete_session,
+                routes::sessions::export_session_data,
+                routes::chats::list_chats,
+                routes::chats::get_chat,
+                routes::config::get_config,
+                routes::config::update_config,
+                routes::ws::ws_handler,
+                // Admin — API Key 管理
+                routes::admin::list_api_keys,
+                routes::admin::create_api_key,
+                routes::admin::revoke_api_key,
+                routes::admin::rotate_api_key,
+                routes::admin::list_rotation_transitions,
+                routes::admin::reconcile_rotation_transition,
+                routes::admin::purge_api_key,
+                routes::admin::list_api_key_types,
+                routes::admin::list_audit_events,
+                routes::admin::list_usage,
+                routes::admin::list_target_grants,
+                routes::admin::create_target_grant,
+                routes::admin::delete_target_grant,
+                routes::billing::create_billing_event,
+                routes::billing::list_billing_events,
+                routes::admin::admin_login,
+                routes::admin::admin_logout,
+                // System
+                routes::system::system_info,
+                // Version update check
+                routes::update::update_check,
+                // Logs
+                routes::logs::log_entries,
+                // Plugins（plugin-system 特性）
+                $($ppath,)*
+            ),
+            components(
+                schemas(
+                    // Admin — API Keys
+                    routes::admin::ApiKeyResponse,
+                    routes::admin::CreateApiKeyRequest,
+                    routes::admin::CreateApiKeyResponse,
+                    routes::admin::RotateApiKeyRequest,
+                    routes::admin::ReconcileRotationRequest,
+                    routes::admin::RotationReconcileResponse,
+                    easybot_core::auth::ApiKeyRotationTransition,
+                    routes::admin::RevokeResponse,
+                    routes::admin::ApiKeyTypesResponse,
+                    routes::admin::AuditEventsResponse,
+                    easybot_core::auth::AuditEvent,
+                    routes::admin::UsageQuery,
+                    routes::admin::UsageResponse,
+                    easybot_core::auth::UsageRecord,
+                    easybot_core::auth::TargetGrant,
+                    routes::admin::CreateTargetGrantRequest,
+                    routes::admin::DeleteTargetGrantResponse,
+                    routes::billing::CreateBillingEventRequest,
+                    routes::billing::BillingEventWriteResponse,
+                    routes::billing::BillingEventQuery,
+                    routes::billing::BillingEventsResponse,
+                    easybot_core::auth::BillingEvent,
+                    routes::admin::LoginRequest,
+                    routes::admin::LoginResponse,
+                    // Health
+                    routes::health::HealthResponse,
+                    routes::health::AdapterSummary,
+                    routes::health::SessionSummary,
+                    routes::health::ProbeResponse,
+                    routes::health::ReadinessResponse,
+                    // Adapters
+                    routes::adapters::AdapterListResponse,
+                    routes::adapters::AdapterItem,
+                    // Messages
+                    routes::messages::SendMessageRequest,
+                    routes::messages::BatchSendRequest,
+                    routes::messages::EditMessageRequest,
+                    routes::messages::DeleteMessageRequest,
+                    routes::messages::MessageHistoryParams,
+                    routes::messages::MessageHistoryResponse,
+                    // Core types (API-facing)
+                    easybot_core::types::message::InboundMessage,
+                    easybot_core::types::message::OutboundMessage,
+                    easybot_core::types::message::SendTextParams,
+                    easybot_core::types::message::SendMediaParams,
+                    easybot_core::types::message::SendInteractiveParams,
+                    easybot_core::types::message::EditMessageParams,
+                    easybot_core::types::message::SendResult,
+                    easybot_core::types::message::EditResult,
+                    easybot_core::types::message::DeleteResult,
+                    easybot_core::types::message::ChatType,
+                    easybot_core::types::message::ParseMode,
+                    easybot_core::types::message::MessageSender,
+                    easybot_core::types::message::MessageType,
+                    easybot_core::types::message::MentionInfo,
+                    easybot_core::types::message::SenderRole,
+                    easybot_core::types::message::MediaAttachment,
+                    easybot_core::types::message::MediaType,
+                    easybot_core::types::message::CommandData,
+                    easybot_core::types::message::CallbackData,
+                    easybot_core::types::message::MessageReference,
+                    easybot_core::types::message::InlineKeyboard,
+                    easybot_core::types::message::KeyboardRow,
+                    easybot_core::types::message::Button,
+                    easybot_core::types::message::CallbackEvent,
+                    easybot_core::types::message::ChatInfo,
+                    easybot_core::types::message::ChatFilter,
+                    // Session
+                    easybot_core::types::session::Session,
+                    easybot_core::types::session::SessionSource,
+                    easybot_core::types::session::ResetPolicy,
+                    routes::sessions::UpdateSessionRequest,
+                    // Adapter
+                    easybot_core::types::adapter::AdapterConfig,
+                    easybot_core::types::adapter::AdapterStatusSummary,
+                    easybot_core::types::adapter::AdapterState,
+                    easybot_core::types::adapter::Capability,
+                    easybot_core::types::adapter::CapabilityName,
+                    easybot_core::types::adapter::CapabilityLimits,
+                    easybot_core::types::adapter::HealthStatus,
+                    easybot_core::types::adapter::HealthReport,
+                    easybot_core::types::adapter::BotInfo,
+                    easybot_core::types::adapter::AdapterRuntimeConfig,
+                    // Config
+                    easybot_core::types::config::GatewayConfig,
+                    easybot_core::types::config::ServerConfig,
+                    easybot_core::types::config::ApiConfig,
+                    easybot_core::types::config::WebSocketConfig,
+                    easybot_core::types::config::StorageConfig,
+                    easybot_core::types::config::LoggingConfig,
+                    easybot_core::types::config::TlsConfig,
+                    easybot_core::types::config::WebhookConfig,
+                    // Event
+                    easybot_core::types::event::GatewayEvent,
+                    easybot_core::types::event::EventMetadata,
+                    // Error
+                    easybot_core::types::error::ApiErrorResponse,
+                    easybot_core::types::error::ApiErrorDetail,
+                    // Update check
+                    routes::update::UpdateCheckResponse,
+                    // Logs
+                    routes::logs::LogQuery,
+                    // Plugins（plugin-system 特性）
+                    $($pschema,)*
+                )
+            ),
+            tags(
+                (name = "Health", description = "服务健康检查"),
+                (name = "Adapters", description = "适配器管理（启动/停止/状态查询）"),
+                (name = "Messages", description = "消息发送与管理"),
+                (name = "Sessions", description = "会话管理"),
+                (name = "Chats", description = "聊天信息查询"),
+                (name = "Config", description = "网关配置管理"),
+                (name = "WebSocket", description = "WebSocket 实时事件推送"),
+                (name = "API Keys", description = "API Key 管理（创建/列出/吊销/删除）"),
+                (name = "System", description = "系统信息查询"),
+                (name = "Logs", description = "日志查询"),
+                (name = "Admin", description = "管理后台登录"),
+                (name = "Plugins", description = "插件管理（安装/卸载/启停/市场目录）"),
+            )
+        )]
+        pub struct ApiDoc;
+    };
+}
+
+#[cfg(feature = "plugin-system")]
+openapi_attrs! {
     paths(
-        routes::health::health_check,
-        routes::health::live,
-        routes::health::ready,
-        routes::adapters::list_adapters,
-        routes::adapters::start_adapter,
-        routes::adapters::stop_adapter,
-        routes::adapters::adapter_status,
-        routes::messages::send_message,
-        routes::messages::batch_send,
-        routes::messages::answer_callback,
-        routes::messages::list_deliveries,
-        routes::messages::reconcile_delivery,
-        routes::messages::edit_message,
-        routes::messages::delete_message,
-        routes::messages::message_history,
-        routes::sessions::list_sessions,
-        routes::sessions::get_session,
-        routes::sessions::update_session,
-        routes::sessions::delete_session,
-        routes::sessions::export_session_data,
-        routes::chats::list_chats,
-        routes::chats::get_chat,
-        routes::config::get_config,
-        routes::config::update_config,
-        routes::ws::ws_handler,
-        // Admin — API Key 管理
-        routes::admin::list_api_keys,
-        routes::admin::create_api_key,
-        routes::admin::revoke_api_key,
-        routes::admin::rotate_api_key,
-        routes::admin::list_rotation_transitions,
-        routes::admin::reconcile_rotation_transition,
-        routes::admin::purge_api_key,
-        routes::admin::list_api_key_types,
-        routes::admin::list_audit_events,
-        routes::admin::list_usage,
-        routes::admin::list_target_grants,
-        routes::admin::create_target_grant,
-        routes::admin::delete_target_grant,
-        routes::billing::create_billing_event,
-        routes::billing::list_billing_events,
-        routes::admin::admin_login,
-        routes::admin::admin_logout,
-        // System
-        routes::system::system_info,
-        // Version update check
-        routes::update::update_check,
-        // Logs
-        routes::logs::log_entries,
-    ),
-    components(
-        schemas(
-            // Admin — API Keys
-            routes::admin::ApiKeyResponse,
-            routes::admin::CreateApiKeyRequest,
-            routes::admin::CreateApiKeyResponse,
-            routes::admin::RotateApiKeyRequest,
-            routes::admin::ReconcileRotationRequest,
-            routes::admin::RotationReconcileResponse,
-            easybot_core::auth::ApiKeyRotationTransition,
-            routes::admin::RevokeResponse,
-            routes::admin::ApiKeyTypesResponse,
-            routes::admin::AuditEventsResponse,
-            easybot_core::auth::AuditEvent,
-            routes::admin::UsageQuery,
-            routes::admin::UsageResponse,
-            easybot_core::auth::UsageRecord,
-            easybot_core::auth::TargetGrant,
-            routes::admin::CreateTargetGrantRequest,
-            routes::admin::DeleteTargetGrantResponse,
-            routes::billing::CreateBillingEventRequest,
-            routes::billing::BillingEventWriteResponse,
-            routes::billing::BillingEventQuery,
-            routes::billing::BillingEventsResponse,
-            easybot_core::auth::BillingEvent,
-            routes::admin::LoginRequest,
-            routes::admin::LoginResponse,
-            // Health
-            routes::health::HealthResponse,
-            routes::health::AdapterSummary,
-            routes::health::SessionSummary,
-            routes::health::ProbeResponse,
-            routes::health::ReadinessResponse,
-            // Adapters
-            routes::adapters::AdapterListResponse,
-            routes::adapters::AdapterItem,
-            // Messages
-            routes::messages::SendMessageRequest,
-            routes::messages::BatchSendRequest,
-            routes::messages::EditMessageRequest,
-            routes::messages::DeleteMessageRequest,
-            routes::messages::MessageHistoryParams,
-            routes::messages::MessageHistoryResponse,
-            // Core types (API-facing)
-            easybot_core::types::message::InboundMessage,
-            easybot_core::types::message::OutboundMessage,
-            easybot_core::types::message::SendTextParams,
-            easybot_core::types::message::SendMediaParams,
-            easybot_core::types::message::SendInteractiveParams,
-            easybot_core::types::message::EditMessageParams,
-            easybot_core::types::message::SendResult,
-            easybot_core::types::message::EditResult,
-            easybot_core::types::message::DeleteResult,
-            easybot_core::types::message::ChatType,
-            easybot_core::types::message::ParseMode,
-            easybot_core::types::message::MessageSender,
-            easybot_core::types::message::MessageType,
-            easybot_core::types::message::MentionInfo,
-            easybot_core::types::message::SenderRole,
-            easybot_core::types::message::MediaAttachment,
-            easybot_core::types::message::MediaType,
-            easybot_core::types::message::CommandData,
-            easybot_core::types::message::CallbackData,
-            easybot_core::types::message::MessageReference,
-            easybot_core::types::message::InlineKeyboard,
-            easybot_core::types::message::KeyboardRow,
-            easybot_core::types::message::Button,
-            easybot_core::types::message::CallbackEvent,
-            easybot_core::types::message::ChatInfo,
-            easybot_core::types::message::ChatFilter,
-            // Session
-            easybot_core::types::session::Session,
-            easybot_core::types::session::SessionSource,
-            easybot_core::types::session::ResetPolicy,
-            routes::sessions::UpdateSessionRequest,
-            // Adapter
-            easybot_core::types::adapter::AdapterConfig,
-            easybot_core::types::adapter::AdapterStatusSummary,
-            easybot_core::types::adapter::AdapterState,
-            easybot_core::types::adapter::Capability,
-            easybot_core::types::adapter::CapabilityName,
-            easybot_core::types::adapter::CapabilityLimits,
-            easybot_core::types::adapter::HealthStatus,
-            easybot_core::types::adapter::HealthReport,
-            easybot_core::types::adapter::BotInfo,
-            easybot_core::types::adapter::AdapterRuntimeConfig,
-            // Config
-            easybot_core::types::config::GatewayConfig,
-            easybot_core::types::config::ServerConfig,
-            easybot_core::types::config::ApiConfig,
-            easybot_core::types::config::WebSocketConfig,
-            easybot_core::types::config::StorageConfig,
-            easybot_core::types::config::LoggingConfig,
-            easybot_core::types::config::TlsConfig,
-            easybot_core::types::config::WebhookConfig,
-            // Event
-            easybot_core::types::event::GatewayEvent,
-            easybot_core::types::event::EventMetadata,
-            // Error
-            easybot_core::types::error::ApiErrorResponse,
-            easybot_core::types::error::ApiErrorDetail,
-            // Update check
-            routes::update::UpdateCheckResponse,
-            // Logs
-            routes::logs::LogQuery,
-        )
-    ),
-    tags(
-        (name = "Health", description = "服务健康检查"),
-        (name = "Adapters", description = "适配器管理（启动/停止/状态查询）"),
-        (name = "Messages", description = "消息发送与管理"),
-        (name = "Sessions", description = "会话管理"),
-        (name = "Chats", description = "聊天信息查询"),
-        (name = "Config", description = "网关配置管理"),
-        (name = "WebSocket", description = "WebSocket 实时事件推送"),
-        (name = "API Keys", description = "API Key 管理（创建/列出/吊销/删除）"),
-        (name = "System", description = "系统信息查询"),
-        (name = "Logs", description = "日志查询"),
-        (name = "Admin", description = "管理后台登录"),
+        routes::plugins::list_plugins,
+        routes::plugins::catalog_plugins,
+        routes::plugins::install_plugin,
+        routes::plugins::uninstall_plugin,
+        routes::plugins::enable_plugin,
+        routes::plugins::disable_plugin
     )
-)]
-pub struct ApiDoc;
+    schemas(
+        routes::plugins::PluginsListResponse,
+        routes::plugins::PluginItem,
+        routes::plugins::CatalogResponse,
+        routes::plugins::CatalogItem,
+        routes::plugins::CatalogQuery,
+        routes::plugins::PluginInstallRequest,
+        routes::plugins::PluginInstallResponse
+    )
+}
+
+#[cfg(not(feature = "plugin-system"))]
+openapi_attrs! { paths() schemas() }
 
 #[cfg(test)]
 mod tests {
@@ -361,6 +398,10 @@ mod tests {
         assert_eq!(document.servers.as_ref().unwrap()[0].url, "/");
     }
 
+    /// 完整契约快照仅在 `plugin-system` 特性下断言（该模式下 OpenAPI 含 6 条
+    /// `/api/v1/plugins*` 路径）；未启用特性时文档是其子集（38 条基础路径），
+    /// 由 `security_requirements_match_router_authentication` 覆盖。
+    #[cfg(feature = "plugin-system")]
     #[test]
     fn openapi_v1_contract_snapshot() {
         insta::assert_json_snapshot!("openapi_v1_contract", ApiDoc::openapi());

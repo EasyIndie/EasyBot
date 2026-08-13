@@ -34,11 +34,14 @@ pub const EASYBOT_PLUGIN_ABI_VERSION: u32 = 1;
 #[macro_export]
 macro_rules! declare_plugin {
     ($plugin_type:ty, $constructor:path) => {
+        // FFI 入口点是实现细节，无需文档（缺省 missing_docs 对宏展开件豁免）
+        #[allow(missing_docs)]
         #[unsafe(no_mangle)]
         pub extern "C" fn easybot_abi_version() -> u32 {
             $crate::EASYBOT_PLUGIN_ABI_VERSION
         }
 
+        #[allow(missing_docs)]
         #[unsafe(no_mangle)]
         pub extern "C" fn easybot_plugin_create() -> *mut std::ffi::c_void {
             let adapter: Box<dyn $crate::PlatformAdapter> = Box::new($constructor());
@@ -47,6 +50,7 @@ macro_rules! declare_plugin {
             Box::into_raw(boxed) as *mut std::ffi::c_void
         }
 
+        #[allow(missing_docs)]
         #[unsafe(no_mangle)]
         pub unsafe extern "C" fn easybot_plugin_destroy(ptr: *mut std::ffi::c_void) {
             if !ptr.is_null() {

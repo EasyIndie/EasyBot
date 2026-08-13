@@ -63,6 +63,24 @@ pub fn ensure_subdir(home: &std::path::Path, name: &str) -> std::io::Result<Path
     Ok(dir)
 }
 
+/// 解析 `plugins.directory` 配置为实际插件目录
+///
+/// - 默认 `"plugins"` / 相对路径 → 相对配置根目录解析（`{home}/plugins`）
+/// - 绝对路径 → 原样使用
+/// - 空字符串 → 回退默认 `{home}/plugins`
+///
+/// `plugins.directory` 此前是死字段，`EasyBotPaths::plugins_dir` 恒为 `{home}/plugins`。
+/// 接线后此函数是唯一权威来源（main.rs 生产门禁 / `PluginManager::new` / CLI 共用）。
+pub fn resolve_plugins_dir(directory: &str, home: &std::path::Path) -> PathBuf {
+    let dir = directory.trim();
+    if dir.is_empty() || dir == "plugins" {
+        home.join("plugins")
+    } else {
+        let p = PathBuf::from(dir);
+        if p.is_absolute() { p } else { home.join(p) }
+    }
+}
+
 /// EasyBot 配置目录所有子路径
 #[derive(Debug, Clone)]
 pub struct EasyBotPaths {

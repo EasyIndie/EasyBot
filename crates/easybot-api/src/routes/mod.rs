@@ -10,6 +10,8 @@ pub mod health;
 pub mod home;
 pub mod logs;
 pub mod messages;
+#[cfg(feature = "plugin-system")]
+pub mod plugins;
 pub mod sessions;
 pub mod system;
 pub mod update;

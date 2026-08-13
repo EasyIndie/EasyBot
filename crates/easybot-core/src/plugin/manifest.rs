@@ -3,18 +3,22 @@
 //! 每个插件目录下包含一个 plugin.yaml 清单文件，描述插件元数据和库路径。
 //! 加载器通过清单定位动态库文件。
 
+use super::registry::types::PluginRequirements;
 use std::path::Path;
 
 /// 插件清单（plugin.yaml）
-#[derive(Debug, Clone, serde::Deserialize)]
+///
+/// `Serialize` 用于市场安装时由 `PluginVersionMeta` 合成清单落位
+/// （字段保持与 `Deserialize` 相同的 key，保证回读一致）。
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct PluginManifest {
     /// 平台标识符，如 "my-custom-im"
     pub name: String,
     /// 人类可读的显示名称
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
     /// 功能描述
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     /// 插件版本
     #[serde(default = "default_version")]
@@ -22,12 +26,19 @@ pub struct PluginManifest {
     /// 所需 easybot-plugin-sdk ABI 版本（必填）
     pub sdk_version: u32,
     /// 作者信息
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub author: Option<String>,
     /// 动态库路径（相对于插件目录）。
     /// 不指定时按平台规则推断：lib{name}.so / lib{name}.dylib / {name}.dll
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub library: Option<String>,
+    /// 是否启用。缺省启用（向后兼容：旧清单无此字段默认 true）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+    /// 宿主 EasyBot 版本兼容范围（semver range，如 `>=0.0.28`）。
+    /// 市场安装由 `easybot-plugin.json` 的 `requires` 校验；`--file` 离线安装读此字段。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requires: Option<PluginRequirements>,
 }
 
 fn default_version() -> String {
@@ -47,14 +58,20 @@ impl PluginManifest {
         let lib = match self.library {
             Some(ref lib) => lib.clone(),
             None => {
-                // 按平台规则推断默认库文件名
-                let lib_name = format!("lib{}", self.name);
+                // 按平台规则推断默认库文件名。
+                //
+                // cargo 对 cdylib 的输出用 **下划线** crate 名（kebab-case 包名会
+                // 转下划线）：包 `hello-adapter` → `libhello_adapter.dylib`。
+                // 推导必须同样转下划线，否则 `cp target/release/libhello_adapter.*`
+                // 手动安装 / `install --file` 的库文件与推导名不匹配、加载找不到。
+                let crate_name = self.name.replace('-', "_");
+                let lib_name = format!("lib{}", crate_name);
                 if cfg!(target_os = "linux") {
                     format!("{}.so", lib_name)
                 } else if cfg!(target_os = "macos") {
                     format!("{}.dylib", lib_name)
                 } else if cfg!(target_os = "windows") {
-                    format!("{}.dll", self.name)
+                    format!("{}.dll", crate_name)
                 } else {
                     format!("{}.so", lib_name)
                 }
@@ -75,6 +92,11 @@ impl PluginManifest {
         }
 
         Ok(plugin_dir.join(&lib))
+    }
+
+    /// 插件是否启用（缺省启用）
+    pub fn is_enabled(&self) -> bool {
+        self.enabled.unwrap_or(true)
     }
 }
 
@@ -109,7 +131,7 @@ author: "EasyBot Contributors"
     }
 
     #[test]
-    fn test_default_library_path_linux() {
+    fn test_default_library_path_kebab_to_underscore() {
         let manifest = PluginManifest {
             name: "my-adapter".into(),
             display_name: None,
@@ -118,10 +140,13 @@ author: "EasyBot Contributors"
             sdk_version: 1,
             author: None,
             library: None,
+            enabled: None,
+            requires: None,
         };
         let dir = Path::new("/plugins/my-adapter");
         let path = manifest.library_path(dir).unwrap();
-        // Platform-dependent, but the name should contain "lib" prefix
+        // cargo cdylib 产物用下划线 crate 名（kebab 包名 → 下划线），推导名必须一致，
+        // 否则手动安装 / `--file` 落位的库文件找不到。
         let filename = path.file_name().unwrap().to_str().unwrap();
         assert!(
             filename.starts_with("lib"),
@@ -129,8 +154,14 @@ author: "EasyBot Contributors"
             filename
         );
         assert!(
-            filename.contains("my-adapter"),
-            "filename should contain plugin name"
+            filename.contains("my_adapter"),
+            "filename should use underscore crate name (cargo convention), got: {}",
+            filename
+        );
+        assert!(
+            !filename.contains("my-adapter"),
+            "filename must NOT contain kebab-case name, got: {}",
+            filename
         );
     }
 
@@ -144,6 +175,8 @@ author: "EasyBot Contributors"
             sdk_version: 1,
             author: None,
             library: Some("custom.so".into()),
+            enabled: None,
+            requires: None,
         };
         let dir = Path::new("/plugins/my-adapter");
         let path = manifest.library_path(dir).unwrap();
@@ -160,6 +193,8 @@ author: "EasyBot Contributors"
             sdk_version: 1,
             author: None,
             library: Some("/usr/lib/libc.so.6".into()),
+            enabled: None,
+            requires: None,
         };
         let dir = Path::new("/plugins/my-adapter");
         assert!(manifest.library_path(dir).is_err());
@@ -175,6 +210,8 @@ author: "EasyBot Contributors"
             sdk_version: 1,
             author: None,
             library: Some("../../../usr/lib/libc.so.6".into()),
+            enabled: None,
+            requires: None,
         };
         let dir = Path::new("/plugins/my-adapter");
         let result = manifest.library_path(dir);
@@ -189,5 +226,17 @@ author: "EasyBot Contributors"
     fn test_invalid_yaml() {
         let result = PluginManifest::from_yaml("invalid: [yaml: broken");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_enabled_defaults_to_true() {
+        // 无 enabled 字段 → 启用（向后兼容）
+        let manifest = PluginManifest::from_yaml("name: \"a\"\nsdk_version: 1").unwrap();
+        assert!(manifest.is_enabled());
+
+        // enabled: false → 禁用
+        let manifest =
+            PluginManifest::from_yaml("name: \"a\"\nsdk_version: 1\nenabled: false").unwrap();
+        assert!(!manifest.is_enabled());
     }
 }

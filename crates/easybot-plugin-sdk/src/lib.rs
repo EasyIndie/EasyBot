@@ -9,12 +9,18 @@
 mod ffi;
 pub use ffi::EASYBOT_PLUGIN_ABI_VERSION;
 
+// 测试宿主：`easybot-plugin-sdk = { ..., features = ["testing"] }` 时可用
+#[cfg(feature = "testing")]
+pub mod testing;
+
 // 重新导出核心类型
+pub use easybot_core::bus::EventBus;
 pub use easybot_core::types::adapter::{
     AdapterConfig, AdapterRuntimeConfig, AdapterState, AdapterStatusSummary, BotInfo, Capability,
-    CapabilityLimits, CapabilityName, ConnectResult, HealthReport, HealthStatus, InitResult,
-    PlatformAdapter,
+    CapabilityLimits, CapabilityName, ConnectErrorKind, ConnectResult, HealthReport, HealthStatus,
+    InitResult, PlatformAdapter,
 };
+pub use easybot_core::types::event::{GatewayEvent, event_types};
 
 pub use easybot_core::types::message::{
     CallbackEvent, ChatFilter, ChatInfo, ChatType, DeleteResult, EditMessageParams, EditResult,
@@ -33,11 +39,12 @@ pub mod prelude {
     pub use crate::{
         AdapterConfig, AdapterRuntimeConfig, AdapterState, AdapterStatusSummary, BotInfo,
         CallbackEvent, Capability, CapabilityLimits, CapabilityName, ChatFilter, ChatInfo,
-        ChatType, ConnectResult, DeleteResult, EASYBOT_PLUGIN_ABI_VERSION, EditMessageParams,
-        EditResult, GatewayError, HealthReport, HealthStatus, InboundMessage, InitResult,
-        MediaAttachment, MediaType, MentionInfo, MessageSender, MessageType, OutboundMessage,
-        ParseMode, PlatformAdapter, SendInteractiveParams, SendMediaParams, SendResult,
-        SendTextParams, SenderRole, SessionSource, declare_plugin,
+        ChatType, ConnectErrorKind, ConnectResult, DeleteResult, EASYBOT_PLUGIN_ABI_VERSION,
+        EditMessageParams, EditResult, EventBus, GatewayError, GatewayEvent, HealthReport,
+        HealthStatus, InboundMessage, InitResult, MediaAttachment, MediaType, MentionInfo,
+        MessageSender, MessageType, OutboundMessage, ParseMode, PlatformAdapter,
+        SendInteractiveParams, SendMediaParams, SendResult, SendTextParams, SenderRole,
+        SessionSource, declare_plugin, event_types,
     };
     pub use async_trait::async_trait;
 }

@@ -36,8 +36,8 @@ impl GitHubClient {
         Self::with_base_url(owner, repo, GITHUB_API_BASE)
     }
 
-    /// 创建带自定义 base URL 的客户端（用于测试）
-    fn with_base_url(owner: &str, repo: &str, base_url: &str) -> Self {
+    /// 创建带自定义 base URL 的客户端（用于测试 / 插件注册表 mock 注入）
+    pub(crate) fn with_base_url(owner: &str, repo: &str, base_url: &str) -> Self {
         let token = std::env::var("GITHUB_TOKEN").ok().filter(|t| !t.is_empty());
 
         let mut headers = reqwest::header::HeaderMap::new();
@@ -166,6 +166,73 @@ impl GitHubClient {
         let manifest: VersionManifest = resp.json().await?;
         self.manifest_cache = Some((manifest.clone(), Instant::now()));
         Ok(manifest)
+    }
+
+    /// 获取仓库文件原始内容（如 `catalog.json`）
+    ///
+    /// 通过 GitHub Contents API 读取**默认分支**的文件，以 raw media type 返回文本。
+    /// 供插件市场目录读取使用。
+    pub async fn raw_file(&mut self, path: &str) -> Result<String, UpdateError> {
+        let url = format!(
+            "{}/repos/{}/{}/contents/{}",
+            self.base_url, self.owner, self.repo, path
+        );
+
+        let resp = self
+            .client
+            .get(&url)
+            .header(reqwest::header::ACCEPT, "application/vnd.github.raw")
+            .send()
+            .await?;
+
+        if resp.status() == reqwest::StatusCode::FORBIDDEN {
+            return Err(UpdateError::RateLimited);
+        }
+        if !resp.status().is_success() {
+            return Err(UpdateError::NetworkError(format!(
+                "Failed to fetch file {path}: {}",
+                resp.status()
+            )));
+        }
+
+        resp.text().await.map_err(UpdateError::HttpError)
+    }
+
+    /// 列出仓库最近的 Releases（发布时间倒序）
+    ///
+    /// 供插件注册表枚举 `easybot-plugin.json` 版本使用。`limit` 上限 100。
+    pub async fn releases(&mut self, limit: usize) -> Result<Vec<ReleaseInfo>, UpdateError> {
+        let per_page = limit.clamp(1, 100);
+        let url = format!(
+            "{}/repos/{}/{}/releases?per_page={}",
+            self.base_url, self.owner, self.repo, per_page
+        );
+
+        let resp = self.client.get(&url).send().await?;
+        if resp.status() == reqwest::StatusCode::FORBIDDEN {
+            return Err(UpdateError::RateLimited);
+        }
+        if !resp.status().is_success() {
+            return Err(UpdateError::NetworkError(format!(
+                "Failed to list releases: {}",
+                resp.status()
+            )));
+        }
+
+        resp.json().await.map_err(UpdateError::HttpError)
+    }
+
+    /// 获取 Release asset 的文本内容（如 `easybot-plugin.json`）
+    pub async fn get_text(&self, url: &str) -> Result<String, UpdateError> {
+        let resp = self.client.get(url).send().await?;
+        if !resp.status().is_success() {
+            return Err(UpdateError::NetworkError(format!(
+                "Failed to fetch asset: {}",
+                resp.status()
+            )));
+        }
+
+        resp.text().await.map_err(UpdateError::HttpError)
     }
 
     /// 获取 checksums.txt 内容
@@ -306,12 +373,17 @@ pub fn parse_checksums(content: &str) -> HashMap<String, String> {
     map
 }
 
+/// 计算字节数据的 SHA256 哈希（十六进制小写）
+pub fn sha256_hex_bytes(data: &[u8]) -> String {
+    use sha2::Digest;
+    let hash = sha2::Sha256::digest(data);
+    hash.iter().map(|b| format!("{:02x}", b)).collect()
+}
+
 /// 计算文件的 SHA256 哈希（十六进制小写）
 pub fn sha256_hex(path: &std::path::Path) -> Result<String, UpdateError> {
-    use sha2::Digest;
     let data = std::fs::read(path)?;
-    let hash = sha2::Sha256::digest(&data);
-    Ok(hash.iter().map(|b| format!("{:02x}", b)).collect())
+    Ok(sha256_hex_bytes(&data))
 }
 
 // ══════════════════════════════════════════════════════════════════
@@ -502,6 +574,92 @@ mod tests {
                 .to_string()
                 .contains("legacy releases are not supported")
         );
+    }
+
+    #[tokio::test]
+    async fn test_raw_file_fetches_content() {
+        let mock_server = wiremock::MockServer::start().await;
+        let body = r#"{"schemaVersion":1,"plugins":[]}"#;
+
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path(
+                "/repos/EasyIndie/marketplace/contents/catalog.json",
+            ))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(body))
+            .mount(&mock_server)
+            .await;
+
+        let mut client =
+            GitHubClient::with_base_url("EasyIndie", "marketplace", &mock_server.uri());
+        let text = client
+            .raw_file("catalog.json")
+            .await
+            .expect("raw_file should succeed");
+        assert_eq!(text, body);
+    }
+
+    #[tokio::test]
+    async fn test_raw_file_rate_limited() {
+        let mock_server = wiremock::MockServer::start().await;
+
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path(
+                "/repos/EasyIndie/marketplace/contents/catalog.json",
+            ))
+            .respond_with(wiremock::ResponseTemplate::new(403))
+            .mount(&mock_server)
+            .await;
+
+        let mut client =
+            GitHubClient::with_base_url("EasyIndie", "marketplace", &mock_server.uri());
+        match client.raw_file("catalog.json").await.unwrap_err() {
+            UpdateError::RateLimited => {}
+            e => panic!("Expected RateLimited, got: {e}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_releases_lists_newest_first() {
+        let mock_server = wiremock::MockServer::start().await;
+
+        let releases = vec![
+            serde_json::json!({"tag_name":"v1.0.0","html_url":"","body":"","published_at":null,"assets":[]}),
+            serde_json::json!({"tag_name":"v0.9.0","html_url":"","body":"","published_at":null,"assets":[]}),
+        ];
+
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path(
+                "/repos/EasyIndie/EasyBot/releases",
+            ))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(&releases))
+            .mount(&mock_server)
+            .await;
+
+        let mut client = GitHubClient::with_base_url("EasyIndie", "EasyBot", &mock_server.uri());
+        let list = client.releases(10).await.expect("releases should succeed");
+        assert_eq!(list.len(), 2);
+        assert_eq!(list[0].tag_name, "v1.0.0");
+        assert_eq!(list[1].tag_name, "v0.9.0");
+    }
+
+    #[tokio::test]
+    async fn test_get_text_fetches_asset() {
+        let mock_server = wiremock::MockServer::start().await;
+        let body = r#"{"schemaVersion":1}"#;
+
+        wiremock::Mock::given(wiremock::matchers::method("GET"))
+            .and(wiremock::matchers::path("/assets/plugin.json"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_string(body))
+            .mount(&mock_server)
+            .await;
+
+        let client = GitHubClient::with_base_url("EasyIndie", "EasyBot", &mock_server.uri());
+        let url = format!("{}/assets/plugin.json", mock_server.uri());
+        let text = client
+            .get_text(&url)
+            .await
+            .expect("get_text should succeed");
+        assert_eq!(text, body);
     }
 
     #[tokio::test]

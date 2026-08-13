@@ -36,6 +36,103 @@ pub struct GatewayConfig {
     /// Webhook 配置
     #[serde(default)]
     pub webhooks: Vec<WebhookConfig>,
+
+    /// 插件系统配置
+    #[serde(default)]
+    pub plugins: PluginConfig,
+}
+
+/// 插件系统配置（`plugins:` 段）
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginConfig {
+    /// 插件目录（相对配置目录或绝对路径；默认 `plugins`）
+    #[serde(default = "default_plugin_directory")]
+    pub directory: String,
+
+    /// 启动时自动加载插件
+    #[serde(default = "default_true")]
+    pub auto_load: bool,
+
+    /// 校验插件签名。dev 下无签名仅告警；生产模式下强制要求签名。
+    #[serde(default = "default_true")]
+    pub verify_signatures: bool,
+
+    /// 允许未受信任发布者/未签名插件（生产门禁豁免；默认 false）。
+    /// 开启等同于信任全部插件，仅应在受控环境（离线部署/开发）使用。
+    #[serde(default)]
+    pub allow_untrusted: bool,
+
+    /// 受信任发布者公钥（发布者标识 → base64 ed25519 验证公钥）。
+    /// 官方发布者公钥通过 PR 进主仓默认列表；用户可通过 `.trust` 文件
+    /// 追加对单个发布者的信任（`easybot plugin trust <publisher>`）。
+    #[serde(default)]
+    pub trusted_publishers: HashMap<String, String>,
+
+    /// 插件注册源列表（Homebrew Taps 模型；官方市场为默认源）。
+    /// 多源目录合并查询，`publisher/name` 唯一限定插件。
+    #[serde(default = "default_registries")]
+    pub registries: Vec<RegistryConfig>,
+}
+
+impl Default for PluginConfig {
+    fn default() -> Self {
+        Self {
+            directory: default_plugin_directory(),
+            auto_load: default_true(),
+            verify_signatures: default_true(),
+            allow_untrusted: false,
+            trusted_publishers: HashMap::new(),
+            registries: default_registries(),
+        }
+    }
+}
+
+/// 插件注册源（Taps 模型）
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct RegistryConfig {
+    /// 注册源名称（用于日志/UI 展示）
+    #[serde(default)]
+    pub name: String,
+
+    /// 注册源类型（v1 仅 `github`；`static` 供离线目录桩扩展）
+    #[serde(default = "default_registry_kind")]
+    pub kind: String,
+
+    /// GitHub 目录仓库所属组织/用户
+    #[serde(default)]
+    pub owner: String,
+
+    /// GitHub 目录仓库名
+    #[serde(default)]
+    pub repo: String,
+
+    /// 完整基础 URL（kind=github 时可选，默认 GitHub API）
+    #[serde(default)]
+    pub url: String,
+}
+
+fn default_plugin_directory() -> String {
+    "plugins".to_string()
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_registry_kind() -> String {
+    "github".to_string()
+}
+
+fn default_registries() -> Vec<RegistryConfig> {
+    vec![RegistryConfig {
+        name: "official".into(),
+        kind: "github".into(),
+        owner: "EasyIndie".into(),
+        repo: "EasyBot-Plugins".into(),
+        url: String::new(),
+    }]
 }
 
 /// 服务器配置

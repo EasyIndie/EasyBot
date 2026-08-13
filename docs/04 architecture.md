@@ -98,6 +98,12 @@ EasyBot 是连接 **IM 平台**与**业务系统**之间的独立中间层服务
 | GET | `/api-keys/types` | API Key 类型列表 | ✅ |
 | DELETE | `/api-keys/{id}` | 吊销 API Key | ✅ |
 | DELETE | `/api-keys/{id}/purge` | 彻底删除 API Key | ✅ |
+| GET | `/plugins` | 已安装插件（含加载失败清单与原因） | ✅ |
+| GET | `/plugins/catalog` | 市场目录（`?query=` 搜索，5min 缓存） | ✅ |
+| POST | `/plugins/install` | 安装插件（支持 `publisher/name` 限定 + `channel`） | ✅ |
+| DELETE | `/plugins/{name}` | 卸载插件 | ✅ |
+| POST | `/plugins/{name}/enable` | 启用插件（下次启动生效） | ✅ |
+| POST | `/plugins/{name}/disable` | 禁用插件（立即停止适配器） | ✅ |
 | GET | `/metrics` | Prometheus 指标 | ✅ |
 | GET | `/logs` | 实时日志流（环形缓冲） | ✅ |
 | GET | `/ws` | WebSocket 升级 | ✅ |
@@ -570,6 +576,16 @@ interface AdapterConfig {
 └────────────────────────────────────────────────────────────┘
 ```
 
+除上述核心模块外，**Plugin Manager**（`core/src/plugin/`）负责插件市场与开发者工作流：
+
+| 子模块 | 职责 |
+|---|---|
+| `registry/` | `PluginRegistry` trait（抽象）+ `GitHubRegistry`（catalog.json + Releases 的 `easybot-plugin.json`）+ `StaticRegistry` 桩（离线） |
+| `signing/` | ed25519 验签（`verify_artifact`）+ `TrustStore`（`{plugins_dir}/.trust` 用户信任状态） |
+| `loader.rs` | `PluginLoader`（libloading）+ `PluginLoadPolicy`（lenient=dev / strict=prod）+ 启动验签 |
+| `manager.rs` | `PluginManager` 编排：install/update/uninstall/enable/disable/list/search/info/trust |
+| `install.rs` | 安装流水线：triple 匹配 → ABI 预检 → `requires.easybot` semver → 信任确认 → 下载 → sha256+验签 → 原子落位 |
+
 ### 4.2 事件总线
 
 基于 tokio broadcast channel（容量 256），每个事件类型有独立通道：
@@ -702,13 +718,15 @@ interface AdapterManager {
 
 ---
 
-## 第五章：插件体系
+## 第五章：插件体系（市场 + DX）
 
 ### 5.1 概述
 
-EasyBot 支持通过动态库加载第三方适配器插件。插件使用 Rust 编写并编译为 cdylib，通过 `libloading` 在运行时动态加载。
+EasyBot 支持通过动态库加载第三方适配器插件。插件使用 Rust 编写并编译为 cdylib，通过 `libloading` 在运行时动态加载。除手动放入 `plugins/` 目录外，插件可经**插件市场**（GitHub Releases 分发）安装，每个版本按 6 target 发布产物，安装端按宿主 triple 下载。
 
-每个插件提供两个 C ABI 入口函数：
+**信任模型**（详见 `docs/SECURITY.md`）：ed25519 签名校验解锁生产模式动态插件。**签名只证作者 + 完整性，不证代码安全**——插件无沙箱，以宿主权限进程内运行，生产隔离用容器化兜底。
+
+每个插件提供两个 C ABI 入口函数（`declare_plugin!` 宏生成）：
 
 ```c
 uint32_t easybot_abi_version();
@@ -726,7 +744,10 @@ version: "1.0.0"
 sdk_version: 1
 author: "Your Name"
 library: "libmy_adapter.so"
+enabled: true            # 可选，缺省启用
 ```
+
+市场安装的插件由宿主根据 `easybot-plugin.json` 元数据（`artifacts` 按 triple 记录 url+sha256+signature、`requires.easybot` semver range、`channel`）合成 `plugin.yaml` + `plugin.sig.json`。
 
 ### 5.3 加载流程
 
@@ -737,33 +758,45 @@ EasyBot 启动
 1. 扫描 plugins/ 目录
     │
     ▼
-2. 每个子目录读取 plugin.yaml
+2. 每个子目录读取 plugin.yaml（enabled=false → 跳过）
     │
     ▼
-3. 加载动态库（.so / .dylib / .dll）
+3. 有 plugin.sig.json → 对库文件重新验签（失败 → SignatureVerificationFailed）
     │
     ▼
-4. 调用 easybot_abi_version() 检查兼容性
+4. 加载动态库（.so / .dylib / .dll）
     │
     ▼
-5. 调用 easybot_plugin_create() 创建适配器
+5. 调用 easybot_abi_version() 检查兼容性（不匹配 → AbiVersionMismatch）
     │
     ▼
-6. 注册到 AdapterRegistry
+6. 调用 easybot_plugin_create() 创建适配器
     │
     ▼
-7. 自动检测凭据，若存在则启动适配器
+7. 注册到 AdapterRegistry
+    │
+    ▼
+8. 自动检测凭据，若存在则启动适配器
 ```
 
-### 5.4 插件 SDK
+生产模式（`--production` / `EASYBOT_ENV=production`）在启动时**扫描签名**：存在未签名插件且未设 `plugins.allow_untrusted` → 拒绝启动。
+
+### 5.4 插件 SDK 与开发工作流
 
 `easybot-plugin-sdk` crate 为插件开发者提供：
 
 - `PlatformAdapter` trait 完整导出
 - `declare_plugin!()` 宏：一行声明入口函数
 - 核心类型（`InboundMessage`、`SendResult`、`GatewayError` 等）
+- `testing` feature：`PluginTestHost` 内存宿主（离线测试）
 
-详见 `docs/02 plugin-dev.md`。
+开发者工作流（DX）：
+- `easybot plugin new <name>` 脚手架生成独立可构建工程（SDK git tag 依赖）
+- `cargo test` 跑单元 + PluginTestHost 离线测试
+- `plugin-publish.yml` CI 模板：6-target 交叉编译 + gitleaks 扫描 + ed25519 签名 + Release
+- 信任语义（VS Code 1.97）：`--yes` 不自动信任，显式 `plugin trust <publisher>` 才加入
+
+详见 `docs/plugin-quickstart.md`（快速上手）、`docs/plugin-guide.md`（完整参考）与 `docs/plugin-methodology.md`（方法论）。
 
 ---
 
@@ -795,6 +828,7 @@ IM 平台 → 平台 Token（Bot Token / App Secret）→ 适配器
 - 请求体大小限制：10 MB
 - WebSocket 帧大小限制：64 KB / 消息 256 KB
 - Content-Security-Policy、X-Frame-Options 等安全头
+- **插件签名**：ed25519 验签（生产模式强制）；签名只证作者 + 完整性，不证代码安全——插件无沙箱，以宿主权限运行，生产隔离用容器化兜底（`docs/SECURITY.md`）
 
 ---
 
@@ -864,6 +898,18 @@ webhooks:
     secret: "${WEBHOOK_SECRET}"
     events: ["message.inbound"]
     platforms: ["telegram"]
+
+plugins:
+  directory: "plugins"
+  autoLoad: true
+  verifySignatures: true
+  allowUntrusted: false
+  trustedPublishers: {}
+  registries:
+    - name: "official"
+      kind: "github"
+      owner: "EasyIndie"
+      repo: "EasyBot-Plugins"
 ```
 
 > **配置优先级**: gateway.yaml ← gateway.local.yaml（递归合并）← `${VAR_NAME}` 替换 ← `.env` 文件 ← 内建默认值
@@ -884,6 +930,16 @@ easybot --config /etc/easybot/gateway.yaml  # 指定配置文件
 easybot --debug              # 调试模式
 easybot --version            # 查看版本
 easybot --help               # 查看帮助
+easybot plugin new <name>            # 脚手架：生成独立可构建的插件工程
+easybot plugin list                 # 列出已安装插件
+easybot plugin search <query>       # 搜索市场目录（catalog.json）
+easybot plugin info <name>          # 插件详情（已装 + 市场版本）
+easybot plugin install <name>       # 安装（支持 publisher/name；--yes 接受信任确认；--file 离线）
+easybot plugin uninstall <name>     # 卸载
+easybot plugin enable|disable <name>  # 启停（disable 立即停，enable 下次启动生效）
+easybot plugin update <name>        # 更新（默认 pin 当前版本；--latest 跨版本）
+easybot plugin trust <pub> --public-key <k>   # 信任发布者
+easybot plugin inspect <name>       # 检查插件（清单/签名/加载错误）
 ```
 
 ### 7.4 部署拓扑
@@ -938,15 +994,15 @@ Production (high-availability):
 ### 8.2 实施路线图
 
 ```
-Phase 1 (✅)     Phase 2 (✅)     Phase 3 (✅)     Phase 4 (✅ 95%)    Phase 5 (✅)
-─────────        ─────────        ─────────        ─────────            ─────────
-REST 单发        WebSocket         Discord           API Key/Argon2      Plugin SDK
-Telegram         Webhook           飞书/QQ/微信       速率限制            动态加载
-                                   5 平台            热重载
-                                                    健康轮询+重连
-                                                    HTTPS (⚠️暂缓)
-                                                    Prometheus
-                                                    Docker
+Phase 1 (✅)     Phase 2 (✅)     Phase 3 (✅)     Phase 4 (✅ 95%)    Phase 5 (✅)     Phase 6 (✅)
+─────────        ─────────        ─────────        ─────────            ─────────         ─────────
+REST 单发        WebSocket         Discord           API Key/Argon2      Plugin SDK        Plugin Market
+Telegram         Webhook           飞书/QQ/微信       速率限制            动态加载           GitHub Releases
+                                   5 平台            热重载              测试宿主            ed25519 签名
+                                                    健康轮询+重连        脚手架             多注册表 Taps
+                                                    HTTPS (⚠️暂缓)                         信任语义/CLI
+                                                    Prometheus                             发布者 CI 模板
+                                                    Docker                                 文档 DX
                                                     交互按钮+流式
                                                     PostgreSQL
 ```

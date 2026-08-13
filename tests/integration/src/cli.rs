@@ -172,19 +172,30 @@ fn test_cli_unknown_flag() {
     );
 }
 
+/// 以下 3 个插件门禁/CLI 测试依赖 `easybot` 二进制启用 plugin-system
+/// （`easybot plugin ...` 子命令、生产模式签名扫描）。pre-push 的
+/// `cargo test --all` 不带该 feature → 二进制无插件能力，跳过；
+/// CI 的 `--workspace --features "default,plugin-system"` 会启用 → 仍运行。
+#[cfg(feature = "plugin-system")]
 #[test]
-fn test_production_rejects_unsigned_dynamic_plugins() {
+fn test_production_rejects_unverified_plugins() {
     let dir = tempfile::tempdir().expect("failed to create temp dir");
     let init = Command::new(easybot_bin())
         .args(["--init", "--dir", dir.path().to_str().unwrap()])
         .output()
         .unwrap();
     assert!(init.status.success());
+
+    // 未签名插件目录（plugin.yaml + 库文件，无 plugin.sig.json）——生产门禁应拒绝
+    let plugin_dir = dir.path().join("plugins").join("my-plugin");
+    std::fs::create_dir_all(&plugin_dir).unwrap();
     std::fs::write(
-        dir.path().join("plugins").join("untrusted.so"),
-        b"not-a-plugin",
+        plugin_dir.join("plugin.yaml"),
+        "name: my-plugin\nsdk_version: 1\nlibrary: libmy_plugin.so\n",
     )
     .unwrap();
+    std::fs::write(plugin_dir.join("libmy_plugin.so"), b"not-a-plugin").unwrap();
+
     let output = Command::new(easybot_bin())
         .args(["--production", "--dir", dir.path().to_str().unwrap()])
         .env("EASYBOT_ADMIN_PASSWORD", "a-production-password")
@@ -193,7 +204,211 @@ fn test_production_rejects_unsigned_dynamic_plugins() {
         .unwrap();
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("refuses dynamic plugins"), "{stderr}");
+    assert!(stderr.contains("refuses"), "{stderr}");
+    assert!(stderr.contains("my-plugin"), "{stderr}");
+    assert!(stderr.contains("unverified"), "{stderr}");
+}
+
+#[cfg(feature = "plugin-system")]
+#[test]
+fn test_production_allows_verified_trusted_plugins() {
+    use easybot_core::plugin::signing::{
+        PluginSignature, SIGNATURE_SCHEMA_VERSION, encode_public_key, generate_keypair,
+        sign_artifact,
+    };
+
+    let dir = tempfile::tempdir().expect("failed to create temp dir");
+    let init = Command::new(easybot_bin())
+        .args(["--init", "--dir", dir.path().to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(init.status.success());
+
+    // 生成发布者密钥对，并把公钥登记进配置 trustedPublishers（配置侧信任）
+    let (signing, verifying) = generate_keypair();
+    let pk = encode_public_key(&verifying);
+    let port = find_free_port();
+    let local_yaml =
+        format!("server:\n  port: {port}\nplugins:\n  trustedPublishers:\n    testpub: \"{pk}\"\n");
+    std::fs::write(dir.path().join("gateway.local.yaml"), local_yaml).unwrap();
+
+    // 签名插件目录：plugin.yaml + 库文件 + 合法 plugin.sig.json
+    let plugin_dir = dir.path().join("plugins").join("signed-plugin");
+    std::fs::create_dir_all(&plugin_dir).unwrap();
+    std::fs::write(
+        plugin_dir.join("plugin.yaml"),
+        "name: signed-plugin\nsdk_version: 1\nlibrary: libsigned.so\n",
+    )
+    .unwrap();
+    let lib = b"fake-dylib-bytes";
+    std::fs::write(plugin_dir.join("libsigned.so"), lib).unwrap();
+    let sig = PluginSignature {
+        schema_version: SIGNATURE_SCHEMA_VERSION,
+        name: "signed-plugin".into(),
+        version: "1.0.0".into(),
+        publisher: "testpub".into(),
+        artifact: "libsigned.so".into(),
+        signature: sign_artifact(lib, &signing),
+        public_key: pk,
+    };
+    sig.write_to(&plugin_dir.join("plugin.sig.json"))
+        .expect("failed to write plugin.sig.json");
+
+    // 生产启动应放行（服务器阻塞，用 spawn + kill 验证不因插件门禁退出）
+    let mut child = Command::new(easybot_bin())
+        .args(["--production", "--dir", dir.path().to_str().unwrap()])
+        .env("EASYBOT_ADMIN_PASSWORD", "a-production-password")
+        .env("EASYBOT_ALLOW_PLAINTEXT", "true")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("failed to start easybot --production");
+
+    // Let it run briefly; a spurious gate refusal would exit non-zero
+    std::thread::sleep(std::time::Duration::from_millis(1200));
+    match child.try_wait() {
+        Ok(Some(status)) => {
+            let mut stderr = String::new();
+            child
+                .stderr
+                .take()
+                .unwrap()
+                .read_to_string(&mut stderr)
+                .unwrap();
+            panic!("production gate refused a verified+trusted plugin (status {status}): {stderr}");
+        }
+        Ok(None) => {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        Err(e) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("failed to check easybot status: {e}");
+        }
+    }
+}
+
+#[cfg(feature = "plugin-system")]
+#[test]
+fn test_plugin_cli_offline_install_trust_inspect() {
+    use easybot_core::plugin::signing::{
+        PluginSignature, SIGNATURE_SCHEMA_VERSION, encode_public_key, generate_keypair,
+        sign_artifact,
+    };
+
+    let dir = tempfile::tempdir().expect("failed to create temp dir");
+    let dir_arg = dir.path().to_str().unwrap();
+    let init = Command::new(easybot_bin())
+        .args(["--init", "--dir", dir_arg])
+        .output()
+        .unwrap();
+    assert!(init.status.success());
+
+    // 空目录 list
+    let out = Command::new(easybot_bin())
+        .args(["--dir", dir_arg, "plugin", "list"])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    assert!(String::from_utf8_lossy(&out.stdout).contains("No plugins installed"));
+
+    // 非法公钥 → 拒绝信任
+    let bad = Command::new(easybot_bin())
+        .args([
+            "--dir",
+            dir_arg,
+            "plugin",
+            "trust",
+            "pub-a",
+            "--public-key",
+            "not-a-key",
+        ])
+        .output()
+        .unwrap();
+    assert!(!bad.status.success(), "invalid key should be rejected");
+
+    // 生成发布者密钥对并信任
+    let (signing, verifying) = generate_keypair();
+    let pk = encode_public_key(&verifying);
+    let ok = Command::new(easybot_bin())
+        .args([
+            "--dir",
+            dir_arg,
+            "plugin",
+            "trust",
+            "pub-a",
+            "--public-key",
+            &pk,
+        ])
+        .output()
+        .unwrap();
+    assert!(ok.status.success(), "valid key should be trusted");
+    let trust_path = dir.path().join("plugins").join(".trust");
+    assert!(trust_path.exists());
+    assert!(
+        std::fs::read_to_string(&trust_path)
+            .unwrap()
+            .contains("pub-a")
+    );
+
+    // 离线安装：签名插件源目录 → install --file
+    //
+    // 故意不写 `library` 字段——走 `install_from_file` 的缺省库名推导分支
+    // （`default_library_name` 按宿主 triple 落位；曾把 triple 写死为 "host"
+    // 恒落入 `.so` 分支，macOS/Windows 落位扩展名错误、加载期验签失效）。
+    // 库文件名按宿主平台推导，确保本测试在 mac/linux/windows 都能通过。
+    let src = dir.path().join("plugin-src");
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::write(src.join("plugin.yaml"), "name: myplugin\nsdk_version: 1\n").unwrap();
+    let lib = b"fake-dylib-bytes";
+    let lib_name = easybot_core::plugin::install::default_library_name(
+        "myplugin",
+        easybot_core::updater::types::current_target_triple().unwrap_or("unknown"),
+    );
+    std::fs::write(src.join(&lib_name), lib).unwrap();
+    let sig = PluginSignature {
+        schema_version: SIGNATURE_SCHEMA_VERSION,
+        name: "myplugin".into(),
+        version: "1.0.0".into(),
+        publisher: "pub-a".into(),
+        artifact: lib_name.clone(),
+        signature: sign_artifact(lib, &signing),
+        public_key: pk,
+    };
+    sig.write_to(&src.join("plugin.sig.json")).unwrap();
+
+    let inst = Command::new(easybot_bin())
+        .args([
+            "--dir",
+            dir_arg,
+            "plugin",
+            "install",
+            "myplugin",
+            "--file",
+            src.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(inst.status.success(), "offline install should succeed");
+    assert!(String::from_utf8_lossy(&inst.stdout).contains("Installed"));
+
+    // list / inspect 反映已装插件
+    let list = Command::new(easybot_bin())
+        .args(["--dir", dir_arg, "plugin", "list"])
+        .output()
+        .unwrap();
+    let list_out = String::from_utf8_lossy(&list.stdout);
+    assert!(list_out.contains("myplugin"), "{list_out}");
+    assert!(list_out.contains("valid"), "{list_out}");
+
+    let insp = Command::new(easybot_bin())
+        .args(["--dir", dir_arg, "plugin", "inspect", "myplugin"])
+        .output()
+        .unwrap();
+    let insp_out = String::from_utf8_lossy(&insp.stdout);
+    assert!(insp_out.contains("signature: valid"), "{insp_out}");
+    assert!(insp_out.contains("pub-a"), "{insp_out}");
 }
 
 #[test]

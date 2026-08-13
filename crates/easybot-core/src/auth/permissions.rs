@@ -42,6 +42,10 @@ pub enum Permission {
     LogsRead,
     /// Read host resource and runtime information
     SystemRead,
+    /// 查看已安装插件与市场目录
+    PluginsRead,
+    /// 安装/卸载/启停/信任插件
+    PluginsManage,
 }
 
 /// 检查 AuthInfo 是否持有所需权限

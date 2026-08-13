@@ -325,3 +325,55 @@ async fn test_unknown_route_returns_404() {
     let (status, _) = get(state, "/api/v1/unknown-route-xyz", Some(&key)).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
+
+// ── 插件路由（plugin-system 特性）──
+
+/// 权限中间件 + 路由登记验证：
+/// - 无 plugins 权限 → 403
+/// - 仅 pluginsread → GET 通过（handler 因未注入 PluginManager 返回 400）
+/// - 安装需要 PluginsManage（pluginsread 不足 → 403）
+#[cfg(feature = "plugin-system")]
+#[tokio::test]
+async fn test_plugins_routes_enforce_permissions() {
+    let (state, admin_key) = common::test_app_state().await;
+    let (_, reader_key) = state
+        .auth_manager
+        .create_key("plugin-reader", vec!["pluginsread".into()], None)
+        .await
+        .unwrap();
+
+    // 仅 pluginsread：GET 通过权限检查，handler 因未注入管理器返回 400
+    let (status, json) = get(state.clone(), "/api/v1/plugins", Some(&reader_key)).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(json["error"]["code"], "INVALID_REQUEST");
+
+    // 无插件权限的 key：403
+    let (_, no_perm_key) = state
+        .auth_manager
+        .create_key("no-plugin-perm", vec!["messagesread".into()], None)
+        .await
+        .unwrap();
+    let (status, _) = get(state.clone(), "/api/v1/plugins", Some(&no_perm_key)).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+
+    // 安装需要 PluginsManage：pluginsread 不足 → 403
+    let (status, _) = post(
+        state.clone(),
+        "/api/v1/plugins/install",
+        Some(&reader_key),
+        Some(r#"{"name":"slack"}"#),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+
+    // 管理员（*）可到达安装 handler（未注入管理器 → 400）
+    let (status, json) = post(
+        state,
+        "/api/v1/plugins/install",
+        Some(&admin_key),
+        Some(r#"{"name":"slack"}"#),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(json["error"]["code"], "INVALID_REQUEST");
+}

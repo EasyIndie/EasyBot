@@ -16,6 +16,9 @@ ENV CARGO_NET_RETRY=5 \
 COPY Cargo.toml Cargo.lock ./
 COPY crates/ ./crates/
 COPY bin/ ./bin/
+# 插件入门示例是 workspace 成员（workspace 解析需其清单；--bin easybot 不编译它）
+COPY plugins/example-hello-adapter/Cargo.toml plugins/example-hello-adapter/
+COPY plugins/example-hello-adapter/src/ plugins/example-hello-adapter/src/
 # Only Cargo.toml + minimal stubs for workspace member resolution (--bin easybot skips test compilation)
 COPY tests/plugins/mock-adapter/Cargo.toml tests/plugins/mock-adapter/
 COPY tests/plugins/mock-adapter/src/ tests/plugins/mock-adapter/src/
@@ -25,6 +28,9 @@ COPY tests/e2e/Cargo.toml tests/e2e/
 COPY tests/e2e/src/ tests/e2e/src/
 COPY tests/fixtures/Cargo.toml tests/fixtures/
 COPY tests/fixtures/src/ tests/fixtures/src/
+# plugin_scaffold_template.rs 用 include_str! 编译时内嵌发布者 CI 模板
+# （../../.github/workflows/plugin-publish.yml）→ 必须进入构建上下文
+COPY .github/workflows/plugin-publish.yml .github/workflows/
 RUN --mount=type=cache,target=/app/target \
     --mount=type=cache,target=/usr/local/cargo/registry \
     cargo build --locked --release --features "default,plugin-system" --bin easybot && \

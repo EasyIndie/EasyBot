@@ -194,5 +194,5 @@ bash scripts/production-restore.sh    # 校验 + 恢复（自动保留恢复前�
 ## 完整文档
 
 工具包是离线部署的最小集。完整用户指南 / API / 插件开发文档见仓库：
-`docs/01 user-guide.md`、`docs/04 architecture.md`、`docs/02 plugin-dev.md`，
+`docs/01 user-guide.md`、`docs/04 architecture.md`、`docs/plugin-quickstart.md`，
 或在线浏览 https://github.com/EasyIndie/EasyBot 。

@@ -13,6 +13,13 @@ use easybot_core::PlatformAdapter;
 use easybot_core::types::event::{GatewayEvent, event_types};
 use std::sync::Arc;
 
+#[cfg(feature = "plugin-system")]
+mod plugin_cli;
+#[cfg(feature = "plugin-system")]
+mod plugin_scaffold;
+#[cfg(feature = "plugin-system")]
+mod plugin_scaffold_template;
+
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
@@ -62,6 +69,12 @@ enum Commands {
         /// Skip confirmation prompt
         #[arg(long)]
         yes: bool,
+    },
+    /// 插件市场与管理（安装/更新/信任/检查；需 plugin-system 特性）
+    #[cfg(feature = "plugin-system")]
+    Plugin {
+        #[command(subcommand)]
+        cmd: plugin_cli::PluginCmd,
     },
 }
 
@@ -128,6 +141,10 @@ async fn main() -> anyhow::Result<()> {
         }
         Some(Commands::Rollback { yes }) => {
             return handle_rollback(cli.dir.clone(), *yes).await;
+        }
+        #[cfg(feature = "plugin-system")]
+        Some(Commands::Plugin { cmd }) => {
+            return plugin_cli::run(cmd, cli.dir.clone()).await;
         }
         None => {}
     }
@@ -275,6 +292,11 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
+    // 解析插件目录（`plugins.directory` 死字段接线）。这是唯一权威来源：
+    // 生产门禁扫描 / `PluginManager` 加载 / CLI 均使用同一解析结果。
+    let plugins_dir =
+        easybot_core::config::resolve_plugins_dir(&config.plugins.directory, &paths.home);
+
     let production_mode = cli.production
         || std::env::var("EASYBOT_ENV").is_ok_and(|value| value.eq_ignore_ascii_case("production"));
     if production_mode {
@@ -295,11 +317,8 @@ async fn main() -> anyhow::Result<()> {
                 errors.join("\n- ")
             );
         }
-        if std::fs::read_dir(&paths.plugins_dir).is_ok_and(|mut entries| entries.next().is_some()) {
-            anyhow::bail!(
-                "production mode refuses dynamic plugins because plugin signatures and publisher trust are not implemented; empty {} or isolate the plugin in a separate service",
-                paths.plugins_dir.display()
-            );
+        if let Err(reason) = scan_plugins_for_production(&config, &paths, &plugins_dir) {
+            anyhow::bail!("{reason}");
         }
         tracing::info!("Production readiness configuration check passed");
     }
@@ -506,8 +525,53 @@ async fn main() -> anyhow::Result<()> {
     // 注册内置适配器
     register_builtin_adapters(&adapter_manager, event_bus.clone()).await;
 
-    // 加载并注册插件适配器
-    load_plugin_adapters(&adapter_manager, &paths, event_bus.clone()).await;
+    // 加载并注册插件适配器，构建插件管理器（市场管理 API 用）
+    //
+    // 加载顺序约束：插件适配器工厂必须在 `start_all()` 之前注册，否则自动检测/
+    // 健康监测遗漏插件适配器。`PluginManager::load_all` + `register_loaded` 即完成
+    // 注册；构造时必须先于 `start_all`（下方 tokio::spawn）。插件注册表/信任配置
+    // 变更需重启生效（v1 无热重载）。
+    #[cfg(feature = "plugin-system")]
+    let plugin_manager = {
+        use easybot_core::plugin::manager::PluginManager;
+        let manager = Arc::new(
+            PluginManager::new(
+                plugins_dir.clone(),
+                Arc::new(tokio::sync::RwLock::new(config.plugins.clone())),
+                adapter_manager.clone(),
+                event_bus.clone(),
+                production_mode,
+            )
+            .await,
+        );
+        if config.plugins.auto_load {
+            if plugins_dir.exists() {
+                tracing::info!("Loading plugins from {}", plugins_dir.display());
+                let (succeeded, failed) = manager.load_all().await;
+                manager.register_loaded().await;
+                for result in &succeeded {
+                    tracing::info!(
+                        "Registered plugin adapter: {} ({})",
+                        result.platform_name,
+                        result.display_name
+                    );
+                }
+                for (path, error) in &failed {
+                    tracing::warn!("Failed to load plugin from {}: {}", path.display(), error);
+                }
+            } else {
+                tracing::info!(
+                    "No plugins directory at {}, skipping plugin loading",
+                    plugins_dir.display()
+                );
+            }
+        } else {
+            tracing::info!("plugins.auto_load is false — skipping plugin loading at startup");
+        }
+        Some(manager)
+    };
+    #[cfg(not(feature = "plugin-system"))]
+    let _plugin_manager: Option<()> = None;
 
     // 解析管理后台密码（优先级：EASYBOT_ADMIN_PASSWORD > gateway.yaml > 默认值）
     // ConfigManager.new() 内部也会应用此覆盖，确保热重载路径一致。
@@ -565,7 +629,9 @@ async fn main() -> anyhow::Result<()> {
 
     // 构建应用状态
     let server_config = config.server.clone();
-    let app_state = easybot_api::AppState::new(
+    // 仅在 plugin-system 构建下会可变（注入 plugin_manager）；禁用时无需 mut
+    #[allow(unused_mut)]
+    let mut app_state = easybot_api::AppState::new(
         event_bus.clone(),
         adapter_manager.clone(),
         session_manager,
@@ -577,6 +643,12 @@ async fn main() -> anyhow::Result<()> {
         log_collector,
         admin_password,
     );
+
+    // 注入插件管理器（/api/v1/plugins* 路由与市场管理用）
+    #[cfg(feature = "plugin-system")]
+    {
+        app_state.plugin_manager = plugin_manager;
+    }
 
     // ── 启动指标事件监听器（自动更新消息计数和适配器状态）──
     if let Some(ref metrics) = app_state.metrics {
@@ -890,57 +962,58 @@ async fn handle_init(cli: Cli) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// 加载并注册插件适配器
+/// 生产模式插件门禁：签名扫描
+///
+/// 取代旧的"目录非空即拒绝"。prod 启动时逐个插件目录验签 + 检查发布者公钥信任；
+/// 全部通过（或无插件）则放行。有未验签插件且 `!allow_untrusted` → 拒绝并提示
+/// 走市场重装或设 `plugins.allowUntrusted: true`。dev 恒 lenient，不调用此函数。
 #[cfg(feature = "plugin-system")]
-async fn load_plugin_adapters(
-    adapter_manager: &easybot_core::adapter::AdapterManager,
-    paths: &easybot_core::config::EasyBotPaths,
-    event_bus: Arc<easybot_core::bus::EventBus>,
-) {
-    use easybot_core::plugin::PluginLoader;
+fn scan_plugins_for_production(
+    config: &easybot_core::types::config::GatewayConfig,
+    _paths: &easybot_core::config::EasyBotPaths,
+    plugins_dir: &std::path::Path,
+) -> Result<(), String> {
+    use easybot_core::plugin::signing::trust::TrustStore;
 
-    if !paths.plugins_dir.exists() {
-        tracing::info!(
-            "No plugins directory at {}, skipping plugin loading",
-            paths.plugins_dir.display()
-        );
-        return;
+    let trust_store = TrustStore::load(&plugins_dir.join(".trust"));
+    let unverified =
+        easybot_core::plugin::scan_unverified(plugins_dir, &config.plugins, &trust_store);
+    if unverified.is_empty() {
+        return Ok(());
     }
-
-    tracing::info!("Loading plugins from {}", paths.plugins_dir.display());
-    let loader = PluginLoader::new(paths.plugins_dir.clone());
-    let (succeeded, failed) = loader.load_all().await;
-
-    for result in &succeeded {
-        if let Some(factory) = loader
-            .get_factory(&result.platform_name, event_bus.clone())
-            .await
-        {
-            adapter_manager
-                .registry()
-                .register(&result.platform_name, &result.display_name, factory, &[])
-                .await;
-            tracing::info!(
-                "Registered plugin adapter: {} ({})",
-                result.platform_name,
-                result.display_name
+    if config.plugins.allow_untrusted {
+        for (name, reason) in &unverified {
+            tracing::warn!(
+                "plugin {name} is unverified ({reason}); allow_untrusted=true permits it in production"
             );
         }
+        return Ok(());
     }
-
-    for (path, error) in &failed {
-        tracing::warn!("Failed to load plugin from {}: {}", path.display(), error);
-    }
+    let details: Vec<String> = unverified
+        .iter()
+        .map(|(name, reason)| format!("- {name}: {reason}"))
+        .collect();
+    Err(format!(
+        "production mode refuses {} unverified plugin(s):\n{}\nReinstall via `easybot plugin install <name>` (requires a trusted publisher), or set `plugins.allowUntrusted: true` to override",
+        unverified.len(),
+        details.join("\n")
+    ))
 }
 
-/// 插件系统未启用时的空实现
+/// 插件系统未启用时的生产门禁（保持旧的"非空即拒绝"语义）
 #[cfg(not(feature = "plugin-system"))]
-async fn load_plugin_adapters(
-    _adapter_manager: &easybot_core::adapter::AdapterManager,
+fn scan_plugins_for_production(
+    _config: &easybot_core::types::config::GatewayConfig,
     _paths: &easybot_core::config::EasyBotPaths,
-    _event_bus: Arc<easybot_core::bus::EventBus>,
-) {
-    tracing::info!("Plugin system not enabled (compile with --features plugin-system to enable)");
+    plugins_dir: &std::path::Path,
+) -> Result<(), String> {
+    if std::fs::read_dir(plugins_dir).is_ok_and(|mut entries| entries.next().is_some()) {
+        return Err(format!(
+            "production mode refuses dynamic plugins because the plugin-system feature is not enabled; empty {} or rebuild with --features plugin-system",
+            plugins_dir.display()
+        ));
+    }
+    Ok(())
 }
 
 /// 注册单个内置适配器的宏

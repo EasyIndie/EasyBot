@@ -83,6 +83,16 @@ impl AdapterRegistry {
         factories.contains_key(platform)
     }
 
+    /// 注销平台工厂（插件卸载时调用）
+    ///
+    /// 返回该平台此前是否已注册。只移除工厂，不停止运行中的适配器——
+    /// 停止由 `AdapterManager::stop()` 负责；停止后全局健康监测器不再迭代
+    /// 该平台，无需单独清理。
+    pub async fn unregister(&self, platform: &str) -> bool {
+        let mut factories = self.factories.write().await;
+        factories.remove(platform).is_some()
+    }
+
     /// 列出所有已注册的平台
     pub async fn list_platforms(&self) -> Vec<(String, String)> {
         let factories = self.factories.read().await;
