@@ -238,7 +238,7 @@ init(config) → connect() → send()/... → disconnect()
 
 1. **文档对齐**：CHANGELOG.md 在 `[Unreleased]` 下新增 `[0.0.X]` 条目（Keep a Changelog，中文）；README/CLAUDE/docs 与代码实现对齐。
 2. **版本同步**：`Cargo.toml`（version）+ `Cargo.lock`（`cargo update --workspace`）+ `compose.quickstart.yml`（EASYBOT_IMAGE 注释）+ `crates/easybot-api/src/routes/update.rs`（`#[schema(example)]`）+ `crates/easybot-api/tests/routes.rs`（current_version）+ 两个快照（health + openapi 的 version/example）+ `deploy-kit/deploy.sh`（注释→**下一**版本）+ `docs/01 user-guide.md`（版本引用）+ `docs/other/windows-deployment.md`（版本要求）。
-3. **前置构建**：`cargo build -p mock-adapter` + `cargo build`（CLI 测试硬编码找 `target/debug/easybot`）。`cargo clean` 后必做。
+3. **前置构建**：`cargo build -p mock-adapter` + `cargo build --features "default,plugin-system"`（CLI 测试硬编码找 `target/debug/easybot`，且插件集成测试要求该二进制带 `plugin-system` —— 裸 `cargo build` 会把二进制重建成无插件版，导致 `cli::test_production_*` / `cli::test_plugin_cli_*` 失败）。`cargo clean` 后必做。
 4. **预检**：`bash scripts/release-preflight.sh`。**禁止 `| tail`**（管道吞掉退出码）——用 `> /tmp/log 2>&1; echo EXIT_CODE=$?`。含 Actions 40 位 SHA 固定门禁。
 5. **测试**：`cargo test --workspace --features "default,plugin-system" --locked` + `cargo fmt --all --check`。注意 APFS 磁盘空间：全量编译可打满共享容器，满盘表现为空输出 + exit 1，不是测试失败。
 6. **提交**（3 个）：`docs: align documentation with current implementation` / `ci: pin <action> action to commit SHA` / `release: bump v0.0.X → v0.0.Y`。

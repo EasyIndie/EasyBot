@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.34] - 2026-08-13
+
 ### Added
 
 - **插件市场（P6）** — 通过 GitHub Releases 分发第三方适配器插件，`easybot plugin`
