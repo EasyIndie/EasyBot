@@ -172,6 +172,11 @@ fn test_cli_unknown_flag() {
     );
 }
 
+/// 以下 3 个插件门禁/CLI 测试依赖 `easybot` 二进制启用 plugin-system
+/// （`easybot plugin ...` 子命令、生产模式签名扫描）。pre-push 的
+/// `cargo test --all` 不带该 feature → 二进制无插件能力，跳过；
+/// CI 的 `--workspace --features "default,plugin-system"` 会启用 → 仍运行。
+#[cfg(feature = "plugin-system")]
 #[test]
 fn test_production_rejects_unverified_plugins() {
     let dir = tempfile::tempdir().expect("failed to create temp dir");
@@ -204,6 +209,7 @@ fn test_production_rejects_unverified_plugins() {
     assert!(stderr.contains("unverified"), "{stderr}");
 }
 
+#[cfg(feature = "plugin-system")]
 #[test]
 fn test_production_allows_verified_trusted_plugins() {
     use easybot_core::plugin::signing::{
@@ -283,6 +289,7 @@ fn test_production_allows_verified_trusted_plugins() {
     }
 }
 
+#[cfg(feature = "plugin-system")]
 #[test]
 fn test_plugin_cli_offline_install_trust_inspect() {
     use easybot_core::plugin::signing::{
