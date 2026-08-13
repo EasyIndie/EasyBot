@@ -188,6 +188,23 @@ easybot plugin trust <publisher> --public-key <PUBLIC_KEY>   # 显式信任发�
 
 > **签名 ≠ 安全**：签名只证明「代码来自该发布者、未被篡改」，不证明代码无害。插件以宿主权限进程内运行，无沙箱。安装第三方发布者插件前请自行评估；生产环境建议把 EasyBot 跑在容器里（见 `docs/docker-compose.plugin-dev.yml` 与 `docs/SECURITY.md`）。
 
+### 离线分发（`install --file`，空气隔离环境）
+
+不走 GitHub Releases 时，直接给用户一个**带签名**的插件目录即可——`sign` 的 `--sig-json`
+额外写出 `install --file` 读取的 `plugin.sig.json`：
+
+```bash
+# 1. 签名产物：--name 必须传 plugin.yaml 的 name（kebab-case 插件库名推导是下划线 crate 名）
+easybot-plugin-sign sign --key "$PRIVATE_KEY" \
+  --publisher my-org --version 0.1.0 --triple x86_64-apple-darwin \
+  --artifact ./target/release/libmy_adapter.dylib --name my-adapter \
+  --sig-json ./plugin.sig.json
+
+# 2. 把 { plugin.yaml, libmy_adapter.dylib, plugin.sig.json } 组成一个目录交给用户
+# 用户侧（与市场安装同一流水线：ABI 预检 + 信任确认 + 验签 + 原子落位，仅跳过下载）：
+easybot plugin install my-adapter --file ./my-adapter-dist/
+```
+
 ---
 
 ## 后续

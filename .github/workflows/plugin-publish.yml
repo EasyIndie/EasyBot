@@ -215,6 +215,7 @@ jobs:
             easybot-plugin-sign sign --publisher "${{ steps.meta.outputs.publisher }}" \
               --version "${{ steps.meta.outputs.version }}" \
               --triple "$triple" --artifact "$dir/$suffixed" --library "$library" \
+              --name "${{ steps.meta.outputs.plugin-name }}" \
               > "$dir/sign.json"
             # 注入 release asset 名，供组装 easybot-plugin.json 的 url 字段
             jq --arg suffixed "$suffixed" '. + {suffixed: $suffixed}' \

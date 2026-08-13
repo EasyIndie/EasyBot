@@ -52,7 +52,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     `docs/SECURITY.md`（信任模型）与 `docs/docker-compose.plugin-dev.yml`（Docker 联调）。
 
 - **`easybot-plugin-sign` 独立工具** — `gen-keypair` / `sign`（ed25519），仅发布者
-  CI 使用，主程序不持私钥。
+  CI 使用，主程序不持私钥。`sign --sig-json <path>` 额外写出离线分发用的
+  `plugin.sig.json`（`install --file` 读取此格式验签），`--name` 显式指定插件名
+  （kebab-case 插件必须——库名推导是下划线 crate 名）。
 
 ### Changed
 
