@@ -28,6 +28,9 @@ COPY tests/e2e/Cargo.toml tests/e2e/
 COPY tests/e2e/src/ tests/e2e/src/
 COPY tests/fixtures/Cargo.toml tests/fixtures/
 COPY tests/fixtures/src/ tests/fixtures/src/
+# plugin_scaffold_template.rs 用 include_str! 编译时内嵌发布者 CI 模板
+# （../../.github/workflows/plugin-publish.yml）→ 必须进入构建上下文
+COPY .github/workflows/plugin-publish.yml .github/workflows/
 RUN --mount=type=cache,target=/app/target \
     --mount=type=cache,target=/usr/local/cargo/registry \
     cargo build --locked --release --features "default,plugin-system" --bin easybot && \
