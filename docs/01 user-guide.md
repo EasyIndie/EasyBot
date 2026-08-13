@@ -365,7 +365,7 @@ plugins:
     - name: "official"
       kind: "github"
       owner: "EasyIndie"
-      repo: "easybot-marketplace"
+      repo: "EasyBot-Plugins"
 ```
 
 ### 4.5 本地覆盖（gateway.local.yaml）

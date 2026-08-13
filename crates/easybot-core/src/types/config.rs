@@ -130,7 +130,7 @@ fn default_registries() -> Vec<RegistryConfig> {
         name: "official".into(),
         kind: "github".into(),
         owner: "EasyIndie".into(),
-        repo: "easybot-marketplace".into(),
+        repo: "EasyBot-Plugins".into(),
         url: String::new(),
     }]
 }

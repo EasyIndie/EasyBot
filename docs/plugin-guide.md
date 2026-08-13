@@ -283,7 +283,7 @@ plugins:
   registries:
     - kind: github
       owner: EasyIndie
-      repo: easybot-marketplace
+      repo: EasyBot-Plugins
 ```
 
 ---

@@ -16,7 +16,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     校验 → 信任确认 → 下载 → SHA256 比对 + ed25519 验签 → 原子落位（含合成
     `plugin.yaml` + `plugin.sig.json`）。`--file <dir>` 离线安装走同流水线跳过下载。
   - **多注册表（Taps）** — `plugins.registries` 列表合并多源 catalog，插件名支持
-    `publisher/name` 限定，5min 缓存。
+    `publisher/name` 限定，5min 缓存。官方目录默认源为
+    `EasyIndie/EasyBot-Plugins`（`catalog.json`）。
   - **信任管理（VS Code 1.97 语义）** — 信任按**发布者**粒度存 `plugins/.trust`；
     `--yes` 不自动信任，显式 `plugin trust <publisher> --public-key <k>` 才加入。
   - **更新语义** — `plugin update` 显式触发、默认 pin 当前版本，`--latest`/`--channel`

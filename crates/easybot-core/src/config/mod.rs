@@ -492,12 +492,12 @@ plugins:
   #   easybot plugin trust <publisher> --public-key "<base64 公钥>"
   trustedPublishers: {}
   # 插件注册源（Taps 模型）：可添加任意第三方目录仓库作为社区源。
-  # 官方市场为默认源（EasyIndie/easybot-marketplace）。
+  # 官方市场为默认源（EasyIndie/EasyBot-Plugins）。
   registries:
     - name: "official"
       kind: "github"
       owner: "EasyIndie"
-      repo: "easybot-marketplace"
+      repo: "EasyBot-Plugins"
 "#
     .to_string()
 }

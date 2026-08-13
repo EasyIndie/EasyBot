@@ -909,7 +909,7 @@ plugins:
     - name: "official"
       kind: "github"
       owner: "EasyIndie"
-      repo: "easybot-marketplace"
+      repo: "EasyBot-Plugins"
 ```
 
 > **配置优先级**: gateway.yaml ← gateway.local.yaml（递归合并）← `${VAR_NAME}` 替换 ← `.env` 文件 ← 内建默认值
