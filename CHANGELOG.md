@@ -7,7 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.35] - 2026-08-14
+
 ### Fixed
+
+- **`gateway.local.yaml` 覆盖合并不再注入结构体默认值** — 修复本地覆盖配置合并的
+  serde 默认值注入 bug：此前 `gateway.local.yaml` 经 `load_config` 反序列化为完整
+  `GatewayConfig`（缺失键被默认值补齐，如 `server.host` 默认 `127.0.0.1`）再序列化
+  合并，默认值被当成"显式字段"覆盖基础配置（容器基础配置 `server.host=0.0.0.0`
+  被覆盖为 `127.0.0.1`，监听退回容器回环，经反向代理/隧道的公网入口 502）。现本地
+  覆盖改走 `load_config_value` 按原始 YAML Value 合并，只合并文件显式写出的键；
+  合并后仍校验 webhook 防 SSRF。覆盖文件不再需要显式重复 `server.host: "0.0.0.0"`。
 
 - **FFI 分配器契约（行为变更）** — 移除宿主 `#[global_allocator]` mimalloc（`bin/`
   的 `main.rs` / `Cargo.toml`），宿主与进程内 dlopen 的插件共用默认系统分配器。
