@@ -37,6 +37,51 @@ pub fn validate_name(name: &str) -> Result<(), PluginManagerError> {
     }
 }
 
+/// 动态库文件名白名单：必须是**单个裸文件名**（无路径分隔符、非绝对路径、无 `..`）
+///
+/// `artifact.library` 来自不可信的 `easybot-plugin.json`。安装时用它拼下载目标
+/// `staging.join(library)`——若不校验，恶意 `"library": "../../.env"` 会把下载
+/// 写入 plugins 目录之外（任意文件覆盖，CRITICAL）。加载期的 `library_path()`
+/// 已拒绝绝对路径/`..`，但那只覆盖 load 时点，不覆盖安装时的下载落点。
+pub fn validate_library_name(lib: &str) -> Result<(), PluginManagerError> {
+    // `Path::file_name()` 在含分隔符/尾随斜杠/`..` 时返回 None 或子串，故"整串等于
+    // 自己的 file_name"即可保证它是单个裸文件名（跨平台：`/` 与 Windows `\` 均被拒）。
+    let ok = !lib.is_empty()
+        && lib.len() <= 255
+        && !lib.contains('\0')
+        && !matches!(lib, "." | "..")
+        && !Path::new(lib).is_absolute()
+        && lib
+            == Path::new(lib)
+                .file_name()
+                .map(|f| f.to_str().unwrap_or(""))
+                .unwrap_or("");
+    if ok {
+        Ok(())
+    } else {
+        Err(PluginManagerError::InvalidLibrary(lib.to_string()))
+    }
+}
+
+/// 下载 URL 白名单：必须 https + GitHub 域（防 SSRF）
+///
+/// `artifact.url` 同样来自不可信元数据。宿主在受害者内网发起 GET 到该地址
+/// 可能命中云元数据/内网服务。v1 分发模型只经 GitHub Releases，故收窄到
+/// GitHub 官方域；自定义注册后端应各自实现自身的源策略。
+pub fn validate_artifact_url(url: &str) -> Result<(), PluginManagerError> {
+    let parsed = url::Url::parse(url)
+        .map_err(|_| PluginManagerError::InvalidArtifactUrl(url.to_string()))?;
+    let ok = parsed.scheme() == "https"
+        && parsed.host_str().is_some_and(|h| {
+            h == "github.com" || h.ends_with(".github.com") || h.ends_with("githubusercontent.com")
+        });
+    if ok {
+        Ok(())
+    } else {
+        Err(PluginManagerError::InvalidArtifactUrl(url.to_string()))
+    }
+}
+
 /// 解析 `publisher/name` 限定名，返回 `(publisher: Option, name)`
 ///
 /// 无 `/` 时按裸名在全部注册源中查找（名称唯一）。
@@ -100,6 +145,7 @@ pub fn synthesize_manifest(
         author: Some(source.publisher.clone()),
         library: artifact.library.clone(),
         enabled: Some(true),
+        requires: meta.requires.clone(),
     }
 }
 
@@ -129,9 +175,9 @@ pub fn build_signature(
 ///
 /// 在 staging 目录内写入 `plugin.yaml`（+ `plugin.sig.json`）后整体 `rename`——
 /// 同文件系统内 rename 是原子的。`replace=false` 时目标已存在直接失败（安装防覆盖）；
-/// `replace=true`（更新/刷新）时先移除旧目录再落位（下载+验签已完成，rename 本地
-/// 操作极难失败；v1 无回滚，坏更新由 `plugin update` 手动重装修复）。
-/// 失败方由调用方清理 staging。
+/// `replace=true`（更新/刷新）时先把旧目录改名到 `.` 前缀备份，再原子落位新目录，
+/// 落位失败（如瞬态 FS 错误）回滚旧版——**不**先删旧版，避免坏更新丢插件。
+/// 备份目录带 `.` 前缀，扫描/加载一律跳过（`name.starts_with('.')` 约定）。
 pub fn place_installed(
     plugins_dir: &Path,
     name: &str,
@@ -142,13 +188,6 @@ pub fn place_installed(
 ) -> Result<(), PluginManagerError> {
     validate_name(name)?;
 
-    let target = plugins_dir.join(name);
-    if target.exists() {
-        if !replace {
-            return Err(PluginManagerError::AlreadyInstalled(name.to_string()));
-        }
-        std::fs::remove_dir_all(&target)?;
-    }
     if !staging.is_dir() {
         return Err(PluginManagerError::Other(format!(
             "staging dir missing: {}",
@@ -156,15 +195,35 @@ pub fn place_installed(
         )));
     }
 
-    // 写入清单与签名
+    // 先写入清单与签名（失败不触碰已安装版本）
     let yaml = serde_yaml::to_string(manifest)?;
     std::fs::write(staging.join("plugin.yaml"), yaml)?;
     if let Some(sig) = signature {
         sig.write_to(&staging.join("plugin.sig.json"))?;
     }
 
-    // 原子改名进目标目录
-    std::fs::rename(staging, &target)?;
+    let target = plugins_dir.join(name);
+    if target.exists() {
+        if !replace {
+            return Err(PluginManagerError::AlreadyInstalled(name.to_string()));
+        }
+        // 旧版改名为备份（同文件系统，原子），新版落位成功后再删除备份。
+        // 落位失败时把备份改回原目录，回滚到更新前状态。
+        let backup = plugins_dir.join(format!(".{name}.old"));
+        let _ = std::fs::remove_dir_all(&backup); // 清理上一次残留备份
+        std::fs::rename(&target, &backup)?;
+        match std::fs::rename(staging, &target) {
+            Ok(()) => {
+                let _ = std::fs::remove_dir_all(&backup);
+            }
+            Err(e) => {
+                let _ = std::fs::rename(&backup, &target); // 尽力回滚
+                return Err(e.into());
+            }
+        }
+    } else {
+        std::fs::rename(staging, &target)?;
+    }
     Ok(())
 }
 
@@ -234,6 +293,51 @@ mod tests {
     }
 
     #[test]
+    fn test_validate_library_name_rejects_traversal() {
+        // 路径穿越 / 绝对路径 / 分隔符 / 特殊名 —— 全部拒绝
+        assert!(validate_library_name("../../.env").is_err());
+        assert!(validate_library_name("sub/lib.so").is_err());
+        assert!(validate_library_name("lib.so/").is_err());
+        assert!(validate_library_name("/etc/passwd").is_err());
+        assert!(validate_library_name(".").is_err());
+        assert!(validate_library_name("..").is_err());
+        assert!(validate_library_name("").is_err());
+        assert!(validate_library_name("a\0b.so").is_err());
+        if cfg!(windows) {
+            assert!(validate_library_name("..\\..\\\\.env").is_err());
+            assert!(validate_library_name("dir\\lib.so").is_err());
+        }
+    }
+
+    #[test]
+    fn test_validate_library_name_accepts_bare_names() {
+        assert!(validate_library_name("libslack.so").is_ok());
+        assert!(validate_library_name("hello_adapter.dylib").is_ok());
+        assert!(validate_library_name("plugin.dll").is_ok());
+    }
+
+    #[test]
+    fn test_validate_artifact_url_allows_github_only() {
+        // GitHub 官方域放行
+        assert!(
+            validate_artifact_url(
+                "https://github.com/EasyIndie/plugin/releases/download/v1/plugin.so"
+            )
+            .is_ok()
+        );
+        assert!(validate_artifact_url("https://objects.githubusercontent.com/abc").is_ok());
+        assert!(
+            validate_artifact_url("https://github.com@169.254.169.254/evil").is_err(),
+            "host confusion must be rejected"
+        );
+        // 非 https / 非 GitHub 域拒绝
+        assert!(validate_artifact_url("http://github.com/x/y").is_err());
+        assert!(validate_artifact_url("https://169.254.169.254/latest/meta-data").is_err());
+        assert!(validate_artifact_url("https://evil.com/plugin.so").is_err());
+        assert!(validate_artifact_url("not-a-url").is_err());
+    }
+
+    #[test]
     fn test_split_qualified() {
         assert_eq!(
             split_qualified("easybot/slack"),
@@ -300,6 +404,7 @@ mod tests {
             author: Some("easybot".into()),
             library: Some("libx.so".into()),
             enabled: Some(true),
+            requires: None,
         };
         place_installed(&plugins, "demo", &staging, &manifest, None, false).unwrap();
 
@@ -333,10 +438,46 @@ mod tests {
             author: None,
             library: None,
             enabled: None,
+            requires: None,
         };
         let err = place_installed(&plugins, "demo", &staging, &manifest, None, false).unwrap_err();
         assert!(matches!(err, PluginManagerError::AlreadyInstalled(n) if n == "demo"));
 
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn test_place_installed_replace_swaps_and_removes_backup() {
+        let root = std::env::temp_dir().join(format!("install-test-repl-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let plugins = root.join("plugins");
+        let plugins_dir = &plugins;
+        let old = plugins.join("demo");
+        std::fs::create_dir_all(&old).unwrap();
+        std::fs::write(old.join("old.so"), b"old").unwrap();
+        let staging = root.join("staging");
+        std::fs::create_dir_all(&staging).unwrap();
+        std::fs::write(staging.join("new.so"), b"new").unwrap();
+
+        let manifest = PluginManifest {
+            name: "demo".into(),
+            display_name: None,
+            description: None,
+            version: "2.0.0".into(),
+            sdk_version: 1,
+            author: None,
+            library: Some("new.so".into()),
+            enabled: Some(true),
+            requires: None,
+        };
+        place_installed(plugins_dir, "demo", &staging, &manifest, None, true).unwrap();
+
+        assert!(old.join("new.so").exists(), "new lib should be in place");
+        assert!(!old.join("old.so").exists(), "old lib should be replaced");
+        assert!(
+            !plugins.join(".demo.old").exists(),
+            "backup should be removed after success"
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 

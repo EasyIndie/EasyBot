@@ -12,7 +12,9 @@
 
 use super::{SigningError, public_key_fingerprint};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::Path;
+use std::sync::{Arc, RwLock};
 
 /// 发布者信任判定抽象
 ///
@@ -93,6 +95,43 @@ impl TrustStore {
     /// 移除发布者信任
     pub fn remove(&mut self, publisher: &str) {
         self.publishers.retain(|e| e.publisher != publisher);
+    }
+}
+
+/// 组合信任判定：配置 `plugins.trusted_publishers`（内置 + 覆盖）∪ 用户 `.trust`。
+///
+/// 加载器在同步 `verify_signature` 上下文中调用，故用 `std::sync::RwLock`
+/// 读用户 `.trust`（tokio RwLock 的 blocking 读取在 async 上下文会 panic）。
+#[derive(Clone, Default)]
+pub struct CompositePublisherTrust {
+    /// 用户级 `.trust` 状态（由 `PluginManager` 持有并维护）
+    store: Arc<RwLock<TrustStore>>,
+    /// 配置 `plugins.trusted_publishers`：发布者 → 公钥 base64
+    configured: HashMap<String, String>,
+}
+
+impl CompositePublisherTrust {
+    pub fn new(store: Arc<RwLock<TrustStore>>, configured: HashMap<String, String>) -> Self {
+        Self { store, configured }
+    }
+}
+
+impl PublisherTrust for CompositePublisherTrust {
+    fn is_trusted(&self, publisher: &str, public_key_b64: &str) -> bool {
+        // 配置侧：精确公钥匹配（内置默认列表 + 用户配置覆盖）
+        if self
+            .configured
+            .get(publisher)
+            .map(|k| k == public_key_b64)
+            .unwrap_or(false)
+        {
+            return true;
+        }
+        // 用户侧 `.trust`
+        self.store
+            .read()
+            .map(|s| s.is_trusted(publisher, public_key_b64))
+            .unwrap_or(false)
     }
 }
 

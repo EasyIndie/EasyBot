@@ -20,6 +20,14 @@ pub enum PluginManagerError {
     #[error("Plugin name '{0}' is invalid (must match [A-Za-z0-9_-])")]
     InvalidName(String),
 
+    #[error(
+        "Library file name '{0}' is invalid (must be a bare file name without path separators)"
+    )]
+    InvalidLibrary(String),
+
+    #[error("Artifact URL '{0}' is not an allowed download origin (https + GitHub host required)")]
+    InvalidArtifactUrl(String),
+
     #[error("Platform {triple} is not supported by plugin {name}")]
     UnsupportedPlatform { name: String, triple: String },
 

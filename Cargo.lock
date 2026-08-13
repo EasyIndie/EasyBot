@@ -1081,6 +1081,7 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tracing",
+ "url",
  "utoipa",
  "uuid",
  "wiremock",

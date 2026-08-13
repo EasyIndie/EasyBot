@@ -292,6 +292,11 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
+    // 解析插件目录（`plugins.directory` 死字段接线）。这是唯一权威来源：
+    // 生产门禁扫描 / `PluginManager` 加载 / CLI 均使用同一解析结果。
+    let plugins_dir =
+        easybot_core::config::resolve_plugins_dir(&config.plugins.directory, &paths.home);
+
     let production_mode = cli.production
         || std::env::var("EASYBOT_ENV").is_ok_and(|value| value.eq_ignore_ascii_case("production"));
     if production_mode {
@@ -312,7 +317,7 @@ async fn main() -> anyhow::Result<()> {
                 errors.join("\n- ")
             );
         }
-        if let Err(reason) = scan_plugins_for_production(&config, &paths) {
+        if let Err(reason) = scan_plugins_for_production(&config, &paths, &plugins_dir) {
             anyhow::bail!("{reason}");
         }
         tracing::info!("Production readiness configuration check passed");
@@ -531,32 +536,37 @@ async fn main() -> anyhow::Result<()> {
         use easybot_core::plugin::manager::PluginManager;
         let manager = Arc::new(
             PluginManager::new(
-                paths.plugins_dir.clone(),
+                plugins_dir.clone(),
                 Arc::new(tokio::sync::RwLock::new(config.plugins.clone())),
                 adapter_manager.clone(),
                 event_bus.clone(),
+                production_mode,
             )
             .await,
         );
-        if paths.plugins_dir.exists() {
-            tracing::info!("Loading plugins from {}", paths.plugins_dir.display());
-            let (succeeded, failed) = manager.load_all().await;
-            manager.register_loaded().await;
-            for result in &succeeded {
+        if config.plugins.auto_load {
+            if plugins_dir.exists() {
+                tracing::info!("Loading plugins from {}", plugins_dir.display());
+                let (succeeded, failed) = manager.load_all().await;
+                manager.register_loaded().await;
+                for result in &succeeded {
+                    tracing::info!(
+                        "Registered plugin adapter: {} ({})",
+                        result.platform_name,
+                        result.display_name
+                    );
+                }
+                for (path, error) in &failed {
+                    tracing::warn!("Failed to load plugin from {}: {}", path.display(), error);
+                }
+            } else {
                 tracing::info!(
-                    "Registered plugin adapter: {} ({})",
-                    result.platform_name,
-                    result.display_name
+                    "No plugins directory at {}, skipping plugin loading",
+                    plugins_dir.display()
                 );
             }
-            for (path, error) in &failed {
-                tracing::warn!("Failed to load plugin from {}: {}", path.display(), error);
-            }
         } else {
-            tracing::info!(
-                "No plugins directory at {}, skipping plugin loading",
-                paths.plugins_dir.display()
-            );
+            tracing::info!("plugins.auto_load is false — skipping plugin loading at startup");
         }
         Some(manager)
     };
@@ -960,13 +970,14 @@ async fn handle_init(cli: Cli) -> anyhow::Result<()> {
 #[cfg(feature = "plugin-system")]
 fn scan_plugins_for_production(
     config: &easybot_core::types::config::GatewayConfig,
-    paths: &easybot_core::config::EasyBotPaths,
+    _paths: &easybot_core::config::EasyBotPaths,
+    plugins_dir: &std::path::Path,
 ) -> Result<(), String> {
     use easybot_core::plugin::signing::trust::TrustStore;
 
-    let trust_store = TrustStore::load(&paths.plugins_dir.join(".trust"));
+    let trust_store = TrustStore::load(&plugins_dir.join(".trust"));
     let unverified =
-        easybot_core::plugin::scan_unverified(&paths.plugins_dir, &config.plugins, &trust_store);
+        easybot_core::plugin::scan_unverified(plugins_dir, &config.plugins, &trust_store);
     if unverified.is_empty() {
         return Ok(());
     }
@@ -993,12 +1004,13 @@ fn scan_plugins_for_production(
 #[cfg(not(feature = "plugin-system"))]
 fn scan_plugins_for_production(
     _config: &easybot_core::types::config::GatewayConfig,
-    paths: &easybot_core::config::EasyBotPaths,
+    _paths: &easybot_core::config::EasyBotPaths,
+    plugins_dir: &std::path::Path,
 ) -> Result<(), String> {
-    if std::fs::read_dir(&paths.plugins_dir).is_ok_and(|mut entries| entries.next().is_some()) {
+    if std::fs::read_dir(plugins_dir).is_ok_and(|mut entries| entries.next().is_some()) {
         return Err(format!(
             "production mode refuses dynamic plugins because the plugin-system feature is not enabled; empty {} or rebuild with --features plugin-system",
-            paths.plugins_dir.display()
+            plugins_dir.display()
         ));
     }
     Ok(())

@@ -3,6 +3,7 @@
 //! 每个插件目录下包含一个 plugin.yaml 清单文件，描述插件元数据和库路径。
 //! 加载器通过清单定位动态库文件。
 
+use super::registry::types::PluginRequirements;
 use std::path::Path;
 
 /// 插件清单（plugin.yaml）
@@ -34,6 +35,10 @@ pub struct PluginManifest {
     /// 是否启用。缺省启用（向后兼容：旧清单无此字段默认 true）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub enabled: Option<bool>,
+    /// 宿主 EasyBot 版本兼容范围（semver range，如 `>=0.0.28`）。
+    /// 市场安装由 `easybot-plugin.json` 的 `requires` 校验；`--file` 离线安装读此字段。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requires: Option<PluginRequirements>,
 }
 
 fn default_version() -> String {
@@ -136,6 +141,7 @@ author: "EasyBot Contributors"
             author: None,
             library: None,
             enabled: None,
+            requires: None,
         };
         let dir = Path::new("/plugins/my-adapter");
         let path = manifest.library_path(dir).unwrap();
@@ -170,6 +176,7 @@ author: "EasyBot Contributors"
             author: None,
             library: Some("custom.so".into()),
             enabled: None,
+            requires: None,
         };
         let dir = Path::new("/plugins/my-adapter");
         let path = manifest.library_path(dir).unwrap();
@@ -187,6 +194,7 @@ author: "EasyBot Contributors"
             author: None,
             library: Some("/usr/lib/libc.so.6".into()),
             enabled: None,
+            requires: None,
         };
         let dir = Path::new("/plugins/my-adapter");
         assert!(manifest.library_path(dir).is_err());
@@ -203,6 +211,7 @@ author: "EasyBot Contributors"
             author: None,
             library: Some("../../../usr/lib/libc.so.6".into()),
             enabled: None,
+            requires: None,
         };
         let dir = Path::new("/plugins/my-adapter");
         let result = manifest.library_path(dir);

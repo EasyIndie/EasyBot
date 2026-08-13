@@ -21,14 +21,14 @@ use super::error::PluginManagerError;
 use super::install::{
     build_signature, check_abi, check_easybot_range, default_library_name, parse_manifest_yaml,
     pick_version, place_installed, resolve_source, split_qualified, synthesize_manifest,
-    validate_name,
+    validate_artifact_url, validate_library_name, validate_name,
 };
-use super::loader::{PluginError, PluginLoadResult, PluginLoader};
+use super::loader::{PluginError, PluginLoadPolicy, PluginLoadResult, PluginLoader};
 use super::manifest::PluginManifest;
 use super::registry::PluginRegistry;
 use super::registry::github::GitHubRegistry;
 use super::registry::types::{PluginChannel, PluginSource, PluginVersionMeta};
-use super::signing::trust::TrustStore;
+use super::signing::trust::{CompositePublisherTrust, TrustStore};
 use super::signing::{PluginSignature, SigningError, parse_public_key, verify_artifact};
 use crate::adapter::AdapterManager;
 use crate::bus::EventBus;
@@ -121,7 +121,7 @@ pub struct PluginManager {
     plugins_dir: PathBuf,
     /// 注册源（多源合并，Taps 模型）；热重载时经 `set_registries` 重建
     registries: RwLock<Vec<Arc<dyn PluginRegistry>>>,
-    trust_store: Arc<RwLock<TrustStore>>,
+    trust_store: Arc<std::sync::RwLock<TrustStore>>,
     trust_path: PathBuf,
     config: Arc<RwLock<PluginConfig>>,
     loader: Arc<PluginLoader>,
@@ -136,17 +136,38 @@ pub struct PluginManager {
 }
 
 impl PluginManager {
-    /// 创建插件管理器（dev 用 lenient 加载策略；生产门禁在 `bin` 层单独扫描）
+    /// 创建插件管理器
+    ///
+    /// 加载策略：dev（`production=false`）用 lenient——有签名验签、无签名仅告警；
+    /// prod 由配置决定：`allow_untrusted=false` 时 strict（强制签名 + 发布者信任），
+    /// `allow_untrusted=true` 时退化为"有签名验、无签名放行"。`verify_signatures`
+    /// 配置关闭时跳过签名校验（死字段接线）。
+    #[allow(clippy::too_many_arguments)]
     pub async fn new(
         plugins_dir: PathBuf,
         config: Arc<RwLock<PluginConfig>>,
         adapter_manager: Arc<AdapterManager>,
         event_bus: Arc<EventBus>,
+        production: bool,
     ) -> Self {
         let trust_path = plugins_dir.join(".trust");
-        let trust_store = Arc::new(RwLock::new(TrustStore::load(&trust_path)));
-        let loader = Arc::new(PluginLoader::new(plugins_dir.clone()));
+        let trust_store = Arc::new(std::sync::RwLock::new(TrustStore::load(&trust_path)));
         let cfg = config.read().await;
+
+        let policy = if production && !cfg.allow_untrusted {
+            // prod 且不允许未受信任：强制签名 + 发布者信任（配置 trusted_publishers ∪ .trust）
+            PluginLoadPolicy::strict(Some(Arc::new(CompositePublisherTrust::new(
+                trust_store.clone(),
+                cfg.trusted_publishers.clone(),
+            ))))
+        } else {
+            PluginLoadPolicy {
+                verify_signatures: cfg.verify_signatures,
+                require_signatures: false,
+                trust: None,
+            }
+        };
+        let loader = Arc::new(PluginLoader::with_policy(plugins_dir.clone(), policy));
         let registries = build_registries(&cfg);
         drop(cfg);
         Self {
@@ -182,7 +203,7 @@ impl PluginManager {
         &self.loader
     }
 
-    pub fn trust_store(&self) -> &Arc<RwLock<TrustStore>> {
+    pub fn trust_store(&self) -> &Arc<std::sync::RwLock<TrustStore>> {
         &self.trust_store
     }
 
@@ -271,6 +292,13 @@ impl PluginManager {
             // 签名状态（读文件验签，不 dlopen）
             let (signed, signature_valid, publisher) = inspect_signature(&path, &manifest);
 
+            // 平台/加载失败映射：`load_all` 按**目录名**记录，市场安装目录名 ==
+            // manifest.name；手动放置插件目录名可能与 manifest.name 不一致 →
+            // 先按 manifest.name 查，未命中回退目录名。
+            let lookup = [manifest.name.as_str(), name.as_str()];
+            let platform = lookup.iter().find_map(|n| platforms.get(*n)).cloned();
+            let load_error = lookup.iter().find_map(|n| failures.get(*n)).cloned();
+
             out.push(InstalledPlugin {
                 name: manifest.name.clone(),
                 display_name: manifest.display_name.clone(),
@@ -281,8 +309,8 @@ impl PluginManager {
                 signed,
                 signature_valid,
                 publisher: publisher.or_else(|| manifest.author.clone()),
-                platform: platforms.get(&manifest.name).cloned(),
-                load_error: failures.get(&manifest.name).cloned(),
+                platform,
+                load_error,
             });
         }
         out
@@ -410,8 +438,10 @@ impl PluginManager {
                 })?
         };
 
-        // 已装插件更新：信任视为已授予（保持原信任）；不降级
-        self.install_meta(registry, &source, meta, true, false, true)
+        // 已装插件更新：同密钥信任视为已授予；发布者换了公钥（密钥轮换/泄露）→
+        // `is_publisher_trusted` 判定未受信任 → 返回 `needs_trust` 由 CLI/UI 显式确认。
+        // `trust=false`：更新**不自动**写入 `.trust`（对齐"一次性确认"信任语义）。
+        self.install_meta(registry, &source, meta, false, false, true)
             .await
     }
 
@@ -467,8 +497,13 @@ impl PluginManager {
         public_key_b64: &str,
     ) -> Result<(), SigningError> {
         parse_public_key(public_key_b64)?;
-        let mut trust = self.trust_store.write().await;
+        let mut trust = self
+            .trust_store
+            .write()
+            .map_err(|_| SigningError::Other("trust store lock poisoned".to_string()))?;
         trust.add(publisher, public_key_b64);
+        // 确保 plugins 目录存在（市场安装前目录可能尚未创建）
+        std::fs::create_dir_all(&self.plugins_dir)?;
         trust.save(&self.trust_path)
     }
 
@@ -502,7 +537,23 @@ impl PluginManager {
         let content = std::fs::read_to_string(&manifest_path)?;
         let manifest = parse_manifest_yaml(&content)?;
         validate_name(&manifest.name)?;
+        // 库名只允许裸文件名（与市场安装一致；比 `library_path` 的绝对路径/`..` 检查更早、更严）
+        if let Some(lib) = &manifest.library {
+            validate_library_name(lib)?;
+        }
         check_abi(&manifest.name, manifest.sdk_version)?;
+
+        // requires.easybot 兼容范围校验（离线 `--file` 读 plugin.yaml 的 requires）
+        if let Some(req) = &manifest.requires
+            && let Some(range) = &req.easybot
+            && !check_easybot_range(range, env!("CARGO_PKG_VERSION"))
+        {
+            return Err(PluginManagerError::EasyBotVersionRequirement {
+                name: manifest.name.clone(),
+                range: range.clone(),
+                current: env!("CARGO_PKG_VERSION").to_string(),
+            });
+        }
 
         let lib_path = manifest
             .library_path(dir)
@@ -523,22 +574,16 @@ impl PluginManager {
             let trusted = self
                 .is_publisher_trusted(&sig.publisher, &sig.public_key)
                 .await;
-            if !trusted {
-                if !req.trust {
-                    return Ok(InstallOutcome {
-                        name: manifest.name.clone(),
-                        publisher: sig.publisher.clone(),
-                        version: manifest.version.clone(),
-                        needs_trust: true,
-                        upgraded: false,
-                    });
-                }
-                self.trust_store
-                    .write()
-                    .await
-                    .add(&sig.publisher, &sig.public_key);
-                self.save_trust().await?;
+            if !trusted && !req.trust {
+                return Ok(InstallOutcome {
+                    name: manifest.name.clone(),
+                    publisher: sig.publisher.clone(),
+                    version: manifest.version.clone(),
+                    needs_trust: true,
+                    upgraded: false,
+                });
             }
+            // 一次性确认：不写入 `.trust`（显式 `plugin trust <publisher>` 才写）
             signature = Some(sig);
         } else if !self.config.read().await.allow_untrusted {
             return Err(PluginManagerError::SignatureRequired(manifest.name));
@@ -564,13 +609,14 @@ impl PluginManager {
         // 否则加载期（libloading + 磁盘库验签）找不到正确扩展名的库。
         // 曾传字面量 "host"——既不含 "windows" 也不含 "apple"，恒落入 `.so`
         // 分支，macOS/Windows 上离线 `install --file` 落位错误、验签失效。
-        let staging = self.marketplace_tmp().await?;
         let library_file = manifest.library.clone().unwrap_or_else(|| {
             let triple = current_target_triple()
                 .map(|s| s.to_string())
                 .unwrap_or_else(|_| "unknown".to_string());
             default_library_name(&manifest.name, &triple)
         });
+        validate_library_name(&library_file)?;
+        let staging = self.marketplace_tmp().await?;
         let staging_lib = staging.join(&library_file);
         if let Err(e) = std::fs::copy(&lib_path, &staging_lib) {
             let _ = std::fs::remove_dir_all(&staging);
@@ -649,11 +695,18 @@ impl PluginManager {
         }
 
         // 下载 + 验签 + 信任确认（临时目录与 plugins_dir 同文件系统，rename 原子）
-        let staging = self.marketplace_tmp().await?;
+        //
+        // 元数据（URL/库文件名）来自不可信市场端 → 下载前先做防御性校验：
+        // - `artifact.url` 只允许 https + GitHub 主机（防 SSRF 与跨源下载）
+        // - `library` 只允许裸文件名（防路径穿越；下载前就拒绝，避免把文件写进
+        //    staging 之外的路径）
+        validate_artifact_url(&artifact.url)?;
         let library_file = artifact
             .library
             .clone()
             .unwrap_or_else(|| default_library_name(&name, triple));
+        validate_library_name(&library_file)?;
+        let staging = self.marketplace_tmp().await?;
         let lib_path = staging.join(&library_file);
 
         let mut signature: Option<PluginSignature> = None;
@@ -674,24 +727,17 @@ impl PluginManager {
             };
             verify_artifact(&data, sig_b64, pk_b64).map_err(PluginManagerError::Signing)?;
 
-            // 信任确认（验签通过后才记录信任）
+            // 信任确认（验签通过后判定；`trust=true` 仅一次性放行，**不写入** `.trust`）
             let trusted = self.is_publisher_trusted(&source.publisher, pk_b64).await;
-            if !trusted {
-                if !trust {
-                    let _ = std::fs::remove_dir_all(&staging);
-                    return Ok(InstallOutcome {
-                        name,
-                        publisher: source.publisher.clone(),
-                        version: meta.version.clone(),
-                        needs_trust: true,
-                        upgraded: installed.is_some(),
-                    });
-                }
-                self.trust_store
-                    .write()
-                    .await
-                    .add(&source.publisher, pk_b64);
-                self.save_trust().await?;
+            if !trusted && !trust {
+                let _ = std::fs::remove_dir_all(&staging);
+                return Ok(InstallOutcome {
+                    name,
+                    publisher: source.publisher.clone(),
+                    version: meta.version.clone(),
+                    needs_trust: true,
+                    upgraded: installed.is_some(),
+                });
             }
             signature = Some(build_signature(
                 source,
@@ -753,8 +799,8 @@ impl PluginManager {
         drop(cfg);
         self.trust_store
             .read()
-            .await
-            .is_trusted(publisher, public_key_b64)
+            .map(|t| t.is_trusted(publisher, public_key_b64))
+            .unwrap_or(false)
     }
 
     /// 停止并注销插件适配器（卸载/禁用时）
@@ -781,14 +827,6 @@ impl PluginManager {
         }
         std::fs::create_dir_all(&dir)?;
         Ok(dir)
-    }
-
-    async fn save_trust(&self) -> Result<(), PluginManagerError> {
-        self.trust_store
-            .read()
-            .await
-            .save(&self.trust_path)
-            .map_err(PluginManagerError::Signing)
     }
 }
 
@@ -878,6 +916,10 @@ pub fn scan_unverified(
                 continue;
             }
         };
+        // 禁用插件不加载 → 无需验签（否则生产启动会因故意禁用的未签名插件误拒）
+        if !manifest.is_enabled() {
+            continue;
+        }
         let lib_path = match manifest.library_path(&dir) {
             Ok(lp) => lp,
             Err(e) => {
@@ -974,6 +1016,7 @@ mod tests {
                 config,
                 Arc::new(AdapterManager::new()),
                 Arc::new(EventBus::new()),
+                false,
             )
             .await,
         );
@@ -1006,7 +1049,9 @@ mod tests {
             verified: trusted,
         };
         let artifact = PluginArtifact {
-            url: "https://example.test/lib.so".into(),
+            url: format!(
+                "https://github.com/EasyIndie/easybot-plugin-{name}/releases/download/v{version}/lib{name}.so"
+            ),
             size: data.len() as u64,
             sha256: sha.clone(),
             signature: Some(sig),
@@ -1082,13 +1127,14 @@ mod tests {
             b"plugin-bytes"
         );
 
-        // .trust 已记录该发布者（trust: true 也写入，因为安装成功且验签通过）
+        // trust: true 是**一次性确认**，不写入 `.trust`（显式 plugin trust 才写）
         assert!(
-            manager
+            !manager
                 .trust_store()
                 .read()
-                .await
-                .is_trusted("easybot", &pk_b64)
+                .unwrap()
+                .is_trusted("easybot", &pk_b64),
+            "install --yes must NOT auto-write .trust (explicit plugin trust required)"
         );
 
         // list_installed 展示签名有效
@@ -1157,7 +1203,7 @@ mod tests {
     async fn test_update_pins_current_version_by_default() {
         let home = temp_home("update");
         let plugins = home.join("plugins");
-        let (_, registry, _) = signed_meta("slack", "1.0.0", "easybot", true);
+        let (_, registry, pk_b64) = signed_meta("slack", "1.0.0", "easybot", true);
         let manager = manager_with(plugins.clone(), registry).await;
         manager
             .install(InstallRequest {
@@ -1167,6 +1213,8 @@ mod tests {
             })
             .await
             .unwrap();
+        // 显式信任发布者（更新不自动写 .trust，且同密钥才通过）
+        manager.trust_publisher("easybot", &pk_b64).await.unwrap();
 
         // 默认 pin 当前版本：同版本重拉（重建刷新），不跨版本
         let outcome = manager
@@ -1188,6 +1236,55 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(err, PluginManagerError::AlreadyInstalled(_)));
+
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[tokio::test]
+    async fn test_update_key_rotation_requires_re_trust() {
+        let home = temp_home("update-key-rotation");
+        let plugins = home.join("plugins");
+        let (_, registry, pk_a) = signed_meta("slack", "1.0.0", "easybot", true);
+        let manager = manager_with(plugins.clone(), registry).await;
+        manager
+            .install(InstallRequest {
+                qualified: "slack".into(),
+                trust: true,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        // 显式信任密钥 A
+        manager.trust_publisher("easybot", &pk_a).await.unwrap();
+
+        // 发布者换了签名密钥（密钥轮换/泄露）：signed_meta 每次生成独立密钥对，
+        // v2.0.0 用的是另一把密钥 B → 同发布者信任不再成立 → 更新需重新信任
+        let (_, reg_v2, _pk_b) = signed_meta("slack", "2.0.0", "easybot", true);
+        manager.set_registry_sources(vec![Arc::new(reg_v2)]).await;
+        let outcome = manager
+            .update(
+                "slack",
+                UpdateOptions {
+                    latest: true,
+                    channel: None,
+                },
+            )
+            .await
+            .unwrap();
+        assert!(
+            outcome.needs_trust,
+            "changed signing key must require explicit re-trust"
+        );
+        // needs_trust 在落位前返回 → 已装的 v1.0.0 目录保持原样（未被 v2 覆盖）
+        assert_eq!(
+            manager
+                .read_installed_manifest("slack")
+                .await
+                .unwrap()
+                .unwrap()
+                .version,
+            "1.0.0"
+        );
 
         let _ = std::fs::remove_dir_all(&home);
     }
@@ -1326,6 +1423,157 @@ mod tests {
         let out = scan_unverified(&plugins, &cfg, &TrustStore::default());
         let (_, reason) = out.iter().find(|(n, _)| n == "untrusted-plugin").unwrap();
         assert!(reason.contains("verification failed"), "{reason}");
+
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn test_scan_unverified_skips_disabled_plugins() {
+        let home = temp_home("scan-disabled");
+        let plugins = home.join("plugins");
+        std::fs::create_dir_all(&plugins).unwrap();
+
+        // 故意禁用的未签名插件 → 不报告（不加载 → 无需验签）
+        let disabled_dir = plugins.join("disabled-plugin");
+        std::fs::create_dir_all(&disabled_dir).unwrap();
+        std::fs::write(
+            disabled_dir.join("plugin.yaml"),
+            "name: disabled-plugin\nsdk_version: 1\nenabled: false\n",
+        )
+        .unwrap();
+
+        let out = scan_unverified(&plugins, &PluginConfig::default(), &TrustStore::default());
+        assert!(out.is_empty(), "{out:?}");
+
+        // 同目录启用 → 缺签名被报告
+        std::fs::write(
+            disabled_dir.join("plugin.yaml"),
+            "name: disabled-plugin\nsdk_version: 1\n",
+        )
+        .unwrap();
+        let out = scan_unverified(&plugins, &PluginConfig::default(), &TrustStore::default());
+        assert!(out.iter().any(|(n, _)| n == "disabled-plugin"), "{out:?}");
+
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[tokio::test]
+    async fn test_explicit_trust_writes_trust_store() {
+        let home = temp_home("trust-explicit");
+        let plugins = home.join("plugins");
+        let (_, registry, pk_b64) = signed_meta("slack", "1.0.0", "easybot", false);
+        let manager = manager_with(plugins.clone(), registry).await;
+
+        // 安装不写 .trust
+        manager
+            .install(InstallRequest {
+                qualified: "easybot/slack".into(),
+                trust: true,
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert!(
+            !manager
+                .trust_store()
+                .read()
+                .unwrap()
+                .is_trusted("easybot", &pk_b64)
+        );
+
+        // 显式 plugin trust → 写入 .trust 且落盘
+        manager.trust_publisher("easybot", &pk_b64).await.unwrap();
+        assert!(
+            manager
+                .trust_store()
+                .read()
+                .unwrap()
+                .is_trusted("easybot", &pk_b64)
+        );
+        let on_disk = TrustStore::load(&plugins.join(".trust"));
+        assert!(on_disk.is_trusted("easybot", &pk_b64));
+
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[tokio::test]
+    async fn test_install_from_file_validates_library_and_requires() {
+        let home = temp_home("install-file");
+        let plugins = home.join("plugins");
+        let (_, registry, _) = signed_meta("slack", "1.0.0", "easybot", true);
+        let manager = manager_with(plugins.clone(), registry).await;
+
+        let src = home.join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("libslack.so"), b"plugin-bytes").unwrap();
+        std::fs::write(
+            src.join("plugin.yaml"),
+            "name: slack\nsdk_version: 1\nlibrary: libslack.so\nrequires:\n  easybot: \">=99.0.0\"\n",
+        )
+        .unwrap();
+
+        // requires 不满足 → 拒绝
+        let err = manager
+            .install(InstallRequest {
+                qualified: "slack".into(),
+                file: Some(src.clone()),
+                ..Default::default()
+            })
+            .await
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            PluginManagerError::EasyBotVersionRequirement { .. }
+        ));
+
+        // library 路径穿越 → 拒绝
+        std::fs::write(
+            src.join("plugin.yaml"),
+            "name: slack\nsdk_version: 1\nlibrary: ../../etc/passwd\n",
+        )
+        .unwrap();
+        let err = manager
+            .install(InstallRequest {
+                qualified: "slack".into(),
+                file: Some(src.clone()),
+                ..Default::default()
+            })
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(err, PluginManagerError::InvalidLibrary(_)),
+            "{err:?}"
+        );
+
+        // 合法输入（签名 + 已信任发布者）→ 安装成功
+        let (signing, verifying) = generate_keypair();
+        let pk_b64 = encode_public_key(&verifying);
+        let sig = PluginSignature {
+            schema_version: SIGNATURE_SCHEMA_VERSION,
+            name: "slack".into(),
+            version: "0.1.0".into(),
+            publisher: "easybot".into(),
+            artifact: "libslack.so".into(),
+            signature: sign_artifact(b"plugin-bytes", &signing),
+            public_key: pk_b64.clone(),
+        };
+        sig.write_to(&src.join("plugin.sig.json")).unwrap();
+        manager.trust_publisher("easybot", &pk_b64).await.unwrap();
+        std::fs::write(
+            src.join("plugin.yaml"),
+            "name: slack\nsdk_version: 1\nlibrary: libslack.so\n",
+        )
+        .unwrap();
+        let outcome = manager
+            .install(InstallRequest {
+                qualified: "slack".into(),
+                file: Some(src),
+                ..Default::default()
+            })
+            .await
+            .unwrap();
+        assert!(!outcome.needs_trust);
+        assert!(plugins.join("slack").join("libslack.so").exists());
 
         let _ = std::fs::remove_dir_all(&home);
     }

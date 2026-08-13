@@ -102,6 +102,9 @@ qrcode = { version = "0.14", default-features = false }
 # 语义版本比较
 semver = "1"
 
+# URL 解析（插件 artifact 下载源校验）
+url = "2"
+
 [profile.release]
 opt-level = 3
 lto = "fat"

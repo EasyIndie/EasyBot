@@ -102,7 +102,21 @@ pub fn scaffold(opts: &ScaffoldOptions) -> anyhow::Result<PathBuf> {
     println!("    cd {}", root.display());
     println!("    cargo build --release   # build self-contained cdylib");
     println!("    cargo test              # offline unit + PluginTestHost tests");
-    println!("    easybot plugin dev {name}  # build + install into local host (dev)");
+    let lib_ext = if cfg!(target_os = "macos") {
+        "dylib"
+    } else if cfg!(target_os = "windows") {
+        "dll"
+    } else {
+        "so"
+    };
+    println!(
+        "    cp target/release/lib{}.{} ./   # copy the cdylib next to plugin.yaml",
+        crate_name(name),
+        lib_ext
+    );
+    println!(
+        "    easybot plugin install --file . {name}  # install into local host (offline path, full verify)"
+    );
     println!();
     println!("  Publish: see README.md (gen-keypair → register public key → push tag)");
     Ok(root)

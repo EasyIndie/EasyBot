@@ -67,9 +67,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **配置** — `GatewayConfig` 新增 `plugins:` 段（`directory` / `autoLoad` /
   `verifySignatures` / `allowUntrusted` / `trustedPublishers` / `registries`），
   `easybot --init` 展开默认值。
+- **配置字段接线** — `plugins.directory`（插件目录，相对/绝对路径）、
+  `plugins.autoLoad`（启动自动加载）、`plugins.verifySignatures`（关闭签名校验）
+  现全部生效；目录由 `resolve_plugins_dir` 统一解析，生产门禁 / 加载 / CLI 一致。
+- **生产模式加载策略** — 生产启动时 `PluginManager` 使用 strict 加载策略（强制签名
+  + 发布者信任，信任 = 配置 `trustedPublishers` ∪ 用户 `.trust`）；`plugins.allowUntrusted:
+  true` 时退化为"有签名验、无签名放行"。dev 恒 lenient 不受影响。
 
 ### Fixed
 
+- **信任语义落地（对齐文档）** — `plugin install --yes` / API `trust: true` 现与文档
+  一致，**不再自动**把发布者写入 `.trust`（此前实现会写入）——一次性确认仅放行本次
+  安装；`plugin update` 在发布者更换签名密钥（密钥轮换/泄露）时返回 `needs_trust`，
+  需显式 `plugin trust` 重新信任。
+- **安装下载加固（安全）** — `artifact.url` 仅允许 https + GitHub 主机（防 SSRF /
+  host 混淆）；`artifact.library` 与 `plugin.yaml` 的 `library` 仅允许裸文件名
+  （防路径穿越，下载前拒绝）；`--file` 离线安装同步校验 `requires.easybot` 兼容范围。
+- **生产启动扫描跳过禁用插件** — `enabled:false` 的插件不加载、无需验签，不再被
+  生产门禁误拒。
 - **`install --file` 缺省库名按宿主 triple 推导** — 此前传字面量 `"host"`（既不含
   `windows` 也不含 `apple`），macOS/Windows 上离线安装落位为 `.so` 扩展名错误、
   加载期重验签失效；现按 `current_target_triple()` 推导。

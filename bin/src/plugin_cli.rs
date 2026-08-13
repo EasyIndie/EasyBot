@@ -102,11 +102,14 @@ pub async fn run(cmd: &PluginCmd, dir: Option<String>) -> anyhow::Result<()> {
     easybot_core::config::load_env(&paths)?;
     let config = load_merged_config(&paths).await;
 
+    // 插件目录与宿主解析一致（`plugins.directory` 死字段接线）；CLI 非生产模式
+    let plugins_dir = easybot_core::config::resolve_plugins_dir(&config.plugins.directory, &home);
     let manager = PluginManager::new(
-        paths.plugins_dir.clone(),
+        plugins_dir,
         Arc::new(RwLock::new(config.plugins.clone())),
         Arc::new(easybot_core::adapter::AdapterManager::new()),
         Arc::new(easybot_core::bus::EventBus::new()),
+        false,
     )
     .await;
 
@@ -320,6 +323,14 @@ async fn update(
         channel: channel.map(parse_channel),
     };
     let outcome = manager.update(name, opts).await?;
+    if outcome.needs_trust {
+        // 发布者换了公钥（密钥轮换/泄露）：同发布者信任不再成立，需显式重新信任
+        anyhow::bail!(
+            "update of '{name}' requires re-trusting publisher '{}' (its signing key changed).\n  This may indicate key rotation — verify the new key first, then:\n  `easybot plugin trust {} --public-key <base64>`",
+            outcome.publisher,
+            outcome.publisher
+        );
+    }
     println!(
         "✓ Updated {} → v{} (signature-verified)",
         outcome.name, outcome.version

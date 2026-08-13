@@ -38,6 +38,7 @@ libloading = { workspace = true, optional = true }
 utoipa = { workspace = true }
 sysinfo.workspace = true
 semver.workspace = true
+url.workspace = true
 
 [dev-dependencies]
 wiremock = "0.6"
