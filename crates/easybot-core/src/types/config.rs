@@ -64,9 +64,9 @@ pub struct PluginConfig {
     pub allow_untrusted: bool,
 
     /// 受信任发布者公钥（发布者标识 → base64 ed25519 验证公钥）。
-    /// 官方发布者公钥通过 PR 进主仓默认列表；用户可通过 `.trust` 文件
-    /// 追加对单个发布者的信任（`easybot plugin trust <publisher>`）。
-    #[serde(default)]
+    /// 官方发布者公钥随版本内置（`default_trusted_publishers`）；用户可通过
+    /// `.trust` 文件追加对单个发布者的信任（`easybot plugin trust <publisher>`）。
+    #[serde(default = "default_trusted_publishers")]
     pub trusted_publishers: HashMap<String, String>,
 
     /// 插件注册源列表（Homebrew Taps 模型；官方市场为默认源）。
@@ -82,7 +82,7 @@ impl Default for PluginConfig {
             auto_load: default_true(),
             verify_signatures: default_true(),
             allow_untrusted: false,
-            trusted_publishers: HashMap::new(),
+            trusted_publishers: default_trusted_publishers(),
             registries: default_registries(),
         }
     }
@@ -133,6 +133,21 @@ fn default_registries() -> Vec<RegistryConfig> {
         repo: "EasyBot-Plugins".into(),
         url: String::new(),
     }]
+}
+
+/// 官方发布者公钥（发布者标识 → base64 ed25519 验证公钥）。
+/// 随版本内置，安装官方插件无需额外信任；社区发布者经
+/// `plugin trust <publisher>` 或配置覆盖显式登记。
+/// 注意：仅登记公钥（验证密钥），非凭据；与 `easybot-plugin-sign` 的
+/// STANDARD base64 编码一致（含 `=` 填充），否则字符串精确匹配会失败。
+fn default_trusted_publishers() -> HashMap<String, String> {
+    HashMap::from([(
+        "EasyIndie".to_string(),
+        // easybot-hello-adapter 发布者密钥（2026-08-13 登记；泄露即从此列表移除）。
+        // 注意：2026-08-13 首登公钥 `3d2n...issQ=` 对应私钥在 CI secret 中因
+        // base64 padding 损坏无法使用，已更换为 `rNLow...ldtg=`（未发布任何产物）。
+        "rNLowg/ZHXoUKgbHiOfD55PIDT2f0F0EdyUaZnSldtg=".to_string(),
+    )])
 }
 
 /// 服务器配置
