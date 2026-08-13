@@ -51,9 +51,31 @@ permissions:
   contents: read
 
 jobs:
+  # ── 0. 守卫：本模板是给插件仓库 copy 用的，只在真正的插件工程里运行 ──
+  # 主仓 EasyIndie/EasyBot 的根 Cargo.toml 是 `[workspace]`（无 `[package]`），
+  # 若不加守卫，每次打 tag 都会在此触发一次无意义的 6-target 构建并失败。
+  # 结构判断而非硬编码仓库名：任何"根 Cargo.toml 无 [package]"的非插件仓库也会被跳过。
+  guard:
+    name: Guard (plugin project?)
+    runs-on: ubuntu-latest
+    outputs:
+      is_plugin: ${{ steps.check.outputs.is_plugin }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - id: check
+        run: |
+          if grep -q '^\[package\]' Cargo.toml 2>/dev/null; then
+            echo "is_plugin=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::根 Cargo.toml 无 [package]，非插件工程；跳过 Publish Plugin 工作流。"
+            echo "is_plugin=false" >> "$GITHUB_OUTPUT"
+          fi
+
   # ── 1. 交叉编译 6 target（公开 action，不引用仓库内部 action） ──
   build:
     name: Build ${{ matrix.target }}
+    needs: guard
+    if: needs.guard.outputs.is_plugin == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
