@@ -48,8 +48,10 @@ run_step "cargo build -p mock-adapter" \
 
 # CLI integration tests execute target/debug/easybot directly; cargo test does
 # not build a workspace binary unless it is an explicit test dependency.
-run_step "cargo build -p easybot-bin --bin easybot" \
-    $CARGO build -p easybot-bin --bin easybot --locked
+# plugin 门禁/CLI 测试（tests/integration/src/cli.rs）需要二进制启用 plugin-system，
+# 否则 `plugin` 子命令缺失、生产模式门禁行为不符 —— 必须带该 feature 构建。
+run_step "cargo build -p easybot-bin --bin easybot (plugin-system)" \
+    $CARGO build -p easybot-bin --bin easybot --features plugin-system --locked
 
 run_step "tests (workspace + plugin-system)" \
     $TEST_RUNNER --workspace --features "default,plugin-system" --locked
