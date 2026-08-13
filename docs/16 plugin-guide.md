@@ -1,7 +1,7 @@
 # EasyBot 插件开发完整指南
 
 > 完整参考：生命周期、capability 声明、消息收发/媒体/交互/编辑、事件发布 vs 轮询、配置、错误分类、心跳、资源上限、ABI 纪律、调试。
-> 快速上手（15 分钟教程）见 [`docs/plugin-quickstart.md`](plugin-quickstart.md)；方法论见 [`docs/plugin-methodology.md`](plugin-methodology.md)。
+> 快速上手（15 分钟教程）见 [`docs/15 plugin-quickstart.md`](15%20plugin-quickstart.md)；方法论见 [`docs/17 plugin-methodology.md`](17%20plugin-methodology.md)。
 
 ## 架构与加载流程
 
@@ -20,7 +20,7 @@ plugins/<plugin-name>/
 7. 有 `plugin.sig.json` 则对库文件重新验签（生产模式强制；失败 → `SignatureVerificationFailed`）
 8. 有 `enabled: false` 则标记 `DisabledPlugin` 不加载
 
-> 宿主生产模式对**未签名**插件直接拒绝（见 `docs/SECURITY.md`）。
+> 宿主生产模式对**未签名**插件直接拒绝（见 `docs/18 plugin-security.md`）。
 
 ---
 
@@ -295,10 +295,10 @@ adapters:
 ```yaml
 plugins:
   directory: ~/.easybot/plugins
-  auto_load: true
-  verify_signatures: true
-  allow_untrusted: false
-  trusted_publishers: []
+  autoLoad: true
+  verifySignatures: true
+  allowUntrusted: false
+  trustedPublishers: []
   registries:
     - kind: github
       owner: EasyIndie
@@ -376,7 +376,7 @@ INFO AdapterManager: Registered plugin adapter: my-adapter (My Adapter)
 | `Symbol not found` | 插件未调用 `declare_plugin!` | 添加宏调用 |
 | `Platform conflict` | 平台名已被占用 | 改 `platform_name()` |
 | `Manifest not found` | 插件目录缺 `plugin.yaml` | 创建清单 |
-| `Signature verification failed` | 生产模式签名不匹配 | 用 `plugin install` 重装（带签名）或 `allow_untrusted` |
+| `Signature verification failed` | 生产模式签名不匹配 | 用 `plugin install` 重装（带签名）或 `allowUntrusted` |
 | 装不上/dll 加载失败（Windows） | 缺 `vcruntime140.dll` | 发布时用 `crt-static`；宿主补装 VC runtime |
 
 ### LLDB/gdb

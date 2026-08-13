@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   的 `main.rs` / `Cargo.toml`），宿主与进程内 dlopen 的插件共用默认系统分配器。
   此前宿主 mimalloc + 插件系统 malloc 时，跨 FFI 的 String/Vec/Value 所有权转移会
   交叉 free → SIGABRT；插件各自静态链接 mimalloc 则进程内两套堆 → 析构死锁。
-  现在插件保持默认分配器即可安全收发消息。详见 `docs/plugin-methodology.md`
+  现在插件保持默认分配器即可安全收发消息。详见 `docs/17 plugin-methodology.md`
   「FFI 分配器契约」。
 - **插件 FFI 分配器契约（宿主侧，`PluginAdapterProxy`）** — `PluginLoader::create_adapter()`
   改为返回 `PluginAdapterProxy`：宿主只**借读**插件返回的 `Box<Box<dyn PlatformAdapter>>`
@@ -27,7 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **插件命名规则** — 官方插件统一 `easybot-xxx` 前缀，且同一个名字贯穿仓库名 /
   `[package].name` / cdylib 产物 / `plugin.yaml` name / `platform_name()` / 市场安装名。
-  详见 `docs/plugin-guide.md`「命名规则」。
+  详见 `docs/16 plugin-guide.md`「命名规则」。
 - **主仓与入门样例解耦** — 官方入门样例独立为
   [`EasyIndie/easybot-hello-adapter`](https://github.com/EasyIndie/easybot-hello-adapter)
   （教学样例仓库，含插件开发指南，与主仓仅文档/链接互引）；本仓库移除

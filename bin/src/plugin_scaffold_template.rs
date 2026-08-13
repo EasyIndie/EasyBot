@@ -116,9 +116,9 @@ pub const CARGO_CONFIG: &str = r#"# Cargo 构建配置（对工程内所有 targ
 pub const SRC_LIB_RS: &str = r#"//! __EASYBOT_DISPLAY_NAME__ — EasyBot 适配器插件（`easybot plugin new` 脚手架生成）
 //!
 //! 参考文档：
-//!   - 快速上手：https://github.com/EasyIndie/EasyBot/blob/main/docs/plugin-quickstart.md
-//!   - 完整指南：https://github.com/EasyIndie/EasyBot/blob/main/docs/plugin-guide.md
-//!   - 方法论：  https://github.com/EasyIndie/EasyBot/blob/main/docs/plugin-methodology.md
+//!   - 快速上手：https://github.com/EasyIndie/EasyBot/blob/main/docs/15%20plugin-quickstart.md
+//!   - 完整指南：https://github.com/EasyIndie/EasyBot/blob/main/docs/16%20plugin-guide.md
+//!   - 方法论：  https://github.com/EasyIndie/EasyBot/blob/main/docs/17%20plugin-methodology.md
 //!
 //! 构建 / 测试：
 //!   cargo build --release     # 产出自包含 cdylib（git 依赖 SDK，无需 clone 主仓）
@@ -130,7 +130,7 @@ use std::sync::Arc;
 /// 适配器主体：持有状态与可选的事件总线。
 ///
 /// TODO: 按平台需求添加字段——HTTP client、token、缓存（须带大小上限或 TTL，见
-/// docs/plugin-methodology.md「缓存」一节）。
+/// docs/17 plugin-methodology.md「缓存」一节）。
 pub struct __EASYBOT_STRUCT_NAME__ {
     state: AdapterState,
     event_bus: Option<Arc<EventBus>>,
@@ -142,7 +142,7 @@ impl __EASYBOT_STRUCT_NAME__ {
     /// 构造器（`declare_plugin!` 的入口）。
     ///
     /// 若平台需要非默认初始化，可在此注入 HTTP client 等依赖——测试用 wiremock
-    /// 替换（见 docs/plugin-methodology.md「传输可注入」）。
+    /// 替换（见 docs/17 plugin-methodology.md「传输可注入」）。
     pub fn new() -> Self {
         Self::default()
     }
@@ -206,7 +206,7 @@ impl PlatformAdapter for __EASYBOT_STRUCT_NAME__ {
         // TODO: 建立真实连接（WebSocket / 长轮询）。失败时分类标记：
         //   网络/临时失败 → ConnectResult::failed(msg, Some(ConnectErrorKind::Transient))
         //   凭据被拒     → ConnectResult::failed(msg, Some(ConnectErrorKind::Permanent))
-        // 分类会穿透健康监测的重试/停用决策，见 docs/plugin-methodology.md。
+        // 分类会穿透健康监测的重试/停用决策，见 docs/17 plugin-methodology.md。
         // 注意：后台轮询任务用 tokio::spawn 时须带 Semaphore/JoinSet 并发上限。
         self.state = AdapterState::Connected;
         Ok(ConnectResult::ok(Some(BotInfo {
@@ -351,7 +351,7 @@ fn starts_in_created_state() {
 
 /// `tests/host_test.rs`：PluginTestHost 集成测试（测试金字塔第 2 层）。
 pub const TESTS_HOST: &str = r#"//! PluginTestHost 集成测试：不启动真实网关，在内存宿主里跑通
-//! `attach → init → connect → send → 事件流`（DX-4 / docs/plugin-methodology.md）。
+//! `attach → init → connect → send → 事件流`（DX-4 / docs/17 plugin-methodology.md）。
 //!
 //! 传输可注入方法论：真实适配器把 HTTP client 通过构造器或 `init(config)` 注入，
 //! 协议交互用 wiremock 替换（测试金字塔第 3 层），宿主只负责宿主侧语义。

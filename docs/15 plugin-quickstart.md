@@ -5,7 +5,7 @@
 >
 > 对照示例：官方入门样例 [`EasyIndie/easybot-hello-adapter`](https://github.com/EasyIndie/easybot-hello-adapter)
 > （独立仓库，含完整插件开发指南）是本节教程的产物。
-> 完整参考见 [`docs/plugin-guide.md`](plugin-guide.md)，方法论见 [`docs/plugin-methodology.md`](plugin-methodology.md)。
+> 完整参考见 [`docs/16 plugin-guide.md`](16%20plugin-guide.md)，方法论见 [`docs/17 plugin-methodology.md`](17%20plugin-methodology.md)。
 
 ## 什么是插件
 
@@ -49,7 +49,7 @@ my-adapter/
 
 > **要点**：`Cargo.toml` 的 SDK 依赖是 `git` + `tag`：
 > ```toml
-> easybot-plugin-sdk = { git = "https://github.com/EasyIndie/EasyBot.git", tag = "v0.0.33", package = "easybot-plugin-sdk", features = ["testing"] }
+> easybot-plugin-sdk = { git = "https://github.com/EasyIndie/EasyBot.git", tag = "v0.0.34", package = "easybot-plugin-sdk", features = ["testing"] }
 > ```
 > 构建时自动拉取主仓为依赖，**不需要本地有 EasyBot**。首次拉取后由 cargo 缓存，之后只重编插件 crate，秒级迭代。
 >
@@ -157,7 +157,7 @@ easybot plugin inspect my-adapter     # 清单 / 签名状态 / 加载错误
 
 调试期把 `MY_PLATFORM_TOKEN` 写进 `~/.easybot/.env`（chmod 600）即可。**永远不要**把真实凭据写进 `plugin.yaml` 或提交到 git。
 
-> **生产模式**：`--production`（或 `EASYBOT_ENV=production`）会做签名扫描——手放的未签名插件会被拒绝。要解锁生产动态插件，走 `easybot plugin install`（签名校验）；确要信任未签名插件，设 `plugins.allow_untrusted: true`（见 SECURITY.md）。
+> **生产模式**：`--production`（或 `EASYBOT_ENV=production`）会做签名扫描——手放的未签名插件会被拒绝。要解锁生产动态插件，走 `easybot plugin install`（签名校验）；确要信任未签名插件，设 `plugins.allowUntrusted: true`（见 18 plugin-security.md）。
 
 ---
 
@@ -168,7 +168,7 @@ easybot plugin inspect my-adapter     # 清单 / 签名状态 / 加载错误
 ```bash
 # 1. 生成发布者密钥对（私钥只存 GitHub Actions secret）
 easybot-plugin-sign gen-keypair
-#    输出 PUBLIC_KEY 行 → 通过 PR 提交给 EasyBot 官方登记 trusted_publishers（maintainer 审核）
+#    输出 PUBLIC_KEY 行 → 通过 PR 提交给 EasyBot 官方登记 trustedPublishers（maintainer 审核）
 
 # 2. 私钥存进插件仓库 Actions secret：PUBLISHER_PRIVATE_KEY
 # 3. 按需改 .github/workflows/plugin-publish.yml 顶部的 env（CHANNEL / EASYBOT_REQUIRES / ...）
@@ -187,7 +187,7 @@ easybot plugin update my-adapter             # 更新默认 pin 当前版本
 easybot plugin trust <publisher> --public-key <PUBLIC_KEY>   # 显式信任发布者
 ```
 
-> **签名 ≠ 安全**：签名只证明「代码来自该发布者、未被篡改」，不证明代码无害。插件以宿主权限进程内运行，无沙箱。安装第三方发布者插件前请自行评估；生产环境建议把 EasyBot 跑在容器里（见 `docs/docker-compose.plugin-dev.yml` 与 `docs/SECURITY.md`）。
+> **签名 ≠ 安全**：签名只证明「代码来自该发布者、未被篡改」，不证明代码无害。插件以宿主权限进程内运行，无沙箱。安装第三方发布者插件前请自行评估；生产环境建议把 EasyBot 跑在容器里（见 `docs/docker-compose.plugin-dev.yml` 与 `docs/18 plugin-security.md`）。
 
 ### 离线分发（`install --file`，空气隔离环境）
 
@@ -210,6 +210,6 @@ easybot plugin install my-adapter --file ./my-adapter-dist/
 
 ## 后续
 
-- **完整参考**：`docs/plugin-guide.md` —— 生命周期状态机、capability 声明、媒体/交互/编辑消息、事件发布 vs 轮询、配置、错误分类、心跳、资源上限、ABI 纪律、调试技巧。
-- **方法论**：`docs/plugin-methodology.md` —— 适配器设计原则、Transient/Permanent 错误分类、心跳语义、缓存/并发上限、安全边界。
+- **完整参考**：`docs/16 plugin-guide.md` —— 生命周期状态机、capability 声明、媒体/交互/编辑消息、事件发布 vs 轮询、配置、错误分类、心跳、资源上限、ABI 纪律、调试技巧。
+- **方法论**：`docs/17 plugin-methodology.md` —— 适配器设计原则、Transient/Permanent 错误分类、心跳语义、缓存/并发上限、安全边界。
 - **本地联调 SDK**：不想每次让 cargo 拉 git，可把 SDK 指向本地主仓 checkout——在 `Cargo.toml` 取消注释 `[patch."https://github.com/EasyIndie/EasyBot.git"]` 并填本地路径。

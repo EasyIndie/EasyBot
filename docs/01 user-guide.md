@@ -516,7 +516,7 @@ easybot [OPTIONS] [COMMAND]
   easybot plugin inspect <name>            # 检查插件（清单/签名/加载错误）
 ```
 
-> 插件安装/信任/更新等完整语义见 `docs/plugin-quickstart.md` 与 `docs/SECURITY.md`。
+> 插件安装/信任/更新等完整语义见 `docs/15 plugin-quickstart.md` 与 `docs/18 plugin-security.md`。
 
 ### 6.2 Makefile 命令
 
@@ -1003,7 +1003,7 @@ deploy:
 - 容器：`cap_drop: ALL`、只读根文件系统、`no-new-privileges`
 - 密钥：文件权限 chmod 600、日志输出自动掩码
 - 认证：Argon2 哈希存储 API Key
-- **插件**：生产模式强制 ed25519 签名校验——只装官方市场或已 `plugin trust` 的发布者；**签名证作者 ≠ 代码安全**，插件无沙箱以宿主权限运行，建议容器化兜底（详见 `docs/SECURITY.md`）。未签名/未信任插件需设 `plugins.allowUntrusted: true` 才可加载。
+- **插件**：生产模式强制 ed25519 签名校验——只装官方市场或已 `plugin trust` 的发布者；**签名证作者 ≠ 代码安全**，插件无沙箱以宿主权限运行，建议容器化兜底（详见 `docs/18 plugin-security.md`）。未签名/未信任插件需设 `plugins.allowUntrusted: true` 才可加载。
 
 ---
 

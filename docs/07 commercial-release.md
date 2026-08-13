@@ -14,7 +14,7 @@ git push origin v0.1.0
 
 ## 发布执行步骤（机械流程）
 
-以下为从 `0.0.X` 发布到 `0.0.Y` 的完整机械步骤（`v0.0.33` 验证）。版本号同步涉及 20+ 文件，改错会破坏发布门禁：
+以下为从 `0.0.X` 发布到 `0.0.Y` 的完整机械步骤（`v0.0.34` 验证）。版本号同步涉及 20+ 文件，改错会破坏发布门禁：
 
 1. **CHANGELOG**：`[Unreleased]` 下新增 `[0.0.Y] - YYYY-MM-DD` 条目（Keep a Changelog，中文）。
 2. **版本号同步**：`Cargo.toml`（`version`）、`Cargo.lock`（`cargo update --workspace`）、`compose.quickstart.yml`、`crates/easybot-api/src/routes/update.rs`（`#[schema(example)]`）、`crates/easybot-api/tests/routes.rs`（`current_version` 断言）、`routes__health_response.snap`、`openapi_v1_contract.snap`（`version`+`example`）、`docs/01 user-guide.md`（health JSON/下载 URL/时间戳行）、`docs/other/windows-deployment.md`（版本要求）。`deploy-kit/deploy.sh` 注释示例按约定指向**下一个**版本。

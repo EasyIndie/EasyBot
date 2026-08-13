@@ -15,7 +15,7 @@
 #
 # 说明：
 #   - 本示例偏**开发**：挂载整个插件工程、plugins 目录可写、跟随日志、开 --debug。
-#     生产加固请收紧（read_only、cap_drop、非 root、最小挂载），见 docs/SECURITY.md。
+#     生产加固请收紧（read_only、cap_drop、非 root、最小挂载），见 docs/18 plugin-security.md。
 #   - 容器内 EASYBOT_HOME=/var/lib/easybot，插件目录默认 {config_dir}/plugins。
 #   - --debug 与 dev 环境（未设 --production）使未签名插件也能加载；生产模式会做签名扫描。
 #   - 平台凭据用 *_FILE 或环境变量注入（对齐 compose.quickstart.yml 约定）。
