@@ -2,7 +2,10 @@ target/
 .git/
 .gitignore
 .claude/
-plugins/
+# 仓库内 workspace 成员需进入构建上下文（cargo workspace 解析其清单）；
+# 其余 plugins/（如 example-slack-plugin 独立示例）仍排除。
+plugins/*
+!plugins/example-hello-adapter/
 docs/
 gateway.local.yaml
 .env
