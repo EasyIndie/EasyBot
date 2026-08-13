@@ -135,6 +135,22 @@ let sem = Arc::new(Semaphore::new(16));
 - 升级 SDK 到不兼容版本 = 重新发布插件（按 `sdkVersion` 重建）。
 - 宿主侧 ABI 常量是 loader 自身那份（`plugin/loader.rs`），SDK 发布侧用 SDK 那份（`easybot-plugin-sdk/src/ffi.rs`），两处互相注释「同步」——发布时保持一致。
 - `panic = "abort"`：跨 FFI 不得 unwind。
+- **FFI 分配器契约（最深的坑）**：插件在进程内 dlopen，与宿主通过 FFI 收发
+  String/Vec/Value 等**带堆所有权**的值（宿主构造→插件 Drop，或反向），两侧
+  **必须共用同一全局分配器**。因此：
+  - **宿主侧**：禁用自定义 `#[global_allocator]`（`bin/Cargo.toml` 已移除
+    mimalloc 并注释警示，防止回归）。宿主 mimalloc + 插件系统 malloc → 交叉
+    free → SIGABRT；插件各自静态链接 mimalloc → 进程内两套堆 → 析构死锁。
+  - **宿主侧（`PluginLoader::create_adapter`）**：改为返回 `PluginAdapterProxy`——
+    宿主只**借读**插件返回的 `Box<Box<dyn PlatformAdapter>>` 胖指针
+    （`ptr::read` + `ManuallyDrop`，不取得所有权），代理 Drop 时调用插件的
+    `easybot_plugin_destroy`——**谁分配谁释放**。即便两侧分配器不同也不交叉释放。
+    旧实现宿主 `Box::from_raw` 后用自己的分配器释放插件内存，Linux musl-static
+    宿主跨堆释放即 UB（macOS 两侧共享系统 libc 无感，故早期未暴露）。
+  - **插件侧**：同样**不要**声明 `#[global_allocator]`，保持默认（= System）。
+  - 完整诊断过程（症状/根因/验证）见独立样例仓库
+    [`EasyIndie/easybot-hello-adapter`](https://github.com/EasyIndie/easybot-hello-adapter)
+    的[插件开发指南 §8.1「FFI 分配器契约」](https://github.com/EasyIndie/easybot-hello-adapter/blob/main/docs/plugin-development-guide.md)。
 
 ---
 

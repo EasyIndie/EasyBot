@@ -3,7 +3,8 @@
 > 从零写一个 EasyBot 适配器插件：脚手架 → 接一个平台 HTTP API → 本地运行 → 测试 → 发布。
 > 全程不需要 clone EasyBot 主仓。
 >
-> 对照示例：仓库内 [`plugins/example-hello-adapter/`](../plugins/example-hello-adapter/) 是本节教程的产物。
+> 对照示例：官方入门样例 [`EasyIndie/easybot-hello-adapter`](https://github.com/EasyIndie/easybot-hello-adapter)
+> （独立仓库，含完整插件开发指南）是本节教程的产物。
 > 完整参考见 [`docs/plugin-guide.md`](plugin-guide.md)，方法论见 [`docs/plugin-methodology.md`](plugin-methodology.md)。
 
 ## 什么是插件
@@ -181,7 +182,7 @@ git push origin v0.1.0
 
 ```bash
 easybot plugin install my-adapter            # 首次装第三方发布者需确认信任
-easybot plugin install easybot/my-adapter    # 支持 publisher/name 限定
+easybot plugin install EasyIndie/my-adapter    # 支持 publisher/name 限定（发布者为 GitHub 组织/用户）
 easybot plugin update my-adapter             # 更新默认 pin 当前版本
 easybot plugin trust <publisher> --public-key <PUBLIC_KEY>   # 显式信任发布者
 ```
