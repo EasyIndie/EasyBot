@@ -20,6 +20,20 @@
 >
 > ⏸️ **待 v0.0.36 发版后补充**（本生产机无法端到端）：场景 A/B（完整 upgrade / update TIMEOUT）、D（回滚成功端到端，需停服）、G（迁移显式确认）。
 >
+> ### 🔄 v0.0.36 发布后补充验收（2026-08-14）
+>
+> **复现 issue #95 背景**（v0.0.32 + schema v2）→ 升级到 v0.0.36，隔离测试目录 `easybot-test-v032/`，未触碰生产服务：
+>
+> - ✅ **U2 bug 复现**：v0.0.32 update → `os error 5 (拒绝访问)`，回滚正确（exe 仍 v0.0.32）——确认 issue #95 核心 bug
+> - ✅ **修复路径验证**：手动替换 exe 到 v0.0.36 → 启动 → **schema v2→v3 自动迁移**（`_schema_version` 3 条迁移，sessions 新增 `custom_name` 列）→ **场景 G ✅**
+> - ✅ **U2 分离 swap 机制**（v0.0.36 正式版）：marker=`OK`、staged move、脚本自删、target 可运行
+> - ✅ **U1 `--dir`**（v0.0.36 正式版）：`check-update --dir` 正确解析
+>
+> 📄 v0.0.32→v0.0.36 报告见 issue #95 评论：<https://github.com/EasyIndie/EasyBot/issues/95#issuecomment-5291192192>
+> 本地副本：`C:\Users\WangA\easybot-u2-v032-v036-acceptance.md`
+>
+> **结论更新**：issue #95 的 U2 bug 在 v0.0.32 确认存在（无法自我升级），v0.0.36 已修复（分离 swap + `--dir` + DB 迁移）。v0.0.32 用户需手动替换 exe 升级到 v0.0.36，此后 v0.0.36+ 可用自动 update。
+>
 > 📄 完整报告见 issue #95 评论：<https://github.com/EasyIndie/EasyBot/issues/95#issuecomment-5290048108>
 > 本地副本：`C:\Users\WangA\easybot-u2-acceptance-report.md`
 >
@@ -219,13 +233,15 @@ type C:\Users\<你>\easybot-test\.easybot\logs\easybot.log
 
 ## 验收清单（勾选）
 
-- [ ] A 升级 happy path：marker=OK、批处理自删、check-update 已是最新、服务健康
-- [ ] B 服务运行中 update：marker=TIMEOUT、exe 未动、停服重试后 OK
-- [ ] C 含空格+`!` 路径：marker=OK，批处理路径原样
-- [ ] D 回滚（停服）：marker=OK、DB/config 恢复、备份清理、回到旧版
-- [ ] E 服务运行中回滚：被拒绝、无副作用
-- [ ] F 成功更新后：`.update\` 仅 marker；`.bak`/manifest 保留
-- [ ] G 迁移确认：update 提示 + 启动日志迁移清单
+- [ ] A 升级 happy path：marker=OK、批处理自删、check-update 已是最新、服务健康（⚠ 待 v0.0.37；已验前置：`--dir`+AlreadyUpToDate）
+- [ ] B 服务运行中 update：marker=TIMEOUT、exe 未动、停服重试后 OK（⚠ 待 v0.0.37）
+- [x] C 含空格+`!` 路径：marker=OK，批处理路径原样（v0.0.36 分离脚本 `DisableDelayedExpansion` 验证通过）
+- [ ] D 回滚（停服）：marker=OK、DB/config 恢复、备份清理、回到旧版（⚠ 需停生产服务/独立测试机）
+- [x] E 服务运行中回滚：被拒绝、无副作用（data-safety 验证通过）
+- [x] F 成功更新后：`.update\` 仅 marker；`.bak`/manifest 保留（分离 swap 后残留检查通过）
+- [x] G 迁移确认：update 提示 + 启动日志迁移清单（v0.0.36 启动 schema v2→v3，sessions 新增 `custom_name`）
+
+> 补充：U1 `--dir` 支持 ✅（v0.0.36 正式版）；U2 bug 复现（v0.0.32 update → `os error 5`）✅；U2 分离 swap 机制（marker=OK/自删/move）✅
 
 ## 回报格式
 
