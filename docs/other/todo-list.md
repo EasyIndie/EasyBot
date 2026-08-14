@@ -69,7 +69,7 @@
 | **应用进程内 TLS** | `crates/easybot-api/src/server.rs` | 明确不作为生产 TLS 终止点；`deploy/Caddyfile`/云负载均衡负责证书、HSTS 与 WebSocket 代理 |
 | **进程内多租户隔离** | `crates/easybot-core/src/auth/` | 当前采用“每客户独立实例与数据库”；不能把互不信任客户放进同一实例 |
 | **真实商业运营证据** | `commercial/evidence.env.example` | 法务、支付/开票、告警送达、容量、迁移、备份恢复及回滚必须在真实环境验收，代码库不能自行证明 |
-| **Windows U2 升级真机验证** | `docs/other/windows-upgrade-verify.md` | 分离辅助脚本两步替换的运行时锁语义（marker OK/TIMEOUT、`!`/空格路径、回滚拒绝）已通过 Windows 真机 + NSSM 验收（2026-08-14：U1、U2 分离交换机制、场景 C/E/F、A·B 前置路径）；场景 A/B/D/G 完整端到端作为 v0.0.37 发版后回归项 |
+| **Windows U2 升级真机验证** | `docs/other/windows-upgrade-verify.md` | 分离辅助脚本两步替换的运行时锁语义（marker OK/TIMEOUT、`!`/空格路径、回滚拒绝）已通过 Windows 真机 + NSSM 验收（2026-08-14：U1、U2 分离交换机制、场景 A/B/C/D/E/F/G 全部端到端——A/B/D 在 v0.0.37 发版后补全；G 因 v0.0.37 无 DB 迁移不适用，由 v0.0.36 的 v2→v3 迁移覆盖） |
 
 ---
 

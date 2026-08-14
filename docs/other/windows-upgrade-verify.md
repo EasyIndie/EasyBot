@@ -38,6 +38,17 @@
 > 本地副本：`C:\Users\WangA\easybot-u2-acceptance-report.md`
 >
 > **结论：U2 升级机制（分离辅助脚本两步替换）在 Windows 真机 + NSSM 下验证通过。**（`is_windows_service_running("EasyBot")` 检测本机生产服务，故场景 D 完整路径需独立测试机或停服，属 checklist 既有约束。）
+>
+> ### 🔄 v0.0.37 发版后回归验收（2026-08-14，v0.0.36 → v0.0.37）
+>
+> **场景 A/B/D 完整端到端已通过**（隔离测试 home `C:\Users\WangA\easybot-test-v037\`，测试服务 `EasyBotTest`，官方 v0.0.36/v0.0.37 release 二进制；短暂停止生产服务使 rollback 放行，验收后已恢复生产）：
+>
+> - ✅ **场景 A（标准升级 happy path）**：停服 → `update`（v0.0.36→v0.0.37）→ marker=`OK`、批处理自删、`.update/` 仅剩 marker → 启动 → 健康端点 `version=v0.0.37` → `check-update` = `✓ Already up to date (v0.0.37)`
+> - ✅ **场景 B（服务运行中 update → TIMEOUT 兜底）**：测试服务运行中执行 `update` → 下载/校验/暂存成功、swap 已安排 → 约 30s 后 marker=`TIMEOUT`、exe 仍 v0.0.36（安全）、批处理**保留**（TIMEOUT 不自删）→ 停服重试 → marker=`OK`、exe 变 v0.0.37
+> - ✅ **场景 D（回滚，停服）**：`rollback` → `✓ Rollback complete` → marker=`OK` → exe 回 v0.0.36、`check-update` 显示可升级到 v0.0.37 → `.update_manifest.json` 已删、二进制/DB/config 备份已清理、`.update/` 仅剩 marker → 回滚后服务正常启动、DB schema v3 保持
+> - ⏸️ **场景 G（迁移显式确认）**：**v0.0.37 不适用**——`easybot-version.json` 声明 `requires_db_migration=false`、migrations 为空，v0.0.36→v0.0.37 无 DB 迁移（update 输出 `migrations_applied: []`，启动日志无迁移行）。G 的前提是"含 DB 迁移的版本"，本版本无从确认，逻辑已由 v0.0.36 的 v2→v3 迁移实测覆盖。
+>
+> **⚠️ 发现一个边界情况（建议反馈上游）**：updater 的 rollback 保护**硬编码检测服务名 `EasyBot`**（`precheck::is_windows_service_running("EasyBot")`），若用户以自定义 NSSM 服务名部署（如 `EasyBotTest`），回滚时检测不到运行中的服务 → 放行 rollback（安排 swap→TIMEOUT、**无条件删除 manifest**、恢复 DB/config），造成"DB/config 已回滚但 exe 未变"的半状态。真实生产用标准服务名 `EasyBot` 会被正确拦截（场景 E 已验证），故不影响标准部署；但建议将服务名改为可配置或从 NSSM 读取，避免自定义服务名部署时 data-safety 失效。
 
 ---
 
@@ -233,13 +244,13 @@ type C:\Users\<你>\easybot-test\.easybot\logs\easybot.log
 
 ## 验收清单（勾选）
 
-- [ ] A 升级 happy path：marker=OK、批处理自删、check-update 已是最新、服务健康（⚠ 待 v0.0.37；已验前置：`--dir`+AlreadyUpToDate）
-- [ ] B 服务运行中 update：marker=TIMEOUT、exe 未动、停服重试后 OK（⚠ 待 v0.0.37）
+- [x] A 升级 happy path：marker=OK、批处理自删、check-update 已是最新、服务健康（✅ v0.0.37 完整端到端通过）
+- [x] B 服务运行中 update：marker=TIMEOUT、exe 未动、停服重试后 OK（✅ v0.0.37 完整端到端通过）
 - [x] C 含空格+`!` 路径：marker=OK，批处理路径原样（v0.0.36 分离脚本 `DisableDelayedExpansion` 验证通过）
-- [ ] D 回滚（停服）：marker=OK、DB/config 恢复、备份清理、回到旧版（⚠ 需停生产服务/独立测试机）
+- [x] D 回滚（停服）：marker=OK、DB/config 恢复、备份清理、回到旧版（✅ v0.0.37 完整端到端通过，短暂停生产服务后恢复）
 - [x] E 服务运行中回滚：被拒绝、无副作用（data-safety 验证通过）
 - [x] F 成功更新后：`.update\` 仅 marker；`.bak`/manifest 保留（分离 swap 后残留检查通过）
-- [x] G 迁移确认：update 提示 + 启动日志迁移清单（v0.0.36 启动 schema v2→v3，sessions 新增 `custom_name`）
+- [x] G 迁移确认：update 提示 + 启动日志迁移清单（v0.0.36 启动 schema v2→v3，sessions 新增 `custom_name`；**v0.0.37 无迁移不适用**）
 
 > 补充：U1 `--dir` 支持 ✅（v0.0.36 正式版）；U2 bug 复现（v0.0.32 update → `os error 5`）✅；U2 分离 swap 机制（marker=OK/自删/move）✅
 
