@@ -1,6 +1,6 @@
 # EasyBot TODO — 待办事项清单
 
-> 最后更新: 2026-08-12
+> 最后更新: 2026-08-14
 
 ---
 
@@ -69,6 +69,7 @@
 | **应用进程内 TLS** | `crates/easybot-api/src/server.rs` | 明确不作为生产 TLS 终止点；`deploy/Caddyfile`/云负载均衡负责证书、HSTS 与 WebSocket 代理 |
 | **进程内多租户隔离** | `crates/easybot-core/src/auth/` | 当前采用“每客户独立实例与数据库”；不能把互不信任客户放进同一实例 |
 | **真实商业运营证据** | `commercial/evidence.env.example` | 法务、支付/开票、告警送达、容量、迁移、备份恢复及回滚必须在真实环境验收，代码库不能自行证明 |
+| **Windows U2 升级真机验证** | `docs/other/windows-upgrade-verify.md` | 分离辅助脚本两步替换的运行时锁语义（marker OK/TIMEOUT、`!`/空格路径、回滚拒绝）Linux CI 无法覆盖，须真实 Windows + NSSM 验收。**通过前不发布 v0.0.36** |
 
 ---
 

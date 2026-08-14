@@ -147,7 +147,9 @@ easybot.exe check-update --dir <home>
 
 > **为什么不能原地替换**：Windows 映射正在运行的可执行文件，`rename` 会得到 os error 5（拒绝访问）。Unix（systemd/launchd）的 `rename` 允许覆盖运行中二进制，因此 Linux/macOS 仍是「运行 `update` → 重启服务」两步。Docker 部署请用 `docker compose pull && docker compose up -d`。
 
-> **回滚**：`easybot rollback --dir <home> --yes` 同样走延迟交换（先停服务再执行）。成功后旧 exe 的 `.bak` 由交换脚本一并清理。
+> **回滚**：`easybot rollback --dir <home> --yes` 同样走延迟交换（先停服务再执行）。成功后旧 exe 的 `.bak` 由交换脚本一并清理。注意：服务运行中执行 `rollback` 会被拒绝（防止旧 DB 覆盖活动库），请先停服再回滚。
+
+> **真机验证**：本升级机制的完整验收步骤（含 TIMEOUT 兜底、`!`/空格路径、回滚与迁移确认场景）见 [windows-upgrade-verify.md](windows-upgrade-verify.md)。该清单在真实 Windows + NSSM 环境跑通前，不建议发布新版本。
 
 ## 10. Windows Defender 误报处理
 
