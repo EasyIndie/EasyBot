@@ -204,12 +204,13 @@ impl Updater {
                     match replace::schedule_swap(&self.home, pending, &plan.target_version, &[]) {
                         Ok(marker) => {
                             swap_scheduled = true;
-                            swap_marker = Some(marker);
+                            // 先记录日志再 move 进 swap_marker（PathBuf 非 Copy）
                             tracing::warn!(
                                 "Binary swap scheduled; will complete after this process exits. \
                                  Marker: {}",
                                 marker.display()
                             );
+                            swap_marker = Some(marker);
                         }
                         Err(e) => {
                             // 安排失败：清理暂存 + 备份 + 清单后上报
@@ -250,6 +251,8 @@ impl Updater {
                 // 回滚是否成功决定是否清理备份：失败时必须保留备份供人工恢复，
                 // 否则 cleanup_artifacts 会删掉唯一一份旧二进制，导致无法恢复。
                 tracing::error!("New binary verification failed: {} — rolling back", e);
+                // Windows 分支不写入（cfg(not(windows)) 块被编译掉），此处仅在 Unix 下变更
+                #[allow(unused_mut)]
                 let mut rollback_ok = true;
 
                 #[cfg(not(windows))]
