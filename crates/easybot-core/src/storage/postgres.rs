@@ -30,8 +30,11 @@ pub async fn create_pool(
 
 /// 运行数据库迁移（版本化，带 `pg_advisory_lock` 互斥）
 ///
-/// 对带版本记录的数据库执行版本化增量迁移。
-pub async fn run_migrations(pool: &PgPool) -> Result<(), StoreError> {
+/// 对带版本记录的数据库执行版本化增量迁移，
+/// 返回本次实际执行的迁移列表（空 = 无待迁移）。
+pub async fn run_migrations(
+    pool: &PgPool,
+) -> Result<Vec<crate::storage::migration::AppliedMigration>, StoreError> {
     crate::storage::migration::run_migrations_pg(pool).await
 }
 

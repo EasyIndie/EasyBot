@@ -60,6 +60,18 @@ pub struct Migration {
     pub rollback_postgres: Option<&'static str>,
 }
 
+/// 一条已应用的迁移记录
+///
+/// 由 `run_migrations` / `run_migrations_pg` 返回，供启动流程显式确认
+/// 「哪些迁移在本次启动实际执行了」（U4：迁移结果显式确认）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AppliedMigration {
+    /// 迁移版本号
+    pub version: i64,
+    /// 人类可读描述
+    pub description: &'static str,
+}
+
 /// 所有已注册的迁移（按版本号递增排列）
 ///
 /// 新版本在此追加，**禁止修改或删除已发行的条目**。
@@ -596,7 +608,8 @@ async fn record_migration_sqlite_tx(
 /// 运行所有未执行的 SQLite 前向迁移
 ///
 /// 幂等：已执行的迁移不会重复执行。每步在独立事务中执行。
-pub async fn run_migrations(pool: &SqlitePool) -> Result<(), StoreError> {
+/// 返回本次实际执行的迁移列表（空 = 无待迁移）。
+pub async fn run_migrations(pool: &SqlitePool) -> Result<Vec<AppliedMigration>, StoreError> {
     // 1. 确保版本追踪表存在
     sqlx::query(VERSION_TABLE_SQL).execute(pool).await?;
 
@@ -615,6 +628,7 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), StoreError> {
     }
 
     // 3. 逐版执行未应用的迁移
+    let mut applied: Vec<AppliedMigration> = Vec::new();
     for m in MIGRATIONS {
         if m.version > current {
             tracing::info!("Running SQLite migration v{}: {}", m.version, m.description);
@@ -635,11 +649,24 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<(), StoreError> {
                     return Err(error);
                 }
             }
+            applied.push(AppliedMigration {
+                version: m.version,
+                description: m.description,
+            });
             tracing::info!("SQLite migration v{} applied", m.version);
         }
     }
 
-    Ok(())
+    if !applied.is_empty() {
+        let versions: Vec<String> = applied.iter().map(|m| format!("v{}", m.version)).collect();
+        tracing::info!(
+            "Applied {} SQLite migration(s): {}",
+            applied.len(),
+            versions.join(", ")
+        );
+    }
+
+    Ok(applied)
 }
 
 async fn apply_sqlite_v2(tx: &mut Transaction<'_, Sqlite>) -> Result<(), StoreError> {
@@ -827,7 +854,7 @@ async fn delete_migration_pg(pool: &PgPool, version: i64) -> Result<(), StoreErr
 }
 
 /// 运行所有未执行的 PostgreSQL 前向迁移（带 `pg_advisory_lock` 互斥）
-pub async fn run_migrations_pg(pool: &PgPool) -> Result<(), StoreError> {
+pub async fn run_migrations_pg(pool: &PgPool) -> Result<Vec<AppliedMigration>, StoreError> {
     // 获取应用级互斥锁，防止多实例竞争迁移
     // 锁 ID: 0xEASYBOT_SCHEMA_MIGRATION = 1145258561
     sqlx::query("SELECT pg_advisory_lock(1145258561)")
@@ -845,7 +872,7 @@ pub async fn run_migrations_pg(pool: &PgPool) -> Result<(), StoreError> {
     result
 }
 
-async fn run_migrations_pg_inner(pool: &PgPool) -> Result<(), StoreError> {
+async fn run_migrations_pg_inner(pool: &PgPool) -> Result<Vec<AppliedMigration>, StoreError> {
     // 1. 确保版本追踪表存在
     sqlx::query(VERSION_TABLE_SQL).execute(pool).await?;
     // 2. 未版本化的旧数据库不在上线前兼容范围内。
@@ -863,6 +890,7 @@ async fn run_migrations_pg_inner(pool: &PgPool) -> Result<(), StoreError> {
     }
 
     // 3. 逐版执行
+    let mut applied: Vec<AppliedMigration> = Vec::new();
     for m in MIGRATIONS {
         if m.version > current {
             tracing::info!(
@@ -872,11 +900,24 @@ async fn run_migrations_pg_inner(pool: &PgPool) -> Result<(), StoreError> {
             );
             sqlx::raw_sql(m.sql_postgres).execute(pool).await?;
             record_migration_pg(pool, m.version, m.description).await?;
+            applied.push(AppliedMigration {
+                version: m.version,
+                description: m.description,
+            });
             tracing::info!("PostgreSQL migration v{} applied", m.version);
         }
     }
 
-    Ok(())
+    if !applied.is_empty() {
+        let versions: Vec<String> = applied.iter().map(|m| format!("v{}", m.version)).collect();
+        tracing::info!(
+            "Applied {} PostgreSQL migration(s): {}",
+            applied.len(),
+            versions.join(", ")
+        );
+    }
+
+    Ok(applied)
 }
 
 /// 回滚 PostgreSQL schema 到指定版本（带锁）

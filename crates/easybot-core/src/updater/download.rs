@@ -52,11 +52,15 @@ pub async fn download_and_verify(
     let temp_name = format!("{}.{}", asset_name, uuid::Uuid::new_v4());
     let temp_path = update_dir.join(&temp_name);
 
-    // 7. 下载
+    // 7. 下载（失败时清理临时文件，避免 `.update/` 目录残留）
     tracing::info!("Downloading {} ({} bytes)...", asset.name, asset.size);
-    github
+    if let Err(e) = github
         .download_binary(&asset.download_url, &temp_path)
-        .await?;
+        .await
+    {
+        let _ = tokio::fs::remove_file(&temp_path).await;
+        return Err(e);
+    }
 
     // 8. SHA256 校验
     let actual_sha256 = sha256_hex(&temp_path)?;

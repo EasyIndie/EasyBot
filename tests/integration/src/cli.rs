@@ -93,6 +93,26 @@ fn test_cli_help() {
 }
 
 #[test]
+fn test_cli_update_help_shows_global_dir() {
+    // `--dir` 是 global 参数，必须出现在 update/check-update/rollback 各子命令的 --help 中，
+    // 且能放置在子命令之后（`easybot update --dir X`）。锁定该行为防止回归。
+    for sub in ["update", "check-update", "rollback"] {
+        let output = Command::new(easybot_bin())
+            .arg(sub)
+            .arg("--help")
+            .output()
+            .unwrap_or_else(|e| panic!("failed to run easybot {sub} --help: {e}"));
+        assert!(output.status.success(), "{sub} --help should exit 0");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout.contains("--dir"),
+            "{sub} --help should show global --dir flag, got: {}",
+            stdout.trim()
+        );
+    }
+}
+
+#[test]
 fn test_cli_init_creates_config() {
     let dir = tempfile::tempdir().expect("failed to create temp dir");
     let dir_path = dir.path().to_str().unwrap();

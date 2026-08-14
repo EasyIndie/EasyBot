@@ -113,10 +113,43 @@ fn detect_service_type() -> ServiceType {
 
     #[cfg(target_os = "windows")]
     {
-        // Windows 服务的检测依赖 sc.exe 查询，暂缓实现
+        // NSSM 默认服务名 EasyBot（manage-service.ps1 install 时注册）
+        if detect_windows_service("EasyBot") {
+            return ServiceType::Windows;
+        }
     }
 
     ServiceType::None
+}
+
+/// Windows：探测 NSSM 注册的服务是否存在（`sc.exe query`）
+///
+/// 仅判断服务是否存在（`ServiceType::Windows` 用于 update 编排判断是否需要
+/// 服务路径更新）。服务是否 RUNNING 不影响交换安全——分离交换脚本带 15 次有界
+/// 重试，服务未停止时 marker 写 `TIMEOUT`、目标保持旧版本，可安全重试。
+#[cfg(target_os = "windows")]
+fn detect_windows_service(service_name: &str) -> bool {
+    std::process::Command::new("sc.exe")
+        .args(["query", service_name])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+/// Windows：检测 NSSM 服务当前是否处于 RUNNING 状态
+///
+/// `sc query` 对存在但已停止的服务同样返回退出码 0，须解析输出中的 `STATE : 4 RUNNING`
+/// 行才能区分。`rollback` 用它拒绝在服务运行时恢复旧 DB——否则旧数据库会覆盖活动库。
+/// 检测失败（sc.exe 不存在等）保守返回 `false`（不阻塞流程，交换脚本仍有 15 次有界重试兜底）。
+#[cfg(target_os = "windows")]
+pub fn is_windows_service_running(service_name: &str) -> bool {
+    std::process::Command::new("sc.exe")
+        .args(["query", service_name])
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|out| out.contains("RUNNING"))
+        .unwrap_or(false)
 }
 
 // ══════════════════════════════════════════════════════════════════

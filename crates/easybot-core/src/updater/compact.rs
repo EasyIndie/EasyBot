@@ -145,9 +145,16 @@ impl BackupManager {
     }
 
     /// 恢复所有备份
-    pub async fn restore_all(manifest: &UpdateManifest) -> Result<(), UpdateError> {
-        // 1. 恢复二进制
-        if let Some(ref backup) = manifest.binary_backup {
+    ///
+    /// `restore_binary`：是否同步恢复二进制。Unix 直接 `copy` 即可；Windows 上运行中
+    /// 的 exe 被进程锁定无法覆盖，二进制恢复走分离交换脚本（`mod.rs::rollback` 处理），
+    /// 此处传 `false` 跳过，只恢复数据库与配置。
+    pub async fn restore_all(
+        manifest: &UpdateManifest,
+        restore_binary: bool,
+    ) -> Result<(), UpdateError> {
+        // 1. 恢复二进制（Unix 场景；Windows 由分离交换脚本完成）
+        if restore_binary && let Some(ref backup) = manifest.binary_backup {
             let backup_path = Path::new(backup);
             if backup_path.exists() {
                 let exe = std::env::current_exe().map_err(|e| {
@@ -206,6 +213,55 @@ impl BackupManager {
             }
         }
 
+        Ok(())
+    }
+
+    /// 清理更新产生的陈旧备份与临时产物
+    ///
+    /// 删除：二进制/DB/配置备份、`{home}/.update/` 临时目录（含下载、批处理、marker）。
+    /// 用于失败回滚后或显式 `rollback` 完成后，避免残留 `.bak.<ver>` 与 manifest。
+    ///
+    /// **注意**：Windows 分离交换脚本运行期间其「源文件」（staged/备份）必须保留，
+    /// 调用方须在交换完成后再清理（交换脚本自身会 `move` 消耗源文件）。
+    pub async fn cleanup_artifacts(
+        home: &Path,
+        manifest: &UpdateManifest,
+    ) -> Result<(), UpdateError> {
+        if let Some(ref p) = manifest.binary_backup {
+            let path = Path::new(p);
+            if path.exists() {
+                tokio::fs::remove_file(path)
+                    .await
+                    .map_err(UpdateError::IoError)?;
+                tracing::info!("Removed stale binary backup: {}", path.display());
+            }
+        }
+        if let Some(ref p) = manifest.db_backup {
+            let path = Path::new(p);
+            if path.exists() {
+                tokio::fs::remove_file(path)
+                    .await
+                    .map_err(UpdateError::IoError)?;
+                tracing::info!("Removed stale DB backup: {}", path.display());
+            }
+        }
+        if let Some(ref p) = manifest.config_backup {
+            let path = Path::new(p);
+            if path.exists() {
+                tokio::fs::remove_file(path)
+                    .await
+                    .map_err(UpdateError::IoError)?;
+                tracing::info!("Removed stale config backup: {}", path.display());
+            }
+        }
+
+        let update_dir = home.join(".update");
+        if update_dir.exists() {
+            tokio::fs::remove_dir_all(&update_dir)
+                .await
+                .map_err(UpdateError::IoError)?;
+            tracing::info!("Removed update temp dir: {}", update_dir.display());
+        }
         Ok(())
     }
 }

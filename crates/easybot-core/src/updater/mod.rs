@@ -143,37 +143,91 @@ impl Updater {
         )
         .await?;
 
-        // 4. 下载 + SHA256 校验
+        // 4. 下载 + SHA256 校验（失败时清理已建的备份与清单，避免 `.bak`/manifest 残留）
         tracing::info!("Phase 2/5: Downloading new binary...");
         let release = self.github.latest_release().await?;
-        let (temp_path, _checksum, _size) =
-            download::download_and_verify(&mut self.github, &self.home, &tag, &release.assets)
-                .await?;
+        let (temp_path, _checksum, _size) = match download::download_and_verify(
+            &mut self.github,
+            &self.home,
+            &tag,
+            &release.assets,
+        )
+        .await
+        {
+            Ok(v) => v,
+            Err(e) => {
+                let _ = BackupManager::cleanup_artifacts(&self.home, &manifest).await;
+                let _ = tokio::fs::remove_file(&self.home.join(".update_manifest.json")).await;
+                return Err(e);
+            }
+        };
 
-        // 5. 替换二进制
+        // 5. 替换二进制（平台自适应：Unix 原地替换；Windows 暂存待交换）。
+        //    失败时清理已建的备份与清单（与 U3 清理契约一致）。
         tracing::info!("Phase 3/5: Replacing binary...");
-        let backup = replace::replace_binary(&temp_path, &self.current_version)?;
+        let replace = match replace::replace_binary(&temp_path, &self.current_version) {
+            Ok(r) => r,
+            Err(e) => {
+                let _ = tokio::fs::remove_file(&temp_path).await;
+                let _ = BackupManager::cleanup_artifacts(&self.home, &manifest).await;
+                let _ = tokio::fs::remove_file(&self.home.join(".update_manifest.json")).await;
+                return Err(e);
+            }
+        };
 
-        // 6. 更新服务路径（如需要）
+        // 6. 更新服务路径（如需要；Windows 服务路径 install 时写入，无需更新）
         if precheck.service_type != ServiceType::None {
             let _ = compact::update_service_bin_path(precheck.service_type.clone());
         }
 
-        // 7. 运行数据库迁移
+        // 7. 运行数据库迁移（由启动时的新二进制执行，这里仅记录数量）
         let mut migrations_applied = 0;
         if plan.requires_db_migration && plan.target_schema_version > self.current_schema_version {
             tracing::info!("Phase 4/5: Running database migrations...");
-            // DB 迁移由启动时的新二进制执行，这里仅记录
             migrations_applied = plan.db_migrations.len();
         }
 
-        // 8. 验证新二进制
+        // 8. 验证新二进制（校验在提交点执行：Unix = 替换后的 target；Windows = 暂存文件）
         tracing::info!("Phase 5/5: Verifying new binary...");
-        let exe = std::env::current_exe()
-            .map_err(|e| UpdateError::VerificationFailed(format!("Cannot get exe path: {}", e)))?;
-        match replace::verify_binary(&exe).await {
+        match replace::verify_binary(&replace.verify_path, &self.home).await {
             Ok(_) => {
                 tracing::info!("New binary verification passed");
+
+                // Windows：校验通过后安排分离辅助脚本在主进程退出后完成交换
+                // （Unix 分支 swap 恒为 None，此处不会执行，仅需通过编译）
+                #[allow(unused_mut)] // Unix 分支下不变量化，Windows 下被写入
+                let mut swap_scheduled = false;
+                #[allow(unused_mut)]
+                let mut swap_marker = None;
+                if let Some(pending) = &replace.swap {
+                    #[cfg(windows)]
+                    match replace::schedule_swap(&self.home, pending, &plan.target_version, &[]) {
+                        Ok(marker) => {
+                            swap_scheduled = true;
+                            swap_marker = Some(marker);
+                            tracing::warn!(
+                                "Binary swap scheduled; will complete after this process exits. \
+                                 Marker: {}",
+                                marker.display()
+                            );
+                        }
+                        Err(e) => {
+                            // 安排失败：清理暂存 + 备份 + 清单后上报
+                            let _ = std::fs::remove_file(&replace.verify_path);
+                            let _ = tokio::fs::remove_file(&temp_path).await;
+                            let _ = BackupManager::cleanup_artifacts(&self.home, &manifest).await;
+                            let _ =
+                                tokio::fs::remove_file(&self.home.join(".update_manifest.json"))
+                                    .await;
+                            return Err(e);
+                        }
+                    }
+                    #[cfg(not(windows))]
+                    {
+                        // 逻辑上不可达（Unix 分支 swap = None），此处仅为类型检查
+                        let _ = pending;
+                    }
+                }
 
                 // Keep backups and the manifest so `easybot rollback` remains available
                 // after a successful update.
@@ -184,16 +238,47 @@ impl Updater {
                 Ok(UpdateResult {
                     old_version: self.current_version.clone(),
                     new_version: plan.target_version,
-                    backup_path: backup.backup_path,
+                    backup_path: replace.backup.backup_path,
                     db_backup_path: None,
                     migrations_applied,
+                    swap_scheduled,
+                    swap_marker,
                 })
             }
             Err(e) => {
-                // 验证失败：自动回滚
+                // 验证失败：回滚 + 清理残留。
+                // 回滚是否成功决定是否清理备份：失败时必须保留备份供人工恢复，
+                // 否则 cleanup_artifacts 会删掉唯一一份旧二进制，导致无法恢复。
                 tracing::error!("New binary verification failed: {} — rolling back", e);
-                let _ = replace::rollback_binary(&backup);
-                let _ = BackupManager::restore_all(&manifest).await;
+                let mut rollback_ok = true;
+
+                #[cfg(not(windows))]
+                {
+                    // Unix：target 已被替换，从备份恢复旧二进制 + 恢复 DB/配置。
+                    // restore_all 传 false：二进制已由 rollback_binary 同步恢复，避免重复复制。
+                    rollback_ok &= replace::rollback_binary(&replace.backup).is_ok();
+                    rollback_ok &= BackupManager::restore_all(&manifest, false).await.is_ok();
+                }
+                #[cfg(windows)]
+                {
+                    // Windows：target 未被触碰，仅删除暂存文件
+                    let _ = std::fs::remove_file(&replace.verify_path);
+                }
+
+                // 统一清理：临时下载 + 备份 + 清单（仅回滚成功时）
+                let _ = tokio::fs::remove_file(&temp_path).await;
+                if rollback_ok {
+                    let _ = BackupManager::cleanup_artifacts(&self.home, &manifest).await;
+                    let _ = tokio::fs::remove_file(&self.home.join(".update_manifest.json")).await;
+                } else {
+                    tracing::error!(
+                        "Rollback during verification FAILED — backups retained for manual recovery: \
+                         manifest={}, binary_backup={}",
+                        self.home.join(".update_manifest.json").display(),
+                        manifest.binary_backup.as_deref().unwrap_or("<none>")
+                    );
+                }
+
                 Err(UpdateError::VerificationFailed(format!(
                     "New binary verification failed (rolled back): {}",
                     e
@@ -204,7 +289,10 @@ impl Updater {
 
     /// 回滚到上一个版本
     ///
-    /// 从备份清单恢复：二进制 → 数据库 → 配置
+    /// 从备份清单恢复：二进制 → 数据库 → 配置。Windows 上运行中的 exe 无法原地
+    /// 覆盖，二进制恢复走分离辅助脚本延迟交换（`schedule_swap`），DB/配置可立即恢复；
+    /// **前提是服务已停止**——服务运行中回滚会拒绝（旧 DB 覆盖活动库 + exe 被锁）。
+    /// 完成后清理备份文件与临时产物。
     pub async fn rollback(&self) -> Result<(), UpdateError> {
         let manifest = BackupManager::read_manifest(&self.home).await?;
         tracing::warn!(
@@ -213,27 +301,88 @@ impl Updater {
             manifest.from_version
         );
 
-        // 恢复二进制
-        if let Some(ref backup) = manifest.binary_backup {
-            let backup_path = std::path::Path::new(backup);
-            let exe = std::env::current_exe()
-                .map_err(|e| UpdateError::RollbackFailed(format!("Cannot get exe: {}", e)))?;
-
-            std::fs::copy(backup_path, &exe)?;
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755))?;
-            }
-            tracing::info!("Binary restored from backup");
+        // 0. Windows：拒绝在服务运行时回滚——exe 被服务锁定（分离交换会 TIMEOUT），
+        //    且旧 DB/config 恢复会覆盖仍被服务打开的活动数据库（SQLite 并发写 → 损坏）。
+        //    必须先从服务侧停止（NSSM: `nssm stop EasyBot` / PowerShell: `Stop-Service EasyBot`）。
+        #[cfg(windows)]
+        if precheck::is_windows_service_running("EasyBot") {
+            return Err(UpdateError::RollbackFailed(
+                "EasyBot Windows 服务仍在运行，无法安全回滚：运行中的 exe 被服务锁定，且旧数据库会覆盖活动库。请先停止服务再重试（`nssm stop EasyBot`）。".into(),
+            ));
         }
 
-        // 恢复数据库
-        BackupManager::restore_all(&manifest).await?;
+        // 1. 恢复二进制
+        if let Some(ref backup) = manifest.binary_backup {
+            let backup_path = std::path::Path::new(backup);
+            if !backup_path.exists() {
+                return Err(UpdateError::RollbackFailed(format!(
+                    "Backup not found: {}",
+                    backup
+                )));
+            }
 
-        // 清理备份清单
+            #[cfg(windows)]
+            {
+                // Windows：当前 exe 被进程映射锁定，安排分离脚本在本进程退出后
+                // 执行 `move /y backup → exe`。用户需先停止服务（否则 15 次重试后
+                // marker 写 TIMEOUT，目标保持新版本、可安全重试）。
+                // 交换成功后由脚本顺带删除已恢复完毕的陈旧 DB/config 备份。
+                let exe = std::env::current_exe()
+                    .map_err(|e| UpdateError::RollbackFailed(format!("Cannot get exe: {}", e)))?;
+                let swap = replace::PendingSwap {
+                    staged: backup_path.to_path_buf(),
+                    target: exe,
+                };
+                let mut cleanup: Vec<std::path::PathBuf> = Vec::new();
+                for stale in [manifest.db_backup.as_ref(), manifest.config_backup.as_ref()] {
+                    if let Some(p) = stale {
+                        cleanup.push(std::path::PathBuf::from(p));
+                    }
+                }
+                let marker =
+                    replace::schedule_swap(&self.home, &swap, &manifest.from_version, &cleanup)?;
+                tracing::warn!(
+                    "二进制回滚已安排在后台交换（marker: {}）；请先停止服务，等待 marker 出现 OK",
+                    marker.display()
+                );
+            }
+            #[cfg(not(windows))]
+            {
+                let exe = std::env::current_exe()
+                    .map_err(|e| UpdateError::RollbackFailed(format!("Cannot get exe: {}", e)))?;
+                std::fs::copy(backup_path, &exe)?;
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755))?;
+                }
+                tracing::info!("Binary restored from backup");
+            }
+        }
+
+        // 2. 恢复数据库/配置
+        //    Windows：二进制走延迟交换，DB/config 不锁定、可立即恢复
+        //    Unix：二进制已在上一步同步恢复，这里仅恢复 DB/config（传 false 避免二次复制）
+        #[cfg(not(windows))]
+        {
+            BackupManager::restore_all(&manifest, false).await?;
+        }
+        #[cfg(windows)]
+        {
+            BackupManager::restore_all(&manifest, false).await?;
+        }
+
+        // 3. 清理备份清单
         let manifest_path = self.home.join(".update_manifest.json");
         let _ = tokio::fs::remove_file(&manifest_path).await;
+
+        // 4. 清理陈旧备份与临时产物
+        //    Windows：二进制备份是延迟交换的源文件，交换脚本 `move` 消耗后自然消失，
+        //    此处不能删除；其余备份（DB/config）删除。
+        #[cfg(not(windows))]
+        {
+            BackupManager::cleanup_artifacts(&self.home, &manifest).await?;
+        }
 
         tracing::warn!("Rollback completed. Service restart required.");
         Ok(())

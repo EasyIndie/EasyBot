@@ -247,6 +247,10 @@ pub struct UpdateResult {
     pub backup_path: PathBuf,
     pub db_backup_path: Option<PathBuf>,
     pub migrations_applied: usize,
+    /// Windows：新二进制已由分离辅助脚本安排延迟交换（主进程退出后执行）
+    pub swap_scheduled: bool,
+    /// Windows：交换结果 marker 文件路径（内容 `OK` 表示交换完成）
+    pub swap_marker: Option<PathBuf>,
 }
 
 /// 更新备份清单

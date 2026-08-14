@@ -19,8 +19,11 @@ use crate::types::session::{ResetPolicy, Session, SessionFilter, SessionSource};
 /// 运行数据库迁移（版本化）
 ///
 /// 对带版本记录的数据库执行版本化增量迁移。
-/// 调用 `migration::run_migrations()` 逐版执行并追踪版本。
-pub async fn run_migrations(pool: &SqlitePool) -> Result<(), StoreError> {
+/// 调用 `migration::run_migrations()` 逐版执行并追踪版本，
+/// 返回本次实际执行的迁移列表（空 = 无待迁移）。
+pub async fn run_migrations(
+    pool: &SqlitePool,
+) -> Result<Vec<crate::storage::migration::AppliedMigration>, StoreError> {
     crate::storage::migration::run_migrations(pool).await
 }
 

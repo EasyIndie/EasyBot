@@ -33,8 +33,10 @@ struct Cli {
     #[arg(short, long)]
     config: Option<String>,
 
-    /// 数据目录（默认为 ~/.easybot/ 或平台标准目录）
-    #[arg(long)]
+    /// 数据目录（默认为 ~/.easybot/ 或平台标准目录）。
+    /// 对 update / check-update / rollback / plugin 子命令同样生效；
+    /// home 解析优先级：--dir > EASYBOT_HOME > 平台默认目录。
+    #[arg(long, global = true)]
     dir: Option<String>,
 
     /// 初始化配置目录
@@ -73,6 +75,20 @@ enum Commands {
         #[command(subcommand)]
         cmd: plugin_cli::PluginCmd,
     },
+}
+
+/// 打印启动时实际执行的数据库迁移清单（显式确认，U4）
+///
+/// `applied` 为 `run_migrations` 返回的本次实际执行列表；
+/// 为空说明无待迁移（或迁移在另一池已执行），静默即可。
+fn confirm_applied_migrations(applied: &[easybot_core::storage::migration::AppliedMigration]) {
+    if applied.is_empty() {
+        return;
+    }
+    tracing::info!("✓ 数据库迁移完成：{} 条", applied.len());
+    for m in applied {
+        tracing::info!("  v{}: {}", m.version, m.description);
+    }
 }
 
 /// 删除指定目录中超过 `cutoff` 时间的 easybot 日志文件。
@@ -376,9 +392,10 @@ async fn main() -> anyhow::Result<()> {
                 .await
             {
                 Ok(pool) => {
-                    easybot_core::storage::postgres::run_migrations(&pool)
+                    let applied = easybot_core::storage::postgres::run_migrations(&pool)
                         .await
                         .map_err(|e| anyhow::anyhow!("PostgreSQL migration failed: {}", e))?;
+                    confirm_applied_migrations(&applied);
 
                     // 校验 schema 版本
                     let pg_ver = easybot_core::storage::migration::get_current_version_pg(&pool)
@@ -420,9 +437,10 @@ async fn main() -> anyhow::Result<()> {
         "sqlite" => {
             match easybot_core::storage::sqlite::create_pool(&db_path).await {
                 Ok(pool) => {
-                    easybot_core::storage::sqlite::run_migrations(&pool)
+                    let applied = easybot_core::storage::sqlite::run_migrations(&pool)
                         .await
                         .map_err(|e| anyhow::anyhow!("Migration failed: {}", e))?;
+                    confirm_applied_migrations(&applied);
 
                     // 校验 schema 版本
                     let sqlite_ver = easybot_core::storage::migration::get_current_version(&pool)
@@ -446,9 +464,12 @@ async fn main() -> anyhow::Result<()> {
                     let session_pool = easybot_core::storage::sqlite::create_shared_pool(&db_path)
                         .await
                         .unwrap_or_else(|_| pool.clone());
-                    easybot_core::storage::sqlite::run_migrations(&session_pool)
-                        .await
-                        .ok();
+                    // 会话池重复执行迁移（幂等，主池已执行过则返回空列表）；仅日志确认
+                    if let Ok(applied) =
+                        easybot_core::storage::sqlite::run_migrations(&session_pool).await
+                    {
+                        confirm_applied_migrations(&applied);
+                    }
 
                     auth_pool = Some(pool.clone());
                     retention_pool = Some(pool.clone());
@@ -515,9 +536,10 @@ async fn main() -> anyhow::Result<()> {
         let pool = easybot_core::storage::sqlite::create_pool(&auth_db_path)
             .await
             .map_err(|error| anyhow::anyhow!("Authentication database failed: {error}"))?;
-        easybot_core::storage::sqlite::run_migrations(&pool)
+        let applied = easybot_core::storage::sqlite::run_migrations(&pool)
             .await
             .map_err(|error| anyhow::anyhow!("Authentication migration failed: {error}"))?;
+        confirm_applied_migrations(&applied);
         tracing::info!(path = %auth_db_path.display(), "Dedicated authentication database initialized");
         auth_pool = Some(pool);
     }
@@ -1263,16 +1285,32 @@ async fn handle_update(dir_override: Option<String>, yes: bool) -> anyhow::Resul
             );
             if result.migrations_applied > 0 {
                 println!(
-                    "  ✓ {} database migration(s) prepared",
+                    "  ✓ {} database migration(s) prepared; they will run on next startup",
                     result.migrations_applied
                 );
             }
-            println!("\n  ──────────────────────────────────────");
-            println!("  Restart EasyBot to apply the update:");
-            println!("    systemctl restart easybot      (systemd)");
-            println!("    ./easybot.sh restart            (init script)");
-            println!("    docker compose restart           (Docker)");
-            println!("  ──────────────────────────────────────");
+            if result.swap_scheduled {
+                // Windows：二进制交换延迟到本进程退出后，由分离辅助脚本完成
+                let marker = result
+                    .swap_marker
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|| "<marker>".into());
+                println!("\n  ⚠ Windows deferred swap scheduled:");
+                println!("    • 二进制替换将在本进程退出后完成，结果见:");
+                println!("      {marker}");
+                println!("    • 请先停止服务再启动，让交换脚本独占 exe：");
+                println!("      nssm stop EasyBot");
+                println!("      （等待 marker 内容变为 OK 后再启动）");
+                println!("      nssm start EasyBot");
+            } else {
+                println!("\n  ──────────────────────────────────────");
+                println!("  Restart EasyBot to apply the update:");
+                println!("    systemctl restart easybot      (systemd)");
+                println!("    launchctl kickstart -k gui/$(id -u)/com.easybot.gateway  (launchd)");
+                println!("    nssm restart EasyBot            (Windows NSSM)");
+                println!("    docker compose restart           (Docker)");
+                println!("  ──────────────────────────────────────");
+            }
             println!("\n  To rollback: easybot rollback");
             Ok(())
         }
