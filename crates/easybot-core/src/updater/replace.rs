@@ -255,6 +255,10 @@ pub fn build_swap_script(
 }
 
 /// 从备份恢复二进制文件
+///
+/// 仅 Unix 使用：Windows 回滚走分离交换脚本（运行中 exe 无法进程内覆盖），
+/// 故 Windows 构建下该函数无调用点，需允许 dead_code（`-D warnings` 门禁）。
+#[cfg_attr(windows, allow(dead_code))]
 pub fn rollback_binary(backup: &BinaryBackup) -> Result<(), UpdateError> {
     let current_exe = std::env::current_exe()
         .map_err(|e| UpdateError::RollbackFailed(format!("Cannot get current exe: {}", e)))?;
