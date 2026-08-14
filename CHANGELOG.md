@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.36] - 2026-08-14
+
 ### Fixed
 
 - **Windows 升级：分离辅助脚本两步替换（issue #95 U2）** — 运行中的 exe 被 Windows
@@ -32,7 +34,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Windows 服务检测（`precheck.rs`）由 stub 实现为 `sc.exe query EasyBot` 探测。
 - 文档：`windows-deployment.md` 第 9 节升级流程、第 10 节 Defender 误报处理、
   FAQ 新增升级类条目；`upgrade-strategy.md` / `01 user-guide.md` Windows 升级表述
-  与实现对齐。
+  与实现对齐；`windows-deployment.md` 补充 NSSM 前置项（§1 三种安装方式 + §7
+  NSSM 命令对照表 + FAQ）；新增 `windows-upgrade-verify.md` 真机验证清单。
+- U2 分离辅助脚本两步替换已通过 **Windows 真机 + NSSM 验收**（2026-08-14：U1
+  `--dir`、分离交换、场景 C/E/F、A·B 前置路径）；场景 A/B/D/G 完整端到端作为
+  发版后回归项。
 
 ## [0.0.35] - 2026-08-14
 
