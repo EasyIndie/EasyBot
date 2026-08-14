@@ -236,7 +236,7 @@ init(config) → connect() → send()/... → disconnect()
 
 ## 发布流程
 
-收到"发布新版本"请求时直接按此固定流程执行（v0.0.37 验证；治理原则见 `docs/07 commercial-release.md`）：
+收到"发布新版本"请求时直接按此固定流程执行（v0.0.38 验证；治理原则见 `docs/07 commercial-release.md`）：
 
 1. **文档对齐**：CHANGELOG.md 在 `[Unreleased]` 下新增 `[0.0.X]` 条目（Keep a Changelog，中文）；README/CLAUDE/docs 与代码实现对齐。
 2. **版本同步**：`Cargo.toml`（version）+ `Cargo.lock`（`cargo update --workspace`）+ `compose.quickstart.yml`（EASYBOT_IMAGE 注释）+ `crates/easybot-api/src/routes/update.rs`（`#[schema(example)]`）+ `crates/easybot-api/tests/routes.rs`（current_version）+ 两个快照（health + openapi 的 version/example）+ `deploy-kit/deploy.sh`（注释→**下一**版本）+ `docs/01 user-guide.md`（版本引用）+ `docs/other/windows-deployment.md`（版本要求）。

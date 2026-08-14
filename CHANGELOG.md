@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.38] - 2026-08-14
+
+### Fixed
+
+- **Windows 回滚 data-safety：服务名可配置（issue #95 反馈 #5）** — rollback 的
+  data-safety 保护此前**硬编码检测服务名 `EasyBot`**（`precheck::is_windows_service_running`），
+  自定义 NSSM 服务名部署（如 `EasyBotTest`）时检测不到运行中的服务 → 放行回滚，造成
+  "DB/config 已回滚但 exe 未变 + manifest 已删"的半状态。新增 `server.serviceName`
+  （`gateway.yaml`，默认 `EasyBot`），updater 预检与回滚均按该配置检测服务；自定义服务名
+  部署须将 `serviceName` 设为与 NSSM 注册名一致。`--init` 模板已含注释示例。
+
 ## [0.0.37] - 2026-08-14
 
 ### Fixed
