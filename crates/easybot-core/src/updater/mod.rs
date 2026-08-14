@@ -336,12 +336,12 @@ impl Updater {
                     staged: backup_path.to_path_buf(),
                     target: exe,
                 };
-                let mut cleanup: Vec<std::path::PathBuf> = Vec::new();
-                for stale in [manifest.db_backup.as_ref(), manifest.config_backup.as_ref()] {
-                    if let Some(p) = stale {
-                        cleanup.push(std::path::PathBuf::from(p));
-                    }
-                }
+                let cleanup: Vec<std::path::PathBuf> =
+                    [manifest.db_backup.as_ref(), manifest.config_backup.as_ref()]
+                        .into_iter()
+                        .flatten()
+                        .map(std::path::PathBuf::from)
+                        .collect();
                 let marker =
                     replace::schedule_swap(&self.home, &swap, &manifest.from_version, &cleanup)?;
                 tracing::warn!(
