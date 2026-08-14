@@ -12,7 +12,7 @@
 | 项 | 要求 |
 |---|---|
 | Windows 版本 | Windows 10/11（x86_64），或 Windows 11 ARM |
-| NSSM | 已安装（`choco install nssm` 或 https://nssm.cc），服务名 **EasyBot** |
+| NSSM | 已安装，服务名 **EasyBot**（安装步骤见 `windows-deployment.md` §1：choco / winget / 手动三种方式 + `nssm version` 验证） |
 | Rust 工具链 | 如需本地构建：`rustup target add x86_64-pc-windows-msvc` + MSVC 构建工具 |
 | 测试目录 | 独立 home，如 `C:\Users\<你>\easybot-test\.easybot` |
 

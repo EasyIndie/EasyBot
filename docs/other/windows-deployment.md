@@ -16,10 +16,25 @@ EasyBot 是普通控制台程序，**不是**原生 Windows 服务程序（无 `
    Get-FileHash .\easybot-x86_64-pc-windows-msvc.exe -Algorithm SHA256
    ```
    与 `checksums.txt` 中记录值比对一致后再继续。
-3. 安装 NSSM（服务包装器）：
+3. 安装 NSSM（服务包装器）。EasyBot 是普通控制台程序、非原生 Windows 服务，NSSM 负责把它注册为后台服务并在崩溃时自动重启。`manage-service.ps1` 会自动检测 NSSM（查找 PATH / `ProgramFiles\NSSM` / Chocolatey 目录），未安装会明确提示，因此**部署前必须装好 NSSM**。
+
+   任选一种安装方式：
    ```powershell
+   # 方式一：Chocolatey（需先安装 choco 包管理器）
    choco install nssm
-   # 或从 https://nssm.cc/download 下载后放入 PATH
+
+   # 方式二：winget
+   winget install nssm.nssm
+
+   # 方式三：手动（不依赖包管理器）
+   #   1. 从 https://nssm.cc/download 下载最新版 zip
+   #   2. 解压后把 64 位 nssm.exe 放到固定目录，如 C:\tools\NSSM\
+   #   3. 将 C:\tools\NSSM\ 加入系统 PATH，或后续改用绝对路径调用
+   ```
+
+   验证安装（终端能找到命令即成功）：
+   ```powershell
+   nssm version
    ```
 4. 将 `easybot.exe` 加入 PATH 或放在将要初始化的配置目录中（`manage-service.ps1` 会自动检测）。
 
@@ -103,6 +118,16 @@ curl.exe -X POST http://localhost:8080/admin/login `
 .\manage-service.ps1 disable   # 取消开机自启
 ```
 
+> **NSSM 命令与脚本对照**：`manage-service.ps1` 是 NSSM 的友好封装（自动检测 NSSM 与 exe、参数裸传）。第 9 节升级流程与真机验证清单（`windows-upgrade-verify.md`）直接使用 NSSM 命令，二者等价：
+
+| 操作 | NSSM 直接命令（服务名 EasyBot） | manage-service.ps1 |
+|---|---|---|
+| 查看状态 | `nssm status EasyBot` / `sc query EasyBot` | `.\manage-service.ps1 status` |
+| 停止 | `nssm stop EasyBot` | `.\manage-service.ps1 stop` |
+| 启动 | `nssm start EasyBot` | `.\manage-service.ps1 start` |
+| 重启 | `nssm restart EasyBot` | `.\manage-service.ps1 restart` |
+| 卸载 | `nssm remove EasyBot confirm` | `.\manage-service.ps1 uninstall` |
+
 ## 8. 常见问题对照
 
 | # | 现象 | 根因 | 解决 |
@@ -117,6 +142,7 @@ curl.exe -X POST http://localhost:8080/admin/login `
 | 8 | `update` 报拒绝访问 / exe 没被替换 | 正在运行的服务锁定 exe（os error 5），原地覆盖失败 | 先 `manage-service.ps1 stop` 再 `update`（新版走两步替换，见「9. 升级」） |
 | 9 | 更新失败后残留 `.bak`/`.update_manifest.json` | 旧版失败/回滚路径不清理 | 新版失败/回滚自动清理；成功路径保留备份供 `rollback` |
 | 10 | `update --dir <home>` 报参数错误 | 旧版 `--dir` 不是全局参数，置于子命令后无法解析 | 新版 `--dir` 为全局参数，`update/check-update/rollback` 均支持且显示在各子命令 `--help` |
+| 11 | `manage-service.ps1` 报"未找到 NSSM" | NSSM 未安装或不在 PATH | 按「1. 前置条件」第 3 步安装 NSSM（choco / winget / 手动三选一），并确认 `nssm version` 可运行 |
 
 ## 9. 升级
 
