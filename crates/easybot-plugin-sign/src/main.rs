@@ -48,7 +48,9 @@ enum Command {
     /// 生成 ed25519 密钥对（私钥仅输出一次，请保存到 CI secret）
     GenKeypair,
     /// 对产物动态库签名并输出 artifact 元数据 JSON
-    Sign(SignArgs),
+    /// （Box 化避免 large_enum_variant：Windows 布局下 SignArgs 相对 GenKeypair
+    ///  超 clippy 200B 阈值；CLI 一次性解析，Box 零成本）
+    Sign(Box<SignArgs>),
 }
 
 /// 从 library 文件名推导插件名（`lib{name}.so` / `{name}.dll` → `name`）
@@ -135,7 +137,7 @@ fn main() -> anyhow::Result<()> {
                 library,
                 name,
                 sig_json,
-            } = args;
+            } = *args;
 
             let key_b64 = match key {
                 Some(k) => k,
