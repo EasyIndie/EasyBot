@@ -1126,9 +1126,16 @@ easybot rollback
 
 更新流程说明：
 1. `check-update`：对比当前版本与 GitHub 最新发布版本，显示迁移计划和破坏性变更
-2. `update`：预检（磁盘/权限/Docker 检测）→ 备份二进制+数据库+配置 → 下载新二进制 + SHA256 校验 → 原子替换 → 服务路径更新 → 验证
-3. 任何步骤失败自动回滚
-4. 更新完成后需重启服务生效
+2. `update`：预检（磁盘/权限/Docker 检测）→ 备份二进制+数据库+配置 → 下载新二进制 + SHA256 校验 → 替换二进制 → 服务路径更新 → 验证新二进制
+3. 校验在**提交前**执行（Windows 上对新 exe 暂存文件），任何步骤失败自动回滚并清理残留
+4. 更新完成后需重启服务生效；重启后新版本执行数据库迁移，可在日志看到实际应用的迁移清单
+
+> **自定义目录**：`--dir` 是全局参数，对 `update` / `check-update` / `rollback` 同样生效
+> （`easybot update --dir <home>`）。部署目录非默认时务必显式指定。
+
+> **Windows 差异**：运行中的 exe 被进程锁定无法原地覆盖，`update`/`rollback` 走「暂存 → 分离辅助脚本两步替换」：
+> 先停服务（`manage-service.ps1 stop`）→ 执行 `update` → 等待 `{home}/.update/swap-result-*.txt` 出现 `OK` → 再启动服务。
+> 详见 `docs/other/windows-deployment.md` 第 9 节。
 
 ### 6.2 Docker 部署更新
 
@@ -1142,6 +1149,7 @@ docker compose pull && docker compose up -d
 |---------|---------|
 | systemd | `sudo systemctl restart easybot` |
 | launchd | `./easybot.sh restart` |
+| Windows NSSM | `manage-service.ps1 restart` |
 | 管理脚本 | `./easybot.sh restart` |
 | Docker | `docker compose restart` |
 | 直接运行 | 重新启动 `easybot` 进程 |

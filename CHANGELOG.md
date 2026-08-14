@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Windows 升级：分离辅助脚本两步替换（issue #95 U2）** — 运行中的 exe 被 Windows
+  进程映射锁定，原地 `rename` 会得到 os error 5。`update`/`rollback` 改为「暂存 → 分离
+  辅助脚本两步替换」：新 exe 下载校验后暂存为独立文件，**先运行校验再提交**；交换在
+  本进程退出后由分离 `.cmd` 批处理完成（`CREATE_NO_WINDOW` 隐藏窗口、15 次有界重试、
+  marker 写 `OK`/`TIMEOUT`）。Unix 保持原地 `rename` 语义不变。`updater/replace.rs`、
+  `mod.rs`、`bin/main.rs` 相应调整；Windows 需先停服务再启动（文档已说明）。
+- **`update` 支持全局 `--dir`（issue #95 U1）** — `--dir` 改为 clap 全局参数，
+  `easybot update --dir <home>` / `check-update --dir <home>` / `rollback --dir <home>`
+  均可解析并显示在各子命令 `--help`。`verify_binary` 校验新二进制时透传 `--dir`，
+  修复自定义目录部署下校验落到默认目录的缺口。
+- **更新失败/回滚后清理残留（issue #95 U3）** — 新增 `cleanup_artifacts`：
+  失败（下载/替换/校验）与显式 `rollback` 完成后删除陈旧 `.bak`、`.update_manifest.json`
+  与 `{home}/.update/` 临时目录；下载失败不再残留临时文件。成功路径仍保留备份供
+  `rollback`。
+- **迁移结果显式确认（issue #95 U4）** — `run_migrations`/`run_migrations_pg` 返回
+  本次实际执行的 `Vec<AppliedMigration>`；启动日志打印「✓ 数据库迁移完成：N 条」清单，
+  `update` 提示明确「N 条迁移将在重启后由新版本执行」。
+
+### Changed
+
+- Windows 服务检测（`precheck.rs`）由 stub 实现为 `sc.exe query EasyBot` 探测。
+- 文档：`windows-deployment.md` 第 9 节升级流程、第 10 节 Defender 误报处理、
+  FAQ 新增升级类条目；`upgrade-strategy.md` / `01 user-guide.md` Windows 升级表述
+  与实现对齐。
+
 ## [0.0.35] - 2026-08-14
 
 ### Fixed

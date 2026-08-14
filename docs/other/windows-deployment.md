@@ -113,12 +113,56 @@ curl.exe -X POST http://localhost:8080/admin/login `
 | 4 | gateway.local.yaml 的适配器禁用失效 / .env 不加载 | 用 `--config` 注册，.env 与 local 配置从错误目录解析 | 服务用 `--dir <home>`（本脚本已内置） |
 | 5 | `setx` 设置密码后服务仍报"密码未设置" | `setx` 写用户级环境变量，服务以 LocalSystem 运行读不到 | 密码写入 `<home>/.env`，EasyBot 启动时自行加载 |
 | 6 | gateway.yaml 配置 adminPassword 仍提示"未配置密码" | 多为上述 #4 导致服务跑错目录；`server.adminPassword` 为 camelCase 键名 | 确认服务用 `--dir <home>`；键名写 `adminPassword` |
-| 7 | Defender 隔离删除 exe | 新 Rust 二进制可能被 ML 误判 | 校验 SHA256 后对 exe 所在目录加白名单 |
+| 7 | Defender 隔离删除 exe | 新 Rust 二进制可能被 ML 误判 | 见「10. Windows Defender 误报处理」 |
+| 8 | `update` 报拒绝访问 / exe 没被替换 | 正在运行的服务锁定 exe（os error 5），原地覆盖失败 | 先 `manage-service.ps1 stop` 再 `update`（新版走两步替换，见「9. 升级」） |
+| 9 | 更新失败后残留 `.bak`/`.update_manifest.json` | 旧版失败/回滚路径不清理 | 新版失败/回滚自动清理；成功路径保留备份供 `rollback` |
+| 10 | `update --dir <home>` 报参数错误 | 旧版 `--dir` 不是全局参数，置于子命令后无法解析 | 新版 `--dir` 为全局参数，`update/check-update/rollback` 均支持且显示在各子命令 `--help` |
 
 ## 9. 升级
 
-运行 `easybot.exe update` 即可。NSSM 指向的 exe 路径不变，更新替换二进制后重启服务即生效：
+Windows 上**正在运行的 exe 被进程锁定，无法原地覆盖**。`easybot update` 采用「暂存 → 分离辅助脚本两步替换」：
+
+1. 新 exe 下载并校验后暂存为独立文件，**先运行校验**（`check-update`）通过后，才安排交换。
+2. 二进制交换在本进程**退出后**由分离的 `.cmd` 批处理完成（写结果到 `{home}/.update/swap-result-<ver>.txt`）。
+3. **交换要求 exe 未被占用**——请先停止服务再启动，让批处理独占 exe。
+
+完整流程：
 
 ```powershell
-.\manage-service.ps1 restart
+# 1. 停止服务（释放 exe 锁）
+.\manage-service.ps1 stop
+
+# 2. 更新（--dir 与部署目录一致；--yes 跳过确认）
+easybot.exe update --dir <home> --yes
+
+# 3. 等待交换完成：marker 出现 OK（约几秒；失败会写 TIMEOUT）
+Get-Content <home>/.update/swap-result-*.txt
+
+# 4. 启动服务
+.\manage-service.ps1 start
+
+# 5. 确认已是最新
+easybot.exe check-update --dir <home>
 ```
+
+> **为什么不能原地替换**：Windows 映射正在运行的可执行文件，`rename` 会得到 os error 5（拒绝访问）。Unix（systemd/launchd）的 `rename` 允许覆盖运行中二进制，因此 Linux/macOS 仍是「运行 `update` → 重启服务」两步。Docker 部署请用 `docker compose pull && docker compose up -d`。
+
+> **回滚**：`easybot rollback --dir <home> --yes` 同样走延迟交换（先停服务再执行）。成功后旧 exe 的 `.bak` 由交换脚本一并清理。
+
+## 10. Windows Defender 误报处理
+
+新编译的 Rust 二进制可能被 Defender 的机器学习误判为恶意软件，导致隔离删除 exe。
+
+```powershell
+# 1. 校验下载的 exe 未被篡改（与 Release 附带的 checksums.txt 比对）
+Get-FileHash .\easybot-x86_64-pc-windows-msvc.exe -Algorithm SHA256
+
+# 2. 对 exe 所在目录加排除项（防后续更新误删）
+Add-MpPreference -ExclusionPath "<home>"
+Add-MpPreference -ExclusionPath "C:\Program Files\EasyBot"
+
+# 3. 若已被隔离：在「Windows 安全中心 → 病毒和威胁防护 → 保护历史记录」中
+#    选择「还原」，还原后复核哈希一致再启动
+```
+
+> Defender 隔离的是可执行文件本体，不影响 `.env` 等配置；还原后务必复核 SHA256 与官方 checksums.txt 一致再继续。
