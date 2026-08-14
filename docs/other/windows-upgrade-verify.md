@@ -7,6 +7,26 @@
 
 ---
 
+> ## ✅ 验收结论（2026-08-14，Windows 真机）
+>
+> **已在本机完成真机验收**（隔离测试目录 `C:\Users\WangA\easybot-test\`，本地构建 main 分支 `0d9f7be` + `9c19d98`，未触碰生产服务）：
+>
+> - ✅ **U1 `--dir` 支持**：update / check-update / rollback 均正确解析隔离 home
+> - ✅ **U2 分离交换机制**：staged `move /y` → marker `OK` → 脚本自删 → target 可运行
+> - ✅ **场景 C**：含空格 + `!` 路径 escaping 正确（`DisableDelayedExpansion` 生效）
+> - ✅ **场景 E**：服务运行中回滚被拒（data-safety），零副作用
+> - ✅ **场景 A/B 前置路径**：`--dir` + `AlreadyUpToDate` 无副作用
+> - ✅ **场景 F**：成功交换后 `.update/` 仅剩 marker，无残留
+>
+> ⏸️ **待 v0.0.36 发版后补充**（本生产机无法端到端）：场景 A/B（完整 upgrade / update TIMEOUT）、D（回滚成功端到端，需停服）、G（迁移显式确认）。
+>
+> 📄 完整报告见 issue #95 评论：<https://github.com/EasyIndie/EasyBot/issues/95#issuecomment-5290048108>
+> 本地副本：`C:\Users\WangA\easybot-u2-acceptance-report.md`
+>
+> **结论：U2 升级机制（分离辅助脚本两步替换）在 Windows 真机 + NSSM 下验证通过。**（`is_windows_service_running("EasyBot")` 检测本机生产服务，故场景 D 完整路径需独立测试机或停服，属 checklist 既有约束。）
+
+---
+
 ## 0. 前置准备
 
 | 项 | 要求 |
