@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.37] - 2026-08-14
+
+### Fixed
+
+- **Windows-only clippy 门禁修复（2 项）** — cross-check 升级为 clippy 后暴露的两个
+  `#[cfg(windows)]` 专属 lint：
+  - `updater` 回滚清理循环改 `flatten()`（`clippy::manual_flatten`）。
+  - `plugin-sign` `Command` 枚举 `SignArgs` Box 化，规避 Windows 布局下
+    `clippy::large_enum_variant`（CLI 一次性解析，零成本）。
+
+### Changed
+
+- **CI 门禁：cross-check 升级为 clippy** — `platform-matrix.yml` 的 `Check target`
+  由 `cargo check` 改为 `cargo clippy -- -D warnings`（setup-rust 加 clippy component）。
+  此前 Windows target 的 `#[cfg(windows)]` 代码从没被 clippy 检查（Linux clippy 剔除
+  cfg 块、Windows 仅 rustc check），Windows-only lint 只在推送后暴露；现在
+  Windows/macOS 目标均纳入 clippy 门禁。
+- 文档：`windows-upgrade-verify.md` 补充 v0.0.32→v0.0.36 验收结论并更新验收清单。
+
 ## [0.0.36] - 2026-08-14
 
 ### Fixed

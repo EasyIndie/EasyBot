@@ -1,6 +1,6 @@
 # EasyBot Windows 部署指南
 
-> 适用版本：v0.0.36+（此前版本请先升级）。验证环境：Windows 10 (10.0.26200) + PowerShell 5.1 / pwsh 7 + NSSM 2.24。
+> 适用版本：v0.0.37+（此前版本请先升级）。验证环境：Windows 10 (10.0.26200) + PowerShell 5.1 / pwsh 7 + NSSM 2.24。
 
 本指南描述在 Windows 上将 EasyBot 安装为后台服务的完整路径：下载校验 → 初始化配置 → 配置凭据与适配器 → 用 NSSM 注册服务 → 验证。
 
@@ -175,7 +175,7 @@ easybot.exe check-update --dir <home>
 
 > **回滚**：`easybot rollback --dir <home> --yes` 同样走延迟交换（先停服务再执行）。成功后旧 exe 的 `.bak` 由交换脚本一并清理。注意：服务运行中执行 `rollback` 会被拒绝（防止旧 DB 覆盖活动库），请先停服再回滚。
 
-> **真机验证**：本升级机制的完整验收步骤（含 TIMEOUT 兜底、`!`/空格路径、回滚与迁移确认场景）见 [windows-upgrade-verify.md](windows-upgrade-verify.md)。U2 分离交换机制已通过 Windows 真机 + NSSM 验收（2026-08-14：U1 `--dir`、分离交换、场景 C/E/F、A·B 前置路径）；场景 A/B/D/G 完整端到端作为 v0.0.36 发版后回归项。
+> **真机验证**：本升级机制的完整验收步骤（含 TIMEOUT 兜底、`!`/空格路径、回滚与迁移确认场景）见 [windows-upgrade-verify.md](windows-upgrade-verify.md)。U2 分离交换机制已通过 Windows 真机 + NSSM 验收（2026-08-14：U1 `--dir`、分离交换、场景 C/E/F、A·B 前置路径）；场景 A/B/D/G 完整端到端作为 v0.0.37 发版后回归项。
 
 ## 10. Windows Defender 误报处理
 
