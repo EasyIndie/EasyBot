@@ -51,6 +51,15 @@
 > **⚠️ 发现的边界情况（已修复，v0.0.38 发布）**：updater 的 rollback 保护此前**硬编码检测服务名 `EasyBot`**（`precheck::is_windows_service_running("EasyBot")`），自定义 NSSM 服务名部署（如 `EasyBotTest`）时检测不到运行中的服务 → 放行 rollback（安排 swap→TIMEOUT、**无条件删除 manifest**、恢复 DB/config），造成"DB/config 已回滚但 exe 未变"的半状态。真实生产用标准服务名 `EasyBot` 会被正确拦截（场景 E 已验证），故不影响标准部署。
 >
 > **修复（v0.0.38）**：服务名改为可配置——新增 `server.serviceName`（`gateway.yaml`，默认 `EasyBot`），updater 的预检/回滚 data-safety 均按该配置检测。自定义服务名部署须将 `serviceName` 设为与 NSSM 注册名一致。真机复验建议：用自定义服务名部署 + `server.serviceName` 配置后，服务运行中 `rollback` 应被拒绝（等同场景 E 但针对自定义名）。
+>
+> ### 🔄 v0.0.38 发布后真机验收（2026-08-15，Windows 真机）
+>
+> **服务名可配置化修复端到端通过**（隔离测试 home `C:\Users\WangA\easybot-v038-test\`，测试服务 `EasyBotTest`，官方 v0.0.38 release 二进制，SHA256 对照 checksums.txt 校验通过；未触碰生产服务）：
+> - ✅ **核心修复**：`gateway.local.yaml` 配 `server.serviceName: EasyBotTest` → NSSM 注册同名服务运行 → 服务运行中执行 `rollback` → **被正确拦截**：`✗ Rollback failed: EasyBotTest Windows 服务仍在运行，无法安全回滚...`（v0.0.37 此处会因检测不到 `EasyBot` 而放行，产生半状态）。
+> - ✅ **对照（证明跟随配置而非硬编码）**：`serviceName` 改成不存在的 `EasyBotWrong` → 放行服务检测、进入 rollback 流程。
+> - ✅ `--init` 模板含 `server.serviceName: "EasyBot"` 注释示例；`gateway.local.yaml` 覆盖 base 生效（上游新增 4 个配置单测覆盖）。
+> - ⏸️ **场景 G**：v0.0.38 `requires_db_migration=false`，仍不适用（v0.0.36 的 v2→v3 已覆盖）。
+> - **验证要点**：rollback 的服务检测在 `read_manifest` **之后**——无 manifest 时直接报 `No update manifest found` 测不到服务检测，须先构造合法 `.update_manifest.json` 才能触发 data-safety 拦截。
 
 ---
 
