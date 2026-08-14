@@ -70,6 +70,7 @@ jobs:
         id: rust-setup
         with:
           target: ${{ matrix.target }}
+          components: clippy
           install-protoc: auto
           install-zigbuild: ${{ contains(matrix.target, 'musl') }}
           cache-shared-key: platform-${{ inputs.operation }}-${{ matrix.target }}
@@ -77,7 +78,7 @@ jobs:
 
       - name: Check target
         if: inputs.operation == 'check' && !contains(matrix.target, 'musl')
-        run: bash scripts/ci-step.sh "target check" cargo check --workspace --features "default,plugin-system" --target ${{ matrix.target }} --locked
+        run: bash scripts/ci-step.sh "target check" cargo clippy --workspace --features "default,plugin-system" --target ${{ matrix.target }} --locked -- -D warnings
 
       # musl dependencies such as ring and aws-lc-sys compile C sources.
       # Validate the release binary with zigbuild's cross C toolchain.
