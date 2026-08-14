@@ -27,17 +27,22 @@ pub struct Updater {
     home: std::path::PathBuf,
     current_version: String,
     current_schema_version: i64,
+    /// Windows NSSM 服务名（`server.serviceName`，缺省 "EasyBot"）。回滚 data-safety
+    /// 用它检测服务是否运行中；自定义服务名部署必须与 gateway.yaml 配置一致。
+    service_name: String,
     precheck: Option<PreCheckResult>,
 }
 
 impl Updater {
     /// 创建新的更新器
     pub fn new(home: std::path::PathBuf) -> Self {
+        let service_name = crate::config::resolve_service_name_from_home(&home);
         Updater {
             github: github::GitHubClient::new(DEFAULT_OWNER, DEFAULT_REPO),
             home,
             current_version: env!("CARGO_PKG_VERSION").to_string(),
             current_schema_version: migration::SCHEMA_VERSION,
+            service_name,
             precheck: None,
         }
     }
@@ -99,7 +104,7 @@ impl Updater {
 
     /// 执行预检
     pub async fn run_precheck(&mut self) -> PreCheckResult {
-        let result = precheck::run_precheck().await;
+        let result = precheck::run_precheck(&self.service_name).await;
         self.precheck = Some(result.clone());
         result
     }
@@ -306,12 +311,14 @@ impl Updater {
 
         // 0. Windows：拒绝在服务运行时回滚——exe 被服务锁定（分离交换会 TIMEOUT），
         //    且旧 DB/config 恢复会覆盖仍被服务打开的活动数据库（SQLite 并发写 → 损坏）。
-        //    必须先从服务侧停止（NSSM: `nssm stop EasyBot` / PowerShell: `Stop-Service EasyBot`）。
+        //    必须先从服务侧停止。服务名取 `server.serviceName` 配置（缺省 EasyBot），
+        //    自定义 NSSM 服务名部署必须同步配置，否则检测不到运行中的服务（data-safety 失效）。
         #[cfg(windows)]
-        if precheck::is_windows_service_running("EasyBot") {
-            return Err(UpdateError::RollbackFailed(
-                "EasyBot Windows 服务仍在运行，无法安全回滚：运行中的 exe 被服务锁定，且旧数据库会覆盖活动库。请先停止服务再重试（`nssm stop EasyBot`）。".into(),
-            ));
+        if precheck::is_windows_service_running(&self.service_name) {
+            return Err(UpdateError::RollbackFailed(format!(
+                "{} Windows 服务仍在运行，无法安全回滚：运行中的 exe 被服务锁定，且旧数据库会覆盖活动库。请先停止服务再重试（`nssm stop {}`）。",
+                self.service_name, self.service_name
+            )));
         }
 
         // 1. 恢复二进制

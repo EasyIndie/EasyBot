@@ -48,7 +48,9 @@
 > - ✅ **场景 D（回滚，停服）**：`rollback` → `✓ Rollback complete` → marker=`OK` → exe 回 v0.0.36、`check-update` 显示可升级到 v0.0.37 → `.update_manifest.json` 已删、二进制/DB/config 备份已清理、`.update/` 仅剩 marker → 回滚后服务正常启动、DB schema v3 保持
 > - ⏸️ **场景 G（迁移显式确认）**：**v0.0.37 不适用**——`easybot-version.json` 声明 `requires_db_migration=false`、migrations 为空，v0.0.36→v0.0.37 无 DB 迁移（update 输出 `migrations_applied: []`，启动日志无迁移行）。G 的前提是"含 DB 迁移的版本"，本版本无从确认，逻辑已由 v0.0.36 的 v2→v3 迁移实测覆盖。
 >
-> **⚠️ 发现一个边界情况（建议反馈上游）**：updater 的 rollback 保护**硬编码检测服务名 `EasyBot`**（`precheck::is_windows_service_running("EasyBot")`），若用户以自定义 NSSM 服务名部署（如 `EasyBotTest`），回滚时检测不到运行中的服务 → 放行 rollback（安排 swap→TIMEOUT、**无条件删除 manifest**、恢复 DB/config），造成"DB/config 已回滚但 exe 未变"的半状态。真实生产用标准服务名 `EasyBot` 会被正确拦截（场景 E 已验证），故不影响标准部署；但建议将服务名改为可配置或从 NSSM 读取，避免自定义服务名部署时 data-safety 失效。
+> **⚠️ 发现的边界情况（已修复，v0.0.38 发布）**：updater 的 rollback 保护此前**硬编码检测服务名 `EasyBot`**（`precheck::is_windows_service_running("EasyBot")`），自定义 NSSM 服务名部署（如 `EasyBotTest`）时检测不到运行中的服务 → 放行 rollback（安排 swap→TIMEOUT、**无条件删除 manifest**、恢复 DB/config），造成"DB/config 已回滚但 exe 未变"的半状态。真实生产用标准服务名 `EasyBot` 会被正确拦截（场景 E 已验证），故不影响标准部署。
+>
+> **修复（v0.0.38）**：服务名改为可配置——新增 `server.serviceName`（`gateway.yaml`，默认 `EasyBot`），updater 的预检/回滚 data-safety 均按该配置检测。自定义服务名部署须将 `serviceName` 设为与 NSSM 注册名一致。真机复验建议：用自定义服务名部署 + `server.serviceName` 配置后，服务运行中 `rollback` 应被拒绝（等同场景 E 但针对自定义名）。
 
 ---
 

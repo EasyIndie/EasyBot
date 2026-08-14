@@ -257,6 +257,39 @@ pub fn merge_configs(base: &mut serde_yaml::Value, local: serde_yaml::Value) {
     }
 }
 
+/// 从 home 目录读取 Windows NSSM 服务名（`server.serviceName`）。
+///
+/// updater 的 data-safety 用它检测服务是否运行中（防运行中回滚覆盖活动库）。
+/// **尽力而为（best-effort）**：读取 `gateway.yaml` + `gateway.local.yaml`，按配置
+/// 合并语义叠加后取 `server.serviceName`；任一文件缺失/解析失败/键不存在时回退
+/// 默认 `EasyBot`（`manage-service.ps1 install` 注册的服务名）。
+///
+/// 同步实现（`Updater::new` 在 async 上下文之外构造）。服务名不依赖 `${VAR}`
+/// 替换，故不做环境变量解析。
+pub fn resolve_service_name_from_home(home: &Path) -> String {
+    const DEFAULT_SERVICE_NAME: &str = "EasyBot";
+
+    let Some(mut merged) = read_config_value_sync(&home.join("gateway.yaml")) else {
+        return DEFAULT_SERVICE_NAME.to_string();
+    };
+    if let Some(local) = read_config_value_sync(&home.join("gateway.local.yaml")) {
+        merge_configs(&mut merged, local);
+    }
+    merged
+        .get("server")
+        .and_then(|s| s.get("serviceName"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .unwrap_or(DEFAULT_SERVICE_NAME)
+        .to_string()
+}
+
+/// 同步读取并解析单个 YAML 配置文件（供 `resolve_service_name_from_home` 用）。
+fn read_config_value_sync(path: &Path) -> Option<serde_yaml::Value> {
+    let content = std::fs::read_to_string(path).ok()?;
+    serde_yaml::from_str(&content).ok()
+}
+
 /// 从配置主目录加载 `.env` 文件
 ///
 /// 将 `.env` 中的变量注入进程环境，但不会覆盖已存在的环境变量。
@@ -492,6 +525,10 @@ server:
   # 管理后台登录密码（也可通过 EASYBOT_ADMIN_PASSWORD 环境变量覆盖）。
   # 留空 = 禁用管理后台登录；生产环境建议至少 12 个字符。
   adminPassword: ""
+  # Windows NSSM 服务名（easybot update/rollback 的回滚 data-safety 检测用）。
+  # 用 manage-service.ps1 标准安装时无需配置（默认 "EasyBot"）；
+  # 自定义 NSSM 服务名部署时必须与此处一致，否则回滚保护检测不到运行中的服务。
+  serviceName: "EasyBot"
 
 api:
   basePath: "/api/v1"
@@ -809,6 +846,71 @@ server:
 "#;
         let config: GatewayConfig = serde_yaml::from_str(yaml).expect("yaml should parse");
         assert_eq!(config.server.admin_password, "543859230");
+    }
+
+    #[test]
+    fn test_service_name_accepts_camelcase_yaml_key() {
+        // 回归保护：gateway.yaml 中的 serviceName（camelCase）必须正确映射到
+        // Rust 字段 server.service_name（snake_case），且未配置时回退默认 "EasyBot"。
+        let yaml = r#"
+server:
+  host: "127.0.0.1"
+  port: 8080
+  serviceName: "EasyBotTest"
+"#;
+        let config: GatewayConfig = serde_yaml::from_str(yaml).expect("yaml should parse");
+        assert_eq!(config.server.service_name, "EasyBotTest");
+
+        let minimal: GatewayConfig =
+            serde_yaml::from_str("server:\n  host: \"127.0.0.1\"\n").expect("yaml should parse");
+        assert_eq!(minimal.server.service_name, "EasyBot");
+    }
+
+    #[test]
+    fn test_resolve_service_name_from_home_custom() {
+        let dir = std::env::temp_dir().join(format!("easybot-svcname-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("gateway.yaml"),
+            "server:\n  host: \"127.0.0.1\"\n  serviceName: \"EasyBotTest\"\n",
+        )
+        .unwrap();
+
+        assert_eq!(resolve_service_name_from_home(&dir), "EasyBotTest");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_resolve_service_name_from_home_local_overrides_base() {
+        // gateway.local.yaml 合并后覆盖 base 的同名 serviceName
+        let dir =
+            std::env::temp_dir().join(format!("easybot-svcname-local-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("gateway.yaml"),
+            "server:\n  host: \"127.0.0.1\"\n  serviceName: \"EasyBot\"\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("gateway.local.yaml"),
+            "server:\n  serviceName: \"EasyBot-Prod\"\n",
+        )
+        .unwrap();
+
+        assert_eq!(resolve_service_name_from_home(&dir), "EasyBot-Prod");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_resolve_service_name_from_home_default() {
+        // 文件缺失 / 键缺失 → 回退默认 EasyBot
+        let dir =
+            std::env::temp_dir().join(format!("easybot-svcname-none-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        assert_eq!(resolve_service_name_from_home(&dir), "EasyBot");
+        std::fs::write(dir.join("gateway.yaml"), "server:\n  host: \"127.0.0.1\"\n").unwrap();
+        assert_eq!(resolve_service_name_from_home(&dir), "EasyBot");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

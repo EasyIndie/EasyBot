@@ -11,11 +11,14 @@ use std::path::Path;
 /// 执行所有预检检查
 ///
 /// 收集全部检测结果，不提前中止。
-pub async fn run_precheck() -> PreCheckResult {
+///
+/// `service_name`：Windows NSSM 服务名（`server.serviceName` 配置，缺省 "EasyBot"）。
+/// 用于服务类型检测与回滚 data-safety，自定义服务名部署必须传入实际名。
+pub async fn run_precheck(service_name: &str) -> PreCheckResult {
     let home = current_easybot_home();
     let exe_path = std::env::current_exe().ok();
 
-    let env_check = detect_environment();
+    let env_check = detect_environment(service_name);
     let disk = check_disk_space(exe_path.as_deref());
     let perm = check_permissions(&home);
     let plugins = check_plugin_compatibility();
@@ -51,7 +54,7 @@ pub struct EnvironmentInfo {
 }
 
 /// 检测运行环境
-pub fn detect_environment() -> EnvironmentInfo {
+pub fn detect_environment(service_name: &str) -> EnvironmentInfo {
     let is_docker = Path::new("/.dockerenv").exists() || std::env::var("EASYBOT_DOCKER").is_ok();
 
     let is_dev_mode = detect_dev_mode();
@@ -60,7 +63,7 @@ pub fn detect_environment() -> EnvironmentInfo {
     // 实际的 GitHub API 可达性由后续版本检测决定
     let is_offline = false; // 乐观假设，实际检测交由 GitHub API 调用
 
-    let service_type = detect_service_type();
+    let service_type = detect_service_type(service_name);
 
     EnvironmentInfo {
         is_docker,
@@ -91,7 +94,10 @@ fn detect_dev_mode() -> bool {
 }
 
 /// 检测系统服务管理器类型
-fn detect_service_type() -> ServiceType {
+///
+/// `service_name` 仅 Windows 使用（探测 NSSM 服务是否存在）；非 Windows 平台
+/// 该参数不参与检测。
+fn detect_service_type(service_name: &str) -> ServiceType {
     #[cfg(target_os = "linux")]
     {
         if Path::new("/etc/systemd/system/easybot.service").exists()
@@ -113,11 +119,15 @@ fn detect_service_type() -> ServiceType {
 
     #[cfg(target_os = "windows")]
     {
-        // NSSM 默认服务名 EasyBot（manage-service.ps1 install 时注册）
-        if detect_windows_service("EasyBot") {
+        // 服务名来自 `server.serviceName` 配置（manage-service.ps1 标准安装为 EasyBot）
+        if detect_windows_service(service_name) {
             return ServiceType::Windows;
         }
     }
+
+    // 非 Windows：service_name 参数不参与检测
+    #[cfg(not(target_os = "windows"))]
+    let _ = service_name;
 
     ServiceType::None
 }
@@ -353,7 +363,7 @@ mod tests {
 
     #[test]
     fn test_detect_environment_no_panic() {
-        let env = detect_environment();
+        let env = detect_environment("EasyBot");
         // 确保所有字段都有合理的默认值
         assert!(!env.is_docker); // 测试环境不应是 Docker
         let _ = env.is_dev_mode;

@@ -1,6 +1,6 @@
 # EasyBot Windows 部署指南
 
-> 适用版本：v0.0.37+（此前版本请先升级）。验证环境：Windows 10 (10.0.26200) + PowerShell 5.1 / pwsh 7 + NSSM 2.24。
+> 适用版本：v0.0.38+（此前版本请先升级）。验证环境：Windows 10 (10.0.26200) + PowerShell 5.1 / pwsh 7 + NSSM 2.24。
 
 本指南描述在 Windows 上将 EasyBot 安装为后台服务的完整路径：下载校验 → 初始化配置 → 配置凭据与适配器 → 用 NSSM 注册服务 → 验证。
 
@@ -143,6 +143,7 @@ curl.exe -X POST http://localhost:8080/admin/login `
 | 9 | 更新失败后残留 `.bak`/`.update_manifest.json` | 旧版失败/回滚路径不清理 | 新版失败/回滚自动清理；成功路径保留备份供 `rollback` |
 | 10 | `update --dir <home>` 报参数错误 | 旧版 `--dir` 不是全局参数，置于子命令后无法解析 | 新版 `--dir` 为全局参数，`update/check-update/rollback` 均支持且显示在各子命令 `--help` |
 | 11 | `manage-service.ps1` 报"未找到 NSSM" | NSSM 未安装或不在 PATH | 按「1. 前置条件」第 3 步安装 NSSM（choco / winget / 手动三选一），并确认 `nssm version` 可运行 |
+| 12 | 自定义服务名部署（如 `EasyBotTest`）时 `rollback` 不拒绝运行中的服务，产生"DB 已回滚但 exe 未变"半状态 | updater 的 data-safety 保护按 `server.serviceName` 检测服务是否运行中；默认 `EasyBot`，自定义名未配置则检测不到 | 在 `<home>/gateway.yaml` 配置 `server.serviceName: "<你的服务名>"` 与 NSSM 注册名一致（或用 `manage-service.ps1` 标准名 `EasyBot`） |
 
 ## 9. 升级
 
@@ -174,6 +175,8 @@ easybot.exe check-update --dir <home>
 > **为什么不能原地替换**：Windows 映射正在运行的可执行文件，`rename` 会得到 os error 5（拒绝访问）。Unix（systemd/launchd）的 `rename` 允许覆盖运行中二进制，因此 Linux/macOS 仍是「运行 `update` → 重启服务」两步。Docker 部署请用 `docker compose pull && docker compose up -d`。
 
 > **回滚**：`easybot rollback --dir <home> --yes` 同样走延迟交换（先停服务再执行）。成功后旧 exe 的 `.bak` 由交换脚本一并清理。注意：服务运行中执行 `rollback` 会被拒绝（防止旧 DB 覆盖活动库），请先停服再回滚。
+>
+> **服务名检测**：updater 的 data-safety 保护按 `server.serviceName` 配置（`gateway.yaml`，默认 `EasyBot`）检测服务是否运行中。用 `manage-service.ps1` 标准安装（服务名 `EasyBot`）无需配置；**自定义 NSSM 服务名部署必须把 `server.serviceName` 设为与 NSSM 注册名一致**，否则运行中的服务检测不到，回滚保护失效（详见 FAQ #12）。
 
 > **真机验证**：本升级机制的完整验收步骤（含 TIMEOUT 兜底、`!`/空格路径、回滚与迁移确认场景）见 [windows-upgrade-verify.md](windows-upgrade-verify.md)。U2 分离交换机制已通过 Windows 真机 + NSSM 验收（2026-08-14：U1 `--dir`、分离交换、场景 C/E/F、A·B 前置路径）；场景 A/B/D/G 完整端到端作为 v0.0.37 发版后回归项。
 

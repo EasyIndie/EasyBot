@@ -170,6 +170,13 @@ pub struct ServerConfig {
     /// 管理后台登录密码（可通过 EASYBOT_ADMIN_PASSWORD 环境变量覆盖）
     #[serde(default = "default_admin_password")]
     pub admin_password: String,
+
+    /// Windows NSSM 服务名（`easybot update`/`rollback` 的 data-safety 用它检测
+    /// 服务是否运行中，防止运行中回滚导致旧 DB 覆盖活动库）。用 `manage-service.ps1`
+    /// 标准安装时服务名固定为 `EasyBot`，无需配置；**自定义 NSSM 服务名部署时必须
+    /// 同步设置**，否则回滚保护检测不到运行中的服务。
+    #[serde(default = "default_service_name")]
+    pub service_name: String,
 }
 
 fn default_cors_origins() -> Vec<String> {
@@ -188,6 +195,11 @@ fn default_admin_password() -> String {
     // or gateway.yaml, the admin panel is disabled (login always fails).
     // The startup warning in main.rs alerts operators when this is unset.
     String::new()
+}
+
+fn default_service_name() -> String {
+    // `manage-service.ps1 install` 注册的 NSSM 服务名固定为 EasyBot。
+    "EasyBot".to_string()
 }
 
 /// TLS 配置
@@ -474,6 +486,7 @@ impl Default for ServerConfig {
             tls: TlsConfig::default(),
             cors_allowed_origins: default_cors_origins(),
             admin_password: default_admin_password(),
+            service_name: default_service_name(),
         }
     }
 }

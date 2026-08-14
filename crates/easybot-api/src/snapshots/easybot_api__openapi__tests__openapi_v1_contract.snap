@@ -11,7 +11,7 @@ expression: "ApiDoc::openapi()"
     "license": {
       "name": "GPL-3.0"
     },
-    "version": "0.0.37"
+    "version": "0.0.38"
   },
   "servers": [
     {
@@ -6908,6 +6908,10 @@ expression: "ApiDoc::openapi()"
             "format": "int32",
             "minimum": 0
           },
+          "serviceName": {
+            "type": "string",
+            "description": "Windows NSSM 服务名（`easybot update`/`rollback` 的 data-safety 用它检测\n服务是否运行中，防止运行中回滚导致旧 DB 覆盖活动库）。用 `manage-service.ps1`\n标准安装时服务名固定为 `EasyBot`，无需配置；**自定义 NSSM 服务名部署时必须\n同步设置**，否则回滚保护检测不到运行中的服务。"
+          },
           "tls": {
             "$ref": "#/components/schemas/TlsConfig"
           }
@@ -7172,7 +7176,7 @@ expression: "ApiDoc::openapi()"
           },
           "current_version": {
             "type": "string",
-            "example": "0.0.37"
+            "example": "0.0.38"
           },
           "last_checked": {
             "type": [
