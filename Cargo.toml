@@ -71,7 +71,7 @@ argon2 = "0.5"
 hmac = "0.13"
 sha2 = "0.11"
 base64 = "0.23"
-ed25519-dalek = { version = "2", features = ["pkcs8", "rand_core"] }
+ed25519-dalek = { version = "3", features = ["pkcs8", "rand_core"] }
 
 # 可观测性
 prometheus = { version = "0.14", features = ["process"] }
