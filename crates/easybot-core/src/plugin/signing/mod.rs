@@ -21,7 +21,7 @@ pub mod trust;
 
 use base64::Engine;
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
-use rand_core_06::OsRng;
+use getrandom::{SysRng, rand_core::UnwrapErr};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -66,7 +66,8 @@ pub enum SigningError {
 /// 私钥仅用于 `easybot-plugin-sign gen-keypair`（发布者本机），
 /// 应保存到 CI secret；公钥登记进官方 `trusted_publishers`。
 pub fn generate_keypair() -> (SigningKey, VerifyingKey) {
-    let signing = SigningKey::generate(&mut OsRng);
+    let mut csprng = UnwrapErr(SysRng);
+    let signing = SigningKey::generate(&mut csprng);
     let verifying = signing.verifying_key();
     (signing, verifying)
 }
