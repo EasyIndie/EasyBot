@@ -112,9 +112,49 @@ jobs:
           name: easybot-version
           path: easybot-version.json
 
+  # ── Container base preflight: surface image CVEs before expensive jobs ──
+  # Builds the runtime image from the current sources (no push) and runs the same
+  # Trivy gate as the docker job. Every later job depends on it, so a broken base
+  # fails the run in ~2 minutes instead of after verify + cross-compiles, and the
+  # expensive jobs never start. The authoritative post-push scan in the docker job
+  # still runs; this is a fast-forward tripwire, not a replacement.
+  container-preflight:
+    needs: prepare-release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event_name == 'push' && github.ref || inputs.tag }}
+
+      - uses: ./.github/actions/docker-setup
+
+      # Placeholder binaries are sufficient — the OS layer (base packages, plus
+      # Dockerfile.release build-time `apk upgrade`) is exactly what is scanned.
+      - name: Build release image locally (no push)
+        run: |
+          mkdir -p dist
+          : > dist/easybot-amd64
+          : > dist/easybot-arm64
+          docker buildx build --platform linux/amd64 --load -t easybot:container-preflight -f Dockerfile.release .
+
+      - name: Container vulnerability preflight scan
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: easybot:container-preflight
+          format: table
+          vuln-type: os,library
+          severity: CRITICAL,HIGH
+          ignore-unfixed: false
+          exit-code: 1
+
   # ── Verify: run full CI checks before releasing ────
   verify:
-    needs: prepare-release
+    needs: [prepare-release, container-preflight]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -356,7 +396,10 @@ jobs:
 
   # ── Create GitHub Release ─────────────────────────
   create-release:
-    needs: [build-binaries, prepare-release, verify, approve-commercial-release]
+    # Depends on `docker` so the GitHub Release is published only after the
+    # container image is built, pushed and its Trivy gate passed — a broken
+    # image must never accompany a published release.
+    needs: [build-binaries, prepare-release, verify, approve-commercial-release, docker]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -462,7 +505,7 @@ jobs:
 
   # ── Build and push Docker image ────────────────────
   docker:
-    needs: [prepare-release, build-binaries, verify, approve-commercial-release]
+    needs: [container-preflight, prepare-release, build-binaries, verify, approve-commercial-release]
     runs-on: ubuntu-latest
     permissions:
       contents: read
