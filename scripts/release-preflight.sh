@@ -20,13 +20,11 @@ for file in LICENSE SECURITY.md README.md deny.toml Dockerfile.release deploy/Ca
   scripts/production-backup-retention.sh \
   crates/easybot-api/src/snapshots/easybot_api__openapi__tests__openapi_v1_contract.snap \
   "docs/05 commercial-readiness.md" "docs/06 privacy-and-data-rights.md" \
-  "docs/08 commercial-launch-acceptance.md" commercial/evidence.env.example \
+  commercial/evidence.env.example \
+  "docs/07 commercial-release.md" "docs/13 commercialization-roadmap.md" \
   deploy/gateway.production.local.yaml \
   "docs/09 billing-integration.md" \
   "docs/10 message-idempotency.md" \
-  "docs/11 api-lifecycle.md" \
-  "docs/12 client-resilience.md" \
-  "docs/14 commercial-g0-scope.md" \
   scripts/easybot-backup.sh scripts/test-backup.sh easybot-alerts.yml; do
   [ -s "$file" ] || { echo "Required commercial release file missing: $file" >&2; exit 1; }
 done

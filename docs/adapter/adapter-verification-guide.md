@@ -6,11 +6,11 @@
 
 | 文件 | 适配器 | 状态 |
 |------|--------|------|
-| [telegram.md](telegram.md) | Telegram | ✅ 已验证 |
-| [discord.md](discord.md) | Discord | ✅ 已验证 |
-| [qq.md](qq.md) | QQ | ✅ 已验证（鉴权升级 + 群聊/私聊/频道全场景双向收发 + Interactive + ChatList） |
-| [feishu.md](feishu.md) | 飞书 | ✅ 已验证（REST API + WebSocket 事件订阅双向） |
-| [wechat.md](wechat.md) | 个人微信 | ✅ 已验证（iLink Bot API 长轮询双向） |
+| [telegram.md](verification/telegram.md) | Telegram | ✅ 已验证 |
+| [discord.md](verification/discord.md) | Discord | ✅ 已验证 |
+| [qq.md](verification/qq.md) | QQ | ✅ 已验证（鉴权升级 + 群聊/私聊/频道全场景双向收发 + Interactive + ChatList） |
+| [feishu.md](verification/feishu.md) | 飞书 | ✅ 已验证（REST API + WebSocket 事件订阅双向） |
+| [wechat.md](verification/wechat.md) | 个人微信 | ✅ 已验证（iLink Bot API 长轮询双向） |
 
 > 另见：本目录下的 [适配器架构全面评审报告](adapter-performance-review.md)，包含所有适配器的代码审查结果和优化建议。
 
