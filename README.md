@@ -38,7 +38,6 @@
 - 🎚️ **套餐配额** — 每个 API Key 可配置独立滑动窗口配额，返回标准限流响应头
 - 🧾 **审计账本** — 关键管理操作持久化为可查询的哈希链，支持完整性验证
 - 🔏 **可验证发布** — 平台签名、SPDX SBOM、SHA-256 清单及 Sigstore/SLSA 来源证明
-- ⚙️ **热重载配置** — 运行时更新配置无需重启
 - 🛡️ **资源管理** — 自动 TTL 清理、WAL checkpoint、有界通道、适配器缓存上限，长期运行不泄漏
 - 💾 **灾难恢复** — SQLite/PostgreSQL 备份、校验与恢复工具，SQLite 在线一致性快照
 - 🏷️ **会话显示名** — 平台无法可靠命名的会话可由操作者通过 `PUT /sessions/{key}` 自定义显示名（`custom_name`）；QQ 自动解析群成员昵称、飞书私聊以对端用户名命名，减少回退显示
@@ -85,9 +84,11 @@
 |------|-------|---------|------|
 | <img src="https://img.shields.io/badge/Telegram-2CA5E0?logo=telegram" height="20"> | `easybot-adapter-telegram` | Bot API (getUpdates 长轮询) | ✅ 已验证 |
 | <img src="https://img.shields.io/badge/Discord-5865F2?logo=discord" height="20"> | `easybot-adapter-discord` | Gateway WebSocket | ✅ 已验证 |
-| <img src="https://img.shields.io/badge/%E9%A3%9E%E4%B9%A6-3370FF?logo=feishu" height="20"> | `easybot-adapter-feishu` | REST API + WebSocket 事件订阅 | ✅ 已完成 |
-| <img src="https://img.shields.io/badge/QQ-1E80FF?logo=tencentqq" height="20"> | `easybot-adapter-qq` | 统一 QQBot 鉴权 + Gateway WebSocket | ✅ 已验证（群聊/私聊/频道全场景） |
-| <img src="https://img.shields.io/badge/%E5%BE%AE%E4%BF%A1-07C160?logo=wechat" height="20"> | `easybot-adapter-wechat` | iLink Bot API 长轮询 | ✅ 已完成 |
+| <img src="https://img.shields.io/badge/%E9%A3%9E%E4%B9%A6-3370FF?logo=feishu" height="20"> | `easybot-adapter-feishu` | REST API + WebSocket 事件订阅 | ✅ 已验证 |
+| <img src="https://img.shields.io/badge/QQ-1E80FF?logo=tencentqq" height="20"> | `easybot-adapter-qq` | 统一 QQBot 鉴权 + Gateway WebSocket | ✅ 已验证 |
+| <img src="https://img.shields.io/badge/%E5%BE%AE%E4%BF%A1-07C160?logo=wechat" height="20"> | `easybot-adapter-wechat` | iLink Bot API 长轮询 | ✅ 已验证 |
+
+> 各平台能力差异（群聊/频道、消息类型、重连机制）见[平台能力矩阵](docs/03%20platform-capabilities.md)。
 
 ---
 
@@ -149,15 +150,7 @@ cargo run -- --debug
 
 生产模式会拒绝弱管理密码、未确认的反向代理部署、伪应用 TLS、开发 CORS、关闭限流、原始 payload 透传和非 HTTPS Webhook。EasyBot 当前监听器仅支持 HTTP，必须置于可信 TLS 反向代理后的私网。完整上线要求见[商用上线门禁](docs/05%20commercial-readiness.md)。
 
-涉及个人数据的部署还应执行[隐私与数据主体请求操作手册](docs/06%20privacy-and-data-rights.md)，并由法律顾问审核对外法律文本。
-
-正式版本必须遵循[商用发布与供应链验证](docs/07%20commercial-release.md)，发布二进制、SBOM、校验和及可验证来源证明。
-
-真实域名开放前必须完成[商用上线证据验收](docs/08%20commercial-launch-acceptance.md)，不能用代码测试替代法务批准、告警送达、备份恢复、容量、回滚和在线 TLS 证据。
-
-支付渠道通过[财务事件与支付集成](docs/09%20billing-integration.md)中的受信桥接器接入，使用幂等财务事件账本处理重复通知、退款和拒付。
-
-需要安全重试的单条发送必须遵循[消息发送幂等与重试](docs/10%20message-idempotency.md)，复用同一 `Idempotency-Key`，禁止超时后自动生成新键。
+> 🏢 **商用运营**（仅当你以付费/多租户方式运营时）还需要：隐私与数据主体请求[操作手册](docs/06%20privacy-and-data-rights.md)、[商用发布与供应链验证](docs/07%20commercial-release.md)、[支付集成](docs/09%20billing-integration.md)、[消息幂等与重试](docs/10%20message-idempotency.md)。普通网关使用无需阅读这些。
 
 ### Docker 部署（使用已发布镜像）
 
@@ -254,9 +247,9 @@ server:
 api:
   basePath: "/api/v1"
   websocket:
-    enabled: true           # 启用 WebSocket
-    maxClients: 1000        # 最大连接数
-    heartbeatInterval: 30   # 心跳间隔（秒）
+    enabled: true            # 启用 WebSocket
+    maxClients: 1000         # 最大连接数
+    heartbeatIntervalSecs: 30  # 心跳间隔（秒）
   # rateLimit:
   #   enabled: true          # 速率限制（默认开启）
   #   requestsPerMinute: 60 # 每分钟最大请求数
@@ -311,7 +304,7 @@ QQ_CLIENT_SECRET=your_secret
 | `/chats/{platform}` | GET | 获取平台聊天列表 |
 | `/chats/{platform}/{chat_id}` | GET | 获取聊天详情 |
 | `/config` | GET | 获取当前配置 |
-| `/config` | PUT | 热更新配置 |
+| `/config` | PUT | 变更配置（返回 409，需审阅后重启生效） |
 | `/ws` | GET | WebSocket 实时事件流（连接后发送 `{"token":"..."}` 认证） |
 | `/metrics` | GET | Prometheus 指标 |
 | `/system` | GET | 系统信息（CPU、内存） |
@@ -354,7 +347,7 @@ struct MyAdapter;
 #[async_trait]
 impl PlatformAdapter for MyAdapter {
     fn platform_name(&self) -> &str { "my-platform" }
-    async fn send(&self, msg: OutboundMessage) -> Result<SendResult, GatewayError> {
+    async fn send(&self, params: SendTextParams) -> Result<SendResult, GatewayError> {
         // 实现消息发送逻辑
     }
     // ...
@@ -485,10 +478,10 @@ init(config) → connect() → send()/send_media()/... → disconnect()
 | **P1 MVP** | 核心类型、PlatformAdapter trait、Telegram 适配器、REST API、配置加载、跨平台路径 | ✅ 完成 |
 | **P2 双向通信** | 事件总线、WebSocket 推送、Webhooks、入站消息处理、会话持久化、消息编辑/删除、适配器生命周期事件 | ✅ 完成 |
 | **P3 多平台** | Telegram ✅、Discord ✅（含 send_interactive + list_chats）、**飞书/Lark** ✅、**QQ** ✅（含 send_interactive + list_chats）、**个人微信** ✅（iLink Bot API 已验证；edit/delete/send_interactive/list_chats 平台不支持）— 五平台全部完成 | ✅ 完成 |
-| **P4 生产就绪** | API 密钥认证（Argon2）、速率限制、热重载、优雅关闭、PostgreSQL、Prometheus、Docker、TTL 保留、健康监控 + 自动重连、send_draft 流式传输、健康运行时间 | ✅ 95% |
+| **P4 生产就绪** | API 密钥认证（Argon2）、速率限制、优雅关闭、PostgreSQL、Prometheus、Docker、TTL 保留、健康监控 + 自动重连、send_draft 流式传输、健康运行时间 | ✅ 95% |
 | **P5 插件系统** | 插件 SDK、动态库加载、插件注册、加载器测试、开发者文档 | ✅ 完成 |
 
-> **P4 说明**: API Key 已支持细粒度权限；TLS 推荐由反向代理终止。`--production` 会强制检查生产安全配置。当前尚未提供进程内多租户隔离，多客户部署需使用独立实例和数据库。
+> **P4 说明**: API Key 已支持细粒度权限；配置变更需审阅后重启生效（PUT /config 返回 409，见上表）；TLS 推荐由反向代理终止。`--production` 会强制检查生产安全配置。当前尚未提供进程内多租户隔离，多客户部署需使用独立实例和数据库。
 
 ---
 

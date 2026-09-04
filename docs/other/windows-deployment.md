@@ -118,7 +118,7 @@ curl.exe -X POST http://localhost:8080/admin/login `
 .\manage-service.ps1 disable   # 取消开机自启
 ```
 
-> **NSSM 命令与脚本对照**：`manage-service.ps1` 是 NSSM 的友好封装（自动检测 NSSM 与 exe、参数裸传）。第 9 节升级流程与真机验证清单（`windows-upgrade-verify.md`）直接使用 NSSM 命令，二者等价：
+> **NSSM 命令与脚本对照**：`manage-service.ps1` 是 NSSM 的友好封装（自动检测 NSSM 与 exe、参数裸传）。第 9 节升级流程直接使用 NSSM 命令，二者等价：
 
 | 操作 | NSSM 直接命令（服务名 EasyBot） | manage-service.ps1 |
 |---|---|---|
@@ -178,7 +178,7 @@ easybot.exe check-update --dir <home>
 >
 > **服务名检测**：updater 的 data-safety 保护按 `server.serviceName` 配置（`gateway.yaml`，默认 `EasyBot`）检测服务是否运行中。用 `manage-service.ps1` 标准安装（服务名 `EasyBot`）无需配置；**自定义 NSSM 服务名部署必须把 `server.serviceName` 设为与 NSSM 注册名一致**，否则运行中的服务检测不到，回滚保护失效（详见 FAQ #12）。
 
-> **真机验证**：本升级机制的完整验收步骤（含 TIMEOUT 兜底、`!`/空格路径、回滚与迁移确认场景）见 [windows-upgrade-verify.md](windows-upgrade-verify.md)。U2 分离交换机制已通过 Windows 真机 + NSSM 验收（2026-08-14：U1 `--dir`、分离交换、场景 C/E/F、A·B 前置路径）；场景 A/B/D/G 完整端到端作为 v0.0.37 发版后回归项。
+> **真机验证结论**：分离辅助脚本两步替换（U2）机制已通过 Windows 真机 + NSSM 验收（2026-08-14：U1 `--dir`、分离交换、含 TIMEOUT 兜底、`!`/空格路径、回滚与迁移确认场景 C/E/F、A·B 前置路径；场景 A/B/D/G 完整端到端在 v0.0.37 发版后补全回归）。
 
 ## 10. Windows Defender 误报处理
 

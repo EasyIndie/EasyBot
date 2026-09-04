@@ -170,7 +170,7 @@ init(config) → connect() → send()/... → disconnect()
 | `/sessions/{key}` | GET/PUT/DELETE | Details / rename (custom_name) / delete |
 | `/sessions/{key}/export` | GET | Export session data |
 | `/chats/{p}[/{chat_id}]` | GET | List / info |
-| `/config` | GET/PUT | Get / hot-reload |
+| `/config` | GET/PUT | Get / PUT returns 409 (change requires reviewed restart) |
 | `/ws` | GET | WebSocket stream (Auth: JSON frame `{"token":"..."}`) |
 | `/metrics` | GET | Prometheus |
 | `/swagger` | GET | OpenAPI browser |
@@ -193,7 +193,7 @@ init(config) → connect() → send()/... → disconnect()
 | **P1 MVP** | Core types, PlatformAdapter trait, Telegram adapter, REST API, config, paths | ✅ |
 | **P2 Bidirectional** | Event bus, WebSocket push, inbound handling, session persistence, edit/delete | ✅ |
 | **P3 Multi-platform** | Telegram, Discord, 飞书, QQ, 微信 — 五平台全部完成 | ✅ |
-| **P4 Production** | Argon2 auth, rate limit, hot-reload, PostgreSQL, Docker, Prometheus, TTL, auto-reconnect, streaming, uptime | 95% (暂缓: RBAC, TLS) |
+| **P4 Production** | Argon2 auth, rate limit, PostgreSQL, Docker, Prometheus, TTL, auto-reconnect, streaming, uptime | 95% (暂缓: RBAC, TLS；配置变更需审阅后重启，PUT /config 返回 409) |
 | **P5 Plugin System** | SDK, dynamic loading, registry, docs | ✅ |
 | **P6 Plugin Market** | GitHub Releases 分发、ed25519 签名、多注册表 Taps、信任语义、脚手架/DX、plugin-publish.yml | ✅ |
 
@@ -248,7 +248,7 @@ init(config) → connect() → send()/... → disconnect()
 
 ## Known Gaps
 
-Full checklist: `docs/TODO.md`. P4 deferred items:
+Full checklist: `docs/other/todo-list.md`. P4 deferred items:
 
 | Gap | File | Description |
 |---|---|---|

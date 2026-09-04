@@ -1,8 +1,8 @@
 # 即时通信网关架构设计说明书
 
 > **摘要：** 一份语言无关的即时通信网关（EasyBot）架构设计。该网关作为独立服务运行，连接多种 IM 平台，对外暴露统一的 API 供第三方客户端调用，支持消息发送与接收的双向通信。设计遵循契约驱动、分层隔离、插件扩展的原则。
->
-> **当前实现**: EasyBot 已用 Rust（tokio + axum tower + sqlx）实现，详见 `CLAUDE.md` 和源码。
+
+> ⚠️ **历史设计稿（v0.0.x 早期）**：本文是设计期产物，用于理解分层与各子系统职责；其中的路由清单、适配器接口、错误码、容量数字等**会随迭代滞后**。权威实现事实以 [CLAUDE.md](../CLAUDE.md)、[用户手册](01%20user-guide.md) 与源码为准（路由表对照 `crates/easybot-api/src/server.rs`，适配器接口对照 `crates/easybot-core/src/types/adapter.rs`）。
 
 ---
 
@@ -283,7 +283,8 @@ GET /health
 Response 200:
 {
   "status": "healthy",               // healthy | degraded
-  "version": "0.0.34",
+  "version": "0.0.38",
+  "schema_version": 1,
   "uptime": 86400,
   "adapters": { "total": 5, "connected": 4 },
   "sessions": { "active": 42 }
@@ -337,14 +338,14 @@ Response 409: 运行组件使用一致启动快照；配置变更需审阅并重
 | `callback.received` | 收到按钮回调 |
 | `gateway.started` | 网关启动 |
 | `gateway.stopping` | 网关关闭 |
-| `config.changed` | 配置已热重载 |
+| `config.changed` | 预留常量；文件监听未接线，当前不推送（配置变更需审阅后重启） |
 
 ### 2.4 统一错误格式
 
 ```json
 {
   "error": {
-    "code": "ADAPTER_NOT_FOUND",
+    "code": "PLATFORM_NOT_FOUND",
     "message": "Platform 'foobar' is not configured",
     "details": { "availablePlatforms": ["telegram", "discord"] },
     "requestId": "req_abc123"

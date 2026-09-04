@@ -48,6 +48,8 @@ Release 创建必须等待完整测试、Clippy、依赖/许可证策略和灾�
 
 OpenAPI v1 的完整生成结果保存在 `crates/easybot-api/src/snapshots/` 契约快照中。端点、方法、认证、参数、响应码、schema 类型或必填字段变化都会令测试失败。兼容性新增也必须审阅快照 diff；删除、重命名、收紧输入或改变响应类型等破坏性变更不得直接修改 v1，应设计新版本路径和迁移/弃用窗口。禁止使用无审阅的自动快照更新掩盖契约变化。
 
+**API 弃用纪律**（内容由原 docs/11 并入）：当前没有已弃用的 v1 操作，服务不加载弃用中间件。首次需要弃用一个端点时，必须先发布迁移文档和替代端点，再实现集中弃用策略；响应应携带 RFC 9745 `Deprecation: @<Unix 秒>`、RFC 8594 `Sunset: <HTTP-date>`，以及 `Link` 的 `deprecation` 关系（可选 `successor-version`）。弃用不改变端点当下行为。正式客户至少获得一个已公告、可测试的迁移窗口；窗口时长由合同和变更风险决定，但 `Sunset` 日期必须位于公告之后，且窗口内保持旧端点安全可用。到期删除旧端点仍属于破坏性契约变更，必须通过 OpenAPI 快照审阅、CHANGELOG、发布审批和客户通知，不能只删除策略表记录。浏览器 CORS 会暴露这些响应头。
+
 仓库必须创建名为 `commercial-release` 的 GitHub Environment，至少配置一名不属于提交作者的 required reviewer，并禁止管理员绕过保护规则。发布工作流完成构建、测试和证明后会停在 `approve-commercial-release`；只有该 Environment 留下审批记录后，GitHub Release 与 GHCR 镜像两个公开发布 Job 才会获得执行资格。不得把该 Environment 改成无审核规则的空壳，审批人应核对版本、变更记录、迁移/回滚报告、法律批准和发布窗口。
 
 ## 客户端验证
