@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.39] - 2026-09-04
+
+### Security
+
+- **h2 0.4.15 → 0.4.16（RUSTSEC-2026-0258）** — 修复 hyper 传递依赖 h2 的空 DATA 帧内存
+  放大（连续空 DATA 帧可无界占用内存触发 OOM）。`Cargo.lock` 已锁定 0.4.16。
+
+### Changed
+
+- **依赖跨版本迁移（批量依赖升级中随主程序代码适配的两个破坏性升级）**：
+  - **ed25519-dalek 2 → 3（#97）** — 密钥生成 CSPRNG 迁移到 getrandom 0.4 `SysRng`
+    （`rand_core::UnwrapErr`），签名侧不再直接依赖 rand_core 0.6。
+  - **argon2 0.5 → 0.6（#110）** — `hash_password` 改为单参（内部用 getrandom 生成随机盐），
+    删除显式 `SaltString::generate(&mut OsRng)`；校验路径不变（从 PHC 串读取参数，
+    0.5 存量哈希仍可正常验证）。随本次迁移，rand_core 0.6 彻底移出依赖树。
+- **例行依赖与 CI 工具更新** — 运行时：thiserror / uuid / futures / async-trait / ureq /
+  http-body-util / larksuite-oapi-sdk-rs；CI Actions：install-action / sbom-action /
+  setup-buildx-action / fetch-metadata / rust-toolchain。
+- **文档结构与内容梳理（#115）** — 对齐实现事实：合并一次性商用薄文档到常驻文档、
+  删除过期过程文档（auto-update-tasks / test-plan / upgrade-strategy /
+  windows-upgrade-verify），README/CLAUDE/docs 与代码一致化；同步 release-preflight
+  必需文档清单与残留引用。
+- **新增 OrzMC 完整客户端接入实战文档（#114）** — 首个真实外部客户接入案例，覆盖
+  架构对接、心跳语义、会话清理、`config.changed` 预置语义等完整实战路径。
+
 ## [0.0.38] - 2026-08-14
 
 ### Fixed
