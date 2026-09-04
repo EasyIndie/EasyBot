@@ -17,13 +17,13 @@ permissions:
 jobs:
   reconcile:
     runs-on: ubuntu-latest
+    env:
+      # secrets context 不能出现在 if 表达式（job/step 级均解析失败）→ 经 job env 中转，step if 判空。
+      # 未配置 → GHCR_TOKEN 空串 → step 跳过（工作流绿 = 尚未启用）；配置后 reconcile 失败 → 红灯（过期/坏 token 告警）。
+      GHCR_TOKEN: ${{ secrets.GHCR_PRUNE_TOKEN }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
-      # secret 门禁放 step 级：secrets context 在 job 级 if 不可用（会解析失败）。
-      # secret 未配置 → step 跳过（工作流绿，表示"尚未启用"）；配置后 reconcile 失败 → 红灯（过期/坏 token 告警）。
       - name: Reconcile GHCR retention
-        if: ${{ secrets.GHCR_PRUNE_TOKEN != '' }}
-        env:
-          GHCR_TOKEN: ${{ secrets.GHCR_PRUNE_TOKEN }}
+        if: ${{ env.GHCR_TOKEN != '' }}
         run: python3 scripts/ghcr-reconcile.py --apply

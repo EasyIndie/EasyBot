@@ -106,6 +106,9 @@ jobs:
     permissions:
       contents: read
       packages: write
+    env:
+      # secrets context 不能出现在 if 表达式（job/step 级均解析失败）→ 经 job env 中转，step if 判空。
+      GHCR_TOKEN: ${{ secrets.GHCR_PRUNE_TOKEN }}
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -139,8 +142,6 @@ jobs:
       # 需 org 级 delete:packages token（repo GITHUB_TOKEN 无权删 org 级包），未配则跳过。
       # best-effort：镜像发布是热路径，清扫失败不应使其变红——残留由下次成功自愈 + ghcr-prune.yml 兜底。
       - name: Reconcile GHCR retention
-        if: ${{ secrets.GHCR_PRUNE_TOKEN != '' }}
+        if: ${{ env.GHCR_TOKEN != '' }}
         continue-on-error: true
-        env:
-          GHCR_TOKEN: ${{ secrets.GHCR_PRUNE_TOKEN }}
         run: python3 scripts/ghcr-reconcile.py --apply
