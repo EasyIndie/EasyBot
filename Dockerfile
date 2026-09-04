@@ -1,5 +1,6 @@
 # syntax=docker/dockerfile:1
 # EasyBot — Multi-stage Docker Build
+# TEMP-CI-MARKER: 仅用于触发 docker 流水线验证 M1 GHCR reconcile（随后回退删除）
 FROM rust:slim-bookworm@sha256:cfbb0e0ef7a73e736386bfa346f1cb0503c6d162969dc9426fb37834f3f64c25 AS builder
 
 WORKDIR /app
