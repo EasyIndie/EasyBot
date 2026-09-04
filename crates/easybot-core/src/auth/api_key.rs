@@ -5,9 +5,10 @@
 //! Phase 4: 从 SHA-256 升级到 argon2id (PHC 格式)
 //! Phase 4: 接入 SQLite 持久化，重启不丢失
 
-use argon2::password_hash::SaltString;
-use argon2::password_hash::rand_core::OsRng;
-use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
+use argon2::{
+    Argon2,
+    password_hash::{PasswordHasher, PasswordVerifier, phc::PasswordHash},
+};
 use futures::TryStreamExt;
 use sha2::{Digest, Sha256};
 use sqlx::SqlitePool;
@@ -391,12 +392,12 @@ impl ApiKeyManager {
         let prefix = raw_key.chars().take(8).collect::<String>();
 
         // 生成 Argon2 哈希 (CPU 密集型，使用 spawn_blocking)
-        let salt = SaltString::generate(&mut OsRng);
+        // argon2 0.6：hash_password 内部用 getrandom 生成随机 salt，无需显式 salt
         let raw_key_clone = raw_key.clone();
         let phc_hash = tokio::task::spawn_blocking(move || -> Result<String, String> {
             let argon2 = Argon2::default();
             argon2
-                .hash_password(raw_key_clone.as_bytes(), &salt)
+                .hash_password(raw_key_clone.as_bytes())
                 .map(|h| h.to_string())
                 .map_err(|e| e.to_string())
         })
