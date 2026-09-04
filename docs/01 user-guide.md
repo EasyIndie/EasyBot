@@ -36,7 +36,6 @@
 | **批量发送** | 一次请求向多个平台/会话发送相同消息 |
 | **会话管理** | 自动追踪跨平台会话，统一管理 |
 | **适配器热插拔** | 运行时启停任意平台适配器，不影响其他平台 |
-| **热重载配置** | 修改配置文件后每 60 秒自动生效，无需重启 |
 | **插件扩展** | 通过动态库加载第三方适配器，无需 fork 主仓库 |
 | **插件市场** | GitHub Releases 分发 + ed25519 签名校验 + 多注册表 + 信任管理（`easybot plugin ...`） |
 
@@ -56,7 +55,7 @@
 
 - [Docker](https://docs.docker.com/get-docker/) + [Docker Compose](https://docs.docker.com/compose/install/)（推荐）
 - 或从 [GitHub Releases](https://github.com/EasyIndie/EasyBot/releases) 下载预编译二进制
-- 或 [Rust 工具链](https://rustup.rs/) 1.81+（源码构建）
+- 或 [Rust 工具链](https://rustup.rs/) 1.94+（源码构建）
 - 一个 Telegram 账号
 
 ### 2.2 创建 Telegram Bot
@@ -320,7 +319,7 @@ api:
   websocket:
     enabled: true
     maxClients: 1000
-    heartbeatInterval: 30        # 心跳间隔（秒）
+    heartbeatIntervalSecs: 30    # 心跳间隔（秒）
   metrics:
     enabled: true
     path: "/metrics"
@@ -647,6 +646,8 @@ API Key 列表中的“调试”按钮可选择活跃 Target，并使用待测 K
 | 路径 | 方法 | 说明 |
 |------|------|------|
 | `/health` | GET | 健康检查（无需认证） |
+| `/live` | GET | 进程存活探针（无需认证，不检查外部平台） |
+| `/ready` | GET | 就绪探针（无需认证；检查存储与适配器，未就绪返回 503） |
 | `/system` | GET | 系统信息（CPU、内存） |
 | `/adapters` | GET | 适配器列表及状态 |
 | `/adapters/{platform}/start` | POST | 启动适配器 |
@@ -861,7 +862,7 @@ ws.addEventListener('message', (e) => {
 | `callback.received` | 收到按钮回调 |
 | `gateway.started` | 网关启动完成 |
 | `gateway.stopping` | 网关正在关闭 |
-| `config.changed` | 配置已热重载 |
+| `config.changed` | 预留事件常量，当前未启用文件监听，不实际推送（配置变更需审阅后重启生效） |
 
 ### 8.4 入站消息数据
 
@@ -1014,7 +1015,7 @@ deploy:
 | Docker 构建慢 | 利用缓存挂载，或使用预编译二进制 |
 | 适配器未连接 | 检查 `.env` 变量名和令牌有效期，使用 `--debug` 查看日志 |
 | 收不到消息 | 确认适配器状态为 `Connected`；确认 WebSocket 已认证；检查平台权限配置 |
-| WebSocket 不稳定 | 缩短心跳间隔（`api.websocket.heartbeatInterval: 15`） |
+| WebSocket 不稳定 | 缩短心跳间隔（`api.websocket.heartbeatIntervalSecs: 15`） |
 | 切换 SQLite→PostgreSQL | 配置 `storage.storageType: "postgres"`，数据需手动迁移 |
 | 更新配置 | 修改受版本控制的配置并执行滚动重启；运行时 PUT 会返回 409 |
 
@@ -1064,6 +1065,56 @@ curl http://localhost:8080/api/v1/plugins    # 查看插件加载状态（含失
 
 ---
 
+## 13. 升级更新
+
+### 13.1 自动更新（二进制部署）
+
+```bash
+# 检查可用更新（显示版本号、数据库迁移、破坏性变更）
+easybot check-update
+
+# 执行更新（自动备份 + 二进制替换 + 数据库迁移）
+easybot update
+
+# 跳过确认提示（用于自动化脚本）
+easybot update --yes
+
+# 回滚到上一个版本
+easybot rollback
+```
+
+更新流程说明：
+1. `check-update`：对比当前版本与 GitHub 最新发布版本，显示迁移计划和破坏性变更
+2. `update`：预检（磁盘/权限/Docker 检测）→ 备份二进制+数据库+配置 → 下载新二进制 + SHA256 校验 → 替换二进制 → 服务路径更新 → 验证新二进制
+3. 校验在**提交前**执行（Windows 上对新 exe 暂存文件），任何步骤失败自动回滚并清理残留
+4. 更新完成后需重启服务生效；重启后新版本执行数据库迁移，可在日志看到实际应用的迁移清单
+
+> **自定义目录**：`--dir` 是全局参数，对 `update` / `check-update` / `rollback` 同样生效
+> （`easybot update --dir <home>`）。部署目录非默认时务必显式指定。
+
+> **Windows 差异**：运行中的 exe 被进程锁定无法原地覆盖，`update`/`rollback` 走「暂存 → 分离辅助脚本两步替换」：
+> 先停服务（`manage-service.ps1 stop`）→ 执行 `update` → 等待 `{home}/.update/swap-result-*.txt` 出现 `OK` → 再启动服务。
+> 详见 `docs/other/windows-deployment.md` 第 9 节。
+
+### 13.2 Docker 部署更新
+
+```bash
+docker compose pull && docker compose up -d
+```
+
+### 13.3 升级后重启
+
+| 部署方式 | 重启命令 |
+|---------|---------|
+| systemd | `sudo systemctl restart easybot` |
+| launchd | `./easybot.sh restart` |
+| Windows NSSM | `manage-service.ps1 restart` |
+| 管理脚本 | `./easybot.sh restart` |
+| Docker | `docker compose restart` |
+| 直接运行 | 重新启动 `easybot` 进程 |
+
+---
+
 ## 附录
 
 ### A. 快速参考卡
@@ -1103,56 +1154,6 @@ wscat -c ws://localhost:8080/api/v1/ws
 | 飞书 | App ID + App Secret | [飞书开放平台](https://open.feishu.cn/app) |
 | QQ | App ID + Client Secret | [QQ 开放平台](https://bot.q.qq.com/) |
 | 微信 | 扫码登录 | 启动后扫描屏幕二维码 |
-
----
-
-## 6. 升级更新
-
-### 6.1 自动更新（二进制部署）
-
-```bash
-# 检查可用更新（显示版本号、数据库迁移、破坏性变更）
-easybot check-update
-
-# 执行更新（自动备份 + 二进制替换 + 数据库迁移）
-easybot update
-
-# 跳过确认提示（用于自动化脚本）
-easybot update --yes
-
-# 回滚到上一个版本
-easybot rollback
-```
-
-更新流程说明：
-1. `check-update`：对比当前版本与 GitHub 最新发布版本，显示迁移计划和破坏性变更
-2. `update`：预检（磁盘/权限/Docker 检测）→ 备份二进制+数据库+配置 → 下载新二进制 + SHA256 校验 → 替换二进制 → 服务路径更新 → 验证新二进制
-3. 校验在**提交前**执行（Windows 上对新 exe 暂存文件），任何步骤失败自动回滚并清理残留
-4. 更新完成后需重启服务生效；重启后新版本执行数据库迁移，可在日志看到实际应用的迁移清单
-
-> **自定义目录**：`--dir` 是全局参数，对 `update` / `check-update` / `rollback` 同样生效
-> （`easybot update --dir <home>`）。部署目录非默认时务必显式指定。
-
-> **Windows 差异**：运行中的 exe 被进程锁定无法原地覆盖，`update`/`rollback` 走「暂存 → 分离辅助脚本两步替换」：
-> 先停服务（`manage-service.ps1 stop`）→ 执行 `update` → 等待 `{home}/.update/swap-result-*.txt` 出现 `OK` → 再启动服务。
-> 详见 `docs/other/windows-deployment.md` 第 9 节。
-
-### 6.2 Docker 部署更新
-
-```bash
-docker compose pull && docker compose up -d
-```
-
-### 6.3 升级后重启
-
-| 部署方式 | 重启命令 |
-|---------|---------|
-| systemd | `sudo systemctl restart easybot` |
-| launchd | `./easybot.sh restart` |
-| Windows NSSM | `manage-service.ps1 restart` |
-| 管理脚本 | `./easybot.sh restart` |
-| Docker | `docker compose restart` |
-| 直接运行 | 重新启动 `easybot` 进程 |
 
 ---
 
