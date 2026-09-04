@@ -334,7 +334,22 @@ impl GitHubClient {
             }
         }
 
+        // flush 等待 write_all 后台写任务真正落盘。tokio::fs::File 的 poll_write 在把字节
+        // 拷入内部缓冲并派发阻塞写任务后即返回 Ready，write_all 随之返回——字节未必已写入
+        // OS。若在 flush 前用独立 fd/path 读该文件（随后的 sha256 校验即如此），高负载下会
+        // 读到空文件；历史上表现为下载测试偶发 "sha256 of empty"（e3b0c442…）失败，此前用
+        // 重试掩盖，真因在此。
+        file.flush().await.map_err(UpdateError::IoError)?;
+
         // 校验下载完整性
+        // 空 body 一律视为失败：当响应没有 Content-Length（或声明为 0）时，旧逻辑会
+        // 把"0 字节完整响应"静默当成成功，留下空文件让调用方（自动更新/插件安装）
+        // 误判为可用的产物。二进制产物不可能合法为空。
+        if downloaded == 0 {
+            return Err(UpdateError::NetworkError(
+                "Download failed: server returned an empty response body".into(),
+            ));
+        }
         if total_size > 0 && downloaded != total_size {
             return Err(UpdateError::NetworkError(format!(
                 "Download incomplete: {}/{} bytes",

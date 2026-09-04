@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **根治下载/插件安装偶发"下载产物为空"缺陷（`updater::github::download_binary`）** —
+  根因是 `tokio::fs::File` 的 `write_all` 只保证字节拷入内部缓冲并派发后台阻塞写任务，
+  `poll_write` 随即返回 `Ready`——字节未必已写入 OS。`download_binary` 未 `flush` 就
+  返回 `Ok`，调用方（自动更新替换、插件安装）用独立 fd/path 读该文件做 sha256 校验时，
+  高负载下会读到尚未落盘的空文件（历史表现为下载测试偶发 `sha256 of empty`，
+  e3b0c442…）。已在返回前补 `file.flush().await` 等待后台写任务完成，并把 0 字节
+  响应判为失败（此前无 Content-Length 的 0 字节完整响应会被静默当成成功）。
+  `test_download_verifies_sha256` 中为此设的 8 次重试循环一并移除——回归即真缺陷，
+  应修根因而非加重试预算。
+
 ## [0.0.40] - 2026-09-04
 
 ### Security

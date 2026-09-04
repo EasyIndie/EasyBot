@@ -305,25 +305,17 @@ mod tests {
             library: Some("libdemo.so".into()),
         };
 
-        // wiremock + hyper 1.x 在本机偶发"空 body 应答"竞争（实测 ~0.4%/请求，
-        // 但全量并行跑时大幅上升——曾有连败 4 次的记录），恰好被 sha256 完整性
-        // 校验捕获。生产行为正确（空 body → ChecksumMismatch）；此处重试以容忍
-        // 测试基建的瞬态，而不是掩盖产品缺陷（真 bug 会连败所有尝试次数）。
+        // 历史：本测试偶发 "sha256 of empty"（空串哈希 e3b0c442…）失败，曾被当作
+        // wiremock/hyper 空应答竞争并以 8 次重试容忍。真因不在 HTTP 层：tokio::fs::File
+        // 的 write_all 在字节拷入内部缓冲、派发后台阻塞写任务后即返回，`download_binary`
+        // 未 flush 就返回，随后的 sha256 校验在负载下读到尚未落盘的空文件。修复 =
+        // download_binary 返回前 `flush()`（见 updater/github.rs），并把 0 字节响应判为
+        // 失败。因此本测试断言单次下载即成功——若再失败，是新缺陷，应修根因而非加重试。
         let dest = std::env::temp_dir().join(format!("registry-dl-{}", std::process::id()));
-        let mut attempt = 0;
-        loop {
-            let _ = std::fs::remove_file(&dest);
-            match registry.download(&artifact, &dest).await {
-                Ok(()) => break,
-                Err(PluginRegistryError::ChecksumMismatch { .. }) if attempt < 8 => {
-                    attempt += 1;
-                    // 间隔让 wiremock/hyper 连接池从竞争态恢复，而非连续打空
-                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                    continue;
-                }
-                Err(e) => panic!("download+verify should pass: {e}"),
-            }
-        }
+        registry
+            .download(&artifact, &dest)
+            .await
+            .expect("download+verify should pass on first attempt");
         assert_eq!(std::fs::read(&dest).unwrap(), payload);
         let _ = std::fs::remove_file(&dest);
     }
