@@ -3,6 +3,12 @@
 # Uses musl binaries produced by the build-binaries CI job, skipping Rust compilation.
 FROM alpine:3.22@sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc1f695dce
 
+# The base digest is pinned to the Alpine build snapshot, but Alpine rebuilds the
+# 3.22 base on its own cadence — a freshly released openssl fix can postdate the
+# image. Upgrade system packages at build time so the runtime image never ships
+# an unfixed CVE (e.g. openssl 3.5.8-r0 in v3.22/main fixes CVE-2026-14456).
+RUN apk upgrade --no-cache
+
 RUN addgroup -S -g 10001 easybot \
     && adduser -S -D -H -u 10001 -G easybot easybot \
     && mkdir -p /var/lib/easybot/data /var/lib/easybot/logs /var/lib/easybot/plugins /etc/easybot \
