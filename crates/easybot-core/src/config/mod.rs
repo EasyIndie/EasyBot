@@ -535,7 +535,7 @@ api:
   websocket:
     enabled: true
     maxClients: 1000
-    heartbeatInterval: 30
+    heartbeatIntervalSecs: 30
   # 透传各平台原始 payload（开发调试用），也可通过环境变量 EASYBOT_RAW_PAYLOAD 覆盖
   # raw_payload_enabled: ${EASYBOT_RAW_PAYLOAD_ENABLED:-false}
 

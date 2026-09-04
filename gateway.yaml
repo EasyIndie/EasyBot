@@ -28,7 +28,7 @@ api:
   websocket:
     enabled: true
     maxClients: 1000
-    heartbeatInterval: 30
+    heartbeatIntervalSecs: 30
 
   # ── Prometheus 指标 ─────────────────────────────────────
   # metrics:
