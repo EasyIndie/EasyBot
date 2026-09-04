@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.40] - 2026-09-04
+
+### Security
+
+- **发布容器镜像构建期升级系统包（修复 CVE-2026-14456）** — `Dockerfile.release` 在 `FROM`
+  之后新增 `RUN apk upgrade --no-cache`。基础镜像 digest 固定于 Alpine 构建快照，而 Alpine
+  重建 3.22 base 的节奏晚于 openssl 补丁发布（修复版 3.5.8-r0 已在 v3.22/main），因此纯 digest
+  升级无法消除预装 openssl/libcrypto3 3.5.7-r0 的高危漏洞（CVE-2026-14456，无界内存 DoS）。
+  构建期升级保证每次产出的运行时镜像都携带仓库最新系统包。受影响的 v0.0.39 镜像由本版本
+  发布的镜像取代（`latest` / `0.0` / `0.0.40`；历史 `0.0.39` 精确 tag 属已淘汰快照）。
+
+### Changed
+
+- **发布流水线把容器镜像校验纳入版本发布前置要求并提前暴露问题（CI）** —
+  - 新增 `container-preflight` 作业：在 `verify` / `build-binaries` 之前用同一 Trivy 门禁
+    （CRITICAL/HIGH、`exit-code 1`）本地构建并扫描发布镜像。坏基础镜像约 2 分钟即失败，
+    后续昂贵作业不再启动，节约 CI 运行成本。
+  - `create-release` 现在依赖 `docker` 作业：GitHub Release 仅在镜像构建、推送与扫描全部通过后
+    才发布（v0.0.39 教训：`create-release` 原不等待 docker，镜像带 CVE 时 Release 仍会先行发布，
+    留下一个带漏洞镜像的已发布版本）。
+
 ## [0.0.39] - 2026-09-04
 
 ### Security

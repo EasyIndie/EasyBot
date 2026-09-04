@@ -236,7 +236,7 @@ init(config) → connect() → send()/... → disconnect()
 
 ## 发布流程
 
-收到"发布新版本"请求时直接按此固定流程执行（v0.0.39 验证；治理原则见 `docs/07 commercial-release.md`）：
+收到"发布新版本"请求时直接按此固定流程执行（v0.0.40 验证；治理原则见 `docs/07 commercial-release.md`）：
 
 1. **文档对齐**：CHANGELOG.md 在 `[Unreleased]` 下新增 `[0.0.X]` 条目（Keep a Changelog，中文）；README/CLAUDE/docs 与代码实现对齐。
 2. **版本同步**：`Cargo.toml`（version）+ `Cargo.lock`（`cargo update --workspace`）+ `compose.quickstart.yml`（EASYBOT_IMAGE 注释）+ `crates/easybot-api/src/routes/update.rs`（`#[schema(example)]`）+ `crates/easybot-api/tests/routes.rs`（current_version）+ 两个快照（health + openapi 的 version/example）+ `deploy-kit/deploy.sh`（注释→**下一**版本）+ `docs/01 user-guide.md`（版本引用）+ `docs/other/windows-deployment.md`（版本要求）。
@@ -244,7 +244,7 @@ init(config) → connect() → send()/... → disconnect()
 4. **预检**：`bash scripts/release-preflight.sh`。**禁止 `| tail`**（管道吞掉退出码）——用 `> /tmp/log 2>&1; echo EXIT_CODE=$?`。含 Actions 40 位 SHA 固定门禁。
 5. **测试**：`cargo test --workspace --features "default,plugin-system" --locked` + `cargo fmt --all --check`。注意 APFS 磁盘空间：全量编译可打满共享容器，满盘表现为空输出 + exit 1，不是测试失败。
 6. **提交**（3 个）：`docs: align documentation with current implementation` / `ci: pin <action> action to commit SHA` / `release: bump v0.0.X → v0.0.Y`。
-7. **推送**：`git push origin main` + `git push origin v0.0.Y` 触发 `release.yml`（要求 Cargo.toml 版本==标签、CHANGELOG 有条目、标签时工作树干净）；推送后必须 `gh api` 确认 CI 通过，失败立即修复。
+7. **推送**：`git push origin main` + `git push origin v0.0.Y` 触发 `release.yml`（要求 Cargo.toml 版本==标签、CHANGELOG 有条目、标签时工作树干净）；推送后必须 `gh api` 确认 CI 通过，失败立即修复。注意 release.yml 已含容器门禁：新增 `container-preflight` 作业在 verify/交叉编译前用同一 Trivy 门禁本地构建并扫描发布镜像（坏基础镜像约 2 分钟整条流水线即红、昂贵作业不再启动），且 `create-release` 依赖 `docker` 作业——镜像构建/推送/扫描未全绿前不会发布 Release。
 
 ## Known Gaps
 

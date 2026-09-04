@@ -14,7 +14,7 @@ git push origin v0.1.0
 
 ## 发布执行步骤（机械流程）
 
-以下为从 `0.0.X` 发布到 `0.0.Y` 的完整机械步骤（`v0.0.34` 验证）。版本号同步涉及 20+ 文件，改错会破坏发布门禁：
+以下为从 `0.0.X` 发布到 `0.0.Y` 的完整机械步骤（`v0.0.40` 验证）。版本号同步涉及 20+ 文件，改错会破坏发布门禁：
 
 1. **CHANGELOG**：`[Unreleased]` 下新增 `[0.0.Y] - YYYY-MM-DD` 条目（Keep a Changelog，中文）。
 2. **版本号同步**：`Cargo.toml`（`version`）、`Cargo.lock`（`cargo update --workspace`）、`compose.quickstart.yml`、`crates/easybot-api/src/routes/update.rs`（`#[schema(example)]`）、`crates/easybot-api/tests/routes.rs`（`current_version` 断言）、`routes__health_response.snap`、`openapi_v1_contract.snap`（`version`+`example`）、`docs/01 user-guide.md`（health JSON/下载 URL/时间戳行）、`docs/other/windows-deployment.md`（版本要求）。`deploy-kit/deploy.sh` 注释示例按约定指向**下一个**版本。
@@ -34,13 +34,13 @@ git push origin v0.1.0
 - GitHub Sigstore/SLSA 构建来源证明；
 - 与容器 digest 绑定的镜像来源证明及 SBOM 证明。
 
-Release 创建必须等待完整测试、Clippy、依赖/许可证策略和灾备演练通过。构建 job 使用标签中的只读源码，不在构建期间改写版本文件。
+Release 创建必须等待完整测试、Clippy、依赖/许可证策略、灾备演练，以及容器镜像作业（构建 + 推送 + Trivy 扫描）全部通过；`create-release` 依赖 `docker` 作业，镜像校验是版本发布的前置要求——绝不允许发布带未接受 CVE 的镜像的版本（v0.0.39 教训：原 `create-release` 不等待 docker，镜像带高危 CVE 时 Release 仍先行发布）。构建 job 使用标签中的只读源码，不在构建期间改写版本文件。
 
-容器构建推送后，工作流按不可变 digest 使用 Trivy 扫描 OS 与应用库漏洞；任何 `CRITICAL` 或 `HIGH`（包括尚无修复版本的漏洞）都会以非零状态停止工作流。provenance 与 SBOM 证明只在扫描通过后生成，因此即使注册表短暂存在失败构建留下的 tag，`production-up.sh` 也无法把没有两类证明的镜像部署到生产。发布负责人仍应删除失败构建的 tag，并通过有期限、列明补偿控制和批准人的风险接受记录处理确需例外的 CVE；不得把扫描改成 `continue-on-error` 或降低退出码。
+为尽快暴露问题、避免在坏基础镜像上耗费构建成本，release.yml 新增 `container-preflight` 作业：流水线早期（先于 `verify` 与交叉编译，仅依赖 `prepare-release`）用同一 Trivy 门禁本地构建并扫描发布镜像，失败即以约 2 分钟让整条流水线变红，后续昂贵作业因 `needs` 依赖不再启动。推送后的最终镜像仍按不可变 digest 扫描，作为权威门禁；任何 `CRITICAL` 或 `HIGH`（包括尚无修复版本的漏洞）都会以非零状态停止工作流。provenance 与 SBOM 证明只在扫描通过后生成，因此即使注册表短暂存在失败构建留下的 tag，`production-up.sh` 也无法把没有两类证明的镜像部署到生产。发布负责人仍应删除失败构建的 tag，并通过有期限、列明补偿控制和批准人的风险接受记录处理确需例外的 CVE；不得把扫描改成 `continue-on-error` 或降低退出码。
 
 `.github/workflows/container-audit.yml` 每日重新扫描当前 `latest` 正式镜像，用于发现发布后新披露的高危漏洞。仓库必须为该工作流失败配置安全值班通知；失败后应定位受影响 digest、暂停新部署并按严重等级执行补丁发布或有期限的风险接受，不能仅重新运行工作流消除告警。
 
-`Dockerfile` 的 Rust/Debian 构建与开发镜像、`Dockerfile.release` 的 Alpine 发布运行时镜像同时保留可读 tag 和不可变的多架构 manifest digest。升级基础系统或 Rust 工具链时，应从 Docker Hub 官方仓库重新取得 manifest digest，审核 amd64/arm64 子清单及漏洞扫描结果后在同一变更中更新；发布预检会拒绝任何没有 `@sha256:` 的 `FROM` 引用。
+`Dockerfile` 的 Rust/Debian 构建与开发镜像、`Dockerfile.release` 的 Alpine 发布运行时镜像同时保留可读 tag 和不可变的多架构 manifest digest。升级基础系统或 Rust 工具链时，应从 Docker Hub 官方仓库重新取得 manifest digest，审核 amd64/arm64 子清单及漏洞扫描结果后在同一变更中更新；发布预检会拒绝任何没有 `@sha256:` 的 `FROM` 引用。注意：digest 只代表 Alpine 构建快照，若 digest 已是最新但 Alpine 尚未基于含安全补丁的仓库重建 base（如 v0.0.39 时 openssl 3.5.8-r0 修复已进 v3.22/main、base 仍预装 3.5.7-r0），纯 digest 升级无法消除 base 内预装包漏洞——此时保持 digest 固定，并在 `Dockerfile.release` 中以构建期 `RUN apk upgrade --no-cache` 拉取仓库最新系统包（v0.0.40 起）。
 
 所有第三方 GitHub Actions 均固定到 40 位 commit SHA，行尾版本注释仅用于可读性，不参与解析。升级 Action 时必须从其官方仓库解析目标标签（注释标签需取解引用后的 commit），审阅变更记录与权限需求后更新 SHA；`test-actions-pinning.sh` 会阻止分支、版本标签或短 SHA 重新进入 CI。
 
