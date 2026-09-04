@@ -1,0 +1,27 @@
+name: GHCR prune
+
+# M2 保留策略兜底：独立于 docker.yml 定时 reconcile。
+# docker.yml 长期故障 / 人为 buildx push / M1 step 被跳过时仍能清扫。
+# 与 M1 共用 scripts/ghcr-reconcile.py（幂等、默认 dry-run，此处显式 --apply）。
+# 此工作流可正常变红——清扫是唯一的职责，坏了就该亮。
+
+on:
+  schedule:
+    # 每周一 05:17 UTC（避开整点/半点，错峰 GitHub 定时任务）
+    - cron: "17 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  reconcile:
+    if: ${{ secrets.GHCR_PRUNE_TOKEN != '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Reconcile GHCR retention
+        env:
+          GHCR_TOKEN: ${{ secrets.GHCR_PRUNE_TOKEN }}
+        run: python3 scripts/ghcr-reconcile.py --apply

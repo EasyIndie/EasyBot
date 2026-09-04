@@ -133,3 +133,14 @@ jobs:
               "${REGISTRY}/${IMAGE}@${DIGEST_AMD64}" \
               "${REGISTRY}/${IMAGE}@${DIGEST_ARM64}"
           done <<< "$TAGS"
+
+      # ── M1 保留策略 reconcile：新 main 树已推，清扫被取代的 sha7 树/孤儿/幽灵条目 ──
+      # 不变量：GHCR 仅含全部正式 release 树 + 当前 main/latest 树。幂等、默认 dry-run。
+      # 需 org 级 delete:packages token（repo GITHUB_TOKEN 无权删 org 级包），未配则跳过。
+      # best-effort：镜像发布是热路径，清扫失败不应使其变红——残留由下次成功自愈 + ghcr-prune.yml 兜底。
+      - name: Reconcile GHCR retention
+        if: ${{ secrets.GHCR_PRUNE_TOKEN != '' }}
+        continue-on-error: true
+        env:
+          GHCR_TOKEN: ${{ secrets.GHCR_PRUNE_TOKEN }}
+        run: python3 scripts/ghcr-reconcile.py --apply
