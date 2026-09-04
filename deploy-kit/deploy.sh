@@ -3,7 +3,7 @@
 #
 # 用法:
 #   ./deploy.sh                        # 部署与工具包同版本的镜像（VERSION 由发版生成）
-#   EASYBOT_IMAGE=ghcr.io/easyindie/easybot:0.0.40 ./deploy.sh   # 显式指定其他版本
+#   EASYBOT_IMAGE=ghcr.io/easyindie/easybot:0.0.41 ./deploy.sh   # 显式指定其他版本
 #   EASYBOT_BIND_ADDRESS=0.0.0.0 ./deploy.sh                     # 绑定到非回环地址
 #
 # 版本锁定：工具包随发版打包，默认拉取与工具包同版本的镜像 tag（读 VERSION 文件），

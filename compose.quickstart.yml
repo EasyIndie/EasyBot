@@ -16,7 +16,7 @@ services:
   easybot:
     # 默认 latest；发布工具包内此默认值由 build-deploy-kit.sh 锁定为同版本 tag，
     # 仓库内/其他版本可用 EASYBOT_IMAGE 覆盖，例如：
-    #   EASYBOT_IMAGE=ghcr.io/easyindie/easybot:0.0.39 docker compose -f compose.quickstart.yml up -d
+    #   EASYBOT_IMAGE=ghcr.io/easyindie/easybot:0.0.40 docker compose -f compose.quickstart.yml up -d
     image: ${EASYBOT_IMAGE:-ghcr.io/easyindie/easybot:latest}
     pull_policy: always
     restart: unless-stopped
