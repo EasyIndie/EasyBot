@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **修复 Windows Docker Desktop bind mount 上无法打开既有 `gateway.db`（`Operation not permitted`）** —
+  `storage::sqlite::create_pool` 在 Unix 下对已存在的数据库文件强制执行 `chmod 0600`，
+  成功与否被当作打开数据库的硬性前提。Windows Docker Desktop 的 bind mount（9p/virtiofs）
+  会拒绝对迁移进来的既有文件执行 `chmod` 并返回 `EPERM`（os error 1），导致 `create_pool`
+  返回错误、`bin/src/main.rs` 回退到内存库：消息/outbox 表不存在（`no such table: messages`）、
+  持久化的 API key 无法加载致 REST/WebSocket 认证全部 401。现将权限收紧改为**纵深防御**：
+  失败仅记录 warn 并继续，依赖底层文件系统 ACL 打开数据库；新建文件仍以 `0600` 创建。
+  容器自身创建的库（如 `auth.db`）权限收紧正常，不受影响。
+
 - **根治下载/插件安装偶发"下载产物为空"缺陷（`updater::github::download_binary`）** —
   根因是 `tokio::fs::File` 的 `write_all` 只保证字节拷入内部缓冲并派发后台阻塞写任务，
   `poll_write` 随即返回 `Ready`——字节未必已写入 OS。`download_binary` 未 `flush` 就

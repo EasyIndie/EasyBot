@@ -76,13 +76,21 @@ pub async fn create_pool(db_path: &std::path::Path) -> Result<SqlitePool, StoreE
                         "SQLite database path is not a regular file".into(),
                     ));
                 }
-                tokio::fs::set_permissions(db_path, std::fs::Permissions::from_mode(0o600))
-                    .await
-                    .map_err(|error| {
-                        StoreError::Database(format!(
-                            "Failed to secure existing SQLite database: {error}"
-                        ))
-                    })?;
+                // 收紧权限属于纵深防御，不应成为打开数据库的硬性前提。
+                // Windows Docker Desktop 的 bind mount 等文件系统会拒绝对
+                // 已存在文件执行 chmod 并返回 EPERM（os error 1），此时继续
+                // 打开数据库并依赖底层文件系统 ACL，而不是退回到内存库
+                // （否则会丢失持久化数据与 API key 认证）。
+                if let Err(error) =
+                    tokio::fs::set_permissions(db_path, std::fs::Permissions::from_mode(0o600))
+                        .await
+                {
+                    tracing::warn!(
+                        path = %db_path.display(),
+                        %error,
+                        "Could not tighten SQLite database permissions; continuing with existing filesystem permissions"
+                    );
+                }
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 std::fs::OpenOptions::new()
