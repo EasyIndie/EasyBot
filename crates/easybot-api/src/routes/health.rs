@@ -94,6 +94,8 @@ pub async fn ready(State(state): State<AppState>) -> (StatusCode, Json<Readiness
     let schema_ready = auth_schema_version.is_ok();
     let auth_schema_version = auth_schema_version.unwrap_or(-1);
     let message_storage_ready = state.message_store.storage_ready().await;
+    // 内存回退库虽然可用，但消息/会话不会落盘，readiness 必须如实反映。
+    let storage_ephemeral = state.storage_ephemeral;
     let stale_before = chrono::Utc::now().timestamp_millis() - 5 * 60 * 1000;
     let delivery_stats = state
         .message_store
@@ -110,6 +112,7 @@ pub async fn ready(State(state): State<AppState>) -> (StatusCode, Json<Readiness
     let ready = storage_ready
         && schema_ready
         && message_storage_ready
+        && !storage_ephemeral
         && delivery_journal_ready
         && metering_ready
         && quota_ready
@@ -122,7 +125,14 @@ pub async fn ready(State(state): State<AppState>) -> (StatusCode, Json<Readiness
             StatusCode::SERVICE_UNAVAILABLE
         },
         Json(ReadinessResponse {
-            status: if ready { "ready" } else { "not_ready" }.into(),
+            status: if ready {
+                "ready"
+            } else if storage_ephemeral {
+                "degraded"
+            } else {
+                "not_ready"
+            }
+            .into(),
             storage: if storage_ready {
                 "ready"
             } else {
@@ -130,7 +140,9 @@ pub async fn ready(State(state): State<AppState>) -> (StatusCode, Json<Readiness
             }
             .into(),
             auth_schema_version,
-            message_storage: if message_storage_ready {
+            message_storage: if storage_ephemeral {
+                "ephemeral"
+            } else if message_storage_ready {
                 "ready"
             } else {
                 "unavailable"
@@ -185,10 +197,10 @@ pub async fn health_check(State(state): State<AppState>) -> Json<HealthResponse>
     let connected = statuses.iter().filter(|s| s.connected).count();
 
     Json(HealthResponse {
-        status: if connected > 0 {
-            "healthy".to_string()
-        } else {
+        status: if state.storage_ephemeral || connected == 0 {
             "degraded".to_string()
+        } else {
+            "healthy".to_string()
         },
         version: env!("CARGO_PKG_VERSION").to_string(),
         schema_version: easybot_core::storage::migration::SCHEMA_VERSION,

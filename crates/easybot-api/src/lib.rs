@@ -92,6 +92,11 @@ pub struct AppState {
     pub ws_event_tx: broadcast::Sender<WsSerializedEvent>,
     /// 进程启动时间
     pub started_at: std::time::Instant,
+    /// 消息/会话存储是否降级为非持久化的内存库。
+    ///
+    /// 为 `true` 时 `/ready` 会把 `message_storage` 标为 `ephemeral` 并返回
+    /// 503，`/health` 也会报告 `degraded`——避免"数据无法落盘但健康检查仍绿"。
+    pub storage_ephemeral: bool,
     /// 内存日志收集器（供管理后台日志查看使用）
     pub log_collector: Arc<log_collector::LogCollector>,
     /// 管理后台登录密码
@@ -188,6 +193,7 @@ impl AppState {
             ws_semaphore: Arc::new(Semaphore::new(max_clients)),
             ws_event_tx,
             started_at: std::time::Instant::now(),
+            storage_ephemeral: false,
             log_collector,
             admin_password,
             #[cfg(feature = "plugin-system")]

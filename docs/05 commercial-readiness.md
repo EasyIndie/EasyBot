@@ -56,7 +56,7 @@ scripts/production-up.sh
 
 生产数据使用显式的 `EASYBOT_DATA_DIR` 宿主机路径，便于受控备份而不是依赖 Docker 内部卷名。`production-backup.sh` 在同一个临时批次目录内备份 PostgreSQL 与本地 `auth.db`，逐一验证后把归档内的 `auth_schema_version` 写入清单，为清单生成独立 SHA-256 摘要，再写 `COMPLETE` 标志并原子重命名；恢复会先验证清单摘要，随后在触碰 PostgreSQL 前重新读取 SQLite 归档版本并与清单比对。失败批次会被清理，异地同步任务只能复制带 `COMPLETE` 的最终目录：
 
-本地 SQLite 连接池对每一条文件连接强制启用 WAL、5 秒 busy timeout、外键约束和 `synchronous=FULL`，不能依赖只作用于随机池连接的启动后 PRAGMA。数据库路径拒绝符号链接和非普通文件；Unix 上新主库在连接前以原子 `create_new` 和 `0600` 创建，已有主库也先收紧权限，因此随后产生的 WAL/SHM 从第一笔事务起继承私有权限。任一连接或权限配置失败都会阻止启动，而不是静默降级。`FULL` 会增加写入延迟，容量测试必须覆盖认证、配额和用量计量的目标并发，不能为了跑分把财务/凭据数据库改回 `NORMAL`。
+本地 SQLite 连接池对每一条文件连接强制启用 WAL、5 秒 busy timeout、外键约束和 `synchronous=FULL`，不能依赖只作用于随机池连接的启动后 PRAGMA。数据库路径拒绝符号链接和非普通文件；Unix 上新主库在连接前以原子 `create_new` 和 `0600` 创建，已有主库则尝试收紧到 `0600`，成功时随后产生的 WAL/SHM 从第一笔事务起继承私有权限。权限收紧属于纵深防御：在 Windows Docker Desktop bind mount 等拒绝 `chmod`（`EPERM`, os error 1）的文件系统上仅记录 warn 并继续打开数据库，依赖底层文件系统 ACL，而不是退回到内存库（否则会丢失持久化数据与 API key 认证）。认证库打开、迁移或 schema 版本校验失败仍会阻止启动，而不是静默降级。主消息库若最终还是回退到内存库（例如属主/权限无法修正且文件不可写），回退实现会对内存库执行同一套版本化迁移，使消息/outbox 表可用而不是持续报 `no such table`；同时 `AppState.storage_ephemeral` 会让 `/api/v1/ready` 返回 503、`message_storage=ephemeral`，`/api/v1/health` 报告 `degraded`，避免"数据未落盘但健康检查仍绿"；回退只记录一条带 `chown` 指引的 `error`，并明确提示数据重启即丢失。`FULL` 会增加写入延迟，容量测试必须覆盖认证、配额和用量计量的目标并发，不能为了跑分把财务/凭据数据库改回 `NORMAL`。
 
 增量迁移在单个 `BEGIN IMMEDIATE` 事务内完成：先通过 `pragma_table_info` 检查目标列，仅在缺失时执行 `ALTER TABLE`，回填旧数据后再创建依赖新列的完整 schema；任一步失败会回滚此前的 DDL 和数据变更。不得用忽略全部错误的方式容忍重复列；只读介质、磁盘故障、锁超时或非法 schema 都必须使迁移失败并阻止服务启动。迁移可重复执行，升级演练需要同时验证旧数据回填、失败回滚和第二次运行幂等。
 

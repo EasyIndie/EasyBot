@@ -379,6 +379,9 @@ async fn main() -> anyhow::Result<()> {
     config.storage.path = db_path.to_string_lossy().to_string();
     let mut auth_pool: Option<sqlx::SqlitePool> = None;
     let mut retention_pool: Option<sqlx::SqlitePool> = None;
+    // 消息/会话存储是否降级为非持久化的内存库；用于让 /health、/ready 如实
+    // 报告降级，而不是在数据无法落盘时仍显示健康。
+    let mut storage_ephemeral = false;
     let (message_store, session_manager) = match config.storage.storage_type.as_str() {
         "postgres" => {
             let conn_str = if !config.storage.connection_string.is_empty() {
@@ -489,17 +492,39 @@ async fn main() -> anyhow::Result<()> {
                     (msg_store, sm)
                 }
                 Err(e) => {
-                    tracing::warn!(
-                        "Failed to initialize SQLite ({}), falling back to in-memory: {}",
-                        db_path.display(),
-                        e
+                    // 降级到内存库前必须让用户看到：进程会继续运行，但消息历史
+                    // 与 outbound journal 不会落盘，重启即丢失。给出可操作指引
+                    // （常见根因是 DB 文件属主与容器运行用户不一致导致 chmod
+                    // EPERM），避免运维只能靠翻日志才发现数据未落盘。
+                    tracing::error!(
+                        path = %db_path.display(),
+                        error = %e,
+                        "Failed to open SQLite database; falling back to a NON-PERSISTENT \
+                         in-memory database. Message history and the outbound delivery journal \
+                         will be LOST on restart. If the file exists but could not be secured, \
+                         check that its owner matches the runtime user (the container image \
+                         runs as uid 10001), e.g. `chown 10001:10001 {}` (including its \
+                         -wal/-shm siblings).",
+                        db_path.display()
                     );
-                    // 使用内存数据库作为回退
+                    storage_ephemeral = true;
+                    // 使用内存数据库作为回退，并执行与持久化路径相同的 schema
+                    // 迁移，使 API/消息持久化至少可用，而不是持续报
+                    // `no such table: messages` / `outbound_deliveries`。
                     let pool = easybot_core::storage::sqlite::create_pool(std::path::Path::new(
                         ":memory:",
                     ))
                     .await
                     .expect("In-memory SQLite should always work");
+                    if let Err(migration_error) =
+                        easybot_core::storage::sqlite::run_migrations(&pool).await
+                    {
+                        tracing::error!(
+                            error = %migration_error,
+                            "Failed to migrate the in-memory fallback database; \
+                             the gateway will run without message/session tables"
+                        );
+                    }
                     let msg_store: Arc<dyn easybot_core::storage::MessageStore> =
                         Arc::new(easybot_core::storage::sqlite::SqliteMessageStore::new(pool));
                     (
@@ -510,15 +535,25 @@ async fn main() -> anyhow::Result<()> {
             }
         }
         _ => {
-            tracing::warn!(
-                "Unknown storage type '{}', falling back to in-memory",
-                config.storage.storage_type
+            tracing::error!(
+                storage_type = %config.storage.storage_type,
+                "Unknown storage type; falling back to a NON-PERSISTENT in-memory database. \
+                 Message history and the outbound delivery journal will be LOST on restart."
             );
+            storage_ephemeral = true;
             // 写回 config，使 API 返回的配置始终反映实际使用的存储类型
             config.storage.storage_type = "sqlite".to_string();
             let pool = easybot_core::storage::sqlite::create_pool(std::path::Path::new(":memory:"))
                 .await
                 .expect("In-memory SQLite should always work");
+            if let Err(migration_error) = easybot_core::storage::sqlite::run_migrations(&pool).await
+            {
+                tracing::error!(
+                    error = %migration_error,
+                    "Failed to migrate the in-memory fallback database; \
+                     the gateway will run without message/session tables"
+                );
+            }
             let msg_store: Arc<dyn easybot_core::storage::MessageStore> =
                 Arc::new(easybot_core::storage::sqlite::SqliteMessageStore::new(pool));
             (
@@ -672,6 +707,7 @@ async fn main() -> anyhow::Result<()> {
         log_collector,
         admin_password,
     );
+    app_state.storage_ephemeral = storage_ephemeral;
 
     // 注入插件管理器（/api/v1/plugins* 路由与市场管理用）
     #[cfg(feature = "plugin-system")]

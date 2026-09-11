@@ -53,6 +53,18 @@ async fn test_server_with_metrics() -> (easybot_api::AppState, String, SocketAdd
     (state, key, addr)
 }
 
+/// 与 `test_server` 相同，但把消息存储标记为内存回退（非持久化）。
+async fn test_server_with_ephemeral_storage() -> (easybot_api::AppState, String, SocketAddr) {
+    let (mut state, key) = common::test_app_state().await;
+    state.storage_ephemeral = true;
+    let router = easybot_api::server::create_router(state.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    (state, key, addr)
+}
+
 /// 带 Bearer Token 认证的 HTTP 客户端
 fn authed_client(key: &str) -> reqwest::Client {
     let mut headers = reqwest::header::HeaderMap::new();
@@ -311,6 +323,30 @@ async fn test_liveness_and_readiness_are_public_and_distinct() {
     assert_eq!(body["pending_deliveries"], 0);
     assert_eq!(body["stale_pending_deliveries"], 0);
     assert_eq!(body["unpublished_delivery_events"], 0);
+}
+
+#[tokio::test]
+async fn test_ephemeral_storage_is_reported_as_degraded() {
+    let (_state, _key, addr) = test_server_with_ephemeral_storage().await;
+
+    // 内存回退库不得被 readiness 报告为 ready，否则运维无法发现数据未落盘。
+    let ready = client()
+        .get(url(&addr, "/api/v1/ready"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(ready.status(), 503, "ephemeral storage must not be ready");
+    let body = ready.json::<Value>().await.unwrap();
+    assert_eq!(body["status"], "degraded");
+    assert_eq!(body["message_storage"], "ephemeral");
+
+    let health = client()
+        .get(url(&addr, "/api/v1/health"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(health.status(), 200);
+    assert_eq!(health.json::<Value>().await.unwrap()["status"], "degraded");
 }
 
 // ── 认证/鉴权 ──

@@ -18,6 +18,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   失败仅记录 warn 并继续，依赖底层文件系统 ACL 打开数据库；新建文件仍以 `0600` 创建。
   容器自身创建的库（如 `auth.db`）权限收紧正常，不受影响。
 
+- **内存回退库不再静默降级：执行 schema 迁移 + 显式报告降级状态** —
+  当 SQLite 仍无法打开而回退到内存库时，`bin/src/main.rs` 现在对内存库执行同一套
+  版本化迁移，避免消息/outbox 持久化持续报 `no such table: messages` /
+  `outbound_deliveries`（此前单容器 2 天可刷出 162MB 日志）。回退日志从 `warn`
+  升为单条 `error`，附可操作指引（提示属主不匹配与 `chown 10001:10001`）。
+  新增 `AppState.storage_ephemeral`，`/api/v1/ready` 在内存回退时把
+  `message_storage` 标为 `ephemeral`、整体 `status` 为 `degraded` 并返回 503，
+  `/api/v1/health` 同步报告 `degraded`，消除"数据未落盘但健康检查仍绿"的运维盲区。
+
 - **根治下载/插件安装偶发"下载产物为空"缺陷（`updater::github::download_binary`）** —
   根因是 `tokio::fs::File` 的 `write_all` 只保证字节拷入内部缓冲并派发后台阻塞写任务，
   `poll_write` 随即返回 `Ready`——字节未必已写入 OS。`download_binary` 未 `flush` 就
