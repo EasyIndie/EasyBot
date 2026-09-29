@@ -61,7 +61,7 @@ thiserror = "2"
 anyhow = "1"
 
 # 跨平台路径
-dirs = "6"
+dirs = "7"
 
 # .env 文件加载
 dotenvy = "0.15"
