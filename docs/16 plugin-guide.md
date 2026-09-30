@@ -357,8 +357,10 @@ struct MyAdapter {
 
 ```bash
 easybot --debug                          # 宿主 debug 日志
-RUST_LOG=my_adapter=debug easybot        # 只开插件 crate 的日志
+RUST_LOG=my_adapter=debug easybot        # 只开插件 crate 的日志（覆盖 logging.level）
 ```
+
+`RUST_LOG` 存在时会**完全接管**过滤规则（控制台与管理后台 `/logs` 环形缓冲共用同一条规则）；未设置时按配置的 `logging.level` / `--debug`，仅采集 `easybot*` target。
 
 插件加载日志示例：
 

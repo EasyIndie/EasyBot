@@ -13,6 +13,8 @@ use easybot_core::PlatformAdapter;
 use easybot_core::types::event::{GatewayEvent, event_types};
 use std::sync::Arc;
 
+mod logging;
+
 #[cfg(feature = "plugin-system")]
 mod plugin_cli;
 #[cfg(feature = "plugin-system")]
@@ -205,7 +207,6 @@ async fn main() -> anyhow::Result<()> {
     let log_format = config.logging.format.clone();
     let log_output = config.logging.output.clone();
 
-    use tracing_subscriber::EnvFilter;
     use tracing_subscriber::Layer;
     use tracing_subscriber::Registry;
     use tracing_subscriber::fmt;
@@ -217,7 +218,11 @@ async fn main() -> anyhow::Result<()> {
     let _file_log_guard: std::sync::Mutex<Option<tracing_appender::non_blocking::WorkerGuard>> =
         std::sync::Mutex::new(None);
 
-    let filter = EnvFilter::new(format!("easybot={}", log_level));
+    let filter = logging::build_filter(&log_level, std::env::var("RUST_LOG").ok().as_deref());
+    // 内存收集器必须与控制台共用同一过滤器，否则会把所有依赖库的 TRACE/DEBUG
+    // 吸入环形缓冲并把全局最大级别抬到 TRACE（详见 bin/src/logging.rs）。
+    let collector_filter =
+        logging::build_filter(&log_level, std::env::var("RUST_LOG").ok().as_deref());
     let make_writer: BoxMakeWriter = match log_output.as_str() {
         "stdout" => BoxMakeWriter::new(std::io::stdout),
         "file" => {
@@ -254,12 +259,12 @@ async fn main() -> anyhow::Result<()> {
                     .with_writer(make_writer)
                     .with_filter(filter),
             )
-            .with((*log_collector).clone())
+            .with((*log_collector).clone().with_filter(collector_filter))
             .init();
     } else {
         Registry::default()
             .with(fmt::layer().with_writer(make_writer).with_filter(filter))
-            .with((*log_collector).clone())
+            .with((*log_collector).clone().with_filter(collector_filter))
             .init();
     }
 
