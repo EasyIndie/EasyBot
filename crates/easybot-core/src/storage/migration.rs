@@ -30,7 +30,7 @@ use sqlx::{PgPool, Sqlite, SqlitePool, Transaction};
 /// 当前二进制所期望的数据库 schema 版本。
 ///
 /// 每次新增/修改表结构时 +1，并追加 `MIGRATIONS` 条目。
-pub const SCHEMA_VERSION: i64 = 3;
+pub const SCHEMA_VERSION: i64 = 4;
 
 /// 版本追踪表（两种后端通用）
 const VERSION_TABLE_SQL: &str = "
@@ -99,6 +99,14 @@ pub static MIGRATIONS: &[Migration] = &[
         sql_postgres: V3_POSTGRES,
         rollback_sqlite: Some(V3_ROLLBACK_SQLITE),
         rollback_postgres: Some(V3_ROLLBACK_POSTGRES),
+    },
+    Migration {
+        version: 4,
+        description: "Cover outbound_deliveries ORDER BY queries to avoid per-tick temp B-trees",
+        sql_sqlite: V4_SQLITE,
+        sql_postgres: V4_POSTGRES,
+        rollback_sqlite: Some(V4_ROLLBACK_SQLITE),
+        rollback_postgres: Some(V4_ROLLBACK_POSTGRES),
     },
     // ── 后续版本在此追加 ──
     // Migration { version: 2, description: "Add webhook_url to sessions", ... }
@@ -572,6 +580,48 @@ const V3_ROLLBACK_SQLITE: &str = "ALTER TABLE sessions DROP COLUMN custom_name;"
 const V3_ROLLBACK_POSTGRES: &str = "ALTER TABLE sessions DROP COLUMN IF EXISTS custom_name;";
 
 // ══════════════════════════════════════════════════════════════════
+// v4: cover outbound_deliveries ORDER BY queries
+//
+// The transactional outbox publisher runs `unpublished_outbound_events()`
+// every 250 ms with `ORDER BY completed_at, id`; the delivery list/export
+// endpoints sort by `created_at DESC, id DESC`. Without a covering index
+// SQLite builds a TEMP B-tree for each call, and the temporary in-memory
+// database backing it is retained instead of released — a slow, unbounded
+// anonymous-memory leak that eventually pushes the container into its
+// cgroup limit (#139). These indexes make the same queries index-ordered.
+// ══════════════════════════════════════════════════════════════════
+
+const V4_SQLITE: &str = "
+CREATE INDEX IF NOT EXISTS idx_outbound_deliveries_outbox
+    ON outbound_deliveries(event_published, completed_at, id);
+CREATE INDEX IF NOT EXISTS idx_outbound_deliveries_actor
+    ON outbound_deliveries(actor_id, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_outbound_deliveries_session
+    ON outbound_deliveries(platform, chat_id, created_at DESC, id DESC);
+";
+
+const V4_POSTGRES: &str = "
+CREATE INDEX IF NOT EXISTS idx_outbound_deliveries_outbox
+    ON outbound_deliveries(event_published, completed_at, id);
+CREATE INDEX IF NOT EXISTS idx_outbound_deliveries_actor
+    ON outbound_deliveries(actor_id, created_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_outbound_deliveries_session
+    ON outbound_deliveries(platform, chat_id, created_at DESC, id DESC);
+";
+
+const V4_ROLLBACK_SQLITE: &str = "
+DROP INDEX IF EXISTS idx_outbound_deliveries_outbox;
+DROP INDEX IF EXISTS idx_outbound_deliveries_actor;
+DROP INDEX IF EXISTS idx_outbound_deliveries_session;
+";
+
+const V4_ROLLBACK_POSTGRES: &str = "
+DROP INDEX IF EXISTS idx_outbound_deliveries_outbox;
+DROP INDEX IF EXISTS idx_outbound_deliveries_actor;
+DROP INDEX IF EXISTS idx_outbound_deliveries_session;
+";
+
+// ══════════════════════════════════════════════════════════════════
 // SQLite 迁移函数
 // ══════════════════════════════════════════════════════════════════
 
@@ -1016,6 +1066,47 @@ mod tests {
             .await
             .unwrap_or(0);
         assert_eq!(count, 10, "All current schema tables should exist");
+    }
+
+    #[tokio::test]
+    async fn test_v4_covers_outbound_delivery_order_by_queries() {
+        use sqlx::Row as _;
+        let pool = create_test_pool().await;
+        run_migrations(&pool).await.unwrap();
+
+        // v4 引入三个覆盖索引；缺失任何一个都会让对应查询退化为
+        // TEMP B-tree，从而在每 250ms 的 outbox 轮询中泄漏匿名内存（#139）。
+        let indexes: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name IN (\
+             'idx_outbound_deliveries_outbox',\
+             'idx_outbound_deliveries_actor',\
+             'idx_outbound_deliveries_session')",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap_or(0);
+        assert_eq!(indexes, 3, "v4 covering indexes should exist");
+
+        let plan: String = sqlx::query(
+            "EXPLAIN QUERY PLAN SELECT id FROM outbound_deliveries \
+             WHERE state != 'pending' AND event_published = 0 \
+             ORDER BY completed_at, id LIMIT 100",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap()
+        .iter()
+        .map(|row| row.get::<String, _>(3))
+        .collect::<Vec<_>>()
+        .join(" | ");
+        assert!(
+            plan.contains("idx_outbound_deliveries_outbox"),
+            "outbox query should use the covering index, got: {plan}"
+        );
+        assert!(
+            !plan.to_lowercase().contains("temp b-tree"),
+            "outbox query must not build a temp B-tree, got: {plan}"
+        );
     }
 
     #[test]
