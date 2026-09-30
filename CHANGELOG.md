@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **管理后台日志环形缓冲不再无过滤采集依赖库内幕（并修复 `RUST_LOG` 被忽略）** —
+  `LogCollector` 图层此前未挂过滤器，会接收并保存 `hyper` / `sqlx` / `tower_http` /
+  `axum` 等所有 target 的 `TRACE`/`DEBUG` 事件：环形缓冲（上限 5000 条）被依赖库噪音占满，
+  业务与插件日志被挤掉；同时未过滤的图层不对全局最大级别提供任何约束，`tracing` 全局最大
+  级别被抬到 `TRACE`，所有 `trace!`/`debug!` 宏（包括依赖内的）都被真实构造/记录，带来
+  不必要的 CPU 与内存开销。现让内存收集器与控制台 `fmt` 层**共用同一过滤器**（默认
+  `easybot=<level>`），并读取 `RUST_LOG`（存在时接管过滤），兼现 `docs/16`/`docs/17` 中
+  `RUST_LOG=<target>=<level>` 可按 target 细分日志的承诺——此前该环境变量被完全忽略。
+
 - **修复空载下匿名内存持续增长直至 cgroup OOM（issue #139）** — 事务性 outbox 发布器每 250ms 调用
   `unpublished_outbound_events()`，其 `ORDER BY completed_at, id` 缺少覆盖索引，SQLite 每次排序都会
   构建一个 TEMP B-tree；承载该临时结构的匿名内存不会被释放，导致空载下匿名内存单调增长

@@ -11,7 +11,7 @@
 3. **无阻塞初始化** — `init()` 只做校验和配置存储，**网络连接在 `connect()` 中建立**。`init()` 里做网络请求会拖慢启动。
 4. **状态更新及时** — `init()` / `connect()` / `disconnect()` 必须正确推进 `AdapterState`，宿主健康监测依赖它。
 5. **Send + Sync** — `PlatformAdapter` 要求 `Send + Sync`；内部可变状态用线程安全容器（`Mutex`/`RwLock`/`dashmap`）。
-6. **日志用 tracing** — 插件日志自动进宿主 `/logs` 环形缓冲；用 `RUST_LOG=my_adapter=trace` 可细分。不要 `println!`。
+6. **日志用 tracing** — 插件日志自动进宿主 `/logs` 环形缓冲（官方插件 target 为 `easybot_*`，跟随 `logging.level` / `--debug`；其他自定义 target 用 `RUST_LOG=my_adapter=trace` 开启，`RUST_LOG` 存在时完全接管过滤规则）。不要 `println!`。
 7. **凭据永不明文** — 不硬编码 token；日志/错误消息里输出密钥必须掩码。`AdapterConfig` 的 `Debug` 已对 `token`/`api_key` 脱敏，但你自己打印 `token` 字段时要同样处理。
 
 ---
