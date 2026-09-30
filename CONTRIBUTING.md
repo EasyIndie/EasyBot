@@ -112,6 +112,42 @@ cargo test -p e2e-tests
 7. Update documentation if needed.
 8. Submit a pull request.
 
+## Merge Queue & Auto-merge
+
+`main` is protected by a ruleset that requires the full status-check set **and a merge queue** (squash). CI runs on a temporary `merge_group` ref and the queue squash-merges the batch once everything is green; nothing is pushed directly to `main`.
+
+### Solo maintainer（当前状态）
+
+GitHub 不允许 PR 作者审批自己的 PR，所以在单人维护阶段分支保护的 **required approvals 设为 0**。此时仓库自带的 auto-merge 能端到端工作：
+
+```bash
+gh pr merge --auto --squash <pr>    # 之后 CI 一绿就自动进 merge queue 并合入
+```
+
+`Dependabot auto-merge` 工作流已对 patch/minor 依赖升级自动执行这一步（major 升级仍保持手动）。
+
+> 实测：把 required approvals 设为 0 后，PR 的 `autoMergeRequest` 会在 checks 全绿时自动入队（`mergeQueueEntry: AWAITING_CHECKS`）并合入。此前 auto-merge 看起来“卡住”只是因为单人无法满足 required review。
+
+### 与其他开发者协作时
+
+一旦有第二个人能评审，恢复评审门禁：
+
+```bash
+gh api -X PATCH repos/EasyIndie/EasyBot/branches/main/protection/required_pull_request_reviews \
+  -F required_approving_review_count=1
+```
+
+- 给新维护者 **Write**（或 **Maintain**）权限；之后由其审批，auto-merge 会在「审批通过 + required checks 全绿」时自动入队。
+- 可选：加 `CODEOWNERS` 并开启 *Require review from Code Owners*。
+- Dependabot PR 此时需要人工审批；若希望它们继续自动合并，加一个 auto-approve 步骤（建议用 **GitHub App** 或 **PAT**，不要依赖默认 `GITHUB_TOKEN` 的审批）。
+- 可选更严：`dismiss_stale_reviews=true`、`require_last_push_approval=true`。
+
+### 排查 auto-merge 不生效
+
+1. `gh pr view <n> --json mergeStateStatus,reviewDecision`：`BLOCKED` + `REVIEW_REQUIRED` 表示评审门禁未满足（单人时改 required approvals=0）。
+2. `gh pr view <n> --json statusCheckRollup`：任一 required check 失败/缺失都不会入队。
+3. `strict_required_status_checks_policy` 要求分支为最新；过旧请先 rebase（Dependabot 会自动 rebase）。
+
 ## Feature Flags
 
 | Flag | Enables |
