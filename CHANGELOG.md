@@ -9,6 +9,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **修复空载下匿名内存持续增长直至 cgroup OOM（issue #139）** — 事务性 outbox 发布器每 250ms 调用
+  `unpublished_outbound_events()`，其 `ORDER BY completed_at, id` 缺少覆盖索引，SQLite 每次排序都会
+  构建一个 TEMP B-tree；承载该临时结构的匿名内存不会被释放，导致空载下匿名内存单调增长
+  （实测空载 ~0.3MB/min，容器最终逼近内存上限并被 OOM kill）。`GET /api/v1/messages/deliveries`
+  与 `GET /api/v1/sessions/{key}/export` 的 `ORDER BY created_at DESC, id DESC` 同样退化为临时 B-tree。
+  新增 schema 迁移 v4：为 `outbound_deliveries` 建立
+  `(event_published, completed_at, id)`、`(actor_id, created_at DESC, id DESC)`、
+  `(platform, chat_id, created_at DESC, id DESC)` 三个索引，使上述查询走索引排序、不再创建临时 B-tree。
+  升级前（schema < 4）的库会在启动时自动迁移；`CREATE INDEX IF NOT EXISTS` 可重复执行。
+
 - **修复 Windows Docker Desktop bind mount 上无法打开既有 `gateway.db`（`Operation not permitted`）** —
   `storage::sqlite::create_pool` 在 Unix 下对已存在的数据库文件强制执行 `chmod 0600`，
   成功与否被当作打开数据库的硬性前提。Windows Docker Desktop 的 bind mount（9p/virtiofs）
