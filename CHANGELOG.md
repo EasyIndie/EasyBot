@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.0.41] - 2026-10-01
+
 ### Fixed
 
 - **管理后台日志环形缓冲不再无过滤采集依赖库内幕（并修复 `RUST_LOG` 被忽略）** —
