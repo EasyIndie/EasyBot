@@ -35,7 +35,9 @@ fi
 
 PREFLIGHT_DIR="${TMPDIR:-/tmp}/easybot-preflight-$$"
 trap 'rm -rf "$PREFLIGHT_DIR"' EXIT
-cargo run -q -p easybot-bin -- --init --dir "$PREFLIGHT_DIR" >/dev/null 2>&1
+# 以发布特性构建/运行预检，使随后 workspace 测试直接复用正确的插件版 target/debug/easybot
+# （不带 plugin-system 的 cargo run 会把该二进制重建成无插件版，导致 cli::test_* 误报失败）。
+cargo run -q -p easybot-bin --features "default,plugin-system" -- --init --dir "$PREFLIGHT_DIR" >/dev/null 2>&1
 grep -q '^# EASYBOT_ALLOW_PLAINTEXT=true$' "$PREFLIGHT_DIR/.env" || {
   echo "Generated environment must keep plaintext opt-in commented" >&2; exit 1;
 }
