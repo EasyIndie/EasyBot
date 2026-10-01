@@ -535,13 +535,35 @@ jobs:
           cp easybot-aarch64-unknown-linux-musl dist/easybot-arm64
           chmod +x dist/easybot-*
 
+      - name: Compute container tags
+        id: image-tags
+        env:
+          VERSION: ${{ needs.prepare-release.outputs.version }}
+        run: |
+          # Derive tags from the verified release version rather than github.ref:
+          # docker/metadata-action's type=semver yields no tags for a branch ref,
+          # which made the workflow_dispatch fallback (dispatched on main) fail
+          # with "tag is needed when pushing to registry".
+          base="${VERSION%%-*}"      # drop any prerelease suffix
+          major_minor="${base%.*}"   # X.Y
+          {
+            printf 'type=raw,value=%s\n' "$VERSION"
+            printf 'type=raw,value=%s\n' "$major_minor"
+            # Prereleases must not move the mutable `latest` tag.
+            if [[ "$VERSION" != *-* ]]; then
+              printf 'type=raw,value=latest\n'
+            fi
+          } > "$RUNNER_TEMP/image-tags.txt"
+          {
+            echo "tags<<EOF"
+            cat "$RUNNER_TEMP/image-tags.txt"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
       - uses: ./.github/actions/docker-setup
         id: docker-prep
         with:
-          tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=raw,value=latest,enable=${{ github.ref_type == 'tag' }}
+          tags: ${{ steps.image-tags.outputs.tags }}
 
       - name: Build and push Docker image
         id: build

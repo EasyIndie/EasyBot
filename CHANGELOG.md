@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **发布流程两处陷阱修复（不影响发布产物）** —
+  - `scripts/release-preflight.sh` 的 `cargo run -p easybot-bin`（不带特性）会把
+    `target/debug/easybot` 重建成无插件版，导致随后 `cargo test --workspace` 的
+    `cli::test_production_*` / `cli::test_plugin_cli_*` 误报失败；现让预检以
+    `--features "default,plugin-system"` 构建并运行，使测试直接复用正确的插件版二进制。
+  - `.github/workflows/release.yml` 的容器标签改由已校验的发布版本推导（`type=raw`），
+    不再依赖 `github.ref_type`：此前用 `workflow_dispatch` 在分支 ref 上重跑发布时
+    `docker/metadata-action` 的 `type=semver` 产生 0 个标签，`docker` 作业以
+    `tag is needed when pushing to registry` 失败。
+
 ## [0.0.41] - 2026-10-01
 
 ### Fixed
