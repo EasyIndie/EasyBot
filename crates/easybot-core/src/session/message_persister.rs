@@ -219,14 +219,21 @@ mod tests {
         }
 
         async fn store_messages(&self, msgs: &[StoredMessage]) -> Result<(), StoreError> {
-            if self
-                .failures_left
-                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |left| {
-                    left.checked_sub(1)
-                })
-                .is_ok()
-            {
-                return Err(StoreError::Database("injected outage".into()));
+            // Equivalent to `AtomicUsize::fetch_update` with `checked_sub(1)`:
+            // atomically decrement when positive and inject a transient outage.
+            // `fetch_update` is deprecated in favour of `try_update`, but
+            // `try_update` is only stable past our MSRV (1.94), so use a CAS loop.
+            let mut left = self.failures_left.load(Ordering::SeqCst);
+            while left > 0 {
+                match self.failures_left.compare_exchange_weak(
+                    left,
+                    left - 1,
+                    Ordering::SeqCst,
+                    Ordering::SeqCst,
+                ) {
+                    Ok(_) => return Err(StoreError::Database("injected outage".into())),
+                    Err(actual) => left = actual,
+                }
             }
             self.stored.lock().unwrap().extend_from_slice(msgs);
             Ok(())
