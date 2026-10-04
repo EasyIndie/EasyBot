@@ -86,9 +86,26 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
           SCHEMA_VERSION=$(sed -nE 's/^pub const SCHEMA_VERSION: i64 = ([0-9]+);$/\1/p' crates/easybot-core/src/storage/migration.rs)
-          PLUGIN_ABI_VERSION=$(sed -nE 's/^pub const EASYBOT_PLUGIN_ABI_VERSION: u32 = ([0-9]+);$/\1/p' crates/easybot-plugin-sdk/src/ffi.rs)
+          PLUGIN_ABI_VERSION=$(sed -nE 's/^pub const EASYBOT_PLUGIN_ABI_VERSION: u32 = ([0-9]+);$/\1/p' crates/easybot-plugin-sdk/src/lib.rs)
           test -n "$SCHEMA_VERSION"
           test -n "$PLUGIN_ABI_VERSION"
+          # breaking_changes 取自 CHANGELOG 本版本的 `### Breaking Changes` 段落，
+          # 升级时由 `easybot update` 展示给操作者（避免静默破坏性升级）。
+          BREAKING=$(awk -v ver="$VERSION" '
+            function emit() {
+              if (cur != "") {
+                gsub(/\\/, "\\\\", cur); gsub(/"/, "\\\"", cur);
+                printf "%s\"%s\"", (n++ ? "," : ""), cur; cur = ""
+              }
+            }
+            /^## \[/ { if (found) exit; if (index($0, "[" ver "]")) found = 1; next }
+            found && /^### Breaking Changes/ { inb = 1; next }
+            found && /^### / { if (inb) { emit(); inb = 0 } }
+            inb && /^- / { emit(); cur = $0; sub(/^- /, "", cur); next }
+            inb && /^[ \t]+[^ \t]/ { l = $0; sub(/^[ \t]+/, "", l); cur = (cur == "" ? l : cur " " l); next }
+            inb && /^[ \t]*$/ { emit(); next }
+            END { emit() }
+          ' CHANGELOG.md)
           cat > easybot-version.json <<EOF
           {
             "version": "$VERSION",
@@ -99,7 +116,7 @@ jobs:
             "migrations": [],
             "requires_config_migration": false,
             "config_changes": [],
-            "breaking_changes": [],
+            "breaking_changes": [$BREAKING],
             "plugin_abi_version": $PLUGIN_ABI_VERSION,
             "min_upgradable_from": "0.0.26"
           }
