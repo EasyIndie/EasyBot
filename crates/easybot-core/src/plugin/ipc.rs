@@ -58,7 +58,9 @@ pub struct IpcPluginAdapter {
     state: Mutex<AdapterState>,
     child: tokio::sync::Mutex<Option<Child>>,
     stdin: tokio::sync::Mutex<Option<ChildStdin>>,
-    pending: Arc<PendingMap>,
+    /// 未决请求表。每次 spawn 替换一代：已退出进程的 reader 只清理它自己那一代，
+    /// 不会把过期错误投递给新进程的请求。
+    pending: Mutex<Arc<PendingMap>>,
     next_id: AtomicU64,
     event_bus: Option<Arc<EventBus>>,
     call_timeout: Duration,
@@ -93,7 +95,7 @@ impl IpcPluginAdapter {
             state: Mutex::new(AdapterState::Created),
             child: tokio::sync::Mutex::new(None),
             stdin: tokio::sync::Mutex::new(None),
-            pending: Arc::new(Mutex::new(HashMap::new())),
+            pending: Mutex::new(Arc::new(Mutex::new(HashMap::new()))),
             next_id: AtomicU64::new(1),
             event_bus: None,
             call_timeout: DEFAULT_CALL_TIMEOUT,
@@ -122,8 +124,9 @@ impl IpcPluginAdapter {
     /// 发起一次请求并等待响应（带超时）。
     async fn call(&self, method: &str, params: Value) -> Result<Value, String> {
         let id = self.next_id.fetch_add(1, Ordering::SeqCst);
+        let pending = self.pending.lock().unwrap().clone();
         let (tx, rx) = oneshot::channel();
-        self.pending.lock().unwrap().insert(id, tx);
+        pending.lock().unwrap().insert(id, tx);
 
         let request = Request::new(id, method, params);
         {
@@ -143,7 +146,7 @@ impl IpcPluginAdapter {
             Ok(Ok(Err(err))) => Err(err),
             Ok(Err(_)) => Err("plugin response channel closed".to_string()),
             Err(_) => {
-                self.pending.lock().unwrap().remove(&id);
+                pending.lock().unwrap().remove(&id);
                 Err(format!("plugin call '{method}' timed out"))
             }
         }
@@ -168,6 +171,11 @@ impl IpcPluginAdapter {
             command.env(key, value);
         }
 
+        // 新一代 pending + 复位存活标志（重连/重启场景）
+        let pending: Arc<PendingMap> = Arc::new(Mutex::new(HashMap::new()));
+        *self.pending.lock().unwrap() = pending.clone();
+        self.child_exited.store(false, Ordering::SeqCst);
+
         let mut child = command.spawn().map_err(|e| {
             GatewayError::Internal(format!(
                 "failed to spawn plugin '{}': {e}",
@@ -189,7 +197,7 @@ impl IpcPluginAdapter {
 
         spawn_reader(
             stdout,
-            self.pending.clone(),
+            pending,
             self.event_bus.clone(),
             self.platform.clone(),
             self.child_exited.clone(),
@@ -269,6 +277,19 @@ impl PlatformAdapter for IpcPluginAdapter {
     }
 
     async fn init(&mut self, config: AdapterConfig) -> Result<InitResult, GatewayError> {
+        // 幂等：宿主会先经 AdapterFactory、再由 `AdapterManager::start` 调用 `init`。
+        // 子进程已在运行时不重复 spawn —— 否则第二个进程会替换第一个（`kill_on_drop`
+        // 杀掉它），而旧进程的 reader 在 EOF 时会把「进程已退出」投递给新握手的请求。
+        let already_running = {
+            let child = self.child.lock().await;
+            child.is_some() && !self.child_exited()
+        };
+        if already_running {
+            return Ok(InitResult {
+                ok: true,
+                error: None,
+            });
+        }
         self.spawn_process().await?;
 
         // 1) 握手 + 协议版本校验
