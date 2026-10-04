@@ -194,6 +194,25 @@ async fn ipc_adapter_passes_home_env_to_plugin() {
 }
 
 #[tokio::test]
+async fn ipc_adapter_init_is_idempotent() {
+    // 回归：宿主会先经 AdapterFactory、再由 `AdapterManager::start` 调用 `init`。
+    // 若第二次 init 重新 spawn，第二个进程会替换第一个（kill_on_drop 杀掉它），
+    // 旧进程的 reader 在 EOF 时会把「plugin process exited」投递给新握手的请求，
+    // 导致插件永远启动失败（"plugin handshake failed: plugin process exited"）。
+    let mut adapter = IpcPluginAdapter::new(find_ipc_mock_plugin(), "ipc-mock", "IPC Mock", None);
+    adapter.init(test_config()).await.expect("first init");
+    adapter
+        .init(test_config())
+        .await
+        .expect("second init 必须成功（幂等，不重启进程）");
+    assert!(!adapter.child_exited(), "重复 init 不应导致子进程退出");
+
+    let conn = adapter.connect().await.expect("connect after double init");
+    assert!(conn.ok, "重复 init 后 connect 仍应成功");
+    let _ = adapter.disconnect().await;
+}
+
+#[tokio::test]
 async fn ipc_adapter_detects_crashed_process() {
     // 插件在 connect 后主动退出（模拟崩溃）：适配器须报告 Down，供健康监测器重连。
     let mut adapter = IpcPluginAdapter::new(find_ipc_mock_plugin(), "ipc-mock", "IPC Mock", None)

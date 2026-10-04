@@ -1,5 +1,25 @@
 ## [Unreleased]
 
+## [Unreleased]
+
+## [0.0.43] - 2026-10-05
+
+### Fixed
+
+- **进程外插件在真实宿主中无法启动（`plugin handshake failed: plugin process
+  exited`）** — `AdapterManager::start()` 在调用 `AdapterFactory` 之后会**再调用一次
+  `init()`**，而工厂内部也已经调用过 `init()`。对内置适配器这只是重复解析配置（无害），
+  但对进程外插件意味着**第二次 `init` 会 spawn 第二个子进程**，第一个被
+  `kill_on_drop` 杀掉；已退出进程的 reader 任务在 EOF 时会把「进程已退出」错误投递给
+  新握手的请求，导致插件永远无法启动。修复：
+  - `IpcPluginAdapter::init` 改为**幂等**：子进程存活时只复用，不再重复 spawn；
+  - 未决请求表改为**按 spawn 换代**（每次 spawn 换新的 `pending` 表），已退出进程的
+    reader 只清理自己那一代，不会误伤新进程的请求；
+  - 新增回归测试 `ipc_adapter_init_is_idempotent`。
+
+  该缺陷仅影响**真实宿主启动路径**（`AdapterFactory` + `AdapterManager` 双重 init），
+  单测与 `ProcessPluginTestHost` 直接调用 `init` 因而未暴露。
+
 ## [0.0.42] - 2026-10-04
 
 ### Added
