@@ -23,7 +23,6 @@ concurrency:
 jobs:
   coverage:
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: ./.github/actions/setup-rust
@@ -52,7 +51,7 @@ jobs:
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: lcov.info
-          fail_ci_if_error: false
+          fail_ci_if_error: true
 
       - name: Cache summary
         if: always()

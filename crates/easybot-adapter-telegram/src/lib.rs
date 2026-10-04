@@ -1292,6 +1292,198 @@ impl PlatformAdapter for TelegramAdapter {
         }
     }
 
+    async fn send_media_group(
+        &self,
+        params: SendMediaGroupParams,
+    ) -> Result<SendResult, GatewayError> {
+        if params.media.is_empty() {
+            return Err(GatewayError::Internal(
+                "send_media_group: media list is empty".to_string(),
+            ));
+        }
+
+        // 单条媒体退化为普通 send_media，与各平台语义保持一致。
+        if let [single] = params.media.as_slice() {
+            return self
+                .send_media(SendMediaParams {
+                    chat_id: params.chat_id,
+                    media: single.clone(),
+                    text: params.text,
+                    reply_to: params.reply_to,
+                })
+                .await;
+        }
+
+        // Telegram 媒体组一次最多 10 条。
+        const MAX_GROUP: usize = 10;
+        if params.media.len() > MAX_GROUP {
+            return Err(GatewayError::Internal(format!(
+                "send_media_group: Telegram supports at most {} media per group, got {}",
+                MAX_GROUP,
+                params.media.len()
+            )));
+        }
+
+        let client = self.http_client();
+        let token = self
+            .config
+            .as_ref()
+            .and_then(|c| c.token.clone())
+            .ok_or_else(|| {
+                GatewayError::ConfigError("Telegram token not configured".to_string())
+            })?;
+        let base = self
+            .config
+            .as_ref()
+            .and_then(|c| c.base_url.clone())
+            .unwrap_or_else(|| TELEGRAM_API.to_string());
+
+        // MediaType → Telegram InputMedia type
+        fn input_media_type(mt: MediaType) -> Result<&'static str, GatewayError> {
+            Ok(match mt {
+                MediaType::Image => "photo",
+                MediaType::Audio => "audio",
+                MediaType::Video => "video",
+                MediaType::Document => "document",
+                MediaType::Animation => "animation",
+                MediaType::Sticker => {
+                    return Err(GatewayError::capability_not_supported(
+                        "telegram send_media_group sticker",
+                    ));
+                }
+            })
+        }
+
+        let mut media_items: Vec<serde_json::Value> = Vec::with_capacity(params.media.len());
+        // 需要上传的附件：(字段名, 文件名, 字节, mime)
+        let mut uploads: Vec<(String, String, Vec<u8>, String)> = Vec::new();
+
+        for (idx, media) in params.media.iter().enumerate() {
+            let kind = input_media_type(media.media_type)?;
+
+            let media_ref = if let Some(url) = &media.url {
+                url.clone()
+            } else if let Some(data_b64) = &media.data {
+                use base64::Engine;
+                let decoded = base64::engine::general_purpose::STANDARD
+                    .decode(data_b64)
+                    .map_err(|e| GatewayError::Internal(format!("Base64 decode failed: {}", e)))?;
+                let field = format!("file{}", idx);
+                let filename = media.filename.clone().unwrap_or_else(|| field.clone());
+                uploads.push((field.clone(), filename, decoded, media.mime_type.clone()));
+                format!("attach://{}", field)
+            } else {
+                return Err(GatewayError::Internal(
+                    "send_media_group: each media requires a url or data".to_string(),
+                ));
+            };
+
+            let mut item = serde_json::json!({ "type": kind, "media": media_ref });
+            // caption：优先 media.caption；第一条回退到 params.text
+            let caption = media
+                .caption
+                .clone()
+                .or_else(|| if idx == 0 { params.text.clone() } else { None });
+            if let Some(caption) = caption {
+                item["caption"] = serde_json::json!(caption);
+            }
+            media_items.push(item);
+        }
+
+        // 统一产出 (ok, description, messages)，避免对 api_call 返回值二次包裹
+        // （api_call 已解开 TelegramApiResponse 外壳，直接返回 result）。
+        let (ok, description, messages): (bool, Option<String>, Vec<TelegramMessage>) = if uploads
+            .is_empty()
+        {
+            // 纯 URL：JSON body
+            let mut body = serde_json::json!({
+                "chat_id": params.chat_id,
+                "media": media_items,
+            });
+            if let Some(reply_to) = &params.reply_to {
+                body["reply_to_message_id"] = Self::json_id(reply_to);
+            }
+            match self
+                .api_call::<Vec<TelegramMessage>>("sendMediaGroup", Some(body))
+                .await
+            {
+                Ok(messages) => (true, None, messages),
+                Err(e) => (false, Some(e.to_string()), Vec::new()),
+            }
+        } else {
+            // 含 base64：multipart + attach://
+            let mut form = reqwest::multipart::Form::new().text("chat_id", params.chat_id.clone());
+            for (field, filename, bytes, mime) in uploads {
+                let mut part = reqwest::multipart::Part::bytes(bytes).file_name(filename);
+                if !mime.is_empty() {
+                    part = part
+                        .mime_str(&mime)
+                        .map_err(|e| GatewayError::Internal(format!("Invalid mime type: {}", e)))?;
+                }
+                form = form.part(field, part);
+            }
+            form = form.text(
+                "media",
+                serde_json::to_string(&media_items).map_err(|e| {
+                    GatewayError::Internal(format!("serialize media group failed: {}", e))
+                })?,
+            );
+            if let Some(reply_to) = &params.reply_to {
+                form = form.text("reply_to_message_id", reply_to.clone());
+            }
+            let url = format!("{}{}/sendMediaGroup", base, token);
+            let resp = client
+                .post(&url)
+                .multipart(form)
+                .send()
+                .await
+                .map_err(|e| GatewayError::Transient(format!("HTTP upload failed: {}", e)))?;
+            let api_resp: TelegramApiResponse<Vec<TelegramMessage>> = resp
+                .json()
+                .await
+                .map_err(|e| GatewayError::Internal(format!("JSON parse failed: {}", e)))?;
+            (
+                api_resp.ok,
+                api_resp.description,
+                api_resp.result.unwrap_or_default(),
+            )
+        };
+
+        if ok {
+            self.messages_out.fetch_add(1, Ordering::Relaxed);
+            let send_result = SendResult {
+                success: true,
+                message_id: messages.first().map(|m| m.message_id.to_string()),
+                timestamp: messages.first().map(|m| m.date * 1000),
+                error: None,
+                error_code: None,
+                retryable: false,
+            };
+            if let Some(bus) = &self.event_bus {
+                bus.publish_send_result(
+                    event_types::MESSAGE_SENT,
+                    "telegram",
+                    &params.chat_id,
+                    &send_result,
+                );
+            }
+            Ok(send_result)
+        } else {
+            let desc = description.unwrap_or_else(|| "Unknown error".to_string());
+            self.errors.fetch_add(1, Ordering::Relaxed);
+            let fail = SendResult::fail(format!("Telegram API media group error: {}", desc), true);
+            if let Some(bus) = &self.event_bus {
+                bus.publish_send_result(
+                    event_types::MESSAGE_FAILED,
+                    "telegram",
+                    &params.chat_id,
+                    &fail,
+                );
+            }
+            Ok(fail)
+        }
+    }
+
     async fn send_interactive(
         &self,
         params: SendInteractiveParams,

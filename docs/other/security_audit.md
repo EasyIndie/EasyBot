@@ -38,7 +38,7 @@
 
 - **影响范围:** `Cargo.lock` 中 `tokio-tungstenite` 0.26.2（飞书适配器 SDK 传递依赖）
 - **风险:** `rustls-native-certs` 证书验证不一致；导致多版本共存
-- **阻塞原因:** `larksuite-oapi-sdk-rs` 0.1.2 固定依赖老版本，无法在 workspace 级别覆盖
+- **阻塞原因:** `larksuite-oapi-sdk-rs`（crates.io 最新 **0.3.12**，2026-09-12 发布）仍固定依赖 `tokio-tungstenite ^0.26`，无法在 workspace 级别覆盖
 - **跟进方式:**
   - 向 [larksuite/oapi-sdk-rust](https://github.com/larksuite/oapi-sdk-rust) 提交 PR 升级 tungstenite 到 0.29.x
   - 短期方案：vendor 一份 patched 版本
@@ -46,10 +46,10 @@
 
 ### 3. 重复安全 crate 版本
 
-- **影响范围:** `sha2`（0.10.9 + 0.11.0）、`tungstenite`（0.26.2 + 0.29.0）、`rand`（3 个版本）、`webpki-roots`（0.26.11 + 1.0.8）、`digest`/`crypto-common`/`block-buffer`（各 2 个版本）
+- **影响范围（2026-10-02 复核更正）:** 重复版本**并非主要来自飞书 SDK**。实测来源为：`sqlx 0.9`（`base64 0.22`、`sha2 0.10`、`thiserror 1` 经 `prometheus → protobuf`）、`reqwest 0.13`（`tower-http 0.6`）、`rand_core 0.9` 与 `getrandom 0.2/0.3` 等间接依赖。
 - **风险:** 每个重复版本扩大攻击面，增加二进制体积
-- **阻塞原因:** 受飞书 SDK（问题 #2）阻塞
-- **跟进方式:** 解决 #2 后大部分重复会自动消除；其余可通过 `cargo tree -i <crate>` 追踪并提 PR 给上游
+- **真正的飞书相关项:** 仅 `tokio-tungstenite 0.26`（见问题 #2）。
+- **跟进方式:** 不能用“解决 #2 后大部分重复会自动消除”一概而论；需按上述真实来源分别跟进 sqlx / protobuf / reqwest 等上游。`cargo tree -i <crate>` 可用于定位单个重复项的引入链。
 
 ---
 

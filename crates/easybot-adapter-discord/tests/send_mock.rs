@@ -8,9 +8,10 @@ use std::time::Duration;
 use easybot_core::types::adapter::{
     AdapterConfig, AdapterState, ConnectErrorKind, PlatformAdapter,
 };
+use easybot_core::types::error::GatewayError;
 use easybot_core::types::message::{
     Button, EditMessageParams, InlineKeyboard, KeyboardRow, MediaAttachment, MediaType,
-    OutboundMessage, ParseMode, SendMediaParams, SendTextParams,
+    OutboundMessage, ParseMode, SendMediaGroupParams, SendMediaParams, SendTextParams,
 };
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -749,4 +750,37 @@ async fn test_send_media_from_local_file() {
     assert_eq!(result.message_id, Some("msg-999".to_string()));
 
     mock_server.verify().await;
+}
+
+// ── send_media_group：Discord 不支持相册，应走 trait 默认实现 ──
+
+#[tokio::test]
+async fn test_send_media_group_unsupported() {
+    let adapter = make_adapter(1).await;
+    let image = |url: &str| MediaAttachment {
+        media_type: MediaType::Image,
+        url: Some(url.to_string()),
+        data: None,
+        mime_type: "image/png".to_string(),
+        filename: None,
+        caption: None,
+        thumbnail_url: None,
+        file_size: None,
+        duration: None,
+    };
+    let params = SendMediaGroupParams {
+        chat_id: "98765".to_string(),
+        media: vec![
+            image("https://example.com/a.png"),
+            image("https://example.com/b.png"),
+        ],
+        text: None,
+        reply_to: None,
+    };
+
+    let err = adapter.send_media_group(params).await.unwrap_err();
+    assert!(
+        matches!(err, GatewayError::CapabilityNotSupported(_)),
+        "Discord must report send_media_group as unsupported, got {err:?}"
+    );
 }

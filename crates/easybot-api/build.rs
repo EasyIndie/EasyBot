@@ -46,6 +46,11 @@ fn main() {
         String::new()
     };
 
+    // 读取设计 token（admin/home/docs 三页共用的单一来源）
+    let tokens_css_path = manifest_dir.join("templates/css/tokens.css");
+    println!("cargo::rerun-if-changed={}", tokens_css_path.display());
+    let tokens_css = std::fs::read_to_string(&tokens_css_path).unwrap_or_default();
+
     // 收集并排序 .md 文件
     let docs_dir = docs_dir.canonicalize().unwrap_or(docs_dir);
     if !docs_dir.exists() || std::fs::read_dir(&docs_dir).map_or(true, |mut d| d.next().is_none()) {
@@ -126,7 +131,8 @@ fn main() {
         let home_html = std::fs::read_to_string(&home_layout_path).unwrap();
         let home_html = home_html
             .replace("__FAVICON__", &favicon_data)
-            .replace("__LOGO__", &logo_data);
+            .replace("__LOGO__", &logo_data)
+            .replace("__TOKENS_CSS__", &tokens_css);
         std::fs::write(&home_output_path, home_html).unwrap();
     }
 
@@ -140,10 +146,25 @@ fn main() {
     println!("cargo::rerun-if-changed={}", js_dir.display());
     println!("cargo::rerun-if-changed={}", css_dir.display());
 
-    let admin_css = std::fs::read_to_string(css_dir.join("admin.css")).unwrap_or_default();
+    let admin_css = format!(
+        "{}\n{}",
+        tokens_css,
+        std::fs::read_to_string(css_dir.join("admin.css")).unwrap_or_default()
+    );
 
-    // 读取 JS（单文件包含所有逻辑）
-    let admin_js = std::fs::read_to_string(js_dir.join("admin.js")).unwrap_or_default();
+    // 读取 JS：按文件名排序拼接 js/ 下所有 .js（00- 前缀保证 utils 在最前）
+    let mut js_files: Vec<_> = std::fs::read_dir(&js_dir)
+        .map(|rd| rd.filter_map(|e| e.ok()).collect::<Vec<_>>())
+        .unwrap_or_default();
+    js_files.retain(|e| e.path().extension().is_some_and(|ext| ext == "js"));
+    js_files.sort_by_key(|e| e.file_name());
+    let admin_js = js_files.iter().fold(String::new(), |mut acc, e| {
+        if let Ok(s) = std::fs::read_to_string(e.path()) {
+            acc.push_str(&s);
+            acc.push('\n');
+        }
+        acc
+    });
 
     if admin_layout_path.exists() {
         let layout = std::fs::read_to_string(&admin_layout_path).unwrap();
@@ -157,10 +178,14 @@ fn main() {
         std::fs::write(&admin_output_path, admin_html).unwrap();
     }
 
-    // ── 文档页：注入 favicon ──
+    // ── 文档页：注入 favicon / 设计 token（占位页 fallback 同样经此覆盖） ──
     if output_path.exists() {
         let docs_html = std::fs::read_to_string(&output_path).unwrap();
-        let docs_html = docs_html.replace("__FAVICON__", &favicon_data);
+        let docs_html = docs_html
+            .replace("__FAVICON__", &favicon_data)
+            .replace("__TOKENS_CSS__", &tokens_css)
+            .replace("__HLJS_CSS__", &hljs_css)
+            .replace("__HLJS_JS__", &hljs_js);
         std::fs::write(&output_path, docs_html).unwrap();
     }
 

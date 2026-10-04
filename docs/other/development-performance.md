@@ -55,7 +55,10 @@ Docker Desktop 数据文件的表观大小并不等于可回收空间，以 `doc
 - 普通 PR：主测试、feature 检查和六平台矩阵；不运行 coverage 或 Docker release 构建。
 - 容器/部署相关 PR：额外运行 Docker 镜像验证。
 - main：运行主 CI 和 coverage；符合镜像路径条件时构建双架构镜像。
-- coverage 另在每周一运行，可手动触发；安全审计与灾备门禁保持独立。
+- coverage 另在每周一运行，可手动触发；安全审计与灾备门禁保持独立。覆盖率门禁由仓库根 `codecov.yml`
+  定义（project `target: auto` + `threshold: 1%`，patch `target: 75%`），需在分支保护中把
+  `codecov/project` 与 `codecov/patch` 设为 required 才能阻止不达标合并；`coverage.yml`
+  已设 `fail_ci_if_error: true`，上传失败会显式报错（不再 `continue-on-error`）。
 
 CI 的 protoc 固定为官方 v23.4 发布包，并在各 runner 上校验 SHA-256 后安装。
 不依赖 Homebrew、apt 或 Node.js setup action，以避免 runner 全局状态警告和

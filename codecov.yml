@@ -1,0 +1,39 @@
+# Codecov 配置 — 覆盖率门禁
+#
+# project: 与 base commit 对比，整体覆盖率不得下降超过 threshold（target: auto）。
+# patch:   新增/修改的代码行覆盖率目标。
+#
+# 门禁生效方式：Codecov 会在 PR/commit 上发布状态检查；在分支保护规则中把
+# `codecov/project` 与 `codecov/patch` 设为 required 后即可阻止不达标的合并。
+# 工作流侧（coverage.yml）已设 `fail_ci_if_error: true`，上传失败会显式报错。
+
+coverage:
+  precision: 2
+  round: down
+  range: "60...90"
+
+  status:
+    project:
+      default:
+        target: auto
+        threshold: 1%
+        informational: false
+    patch:
+      default:
+        target: 75%
+        threshold: 5%
+        informational: false
+
+comment:
+  layout: "reach, diff, flags, files"
+  behavior: default
+  require_changes: false
+
+# 非产品代码不计入覆盖率（测试、文档、模板、示例插件）。
+ignore:
+  - "tests/**"
+  - "**/tests/**"
+  - "docs/**"
+  - "**/templates/**"
+  - "plugins/**"
+  - "**/*_test.rs"

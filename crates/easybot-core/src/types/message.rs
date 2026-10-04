@@ -181,6 +181,25 @@ pub struct SendMediaParams {
     pub reply_to: Option<String>,
 }
 
+/// 发送媒体组（相册/多图）参数
+///
+/// 一次发送多张媒体。仅部分平台支持（如 Telegram `sendMediaGroup`），
+/// 其余平台默认经 [`PlatformAdapter::send_media_group`] 返回
+/// `CapabilityNotSupported`。
+///
+/// [`PlatformAdapter::send_media_group`]: crate::types::adapter::PlatformAdapter::send_media_group
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+pub struct SendMediaGroupParams {
+    /// 目标聊天 ID
+    pub chat_id: String,
+    /// 媒体附件列表（平台可能限制数量，如 Telegram 为 2–10）
+    pub media: Vec<MediaAttachment>,
+    /// 文本说明（可选，通常作为第一条媒体的 caption）
+    pub text: Option<String>,
+    /// 被回复消息 ID（可选）
+    pub reply_to: Option<String>,
+}
+
 /// 发送交互式消息（带按钮）参数
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct SendInteractiveParams {
