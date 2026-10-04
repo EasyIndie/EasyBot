@@ -5,21 +5,23 @@
 
 ## 架构与加载流程
 
+插件是**独立可执行文件**（进程外），通过 stdin/stdout 逐行 JSON 协议与宿主通信
+（`easybot-plugin-protocol`）。宿主 spawn 插件进程，**不做 `dlopen`**。
+
 ```
 plugins/<plugin-name>/
 ├── plugin.yaml          # 插件清单（必需）
-└── lib<plugin>.so       # 编译的动态库（.dylib / .dll）
+└── <plugin-name>        # 插件可执行文件（Windows 为 <plugin-name>.exe）
 ```
 
 1. `PluginLoader` 扫描插件目录，读取 `plugin.yaml`
-2. `dlopen` 加载动态库
-3. 校验 `easybot_abi_version()` 与宿主 `EASYBOT_PLUGIN_ABI_VERSION` 一致（不一致 → `AbiVersionMismatch`）
-4. 调用 `easybot_plugin_create()` 创建适配器实例
-5. 提取平台元信息（`platform_name` / `display_name`）
-6. 生成 `AdapterFactory`，注册到 `AdapterRegistry`
-7. 有 `plugin.sig.json` 则对库文件重新验签（生产模式强制；失败 → `SignatureVerificationFailed`）
-8. 有 `enabled: false` 则标记 `DisabledPlugin` 不加载
+2. 定位入口可执行文件（`command` 字段；旧 `library` 作为别名兼容）并校验路径安全 / 可执行位
+3. 有 `plugin.sig.json` 则对**入口文件字节**验签（生产模式强制；失败 → `SignatureVerificationFailed`）
+4. 生成 `AdapterFactory` 并注册到 `AdapterRegistry`（此阶段**不 spawn** 进程）
+5. 首次创建适配器时 spawn 插件进程：`handshake`（校验 `PROTOCOL_VERSION`）→ `init` → `connect`
+6. 有 `enabled: false` 则标记 `DisabledPlugin` 不加载
 
+> 进程外带来**崩溃隔离**（插件 panic/退出不会拖垮宿主）；但 **v1 不是安全沙箱**。
 > 宿主生产模式对**未签名**插件直接拒绝（见 `docs/18 plugin-security.md`）。
 
 ---
@@ -27,11 +29,12 @@ plugins/<plugin-name>/
 ## 项目结构（脚手架产物）
 
 ```text
-Cargo.toml                  # cdylib + SDK git tag 依赖 + release profile（panic=abort）
+Cargo.toml                  # bin（进程外插件）+ SDK git tag 依赖 + release profile
 .cargo/config.toml          # 构建配置（[patch] 属 Cargo.toml，不写这里）
-src/lib.rs                  # PlatformAdapter 骨架 + declare_plugin!
+src/lib.rs                  # PlatformAdapter 骨架
+src/main.rs                 # 进程入口：run_plugin!
 plugin.yaml                 # 清单
-tests/unit.rs               # 单元测试（离线）
+tests/unit.rs              # 单元测试（离线）
 tests/host_test.rs          # PluginTestHost 集成测试（离线）
 .github/workflows/plugin-publish.yml  # 发布者 CI 模板
 ```
@@ -48,7 +51,10 @@ tests/host_test.rs          # PluginTestHost 集成测试（离线）
 | `version` | string | ❌ | 插件版本号 |
 | `sdk_version` | u32 | ✅ | SDK ABI 版本，必须与编译所用 SDK 的 `EASYBOT_PLUGIN_ABI_VERSION` 一致 |
 | `author` | string | ❌ | 作者信息 |
-| `library` | string | ❌ | 动态库文件名；默认按平台名推导 |
+| `library` | string | ❌ | **旧式**动态库文件名（仅 cdylib 时代）；进程外插件用 `command` |
+| `command` | string | ❌ | 入口可执行文件名（相对插件目录）；Windows 需写 `.exe`。与 `library` 二选一 |
+| `runtime` | string | ❌ | 运行时类型；进程外插件为 `process` |
+| `protocol` | u32 | ❌ | 协议版本（进程外插件；当前为 `1`） |
 | `enabled` | bool | ❌ | 缺省启用；`false` 时不加载（卸载/禁用语义见方法论「启停语义」） |
 
 > 市场安装时由宿主根据 `easybot-plugin.json` 元数据合成 `plugin.yaml`；手动安装则自己写。
@@ -63,7 +69,7 @@ tests/host_test.rs          # PluginTestHost 集成测试（离线）
 |------|------|------|
 | 仓库名 | `easybot-xxx` | `EasyIndie/easybot-hello-adapter` |
 | `Cargo.toml [package].name` | `easybot-xxx` | `easybot-hello-adapter` |
-| cdylib 产物名 | Rust 用下划线连接 crate 名 → `libeasybot_xxx.{so,dylib,dll}` | `libeasybot_hello_adapter.dylib` |
+| 可执行产物名 | 与包名一致（连字符保留） | `easybot-hello-adapter`（Windows：`.exe`） |
 | `plugin.yaml` `name` | `easybot-xxx`（须与 `platform_name()` 一致） | `"easybot-hello-adapter"` |
 | `platform_name()` | `easybot-xxx`（宿主据此做会话 key、路由与展示） | `"easybot-hello-adapter"` |
 | 市场中的 name | `easybot-xxx`（安装/卸载/启用命令用此名，发布者为 GitHub 组织/用户） | `easybot plugin install EasyIndie/easybot-hello-adapter` |
@@ -74,43 +80,34 @@ tests/host_test.rs          # PluginTestHost 集成测试（离线）
 
 ---
 
-## ABI 版本管理
+## 协议版本管理与 `run_plugin!`
 
-`PluginLoader` 调用插件的 `easybot_abi_version()` 检查与宿主 `EASYBOT_PLUGIN_ABI_VERSION` 是否一致。
+进程外插件只有一个入口宏——`run_plugin!`，放在 `src/main.rs`：
 
-当前 ABI 版本：**1**（`sdk_version: 1`）
+```rust
+use easybot_plugin_sdk::prelude::*;
+
+#[derive(Default)]
+struct MyAdapter;
+impl PlatformAdapter for MyAdapter { /* ... */ }
+
+easybot_plugin_sdk::run_plugin!(MyAdapter, MyAdapter::default);
+```
+
+`run_plugin!` 展开为一个 `main()`：建 tokio 运行时、读协议请求、驱动
+`init/connect/send/...`、把适配器发布到事件总线的事件回传给宿主，
+收到 `shutdown` 时退出。
+
+宿主在握手阶段校验协议版本：`PROTOCOL_VERSION` 不匹配即拒绝加载。
+
+当前协议版本：**1**（`protocol: 1`）
 
 | 版本 | 变更说明 |
 |------|---------|
-| 1 | 初始版本，包含 `PlatformAdapter` 核心接口 |
+| 1 | 初始版本，覆盖 `PlatformAdapter` 核心接口 + 事件回传 |
 
-不匹配会被拒绝：
-
-```
-ERROR plugin::loader: Failed to load plugin: ABI version mismatch: plugin uses v1, host expects v2
-```
-
-**ABI 纪律**：`sdk_version` 必须等于编译所用 SDK 的常量；升级 SDK 大版本 = 重新发布插件。宿主更新主程序时 `check_plugin_compatibility` 会阻止不兼容插件（`updater/precheck.rs`）。
-
----
-
-## declare_plugin! 宏
-
-`declare_plugin!` 生成三个 C ABI 函数。**每个插件必须且只能调用一次**：
-
-```rust
-declare_plugin!(MyAdapter, MyAdapter::new);
-```
-
-| 导出函数 | 作用 |
-|---------|------|
-| `easybot_abi_version()` | 返回 `EASYBOT_PLUGIN_ABI_VERSION` |
-| `easybot_plugin_create()` | 创建适配器实例，返回 `*mut c_void` |
-| `easybot_plugin_destroy(ptr)` | 销毁适配器实例（幂等，接受空指针） |
-
-**安全说明**：通过 `Box<Box<dyn PlatformAdapter>>` 双层装箱把 Rust 胖指针压缩为 C 瘦指针（64 bits）跨 FFI 传递。宏生成的函数已带 `#[allow(missing_docs)]`（FFI 入口是实现细节）。
-
-**`panic = "abort"` 是硬要求**（脚手架 release profile 已设）：跨 FFI 边界不得 unwind，cdylib 内 panic 直接终止进程。
+**兼容性纪律**：`sdk_version` 必须等于编译所用 SDK 的常量；升级 SDK 大版本 = 重新发布插件。
+宿主更新主程序时 `check_plugin_compatibility` 会阻止不兼容插件（`updater/precheck.rs`）。
 
 ---
 
@@ -373,9 +370,9 @@ INFO AdapterManager: Registered plugin adapter: my-adapter (My Adapter)
 
 | 错误 | 原因 | 解决 |
 |------|------|------|
-| `Library not found` | `plugin.yaml` 的 `library` 路径不对 | 检查文件存在、文件名匹配（`lib<name>.so`） |
-| `ABI version mismatch` | 插件用旧版 SDK 编译 | 用当前 SDK 重编，`sdk_version` 同步 |
-| `Symbol not found` | 插件未调用 `declare_plugin!` | 添加宏调用 |
+| `Library not found` | `plugin.yaml` 的 `command` 路径不对 | 检查文件存在、文件名匹配（含 Windows 的 `.exe`） |
+| 入口不可执行 | 入口文件缺可执行位 | `chmod +x <entry>`，或重新安装（市场安装会自动补） |
+| 握手超时 / 进程立即退出 |插件 `main` 未调用 `run_plugin!`，或启动即 panic | 检查 `src/main.rs` 与插件自身日志 |
 | `Platform conflict` | 平台名已被占用 | 改 `platform_name()` |
 | `Manifest not found` | 插件目录缺 `plugin.yaml` | 创建清单 |
 | `Signature verification failed` | 生产模式签名不匹配 | 用 `plugin install` 重装（带签名）或 `allowUntrusted` |
@@ -402,4 +399,4 @@ run --dir ~/.easybot
 - 入门（教程对照）：独立样例仓库 [`EasyIndie/easybot-hello-adapter`](https://github.com/EasyIndie/easybot-hello-adapter) —— echo 适配器 + PluginTestHost 测试 + 插件开发指南
 - 高级参考（真实 HTTP + 鉴权 + 媒体/交互 + wiremock）：`plugins/example-slack-plugin/`
 - 内置适配器：`crates/easybot-adapter-{telegram,discord,feishu,qq,wechat}/` 是最好的一手参考
-- MockAdapter 源码：`tests/plugins/mock-adapter/src/lib.rs`
+- 进程外测试插件源码：`tests/plugins/ipc-mock-plugin/src/main.rs`

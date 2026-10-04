@@ -13,3 +13,4 @@ description: "Example Slack adapter demonstrating EasyBot plugin system"
 version: "1.0.0"
 sdk_version: 1
 author: "EasyBot Contributors"
+command: "easybot-example-slack-plugin"

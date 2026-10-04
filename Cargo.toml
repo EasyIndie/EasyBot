@@ -11,18 +11,21 @@ members = [
     "crates/easybot-adapter-wechat",
     "crates/easybot-plugin-sdk",
     "crates/easybot-plugin-sign",
-    "tests/plugins/mock-adapter",
+    "crates/easybot-plugin-protocol",
+    "tests/plugins/ipc-mock-plugin",
     "tests/integration",
     "tests/e2e",
     "tests/fixtures",
 ]
+# 高级参考样例（独立构建、不在 workspace 内——避免其自有依赖版本影响主仓依赖图）
+exclude = ["plugins/example-slack-plugin"]
 
 [workspace.package]
 description = "IM Gateway — 统一多平台即时通讯网关"
 repository = "https://github.com/EasyIndie/EasyBot"
 documentation = "https://github.com/EasyIndie/EasyBot"
 readme = "README.md"
-version = "0.0.41"
+version = "0.0.42"
 edition = "2024"
 rust-version = "1.94"
 authors = ["EasyBot Contributors"]
@@ -40,7 +43,9 @@ tower-http = { version = "0.7", features = ["cors", "trace", "limit", "auth"] }
 # 序列化
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-serde_yaml = "0.9"
+# serde_yaml 已被上游归档弃用（0.9.34+deprecated）；改用维护中的 fork serde_norway
+# （serde_yaml 0.9 的直接复刻，API 兼容），保留 `serde_yaml` 依赖名以避免改动全部调用点。
+serde_yaml = { package = "serde_norway", version = "0.9" }
 
 # 数据库
 sqlx = { version = "0.9", features = ["runtime-tokio", "sqlite", "postgres", "chrono", "uuid", "sqlite-bundled"] }
@@ -78,7 +83,6 @@ prometheus = { version = "0.14", features = ["process"] }
 sysinfo = "0.39"
 
 # 动态库加载
-libloading = "0.9"
 
 # HTTP 客户端
 reqwest = { version = "0.13", default-features = false, features = ["json", "multipart", "rustls"] }
@@ -92,8 +96,8 @@ parking_lot = "0.12"
 async-trait = "0.1"
 
 # OpenAPI / Swagger
-utoipa = "5.1"
-utoipa-swagger-ui = "9"
+utoipa = "6"
+utoipa-swagger-ui = "10"
 
 # QR 码生成
 qrcode = { version = "0.14", default-features = false }

@@ -6,7 +6,12 @@ description = "Example Slack adapter for EasyBot plugin system"
 publish = false
 
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["rlib"]
+
+[[bin]]
+# 进程外插件入口（可执行文件名 = 宿主 plugin.yaml 里的 `command`）
+name = "easybot-example-slack-plugin"
+path = "src/main.rs"
 
 [dependencies]
 easybot-plugin-sdk = { path = "../../crates/easybot-plugin-sdk" }

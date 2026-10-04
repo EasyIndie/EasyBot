@@ -1,7 +1,7 @@
 //! 插件清单
 //!
 //! 每个插件目录下包含一个 plugin.yaml 清单文件，描述插件元数据和库路径。
-//! 加载器通过清单定位动态库文件。
+//! 加载器通过清单定位入口可执行文件（`command`；旧式 `library` 作为兼容别名）。
 
 use super::registry::types::PluginRequirements;
 use std::path::Path;
@@ -28,10 +28,20 @@ pub struct PluginManifest {
     /// 作者信息
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub author: Option<String>,
-    /// 动态库路径（相对于插件目录）。
+    /// 动态库路径（相对于插件目录）。**deprecated**：进程外插件改用 `command`。
     /// 不指定时按平台规则推断：lib{name}.so / lib{name}.dylib / {name}.dll
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub library: Option<String>,
+    /// 进程外插件协议版本（`command` 形态使用）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub protocol: Option<u32>,
+    /// 插件可执行文件路径（相对于插件目录）。进程外插件的入口；
+    /// 未指定时回退 `library`（旧式 cdylib）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+    /// 运行时类型：`process`（默认）| `wasm`（预留）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub runtime: Option<String>,
     /// 是否启用。缺省启用（向后兼容：旧清单无此字段默认 true）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub enabled: Option<bool>,
@@ -45,20 +55,34 @@ fn default_version() -> String {
     "0.1.0".to_string()
 }
 
+/// 安全拼接相对路径：拒绝绝对路径与 `..` 穿越，返回 `plugin_dir.join(rel)`。
+fn safe_join(plugin_dir: &Path, rel: &str, what: &str) -> Result<std::path::PathBuf, String> {
+    if Path::new(rel).is_absolute() {
+        return Err(format!("插件 {what} 路径不允许使用绝对路径: {rel}"));
+    }
+    if Path::new(rel)
+        .components()
+        .any(|c| c == std::path::Component::ParentDir)
+    {
+        return Err(format!("插件 {what} 路径包含非法 '..' 组件: {rel}"));
+    }
+    Ok(plugin_dir.join(rel))
+}
+
 impl PluginManifest {
     /// 解析 YAML 字符串为清单
     pub fn from_yaml(yaml: &str) -> Result<Self, String> {
         serde_yaml::from_str(yaml).map_err(|e| format!("Failed to parse plugin manifest: {}", e))
     }
 
-    /// 计算动态库的完整路径
+    /// 计算旧式 `library` 字段指向的完整路径（兼容别名；新插件用 `command_path`）
     ///
     /// 安全检查：拒绝绝对路径和含 `..` 的路径穿越。
     pub fn library_path(&self, plugin_dir: &Path) -> Result<std::path::PathBuf, String> {
         let lib = match self.library {
             Some(ref lib) => lib.clone(),
             None => {
-                // 按平台规则推断默认库文件名。
+                // 按平台规则推断旧式 cdylib 的默认库文件名。
                 //
                 // cargo 对 cdylib 的输出用 **下划线** crate 名（kebab-case 包名会
                 // 转下划线）：包 `hello-adapter` → `libhello_adapter.dylib`。
@@ -78,20 +102,42 @@ impl PluginManifest {
             }
         };
 
-        // 安全检查：绝对路径可绕过插件目录
-        if Path::new(&lib).is_absolute() {
-            return Err(format!("插件 library 路径不允许使用绝对路径: {}", lib));
-        }
+        // 安全检查：绝对路径 / `..` 穿越（与 `command_path` 共用 `safe_join`）
+        safe_join(plugin_dir, &lib, "library")
+    }
 
-        // 安全检查：拒绝含 .. 的目录穿越
-        if Path::new(&lib)
-            .components()
-            .any(|c| c == std::path::Component::ParentDir)
-        {
-            return Err(format!("插件 library 路径包含非法 '..' 组件: {}", lib));
+    /// 计算插件可执行文件路径（进程外插件入口）。
+    ///
+    /// 优先级：
+    /// 1. `command`（规范字段）
+    /// 2. `library`（旧式 cdylib 别名，加载期会被 `is_legacy_cdylib()` 拒绝）
+    /// 3. 缺省 `{name}`（Windows `{name}.exe`）——与安装落位名
+    ///    （`install::default_command_name`）保持一致
+    ///
+    /// 安全校验：拒绝绝对路径与 `..` 穿越。
+    pub fn command_path(&self, plugin_dir: &Path) -> Result<std::path::PathBuf, String> {
+        if let Some(ref cmd) = self.command {
+            return safe_join(plugin_dir, cmd, "command");
         }
+        if self.library.is_some() {
+            return self.library_path(plugin_dir);
+        }
+        let default = if cfg!(target_os = "windows") {
+            format!("{}.exe", self.name)
+        } else {
+            self.name.clone()
+        };
+        safe_join(plugin_dir, &default, "command")
+    }
 
-        Ok(plugin_dir.join(&lib))
+    /// 是否为进程外（可执行文件）插件（`runtime` 缺省为 `process`）。
+    pub fn is_process_plugin(&self) -> bool {
+        self.runtime.as_deref().unwrap_or("process") == "process"
+    }
+
+    /// 旧式 cdylib 插件（仅有 `library`、无 `command`）。
+    pub fn is_legacy_cdylib(&self) -> bool {
+        self.command.is_none() && self.library.is_some()
     }
 
     /// 插件是否启用（缺省启用）
@@ -142,6 +188,9 @@ author: "EasyBot Contributors"
             library: None,
             enabled: None,
             requires: None,
+            protocol: None,
+            command: None,
+            runtime: None,
         };
         let dir = Path::new("/plugins/my-adapter");
         let path = manifest.library_path(dir).unwrap();
@@ -177,6 +226,9 @@ author: "EasyBot Contributors"
             library: Some("custom.so".into()),
             enabled: None,
             requires: None,
+            protocol: None,
+            command: None,
+            runtime: None,
         };
         let dir = Path::new("/plugins/my-adapter");
         let path = manifest.library_path(dir).unwrap();
@@ -195,6 +247,9 @@ author: "EasyBot Contributors"
             library: Some("/usr/lib/libc.so.6".into()),
             enabled: None,
             requires: None,
+            protocol: None,
+            command: None,
+            runtime: None,
         };
         let dir = Path::new("/plugins/my-adapter");
         assert!(manifest.library_path(dir).is_err());
@@ -212,6 +267,9 @@ author: "EasyBot Contributors"
             library: Some("../../../usr/lib/libc.so.6".into()),
             enabled: None,
             requires: None,
+            protocol: None,
+            command: None,
+            runtime: None,
         };
         let dir = Path::new("/plugins/my-adapter");
         let result = manifest.library_path(dir);
@@ -238,5 +296,68 @@ author: "EasyBot Contributors"
         let manifest =
             PluginManifest::from_yaml("name: \"a\"\nsdk_version: 1\nenabled: false").unwrap();
         assert!(!manifest.is_enabled());
+    }
+
+    #[test]
+    fn test_command_path_prefers_command_field() {
+        let manifest = PluginManifest::from_yaml(
+            "name: \"a\"\nsdk_version: 1\ncommand: \"./a-adapter\"\nlibrary: \"liba.so\"",
+        )
+        .unwrap();
+        let path = manifest.command_path(Path::new("/plugins/a")).unwrap();
+        assert!(path.ends_with("a-adapter"), "应优先 command: {path:?}");
+        assert!(!manifest.is_legacy_cdylib());
+    }
+
+    #[test]
+    fn test_command_path_falls_back_to_library() {
+        let manifest =
+            PluginManifest::from_yaml("name: \"a\"\nsdk_version: 1\nlibrary: \"liba.so\"").unwrap();
+        let path = manifest.command_path(Path::new("/plugins/a")).unwrap();
+        assert!(
+            path.ends_with("liba.so"),
+            "无 command 时回退 library: {path:?}"
+        );
+        assert!(manifest.is_legacy_cdylib());
+    }
+
+    #[test]
+    fn test_command_path_defaults_to_plugin_name() {
+        // 既无 command 也无 library：缺省入口名 = 插件名（Windows 加 .exe），
+        // 必须与安装落位名（install::default_command_name）一致。
+        let manifest = PluginManifest::from_yaml("name: \"my-plugin\"\nsdk_version: 1").unwrap();
+        let path = manifest
+            .command_path(Path::new("/plugins/my-plugin"))
+            .unwrap();
+        let expected = if cfg!(target_os = "windows") {
+            "my-plugin.exe"
+        } else {
+            "my-plugin"
+        };
+        assert!(path.ends_with(expected), "缺省入口名: {path:?}");
+        assert!(!manifest.is_legacy_cdylib());
+        assert!(manifest.is_process_plugin());
+    }
+
+    #[test]
+    fn test_command_path_rejects_absolute_and_traversal() {
+        let abs =
+            PluginManifest::from_yaml("name: \"a\"\nsdk_version: 1\ncommand: \"/usr/bin/evil\"")
+                .unwrap();
+        assert!(abs.command_path(Path::new("/plugins/a")).is_err());
+
+        let traversal =
+            PluginManifest::from_yaml("name: \"a\"\nsdk_version: 1\ncommand: \"../../evil\"")
+                .unwrap();
+        assert!(traversal.command_path(Path::new("/plugins/a")).is_err());
+    }
+
+    #[test]
+    fn test_runtime_defaults_to_process() {
+        let manifest = PluginManifest::from_yaml("name: \"a\"\nsdk_version: 1").unwrap();
+        assert!(manifest.is_process_plugin());
+
+        let wasm = PluginManifest::from_yaml("name: \"a\"\nsdk_version: 1\nruntime: wasm").unwrap();
+        assert!(!wasm.is_process_plugin());
     }
 }

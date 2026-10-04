@@ -175,7 +175,7 @@ impl PluginSignature {
         Ok(())
     }
 
-    /// 校验签名是否匹配磁盘上的动态库文件
+    /// 校验签名是否匹配磁盘上的产物文件（插件入口可执行文件）
     pub fn verify_library(&self, library_path: &Path) -> Result<(), SigningError> {
         let data = std::fs::read(library_path)?;
         verify_artifact(&data, &self.signature, &self.public_key)

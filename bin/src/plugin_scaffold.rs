@@ -4,7 +4,7 @@
 //!
 //! ```text
 //! <name>/
-//! ├── Cargo.toml                    # cdylib + SDK git 依赖 + release(LTO/panic=abort)
+//! ├── Cargo.toml                    # bin（进程外插件）+ SDK git 依赖 + release(LTO)
 //! ├── .cargo/config.toml            # 构建配置（说明 [patch] 放 Cargo.toml）
 //! ├── src/lib.rs                    # 完整 PlatformAdapter 骨架（TODO 占位 + 中文注释）
 //! ├── plugin.yaml                   # 插件清单（name / sdk_version / author 预填）
@@ -75,6 +75,7 @@ pub fn scaffold(opts: &ScaffoldOptions) -> anyhow::Result<PathBuf> {
         ("Cargo.toml", tpl::render(tpl::CARGO_TOML, &vars)),
         (".cargo/config.toml", tpl::render(tpl::CARGO_CONFIG, &vars)),
         ("src/lib.rs", tpl::render(tpl::SRC_LIB_RS, &vars)),
+        ("src/main.rs", tpl::render(tpl::SRC_MAIN_RS, &vars)),
         ("plugin.yaml", tpl::render(tpl::PLUGIN_YAML, &vars)),
         ("tests/unit.rs", tpl::render(tpl::TESTS_UNIT, &vars)),
         ("tests/host_test.rs", tpl::render(tpl::TESTS_HOST, &vars)),
@@ -100,19 +101,16 @@ pub fn scaffold(opts: &ScaffoldOptions) -> anyhow::Result<PathBuf> {
     println!();
     println!("  Next steps:");
     println!("    cd {}", root.display());
-    println!("    cargo build --release   # build self-contained cdylib");
+    println!("    cargo build --release   # build the self-contained plugin executable");
     println!("    cargo test              # offline unit + PluginTestHost tests");
-    let lib_ext = if cfg!(target_os = "macos") {
-        "dylib"
-    } else if cfg!(target_os = "windows") {
-        "dll"
+    let bin_ext = if cfg!(target_os = "windows") {
+        ".exe"
     } else {
-        "so"
+        ""
     };
     println!(
-        "    cp target/release/lib{}.{} ./   # copy the cdylib next to plugin.yaml",
-        crate_name(name),
-        lib_ext
+        "    cp target/release/{}{} ./   # copy the executable next to plugin.yaml",
+        name, bin_ext
     );
     println!(
         "    easybot plugin install --file . {name}  # install into local host (offline path, full verify)"
@@ -237,20 +235,26 @@ mod tests {
             );
         }
 
-        // Cargo.toml：cdylib + SDK git tag = v{CARGO_PKG_VERSION}
+        // Cargo.toml：rlib + bin（进程外插件）+ SDK git tag = v{CARGO_PKG_VERSION}
         let cargo_toml = std::fs::read_to_string(generated.join("Cargo.toml")).unwrap();
-        assert!(cargo_toml.contains("crate-type = [\"cdylib\", \"rlib\"]"));
+        assert!(cargo_toml.contains("crate-type = [\"rlib\"]"));
+        assert!(cargo_toml.contains("[[bin]]"));
         let expected_tag = format!("v{}", env!("CARGO_PKG_VERSION"));
         assert!(
             cargo_toml.contains(&format!("tag = \"{expected_tag}\"")),
             "SDK tag must be derived from compile-time version constant"
         );
 
-        // src/lib.rs：结构体名 / 平台名 / declare_plugin
+        // src/lib.rs：结构体名 / 平台名（无 FFI 宏；进程入口在 src/main.rs）
         let lib_rs = std::fs::read_to_string(generated.join("src/lib.rs")).unwrap();
         assert!(lib_rs.contains("pub struct HelloAdapter"));
         assert!(lib_rs.contains("fn platform_name"));
-        assert!(lib_rs.contains("declare_plugin!(HelloAdapter, HelloAdapter::new);"));
+        assert!(!lib_rs.contains("declare_plugin"));
+
+        // src/main.rs：进程外入口（run_plugin!）
+        let main_rs = std::fs::read_to_string(generated.join("src/main.rs")).unwrap();
+        assert!(main_rs.contains("run_plugin!"));
+        assert!(main_rs.contains("hello_adapter::HelloAdapter"));
 
         // plugin.yaml：sdk_version 与 ABI 常量一致
         let plugin_yaml = std::fs::read_to_string(generated.join("plugin.yaml")).unwrap();

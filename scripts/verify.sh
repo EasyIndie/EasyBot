@@ -10,7 +10,7 @@
 #   Step 4 (Feature Matrix)      → ci.yml test-feature-matrix
 #   Step 5 (cargo build)         → local full-build gate
 #   Step 6 (Test default)        → default feature regression
-#   Step 7 (build mock-adapter)  → plugin integration prerequisite
+#   Step 7 (build ipc-mock-plugin)  → plugin integration prerequisite
 #   Step 8 (Test all)            → ci.yml test
 #   Steps 9-12                   → recovery/release/commercial/security drills
 #
@@ -126,7 +126,7 @@ for arg in "$@"; do
       echo "    4. Feature Matrix (7 种适配器组合的 cargo check)"
       echo "    5. cargo build --workspace"
       echo "    6. 测试 (default features) — 自动选择 nextest 或 cargo test"
-      echo "    7. cargo build -p mock-adapter"
+      echo "    7. cargo build -p ipc-mock-plugin"
       echo "    8. 测试 (default + plugin-system)"
       echo "    9. SQLite 备份、校验与恢复演练"
       echo "   10. 发布资产校验与篡改检测演练"
@@ -205,7 +205,7 @@ else
     exit 1
 fi
 
-# ── 5. 构建全部（确保 mock-adapter 可用）──────────────────────────
+# ── 5. 构建全部（确保 ipc-mock-plugin 可用）──────────────────────────
 run_step "cargo build --workspace" \
   $CARGO build --workspace $LOCKED
 
@@ -213,9 +213,9 @@ run_step "cargo build --workspace" \
 run_step "$TEST_LABEL (default features)" \
   $TEST_RUNNER --workspace $LOCKED
 
-# ── 7. 编译 mock-adapter（插件集成测试前置条件）───────────────────
-run_step "cargo build -p mock-adapter" \
-  $CARGO build -p mock-adapter $LOCKED
+# ── 7. 编译 ipc-mock-plugin（插件集成测试前置条件）───────────────────
+run_step "cargo build -p ipc-mock-plugin" \
+  $CARGO build -p ipc-mock-plugin $LOCKED
 
 # ── 8. 全特性测试（验证所有适配器 + 插件系统 + E2E）─────────────
 run_step "$TEST_LABEL (all features + plugin-system)" \

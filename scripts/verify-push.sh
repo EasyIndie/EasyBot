@@ -43,8 +43,8 @@ run_step "cargo fmt --check" \
 run_step "cargo clippy (workspace + plugin-system)" \
     $CARGO clippy --workspace --features "default,plugin-system" --all-targets --locked -- -D warnings
 
-run_step "cargo build -p mock-adapter" \
-    $CARGO build -p mock-adapter --locked
+run_step "cargo build -p ipc-mock-plugin" \
+    $CARGO build -p ipc-mock-plugin --locked
 
 # CLI integration tests execute target/debug/easybot directly; cargo test does
 # not build a workspace binary unless it is an explicit test dependency.

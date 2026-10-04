@@ -19,8 +19,10 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::Arc;
 
-    /// 查找 mock-adapter 编译产物的路径
-    fn find_mock_lib() -> Option<PathBuf> {
+    /// 查找 `ipc-mock-plugin` 进程外插件可执行文件的路径
+    ///
+    /// （旧式 cdylib 路径已在 v0.0.42 移除：静态宿主无法 dlopen。）
+    fn find_mock_plugin() -> Option<PathBuf> {
         let target_dir = std::env::var("CARGO_TARGET_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(|_| {
@@ -29,69 +31,50 @@ mod tests {
                 p.pop();
                 p.join("target")
             });
-
         let profile = if cfg!(debug_assertions) {
             "debug"
         } else {
             "release"
         };
-
-        let candidates = [
-            target_dir.join(profile).join("libmock_adapter.dylib"),
-            target_dir.join(profile).join("libmock_adapter.so"),
-            target_dir.join(profile).join("mock_adapter.dll"),
-            target_dir
-                .join(profile)
-                .join("deps")
-                .join("libmock_adapter.dylib"),
-            target_dir
-                .join(profile)
-                .join("deps")
-                .join("libmock_adapter.so"),
-        ];
-
-        for c in &candidates {
-            if c.exists() {
-                return Some(c.clone());
-            }
+        let exe = if cfg!(windows) {
+            "ipc-mock-plugin.exe"
+        } else {
+            "ipc-mock-plugin"
+        };
+        let path = target_dir.join(profile).join(exe);
+        if path.exists() {
+            return Some(path);
         }
-
-        // Fallback: search deps/
-        if let Ok(entries) = std::fs::read_dir(target_dir.join(profile).join("deps")) {
-            for entry in entries.flatten() {
-                let name = entry.file_name().to_string_lossy().to_string();
-                if name.contains("mock_adapter")
-                    && (name.ends_with(".so") || name.ends_with(".dylib") || name.ends_with(".dll"))
-                {
-                    return Some(entry.path());
-                }
-            }
-        }
-
         None
     }
 
-    fn create_temp_plugin_dir(lib_path: &std::path::Path) -> tempfile::TempDir {
+    fn create_temp_plugin_dir(plugin_path: &std::path::Path) -> tempfile::TempDir {
         let dir = tempfile::tempdir().expect("failed to create temp dir");
-        let plugin_dir = dir.path().join("mock-test");
+        let plugin_dir = dir.path().join("ipc-mock");
 
         std::fs::create_dir_all(&plugin_dir).expect("failed to create plugin subdir");
 
-        let lib_name = lib_path.file_name().unwrap().to_str().unwrap();
+        let bin_name = plugin_path.file_name().unwrap().to_str().unwrap();
         let manifest = format!(
-            r#"name: "mock-test"
-display_name: "Mock Test Adapter"
+            r#"name: "ipc-mock"
+display_name: "IPC Mock"
 version: "1.0.0"
 sdk_version: 1
-library: "{}"
-"#,
-            lib_name
+command: "{bin_name}"
+"#
         );
         std::fs::write(plugin_dir.join("plugin.yaml"), &manifest)
             .expect("failed to write plugin.yaml");
 
-        let dest = plugin_dir.join(lib_name);
-        std::fs::copy(lib_path, &dest).expect("failed to copy plugin library");
+        let dest = plugin_dir.join(bin_name);
+        std::fs::copy(plugin_path, &dest).expect("failed to copy plugin binary");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mut perms = std::fs::metadata(&dest).unwrap().permissions();
+            perms.set_mode(0o755);
+            std::fs::set_permissions(&dest, perms).expect("chmod plugin binary");
+        }
 
         dir
     }
@@ -112,12 +95,12 @@ library: "{}"
             .with_env_filter("easybot=debug")
             .try_init();
 
-        let lib_path = find_mock_lib().expect(
-            "mock-adapter library not found. Build it first with: cargo build -p mock-adapter",
+        let plugin_path = find_mock_plugin().expect(
+            "ipc-mock-plugin not found. Build it first with: cargo build -p ipc-mock-plugin",
         );
-        eprintln!("Found mock adapter at: {}", lib_path.display());
+        eprintln!("Found ipc mock plugin at: {}", plugin_path.display());
 
-        let temp_dir = create_temp_plugin_dir(&lib_path);
+        let temp_dir = create_temp_plugin_dir(&plugin_path);
         let loader = PluginLoader::new(temp_dir.path().to_path_buf());
         let (succeeded, failed) = loader.load_all().await;
 
@@ -125,13 +108,13 @@ library: "{}"
         assert_eq!(succeeded.len(), 1, "should load exactly 1 plugin");
 
         let result = &succeeded[0];
-        assert_eq!(result.platform_name, "mock-test");
-        assert_eq!(result.display_name, "Mock Test Adapter");
+        assert_eq!(result.platform_name, "ipc-mock");
+        assert_eq!(result.display_name, "IPC Mock");
 
-        // Create adapter through factory
+        // Create adapter through factory（工厂会 spawn 插件进程并完成 init）
         let event_bus = Arc::new(EventBus::new());
         let factory = loader
-            .get_factory("mock-test", event_bus.clone())
+            .get_factory("ipc-mock", event_bus.clone())
             .await
             .expect("factory not found");
 
@@ -139,8 +122,7 @@ library: "{}"
             .await
             .expect("factory create failed");
 
-        // Verify adapter metadata (factory already calls init, so state is Starting)
-        assert_eq!(adapter.platform_name(), "mock-test");
+        assert_eq!(adapter.platform_name(), "ipc-mock");
         assert_eq!(adapter.state(), AdapterState::Starting);
 
         let conn_result = adapter.connect().await.expect("connect failed");

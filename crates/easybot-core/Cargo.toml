@@ -6,7 +6,7 @@ license.workspace = true
 
 [features]
 integration-test = []
-plugin-system = ["dep:libloading", "dep:ed25519-dalek", "dep:getrandom"]
+plugin-system = ["dep:ed25519-dalek", "dep:getrandom", "dep:easybot-plugin-protocol"]
 
 [dependencies]
 serde.workspace = true
@@ -15,7 +15,7 @@ serde_yaml.workspace = true
 thiserror.workspace = true
 uuid.workspace = true
 chrono.workspace = true
-tokio.workspace = true
+tokio = { workspace = true, features = ["process", "io-util"] }
 async-trait.workspace = true
 dashmap.workspace = true
 tracing.workspace = true
@@ -26,7 +26,8 @@ regex.workspace = true
 dirs.workspace = true
 dotenvy.workspace = true
 argon2.workspace = true
-rand_core = { version = "0.9", features = ["os_rng"] }
+# 注意：CSPRNG 统一经 `getrandom::rand_core`（0.10 系）重导出使用，
+# 不再直接依赖 rand_core（避免与 ed25519-dalek 3.x 链路的 0.10 版本重复）。
 sha2.workspace = true
 hmac.workspace = true
 base64.workspace = true
@@ -34,7 +35,8 @@ ed25519-dalek = { workspace = true, optional = true }
 # ed25519-dalek 3.x 密钥生成 CSPRNG（rand_core 0.10 系；sys_rng 开启 SysRng + rand_core 重导出）
 getrandom = { version = "0.4", features = ["sys_rng"], optional = true }
 reqwest.workspace = true
-libloading = { workspace = true, optional = true }
+# 进程外插件协议（宿主侧 IPC 代理用）
+easybot-plugin-protocol = { path = "../easybot-plugin-protocol", optional = true }
 utoipa = { workspace = true }
 sysinfo.workspace = true
 semver.workspace = true

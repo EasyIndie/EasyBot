@@ -1,0 +1,18 @@
+[package]
+name = "ipc-mock-plugin"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[[bin]]
+name = "ipc-mock-plugin"
+path = "src/main.rs"
+
+[dependencies]
+easybot-plugin-protocol = { path = "../../../crates/easybot-plugin-protocol" }
+serde.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

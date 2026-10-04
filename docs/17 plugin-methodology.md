@@ -111,7 +111,7 @@ let sem = Arc::new(Semaphore::new(16));
 | 操作 | 语义 |
 |------|------|
 | `disable` | 写 `enabled: false` 并**立即** stop + unregister（`adapter_manager.stop(platform)`） |
-| `enable` | 写回 `true`，**下次启动生效**（v1 不做热 dlopen） |
+| `enable` | 写回 `true`，**下次启动生效**（v1 不做热加载） |
 | 卸载 | stop + unregister 后删目录；`stop` 失败则拒绝卸载 |
 | 孤儿数据 | 卸载/禁用后的会话/消息由现有 **TTL 保留策略**兜底，不级联删除 |
 | 市场配置（registries/trustedPublishers）变更 | 需重启生效；dev 热加载仅指插件本体，不含市场源配置 |
@@ -121,7 +121,12 @@ let sem = Arc::new(Semaphore::new(16));
 
 ## 9. 安全边界（无沙箱，容器化兜底）
 
-**插件没有沙箱**，以宿主进程相同权限运行。签名 / verified 徽标只证明「代码来自该发布者、未被篡改」，**不证明代码安全**（VS Code 验证徽章被滥用为信任信号的教训）。
+**插件没有沙箱**。自 v0.0.42 起插件以**独立子进程**运行（进程外）：这提供
+**崩溃隔离**（插件 panic/退出不会拖垮宿主），但 **v1 不是安全沙箱**——子进程
+默认继承宿主用户权限，仍可读写文件与网络。
+
+> 不要把「进程外」误读为「已隔离」。签名 / verified 徽标也只证明「代码来自该发布者、
+> 未被篡改」，**不证明代码安全**（VS Code 验证徽章被滥用为信任信号的教训）。
 
 - 不得硬编码/日志输出凭据（对齐 no-hardcoded-credentials 约束）。
 - 安装第三方发布者插件前自行评估。
@@ -129,36 +134,27 @@ let sem = Arc::new(Semaphore::new(16));
 
 ---
 
-## 10. ABI 纪律
+## 10. 协议纪律（替代旧 ABI/FFI 纪律）
+
+插件与宿主通过 stdin/stdout 逐行 JSON（`easybot-plugin-protocol`）通信，
+握手时校验 `PROTOCOL_VERSION`：不匹配宿主即拒绝加载并给出明确错误。
 
 - `plugin.yaml` 的 `sdk_version` 必须等于编译所用 SDK 的 `EASYBOT_PLUGIN_ABI_VERSION`。
 - 升级 SDK 到不兼容版本 = 重新发布插件（按 `sdkVersion` 重建）。
-- 宿主侧 ABI 常量是 loader 自身那份（`plugin/loader.rs`），SDK 发布侧用 SDK 那份（`easybot-plugin-sdk/src/ffi.rs`），两处互相注释「同步」——发布时保持一致。
-- `panic = "abort"`：跨 FFI 不得 unwind。
-- **FFI 分配器契约（最深的坑）**：插件在进程内 dlopen，与宿主通过 FFI 收发
-  String/Vec/Value 等**带堆所有权**的值（宿主构造→插件 Drop，或反向），两侧
-  **必须共用同一全局分配器**。因此：
-  - **宿主侧**：禁用自定义 `#[global_allocator]`（`bin/Cargo.toml` 已移除
-    mimalloc 并注释警示，防止回归）。宿主 mimalloc + 插件系统 malloc → 交叉
-    free → SIGABRT；插件各自静态链接 mimalloc → 进程内两套堆 → 析构死锁。
-  - **宿主侧（`PluginLoader::create_adapter`）**：改为返回 `PluginAdapterProxy`——
-    宿主只**借读**插件返回的 `Box<Box<dyn PlatformAdapter>>` 胖指针
-    （`ptr::read` + `ManuallyDrop`，不取得所有权），代理 Drop 时调用插件的
-    `easybot_plugin_destroy`——**谁分配谁释放**。即便两侧分配器不同也不交叉释放。
-    旧实现宿主 `Box::from_raw` 后用自己的分配器释放插件内存，Linux musl-static
-    宿主跨堆释放即 UB（macOS 两侧共享系统 libc 无感，故早期未暴露）。
-  - **插件侧**：同样**不要**声明 `#[global_allocator]`，保持默认（= System）。
-  - 完整诊断过程（症状/根因/验证）见独立样例仓库
-    [`EasyIndie/easybot-hello-adapter`](https://github.com/EasyIndie/easybot-hello-adapter)
-    的[插件开发指南 §8.1「FFI 分配器契约」](https://github.com/EasyIndie/easybot-hello-adapter/blob/main/docs/plugin-development-guide.md)。
+- **无 FFI、无共享堆**：宿主与插件是两个进程，值经 JSON 序列化传递，
+  不存在跨堆所有权与全局分配器问题（旧 cdylib 时代的
+  「FFI 分配器契约」已随进程外架构一并废止）。
+- 插件崩溃由宿主健康监测器感知（进程退出 → `HealthStatus::Down`）并触发重连（重新 spawn）。
 
 ---
 
 ## 11. 跨平台发布约束
 
-- **Linux 插件必须 musl 静态编译**（宿主 musl-static，glibc `.so` 无法 dlopen）。
+- 插件是**独立可执行文件**，按 6 个 target triple 分别发布；
+  **不再要求**宿主与插件使用同一 libc——宿主即使全静态（无动态加载器）也能运行插件。
+- 仍建议 Linux 两项使用 musl（产物自包含、无 glibc 版本依赖），但不强制。
 - macOS `MACOSX_DEPLOYMENT_TARGET` 须 ≤ 宿主（10.15/11.0）；Windows 可选 `crt-static`。
-- 同一份源码，`plugin-publish.yml` 交叉编译 6 个 target 产物，安装端按宿主 triple 只下载匹配项。
+- 同一份源码，`plugin-publish.yml` 交叉编译 6 个 target 产物（`{name}-{triple}[.exe]`），安装端按宿主 triple 只下载匹配项。
 
 ---
 
