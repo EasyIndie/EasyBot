@@ -374,15 +374,15 @@ fn test_plugin_cli_offline_install_trust_inspect() {
 
     // 离线安装：签名插件源目录 → install --file
     //
-    // 故意不写 `library` 字段——走 `install_from_file` 的缺省库名推导分支
-    // （`default_library_name` 按宿主 triple 落位；曾把 triple 写死为 "host"
-    // 恒落入 `.so` 分支，macOS/Windows 落位扩展名错误、加载期验签失效）。
-    // 库文件名按宿主平台推导，确保本测试在 mac/linux/windows 都能通过。
+    // 故意不写 `command`/`library` 字段——走 `install_from_file` 的缺省入口名推导
+    // 分支（`default_command_name`：`{name}`，Windows 为 `{name}.exe`）。
+    // 入口名按宿主平台推导，确保本测试在 mac/linux/windows 都能通过。
+    // 缺省推导必须与 `PluginManifest::command_path()` 的缺省分支一致，否则安装后加载不到。
     let src = dir.path().join("plugin-src");
     std::fs::create_dir_all(&src).unwrap();
     std::fs::write(src.join("plugin.yaml"), "name: myplugin\nsdk_version: 1\n").unwrap();
     let lib = b"fake-dylib-bytes";
-    let lib_name = easybot_core::plugin::install::default_library_name(
+    let lib_name = easybot_core::plugin::install::default_command_name(
         "myplugin",
         easybot_core::updater::types::current_target_triple().unwrap_or("unknown"),
     );

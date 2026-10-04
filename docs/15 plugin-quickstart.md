@@ -9,12 +9,12 @@
 
 ## 什么是插件
 
-EasyBot 通过动态库（`.so` / `.dylib` / `.dll`）加载第三方 IM 适配器。插件作者只需依赖 `easybot-plugin-sdk` crate、实现 `PlatformAdapter` trait、调用一次 `declare_plugin!`，即可为 EasyBot 添加新的 IM 平台支持——不改主仓、不 fork。
+EasyBot 通过**进程外插件**加载第三方 IM 适配器：插件编译成**独立可执行文件**，宿主把它作为子进程启动，双方用 stdin/stdout JSON 协议通信。插件作者只需依赖 `easybot-plugin-sdk` crate、实现 `PlatformAdapter` trait、在 `src/main.rs` 调用一次 `run_plugin!`，即可为 EasyBot 添加新的 IM 平台支持——不改主仓、不 fork。
 
 ```
 plugins/<name>/
 ├── plugin.yaml          # 清单（name / sdk_version / author）
-└── lib<name>.so         # 编译产物（宿主进程内 dlopen）
+└── <name>               # 编译产物（插件可执行文件；Windows 为 <name>.exe）
 ```
 
 **前提**：安装了已编译好 `plugin-system` 特性的 `easybot`（`easybot --help` 里能看到 `plugin` 子命令）；本地有 Rust 工具链（`rustc --version` ≥ 1.94）。
@@ -32,9 +32,10 @@ cd my-adapter
 
 ```
 my-adapter/
-├── Cargo.toml                  # cdylib + SDK git tag 依赖（tag 按当前 EasyBot 版本生成）
+├── Cargo.toml                  # bin（进程外插件）+ SDK git tag 依赖（tag 按当前 EasyBot 版本生成）
 ├── .cargo/config.toml          # 说明 [patch] 属于 Cargo.toml（本地联调用）
 ├── src/lib.rs                  # 完整 PlatformAdapter 骨架（TODO 占位）
+├── src/main.rs                 # 进程入口：run_plugin!
 ├── plugin.yaml                 # 清单（name / display_name / sdk_version / author）
 ├── tests/unit.rs               # 单元测试：身份 / 能力 / 状态
 ├── tests/host_test.rs          # PluginTestHost 集成测试（离线）
@@ -64,7 +65,7 @@ cargo build --release
 cargo test
 ```
 
-- `cargo build --release` 产物：`target/release/libmy_adapter.so`（Linux）/ `.dylib`（macOS）/ `my_adapter.dll`（Windows）。
+- `cargo build --release` 产物：`target/release/my-adapter`（Linux/macOS）/ `my-adapter.exe`（Windows）。
 - `cargo test` 跑两类测试：`tests/unit.rs`（纯逻辑）+ `tests/host_test.rs`（内存宿主 `PluginTestHost` 模拟 `attach → init → connect → send → 事件流`），**无需启动真实网关**。
 
 此时生成的骨架 `send()` 会把收到的文本回显为 `message.inbound` 事件——这就是一个能编译、能测、能装入宿主的「最小适配器」。
@@ -133,7 +134,7 @@ async fn send(&self, params: SendTextParams) -> Result<SendResult, GatewayError>
 
 ```bash
 mkdir -p ~/.easybot/plugins/my-adapter
-cp target/release/libmy_adapter.so ~/.easybot/plugins/my-adapter/     # .dylib / .dll 同理
+cp target/release/my-adapter ~/.easybot/plugins/my-adapter/     # Windows: my-adapter.exe
 cp plugin.yaml ~/.easybot/plugins/my-adapter/
 ```
 
@@ -195,13 +196,13 @@ easybot plugin trust <publisher> --public-key <PUBLIC_KEY>   # 显式信任发�
 额外写出 `install --file` 读取的 `plugin.sig.json`：
 
 ```bash
-# 1. 签名产物：--name 必须传 plugin.yaml 的 name（kebab-case 插件库名推导是下划线 crate 名）
+# 1. 签名产物：--name 必须传 plugin.yaml 的 name（签名对象 = 入口可执行文件字节）
 easybot-plugin-sign sign --key "$PRIVATE_KEY" \
   --publisher my-org --version 0.1.0 --triple x86_64-apple-darwin \
-  --artifact ./target/release/libmy_adapter.dylib --name my-adapter \
+  --artifact ./target/release/my-adapter --name my-adapter \
   --sig-json ./plugin.sig.json
 
-# 2. 把 { plugin.yaml, libmy_adapter.dylib, plugin.sig.json } 组成一个目录交给用户
+# 2. 把 { plugin.yaml, my-adapter, plugin.sig.json } 组成一个目录交给用户
 # 用户侧（与市场安装同一流水线：ABI 预检 + 信任确认 + 验签 + 原子落位，仅跳过下载）：
 easybot plugin install my-adapter --file ./my-adapter-dist/
 ```

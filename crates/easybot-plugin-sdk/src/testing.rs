@@ -567,3 +567,204 @@ mod tests {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// 进程外测试宿主（P3-2）
+// ---------------------------------------------------------------------------
+
+use easybot_core::plugin::IpcPluginAdapter;
+
+/// **进程外**插件测试宿主。
+///
+/// 与 [`PluginTestHost`]（内存宿主，第 2 层）互补：本宿主把插件当作
+/// **独立可执行进程**启动，走真实的 stdin/stdout 协议
+/// （`handshake → init → connect → send → 事件回传 → disconnect`），
+/// 与生产路径完全一致（测试金字塔第 2.5 层）。
+///
+/// 用途：验证「插件作为可执行文件」的握手、生命周期与事件回传，
+/// 包括静态链接宿主下的真实行为（内存宿主无法覆盖）。
+///
+/// # 示例
+///
+/// ```ignore
+/// let host = ProcessPluginTestHost::spawn("target/debug/my-plugin", "my-platform", "My Plugin")
+///     .await
+///     .unwrap();
+/// let mut rx = host.subscribe(event_types::MESSAGE_INBOUND);
+/// host.send_text("c1", "hello").await.unwrap();
+/// let event = recv_event(&mut rx, Duration::from_secs(2)).await;
+/// host.shutdown().await.unwrap();
+/// ```
+pub struct ProcessPluginTestHost {
+    bus: Arc<EventBus>,
+    adapter: IpcPluginAdapter,
+    /// spawn 时即开始收集的事件（含 connect 阶段推送，避免订阅竞态）。
+    events: Arc<Mutex<Vec<GatewayEvent>>>,
+}
+
+/// 需要收集/转发的事件类型。
+const COLLECTED_EVENTS: &[&str] = &[
+    event_types::MESSAGE_INBOUND,
+    event_types::MESSAGE_SENT,
+    event_types::MESSAGE_FAILED,
+    event_types::CALLBACK_RECEIVED,
+    event_types::ADAPTER_CONNECTED,
+    event_types::ADAPTER_DISCONNECTED,
+    event_types::ADAPTER_ERROR,
+    event_types::ADAPTER_RECONNECTING,
+    event_types::ADAPTER_RECONNECTED,
+    event_types::ADAPTER_RECONNECT_FAILED,
+];
+
+impl ProcessPluginTestHost {
+    /// 启动插件可执行文件并完成 `handshake → init → connect`。
+    ///
+    /// 失败（二进制不存在 / 握手超时 / connect 被拒）返回错误描述。
+    pub async fn spawn(
+        command: impl Into<std::path::PathBuf>,
+        platform: impl Into<String>,
+        display: impl Into<String>,
+    ) -> Result<Self, String> {
+        let bus = Arc::new(EventBus::new());
+        // 先挂收集器，再 init/connect：插件在 connect 阶段推送的事件不会漏
+        let events: Arc<Mutex<Vec<GatewayEvent>>> = Arc::new(Mutex::new(Vec::new()));
+        for event_type in COLLECTED_EVENTS {
+            let mut rx = bus.subscribe(event_type);
+            let sink = events.clone();
+            tokio::spawn(async move {
+                while let Ok(event) = rx.recv().await {
+                    if let Ok(mut guard) = sink.lock() {
+                        guard.push(event);
+                    }
+                }
+            });
+        }
+        let mut adapter = IpcPluginAdapter::new(command, platform, display, None)
+            .with_call_timeout(Duration::from_secs(10));
+        adapter.set_event_bus(bus.clone());
+        adapter
+            .init(AdapterConfig::with_enabled(true))
+            .await
+            .map_err(|e| format!("init failed: {e}"))?;
+        let connected = adapter
+            .connect()
+            .await
+            .map_err(|e| format!("connect failed: {e}"))?;
+        if !connected.ok {
+            return Err(format!(
+                "connect rejected: {}",
+                connected.error.unwrap_or_default()
+            ));
+        }
+        Ok(Self {
+            bus,
+            adapter,
+            events,
+        })
+    }
+
+    /// 目前已收集到的事件（含 `spawn` 阶段插件推送的事件）。
+    pub fn events(&self) -> Vec<GatewayEvent> {
+        self.events.lock().map(|g| g.clone()).unwrap_or_default()
+    }
+
+    /// 事件总线引用（插件经协议回传的事件会发布到这里）。
+    pub fn bus(&self) -> Arc<EventBus> {
+        self.bus.clone()
+    }
+
+    /// 订阅某类事件，配合 [`recv_event`] 断言插件回传的事件流。
+    pub fn subscribe(&self, event_type: &str) -> broadcast::Receiver<GatewayEvent> {
+        self.bus.subscribe(event_type)
+    }
+
+    /// 发送文本消息（走真实 stdio 协议）。
+    pub async fn send_text(&self, chat_id: &str, text: &str) -> Result<SendResult, GatewayError> {
+        self.adapter
+            .send(SendTextParams {
+                chat_id: chat_id.into(),
+                message: crate::OutboundMessage {
+                    text: text.into(),
+                    parse_mode: crate::ParseMode::None,
+                },
+                reply_to: None,
+                metadata: None,
+            })
+            .await
+    }
+
+    /// 插件进程是否已退出（用于崩溃/监管断言）。
+    pub fn child_exited(&self) -> bool {
+        self.adapter.child_exited()
+    }
+
+    /// 断连并结束插件进程。
+    pub async fn shutdown(mut self) -> Result<(), GatewayError> {
+        self.adapter.disconnect().await
+    }
+}
+
+#[cfg(test)]
+mod process_tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    /// 定位 `ipc-mock-plugin`（workspace 成员）。
+    ///
+    /// `cargo test -p easybot-plugin-sdk` 不会构建它——找不到时测试自跳过
+    /// （全量 `cargo test --workspace` 会构建并真正执行）。
+    fn find_ipc_mock_plugin() -> Option<PathBuf> {
+        let target_dir = std::env::var("CARGO_TARGET_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| {
+                let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR")); // crates/easybot-plugin-sdk
+                p.pop(); // crates
+                p.pop(); // 仓库根
+                p.join("target")
+            });
+        let profile = if cfg!(debug_assertions) {
+            "debug"
+        } else {
+            "release"
+        };
+        let exe = if cfg!(windows) {
+            "ipc-mock-plugin.exe"
+        } else {
+            "ipc-mock-plugin"
+        };
+        let path = target_dir.join(profile).join(exe);
+        path.exists().then_some(path)
+    }
+
+    #[tokio::test]
+    async fn process_host_drives_lifecycle_and_events() {
+        let Some(bin) = find_ipc_mock_plugin() else {
+            eprintln!("跳过：ipc-mock-plugin 未构建（先运行 `cargo build -p ipc-mock-plugin`）");
+            return;
+        };
+        let host = ProcessPluginTestHost::spawn(bin, "ipc-mock", "IPC Mock")
+            .await
+            .expect("spawn plugin");
+        // 保持订阅能力可用（流式断言路径）
+        let _rx = host.subscribe(event_types::MESSAGE_INBOUND);
+
+        let result = host.send_text("chat-1", "hello").await.expect("send");
+        assert!(result.success, "send 应成功");
+        assert_eq!(result.message_id.as_deref(), Some("ipc-chat-1-5"));
+
+        // 轮询等待插件回传事件（connect 阶段推送的那条）
+        let mut seen = false;
+        for _ in 0..100 {
+            if !host.events().is_empty() {
+                seen = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        assert!(seen, "应收到插件回传的事件");
+        assert_eq!(host.events()[0].event_type, event_types::MESSAGE_INBOUND);
+
+        assert!(!host.child_exited(), "插件进程应仍存活");
+        host.shutdown().await.expect("shutdown");
+    }
+}

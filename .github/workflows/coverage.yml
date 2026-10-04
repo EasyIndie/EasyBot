@@ -38,8 +38,8 @@ jobs:
         with:
           tool: cargo-llvm-cov
 
-      - name: Build mock-adapter
-        run: bash scripts/ci-step.sh "coverage mock-adapter" cargo build -p mock-adapter --locked
+      - name: Build ipc-mock-plugin
+        run: bash scripts/ci-step.sh "coverage ipc-mock-plugin" cargo build -p ipc-mock-plugin --locked
 
       - name: Build CLI test binary
         run: bash scripts/ci-step.sh "coverage CLI binary" cargo build -p easybot-bin --bin easybot --features "default,plugin-system" --locked

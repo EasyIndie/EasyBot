@@ -11,9 +11,11 @@
 # 约束：
 #   - 本模板是「自包含」的——只能引用公开 GitHub Action（并固定 40 位 commit SHA），
 #     不能引用 EasyBot 仓库的内部 action（插件作者仓库里没有）。
-#   - 产物命名：{lib}{name}-{triple}.{so|dylib|dll}（Windows 无 lib 前缀）。
+#   - 产物命名：{name}-{triple}[.exe]（插件是独立可执行文件，无 lib 前缀）。
 #     同一 Release 下 6 个产物用 triple 后缀区分，安装端按宿主 triple 只下载匹配项。
-#   - Linux 产物必须 musl 静态编译（宿主 musl-static，glibc .so 无法 dlopen）。
+#   - 宿主与插件是「进程外」关系（stdio JSON 协议），因此不要求单个目标静态链接：
+#     宿主即使全静态（无动态加载器、无法 dlopen）也能运行插件。
+#     仍固定 6 个 target triple，保证同一 Release 覆盖所有平台。
 #   - sdkVersion 必须等于插件所依赖 SDK 的 EASYBOT_PLUGIN_ABI_VERSION（当前为 1）。
 #
 # v1.5 可选：在「Release」step 前追加 actions/attest@v4 为产物生成 GitHub
@@ -81,40 +83,34 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Linux：必须 musl（zig cc 交叉编译，静态链接）
+          # Linux：musl（zig cc 交叉编译，静态；产物是独立进程，静态无副作用）
           - os: ubuntu-latest
             target: x86_64-unknown-linux-musl
-            prefix: lib
-            extension: so
+            ext: ""
             zigbuild: true
           - os: ubuntu-latest
             target: aarch64-unknown-linux-musl
-            prefix: lib
-            extension: so
+            ext: ""
             zigbuild: true
-          # macOS：dyld；部署目标 ≤ 宿主（10.15 / 11.0）
+          # macOS：部署目标 ≤ 宿主（10.15 / 11.0）
           - os: macos-latest
             target: x86_64-apple-darwin
-            prefix: lib
-            extension: dylib
+            ext: ""
             zigbuild: false
             macos-deployment-target: "10.15"
           - os: macos-latest
             target: aarch64-apple-darwin
-            prefix: lib
-            extension: dylib
+            ext: ""
             zigbuild: false
             macos-deployment-target: "11.0"
           # Windows：MSVC CRT；ARM 用原生 windows-11-arm runner
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-            prefix: ""
-            extension: dll
+            ext: ".exe"
             zigbuild: false
           - os: windows-11-arm
             target: aarch64-pc-windows-msvc
-            prefix: ""
-            extension: dll
+            ext: ".exe"
             zigbuild: false
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -148,42 +144,45 @@ jobs:
           export PATH="$HOME/zig/zig-x86_64-linux-0.16.0:$PATH"
           zig version
 
-      - name: Build (musl — static linking)
+      - name: Resolve plugin name
+        id: name
+        shell: bash
+        run: |
+          set -euo pipefail
+          PLUGIN_NAME="${PLUGIN_NAME:-$(awk -F'"' '/^\[package\]/{p=1} p&&/^name *=/{gsub(/ /,"");print $2;exit}' Cargo.toml)}"
+          [ -n "$PLUGIN_NAME" ] || { echo "无法确定插件名（设置 env.PLUGIN_NAME 或 Cargo.toml [package].name）" >&2; exit 1; }
+          echo "name=$PLUGIN_NAME" >> "$GITHUB_OUTPUT"
+
+      - name: Build (musl)
         if: ${{ matrix.zigbuild }}
-        run: cargo zigbuild --release --target ${{ matrix.target }}
+        run: cargo zigbuild --release --target ${{ matrix.target }} --bin ${{ steps.name.outputs.name }}
 
       - name: Build (native)
         if: ${{ !matrix.zigbuild }}
         env:
           MACOSX_DEPLOYMENT_TARGET: ${{ matrix.macos-deployment-target }}
-        run: cargo build --release --target ${{ matrix.target }}
+        run: cargo build --release --target ${{ matrix.target }} --bin ${{ steps.name.outputs.name }}
 
       - name: Stage plugin artifacts
         # Windows runner 默认 shell 是 PowerShell，必须显式用 bash（脚本是 bash 语法）
         shell: bash
         env:
-          EXT: ${{ matrix.extension }}
-          PREFIX: ${{ matrix.prefix }}
+          EXT: ${{ matrix.ext }}
           TRIPLE: ${{ matrix.target }}
         run: |
           set -euo pipefail
           # 插件名（缺省从 Cargo.toml [package].name 读取）
           PLUGIN_NAME="${PLUGIN_NAME:-$(awk -F'"' '/^\[package\]/{p=1} p&&/^name *=/{gsub(/ /,"");print $2;exit}' Cargo.toml)}"
           [ -n "$PLUGIN_NAME" ] || { echo "无法确定插件名（设置 env.PLUGIN_NAME 或 Cargo.toml [package].name）" >&2; exit 1; }
-          # Rust cdylib 产物文件名以下划线分隔（如 libmy_adapter.so）
-          CRATE_FILE=$(printf '%s' "$PLUGIN_NAME" | tr '-' '_')
-          RAW="target/${TRIPLE}/release/${PREFIX}${CRATE_FILE}.${EXT}"
+          # 二进制产物名 = bin 名（连字符保留），Windows 带 .exe
+          CLEAN="${PLUGIN_NAME}${EXT}"
+          RAW="target/${TRIPLE}/release/${CLEAN}"
           [ -f "$RAW" ] || { echo "未找到编译产物: $RAW" >&2; exit 1; }
-          # 磁盘上的库名（写入 easybot-plugin.json 的 library 字段，安装后按此名落位）。
-          # 必须用 CRATE_FILE（下划线）——cargo cdylib 产物是下划线 crate 名，宿主
-          # 端缺省推导（manifest.library_path / default_library_name）也按下划线，
-          # 落位名与推导名不一致会导致加载找不到库。
-          CLEAN="${PREFIX}${CRATE_FILE}.${EXT}"
-          # Release asset 名：lib{name}-{triple}.{ext}（与 CLEAN 同字节，仅文件名带 triple）
-          SUFFIXED="${CLEAN%.*}-${TRIPLE}.${EXT}"
+          # Release asset 名：{name}-{triple}[.exe]
+          SUFFIXED="${PLUGIN_NAME}-${TRIPLE}${EXT}"
           mkdir -p artifacts
           cp "$RAW" "artifacts/${SUFFIXED}"
-          printf '{"triple":"%s","library":"%s","suffixed":"%s"}' \
+          printf '{"triple":"%s","command":"%s","suffixed":"%s"}' \
             "$TRIPLE" "$CLEAN" "$SUFFIXED" > artifacts/metadata.json
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v4
@@ -269,11 +268,11 @@ jobs:
           [ -n "$PUBLISHER_PRIVATE_KEY" ] || { echo "缺少 secret PUBLISHER_PRIVATE_KEY" >&2; exit 1; }
           for dir in downloads/artifact-*/; do
             triple=$(jq -r .triple "$dir/metadata.json")
-            library=$(jq -r .library "$dir/metadata.json")
+            command=$(jq -r .command "$dir/metadata.json")
             suffixed=$(jq -r .suffixed "$dir/metadata.json")
             easybot-plugin-sign sign --publisher "${{ steps.meta.outputs.publisher }}" \
               --version "${{ steps.meta.outputs.version }}" \
-              --triple "$triple" --artifact "$dir/$suffixed" --library "$library" \
+              --triple "$triple" --artifact "$dir/$suffixed" --library "$command" \
               --name "${{ steps.meta.outputs.plugin-name }}" \
               > "$dir/sign.json"
             # 注入 release asset 名，供组装 easybot-plugin.json 的 url 字段
@@ -313,7 +312,7 @@ jobs:
                artifacts: ( $e | map( { (.triple): { url: ($base + "/" + .suffixed),
                                                       size: .size, sha256: .sha256,
                                                       signature: .signature, public_key: .public_key,
-                                                      library: .library } } ) | add ) }' \
+                                                      command: .library } } ) | add ) }' \
             > easybot-plugin.json
           jq -e '.artifacts | length > 0' easybot-plugin.json >/dev/null
           ( cd release-assets && sha256sum * | sort ) > checksums.txt

@@ -1,14 +1,18 @@
-//! Example: Slack Adapter Plugin
+//! Example: Slack Adapter Plugin（进程外插件的高级参考）
 //!
 //! Demonstrates how to build a custom IM adapter using the EasyBot Plugin SDK.
 //! This is a reference implementation — not production-ready.
+//!
+//! 架构：本插件编译为**独立可执行文件**，宿主 EasyBot 以子进程方式启动，
+//! 经 stdin/stdout JSON 协议通信（入口见 `src/main.rs` 的 `run_plugin!`）。
 //!
 //! Build:
 //!   cd plugins/example-slack-plugin
 //!   cargo build --release
 //!
 //! Install:
-//!   cp target/release/libslack.{so,dylib} ~/.easybot/plugins/slack/
+//!   mkdir -p ~/.easybot/plugins/slack
+//!   cp target/release/easybot-example-slack-plugin ~/.easybot/plugins/slack/   # Windows: .exe
 //!   cp plugin.yaml ~/.easybot/plugins/slack/
 //!
 //! Configure in gateway.yaml:
@@ -17,24 +21,32 @@
 //!       enabled: true
 //!       token: "${SLACK_BOT_TOKEN}"
 
+use std::sync::Arc;
+
 use easybot_plugin_sdk::prelude::*;
 
-struct SlackAdapter {
+/// Slack 适配器（示例）。
+///
+/// 真实适配器通常还持有 HTTP client、缓存（须带大小上限或 TTL，见
+/// `docs/17 plugin-methodology.md`「缓存」一节）等字段。
+pub struct SlackAdapter {
     name: String,
     display: String,
     state: AdapterState,
     bot_token: Option<String>,
-    event_bus: Option<std::sync::Arc<easybot_plugin_sdk::easybot_core::bus::EventBus>>,
+    event_bus: Option<Arc<EventBus>>,
+    client: reqwest::Client,
 }
 
 impl SlackAdapter {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             name: "slack".into(),
             display: "Slack (Example Plugin)".into(),
             state: AdapterState::Created,
             bot_token: None,
             event_bus: None,
+            client: reqwest::Client::new(),
         }
     }
 }
@@ -50,16 +62,21 @@ impl PlatformAdapter for SlackAdapter {
     }
 
     fn capabilities(&self) -> &[Capability] {
-        &[Capability::text()]
+        &[Capability {
+            name: CapabilityName::Text,
+            supported: true,
+            limits: None,
+        }]
     }
 
-    fn set_event_bus(&mut self, bus: std::sync::Arc<easybot_plugin_sdk::easybot_core::bus::EventBus>) {
+    fn set_event_bus(&mut self, bus: Arc<EventBus>) {
         self.event_bus = Some(bus);
     }
 
     async fn init(&mut self, config: AdapterConfig) -> Result<InitResult, GatewayError> {
         self.bot_token = config.token.clone();
         if self.bot_token.is_none() {
+            // 缺凭据不算错误：返回 ok=false + 说明，宿主会跳过启动该适配器。
             return Ok(InitResult {
                 ok: false,
                 error: Some("SLACK_BOT_TOKEN required".into()),
@@ -73,18 +90,21 @@ impl PlatformAdapter for SlackAdapter {
     }
 
     async fn connect(&mut self) -> Result<ConnectResult, GatewayError> {
-        // In production, establish a WebSocket (RTM API) or poll Events API
-        self.state = AdapterState::Connected;
-        Ok(ConnectResult {
-            ok: true,
-            error: None,
-            bot_info: None,
-        })
+        // 真实实现：调 `auth.test` 校验 token，再建立 WebSocket（RTM）或轮询 Events API。
+        match self.bot_token.as_deref() {
+            None => Ok(ConnectResult::failed(
+                "SLACK_BOT_TOKEN required".into(),
+                None,
+            )),
+            Some(_) => {
+                self.state = AdapterState::Connected;
+                Ok(ConnectResult::ok(None))
+            }
+        }
     }
 
     async fn disconnect(&mut self) -> Result<(), GatewayError> {
         self.state = AdapterState::Stopped;
-        self.bot_token = None;
         Ok(())
     }
 
@@ -93,13 +113,14 @@ impl PlatformAdapter for SlackAdapter {
     }
 
     async fn health(&self) -> HealthReport {
+        let connected = self.state == AdapterState::Connected;
         HealthReport {
-            status: if self.state == AdapterState::Connected {
+            status: if connected {
                 HealthStatus::Healthy
             } else {
                 HealthStatus::Down
             },
-            connected: self.state == AdapterState::Connected,
+            connected,
             last_connected_at: None,
             last_error_at: None,
             last_error: None,
@@ -111,12 +132,15 @@ impl PlatformAdapter for SlackAdapter {
     }
 
     async fn send(&self, params: SendTextParams) -> Result<SendResult, GatewayError> {
-        let token = self.bot_token.as_ref()
+        let token = self
+            .bot_token
+            .as_ref()
             .ok_or_else(|| GatewayError::ConfigError("No token configured".into()))?;
 
-        // Example: call Slack Web API to send a message
-        let client = reqwest::Client::new();
-        let resp = client
+        // 网络层失败必须用 `Transient` 包裹：宿主据此做退避重连（见
+        // `docs/17 plugin-methodology.md`「错误分类」）。
+        let resp = self
+            .client
             .post("https://slack.com/api/chat.postMessage")
             .bearer_auth(token)
             .json(&serde_json::json!({
@@ -125,12 +149,12 @@ impl PlatformAdapter for SlackAdapter {
             }))
             .send()
             .await
-            .map_err(|e| GatewayError::SendError(e.to_string()))?;
+            .map_err(|e| GatewayError::Transient(e.to_string()))?;
 
         let body: serde_json::Value = resp
             .json()
             .await
-            .map_err(|e| GatewayError::SendError(e.to_string()))?;
+            .map_err(|e| GatewayError::Transient(e.to_string()))?;
 
         if body.get("ok").and_then(|v| v.as_bool()).unwrap_or(false) {
             Ok(SendResult {
@@ -142,16 +166,25 @@ impl PlatformAdapter for SlackAdapter {
                 retryable: false,
             })
         } else {
+            // 平台业务失败：返回 success=false（不是 Err——Err 表示调用本身失败）。
             let error = body
                 .get("error")
                 .and_then(|v| v.as_str())
-                .unwrap_or("unknown");
-            Err(GatewayError::SendError(error.to_string()))
+                .unwrap_or("unknown")
+                .to_string();
+            Ok(SendResult {
+                success: false,
+                message_id: None,
+                timestamp: None,
+                error: Some(error),
+                error_code: None,
+                retryable: false,
+            })
         }
     }
 
     async fn get_chat_info(&self, _chat_id: &str) -> Result<ChatInfo, GatewayError> {
-        // Use conversations.info API
+        // 真实实现走 conversations.info；示例返回「不支持」。
         Err(GatewayError::capability_not_supported("get_chat_info"))
     }
 
@@ -178,4 +211,5 @@ impl PlatformAdapter for SlackAdapter {
     }
 }
 
-declare_plugin!(SlackAdapter, SlackAdapter::new);
+// 进程外插件入口见 `src/main.rs`：
+//     easybot_plugin_sdk::run_plugin!(SlackAdapter, SlackAdapter::new);

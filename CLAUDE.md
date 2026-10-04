@@ -15,7 +15,7 @@ make verify    # full CI check
 make lint      # fmt check + clippy
 
 # Notable raw cargo commands
-cargo build -p mock-adapter                      # before integration tests
+cargo build -p ipc-mock-plugin                   # before integration tests
 cargo test -p easybot-core config::tests         # config/env tests only
 cargo test -p easybot-core test_get_or_create -- --exact  # single test
 ```
@@ -33,7 +33,7 @@ Core (easybot-core)       EventBus · SessionManager · AdapterManager · ApiKey
      ↕
 Adapters (easybot-adapter-*)  Telegram · Discord · 飞书 · QQ · WeChat
      ↕
-Plugins (easybot-plugin-sdk)  cdylib 适配器插件（市场分发 · ed25519 签名 · PluginTestHost）
+Plugins (easybot-plugin-sdk)  进程外适配器插件（独立可执行文件 · stdio JSON 协议 · 市场分发 · ed25519 签名）
 ```
 
 ### 模板构建系统（别改错文件）
@@ -91,10 +91,11 @@ Plugins (easybot-plugin-sdk)  cdylib 适配器插件（市场分发 · ed25519 �
 | `crates/easybot-adapter-feishu` | 飞书 REST + WebSocket |
 | `crates/easybot-adapter-qq` | QQBot Gateway |
 | `crates/easybot-adapter-wechat` | 个人微信 iLink Bot API 长轮询（v2，channel_version=2.2.0） |
-| `crates/easybot-plugin-sdk` | Re-exports core types for plugins + `testing` feature (PluginTestHost) |
+| `crates/easybot-plugin-sdk` | Re-exports core types for plugins + `run_plugin!` 服务端运行时；`testing` feature（PluginTestHost / ProcessPluginTestHost） |
+| `crates/easybot-plugin-protocol` | 进程外插件协议类型（Request/Response/Notification + 方法常量 + 生命周期类型） |
 | `crates/easybot-plugin-sign` | 发布者 ed25519 密钥对/签名工具（gen-keypair / sign，仅发布者 CI 用，主程序不持私钥） |
 | `plugins/` | 官方入门样例已独立为 [`EasyIndie/easybot-hello-adapter`](https://github.com/EasyIndie/easybot-hello-adapter)（教学样例仓库，含插件开发指南，与主仓仅文档/链接互引）；本仓库仅保留 `example-slack-plugin` 高级参考（非 workspace 成员） |
-| `tests/` | Integration, e2e, mock-adapter, fixtures |
+| `tests/` | Integration, e2e, `ipc-mock-plugin`（进程外插件测试宿主）, fixtures |
 
 ### Core Types (`easybot-core/src/types/`)
 
@@ -139,7 +140,7 @@ init(config) → connect() → send()/... → disconnect()
 | 模块 | 职责 |
 |---|---|
 | `manifest.rs` | `PluginManifest`（name/sdk_version/library/enabled）+ `library_path()` 安全校验 |
-| `loader.rs` | `PluginLoader`（libloading 进程内 dlopen）+ `PluginLoadPolicy`（lenient=dev / strict=prod）+ 启动验签 |
+| `loader.rs` | `PluginLoader`（**进程外**：定位入口可执行文件）+ `PluginLoadPolicy`（lenient=dev / strict=prod）+ 启动验签 |
 | `registry/` | `PluginRegistry` trait（抽象）+ `GitHubRegistry`（catalog.json + Releases 的 `easybot-plugin.json`） |
 | `signing/` | ed25519 验签（`verify_artifact`）+ `TrustStore`（`{plugins_dir}/.trust` 用户信任状态） |
 | `manager.rs` | `PluginManager` 编排：install/update/uninstall/enable/disable/list/search/info/trust |
@@ -224,15 +225,15 @@ init(config) → connect() → send()/... → disconnect()
 | WeChat iLink API | v2 协议（与官方 openclaw-weixin SDK 一致），`channel_version: "2.2.0"` 常量 `CHANNEL_VERSION`。`message_id` 字段兼容整数和字符串（`deserialize_flexible_id`）。`sendmessage` 请求需 `message_type: 2, message_state: 2`。`getupdates` 需 `base_info.channel_version`。 |
 | Plugin 签名 ≠ 安全 | ed25519 签名只证作者+完整性，**不证代码安全**（VS Code 徽章被滥用教训）。插件无沙箱以宿主权限运行，生产隔离用容器化兜底（`docs/18 plugin-security.md`）。`docs/18 plugin-security.md` 信任模型含威胁模型表。 |
 | Plugin 信任语义 | 信任按**发布者**粒度（VS Code 1.97）：`plugin install --yes` **不自动**写入 `.trust`；显式 `plugin trust <publisher> --public-key <k>` 才加入。状态存 `{plugins_dir}/.trust`。密钥泄露=官方从 `trustedPublishers` 移除公钥→新版拒绝该发布者，不自动卸载已装插件。 |
-| Plugin 签名对象 | 签名的对象 = **产物字节本身**（`.so/.dylib/.dll`），元数据被 sha256 间接锚定。验签两时点：install 下载后 + load 启动时（防安装后被替换）。`easybot-plugin-sign` 是独立工具（主程序不持私钥），私钥只存发布者 GitHub Actions secret `PUBLISHER_PRIVATE_KEY`。 |
+| Plugin 签名对象 | 签名的对象 = **产物字节本身**（插件可执行文件），元数据被 sha256 间接锚定。验签两时点：install 下载后 + load 启动时（防安装后被替换）。`easybot-plugin-sign` 是独立工具（主程序不持私钥），私钥只存发布者 GitHub Actions secret `PUBLISHER_PRIVATE_KEY`。 |
 | Plugin 安装流水线 | `current_target_triple()` 匹配 artifacts → ABI 预检（sdk_version）→ `requires.easybot` semver range → 信任确认 → 下载临时目录 → sha256 + `verify_artifact` 双通过 → **原子 rename** 落位 + 合成 plugin.yaml。name 白名单 `[A-Za-z0-9_-]` 拒绝 `..`/路径穿越。`install --file` 走同流水线跳过下载（离线部署）。`PluginManager` 内部 Mutex 串行化 install/uninstall/enable/disable。 |
 | Plugin 多注册表 | `plugins.registries` 列表（Taps 模型：官方 + 社区源），catalog 合并去重，插件名支持 `publisher/name` 限定。市场不可达明确报错不崩；`plugin update --refresh` 强制清缓存。 |
 | Plugin 更新语义 | `plugin update` 显式触发（非自动），默认 **pin 当前版本**，`--latest`/`--channel beta` 才跨版本（防更新攻击）。`requires.easybot` 安装前校验兼容范围；主程序更新时 `check_plugin_compatibility`（`updater/precheck.rs`）阻止不兼容插件。 |
-| Plugin 跨平台分发 | 插件按 6 target triple 分别编译（Linux 两项必须 **musl**，宿主 musl-static glibc `.so` 无法 dlopen；macOS `MACOSX_DEPLOYMENT_TARGET` ≤ 宿主；Windows 可选 `crt-static`）。`plugin-publish.yml` 是**自包含**模板（只引用公开 action + 40 位 SHA 固定），copy 到插件仓库即用：6-target matrix + gitleaks 扫描 + sign + `easybot-plugin.json` + Release。 |
+| Plugin 跨平台分发 | 插件是**独立可执行文件**，按 6 target triple 分别编译（产物名 `{name}-{triple}[.exe]`）。进程外模式下宿主与插件**无需同一 libc**——宿主即使全静态也能运行插件；Linux 两项仍建议 musl（自包含）；macOS `MACOSX_DEPLOYMENT_TARGET` ≤ 宿主；Windows 可选 `crt-static`。`plugin-publish.yml` 是**自包含**模板（只引用公开 action + 40 位 SHA 固定），copy 到插件仓库即用：6-target matrix + gitleaks 扫描 + sign + `easybot-plugin.json` + Release。 |
 | Plugin 脚手架 | `easybot plugin new <name>` 生成独立可构建工程（`bin/src/plugin_scaffold.rs` + `plugin_scaffold_template.rs`），SDK git tag 依赖由编译时版本常量生成（`v{CARGO_PKG_VERSION}`），离线可用。模板含 `[patch]` 本地联调注释。脚手架产出形状由独立样例仓库 [`EasyIndie/easybot-hello-adapter`](https://github.com/EasyIndie/easybot-hello-adapter) 持续编译验证（教学样例，含插件开发指南）。 |
-| Plugin 测试宿主 | SDK `testing` feature 提供 `PluginTestHost`（`crates/easybot-plugin-sdk/src/testing.rs`）：内存宿主模拟 attach/init/connect/send/事件流，离线跑通。传输可注入方法论：HTTP client 经构造器或 `init(config)` 注入，协议交互用 wiremock 替换。测试金字塔：单元 → PluginTestHost → wiremock → e2e。 |
-| Plugin 命名规则 | 官方插件统一 **`easybot-xxx`** 前缀，且同一个名字贯穿仓库名 / `Cargo.toml [package].name` / cdylib 产物（`libeasybot_xxx.{so,dylib,dll}`，Rust 下划线连 crate 名）/ `plugin.yaml` name / `platform_name()` / 市场安装名。命名一经发布即对外稳定（`platform_name()` 参与会话 key 与路由）。社区插件不强前缀，用 `publisher/name` 限定。详见 `docs/16 plugin-guide.md`「命名规则」。官方入门样例 = 独立仓库 [`EasyIndie/easybot-hello-adapter`](https://github.com/EasyIndie/easybot-hello-adapter)（教学用，含插件开发指南，与主仓仅文档/链接互引）。 |
-| Plugin FFI 分配器契约 | 插件在进程内 dlopen，与宿主通过 FFI 收发 String/Vec/Value 等**带堆所有权**的值（宿主构造→插件 Drop，或反向），两侧**必须共用同一全局分配器**。因此宿主**禁用自定义 `#[global_allocator]`**（`bin/Cargo.toml` 已移除 mimalloc 并注释警示）：宿主 mimalloc + 插件系统 malloc → 交叉 free → SIGABRT；插件各自静态链接 mimalloc → 进程内两套堆 → 析构死锁。插件侧同样**不要**声明 `#[global_allocator]`，保持默认。详见 `docs/17 plugin-methodology.md`「FFI 分配器契约」与独立样例仓库的[插件开发指南](https://github.com/EasyIndie/easybot-hello-adapter/blob/main/docs/plugin-development-guide.md)。 |
+| Plugin 测试宿主 | SDK `testing` feature 提供 `PluginTestHost`（内存宿主）与 `ProcessPluginTestHost`（**进程外**宿主，真实 stdio 协议）；见 `crates/easybot-plugin-sdk/src/testing.rs`。传输可注入方法论：HTTP client 经构造器或 `init(config)` 注入，协议交互用 wiremock 替换。测试金字塔：单元 → PluginTestHost → ProcessPluginTestHost → wiremock → e2e。 |
+| Plugin 命名规则 | 官方插件统一 **`easybot-xxx`** 前缀，且同一个名字贯穿仓库名 / `Cargo.toml [package].name` / bin 产物（可执行文件名，连字符保留；Windows 带 `.exe`）/ `plugin.yaml` name 与 `command` / `platform_name()` / 市场安装名。命名一经发布即对外稳定（`platform_name()` 参与会话 key 与路由）。社区插件不强前缀，用 `publisher/name` 限定。详见 `docs/16 plugin-guide.md`「命名规则」。官方入门样例 = 独立仓库 [`EasyIndie/easybot-hello-adapter`](https://github.com/EasyIndie/easybot-hello-adapter)（教学用，含插件开发指南，与主仓仅文档/链接互引）。 |
+| Plugin 进程外架构 | 插件是**独立可执行文件**，宿主 spawn 子进程，经 stdin/stdout 逐行 JSON（`easybot-plugin-protocol`）通信：`handshake`（校验 `PROTOCOL_VERSION`）→ `init` → `connect` → 收发/事件回传 → `shutdown`。**不得再用 `dlopen`/cdylib**（官方 Linux 发行版是 musl 全静态二进制，无动态加载器，dlopen 必然失败）。收益：崩溃隔离（子进程退出 → `HealthStatus::Down` → 宿主重连/spawn）、静态宿主可用、无 FFI/跨堆分配器问题（旧「FFI 分配器契约」随架构废止）。**v1 只做崩溃隔离，不是安全沙箱**（无 seccomp/降权）。宿主侧 `plugin/ipc.rs`（`IpcPluginAdapter`）+ `plugin/loader.rs`（进程外扫描/验签/工厂）；插件侧 `easybot-plugin-sdk` 的 `run_plugin!`。 |
 
 ## 发布流程
 
@@ -240,7 +241,7 @@ init(config) → connect() → send()/... → disconnect()
 
 1. **文档对齐**：CHANGELOG.md 在 `[Unreleased]` 下新增 `[0.0.X]` 条目（Keep a Changelog，中文）；README/CLAUDE/docs 与代码实现对齐。
 2. **版本同步**：`Cargo.toml`（version）+ `Cargo.lock`（`cargo update --workspace`）+ `compose.quickstart.yml`（EASYBOT_IMAGE 注释）+ `crates/easybot-api/src/routes/update.rs`（`#[schema(example)]`）+ `crates/easybot-api/tests/routes.rs`（current_version）+ 两个快照（health + openapi 的 version/example）+ `deploy-kit/deploy.sh`（注释→**下一**版本）+ `docs/01 user-guide.md`（版本引用）+ `docs/other/windows-deployment.md`（版本要求）。
-3. **前置构建**：`cargo build -p mock-adapter` + `cargo build --features "default,plugin-system"`（CLI 测试硬编码找 `target/debug/easybot`，且插件集成测试要求该二进制带 `plugin-system` —— 裸 `cargo build` 会把二进制重建成无插件版，导致 `cli::test_production_*` / `cli::test_plugin_cli_*` 失败）。`cargo clean` 后必做。
+3. **前置构建**：`cargo build -p ipc-mock-plugin` + `cargo build --features "default,plugin-system"`（CLI 测试硬编码找 `target/debug/easybot`，且插件集成测试要求该二进制带 `plugin-system` —— 裸 `cargo build` 会把二进制重建成无插件版，导致 `cli::test_production_*` / `cli::test_plugin_cli_*` 失败）。`cargo clean` 后必做。
 4. **预检**：`bash scripts/release-preflight.sh`。**禁止 `| tail`**（管道吞掉退出码）——用 `> /tmp/log 2>&1; echo EXIT_CODE=$?`。含 Actions 40 位 SHA 固定门禁。
 5. **测试**：`cargo test --workspace --features "default,plugin-system" --locked` + `cargo fmt --all --check`。注意 APFS 磁盘空间：全量编译可打满共享容器，满盘表现为空输出 + exit 1，不是测试失败。
 6. **提交**（3 个）：`docs: align documentation with current implementation` / `ci: pin <action> action to commit SHA` / `release: bump v0.0.X → v0.0.Y`。

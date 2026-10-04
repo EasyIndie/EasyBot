@@ -37,7 +37,7 @@ pub fn validate_name(name: &str) -> Result<(), PluginManagerError> {
     }
 }
 
-/// 动态库文件名白名单：必须是**单个裸文件名**（无路径分隔符、非绝对路径、无 `..`）
+/// 入口文件名白名单：必须是**单个裸文件名**（无路径分隔符、非绝对路径、无 `..`）
 ///
 /// `artifact.library` 来自不可信的 `easybot-plugin.json`。安装时用它拼下载目标
 /// `staging.join(library)`——若不校验，恶意 `"library": "../../.env"` 会把下载
@@ -143,7 +143,11 @@ pub fn synthesize_manifest(
         version: meta.version.clone(),
         sdk_version: meta.sdk_version,
         author: Some(source.publisher.clone()),
-        library: artifact.library.clone(),
+        library: None,
+        protocol: Some(1),
+        // 进程外插件：产物即入口可执行文件，清单用 `command`
+        command: artifact.library.clone(),
+        runtime: Some("process".to_string()),
         enabled: Some(true),
         requires: meta.requires.clone(),
     }
@@ -152,7 +156,7 @@ pub fn synthesize_manifest(
 /// 组装 `plugin.sig.json` 内容
 ///
 /// `signature`/`public_key` 来自 `PluginArtifact`（随 `easybot-plugin.json`
-/// 经 HTTPS 分发）；落位后加载器对磁盘库文件重新验签。
+/// 经 HTTPS 分发）；落位后加载器对磁盘入口文件重新验签。
 pub fn build_signature(
     source: &PluginSource,
     meta: &PluginVersionMeta,
@@ -227,20 +231,33 @@ pub fn place_installed(
     Ok(())
 }
 
-/// 按平台规则推断缺省动态库文件名
+/// 按平台规则推断缺省可执行文件名（进程外插件）。
 ///
-/// 与 `manifest.library_path()` 一致：cargo cdylib 产物用下划线 crate 名
-/// （kebab-case 包名 → 下划线），推导名必须对齐，否则手动安装 / `--file`
-/// 落位的库文件找不到。
-pub fn default_library_name(name: &str, triple: &str) -> String {
-    let crate_name = name.replace('-', "_");
+/// 与市场产物落位名一致：`{name}`；Windows 追加 `.exe`。
+pub fn default_command_name(name: &str, triple: &str) -> String {
     if triple.contains("windows") {
-        format!("{crate_name}.dll")
-    } else if triple.contains("apple") {
-        format!("lib{crate_name}.dylib")
+        format!("{name}.exe")
     } else {
-        format!("lib{crate_name}.so")
+        name.to_string()
     }
+}
+
+/// 补可执行位（Unix）；其它平台 no-op。
+///
+/// 进程外插件的入口是可执行文件，安装落位后必须可执行。
+pub fn make_executable(path: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(path)?.permissions();
+        perms.set_mode(perms.mode() | 0o755);
+        std::fs::set_permissions(path, perms)?;
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+    }
+    Ok(())
 }
 
 /// ABI 兼容预检（与 SDK 常量一致）
@@ -405,6 +422,9 @@ mod tests {
             library: Some("libx.so".into()),
             enabled: Some(true),
             requires: None,
+            protocol: None,
+            command: None,
+            runtime: None,
         };
         place_installed(&plugins, "demo", &staging, &manifest, None, false).unwrap();
 
@@ -439,6 +459,9 @@ mod tests {
             library: None,
             enabled: None,
             requires: None,
+            protocol: None,
+            command: None,
+            runtime: None,
         };
         let err = place_installed(&plugins, "demo", &staging, &manifest, None, false).unwrap_err();
         assert!(matches!(err, PluginManagerError::AlreadyInstalled(n) if n == "demo"));
@@ -469,6 +492,9 @@ mod tests {
             library: Some("new.so".into()),
             enabled: Some(true),
             requires: None,
+            protocol: None,
+            command: None,
+            runtime: None,
         };
         place_installed(plugins_dir, "demo", &staging, &manifest, None, true).unwrap();
 
@@ -479,28 +505,5 @@ mod tests {
             "backup should be removed after success"
         );
         let _ = std::fs::remove_dir_all(&root);
-    }
-
-    #[test]
-    fn test_default_library_name_kebab_to_underscore() {
-        // cargo cdylib 产物用下划线 crate 名（kebab-case 包名转下划线），
-        // 推导名必须对齐，否则手动安装 / `--file` 落位的库文件找不到。
-        assert_eq!(
-            default_library_name("hello-adapter", "x86_64-apple-darwin"),
-            "libhello_adapter.dylib"
-        );
-        assert_eq!(
-            default_library_name("hello-adapter", "x86_64-unknown-linux-musl"),
-            "libhello_adapter.so"
-        );
-        assert_eq!(
-            default_library_name("hello-adapter", "x86_64-pc-windows-msvc"),
-            "hello_adapter.dll"
-        );
-        // 无连字符的插件名不受影响
-        assert_eq!(
-            default_library_name("myplugin", "x86_64-apple-darwin"),
-            "libmyplugin.dylib"
-        );
     }
 }

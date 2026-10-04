@@ -283,7 +283,7 @@ GET /health
 Response 200:
 {
   "status": "healthy",               // healthy | degraded
-  "version": "0.0.41",
+  "version": "0.0.42",
   "schema_version": 4,
   "uptime": 86400,
   "adapters": { "total": 5, "connected": 4 },
@@ -582,7 +582,7 @@ interface AdapterConfig {
 | 子模块 | 职责 |
 |---|---|
 | `manifest.rs` | `PluginManifest`（name/sdk_version/library/enabled）+ `library_path()` 安全校验 |
-| `loader.rs` | `PluginLoader`（libloading）+ `PluginLoadPolicy`（lenient=dev / strict=prod）+ 启动验签 |
+| `loader.rs` | `PluginLoader`（**进程外**：定位入口可执行文件）+ `PluginLoadPolicy`（lenient=dev / strict=prod）+ 启动验签 |
 | `registry/` | `PluginRegistry` trait（抽象）+ `GitHubRegistry`（catalog.json + Releases 的 `easybot-plugin.json`） |
 | `signing/` | ed25519 验签（`verify_artifact`）+ `TrustStore`（`{plugins_dir}/.trust` 用户信任状态） |
 | `manager.rs` | `PluginManager` 编排：install/update/uninstall/enable/disable/list/search/info/trust |
@@ -725,15 +725,14 @@ interface AdapterManager {
 
 ### 5.1 概述
 
-EasyBot 支持通过动态库加载第三方适配器插件。插件使用 Rust 编写并编译为 cdylib，通过 `libloading` 在运行时动态加载。除手动放入 `plugins/` 目录外，插件可经**插件市场**（GitHub Releases 分发）安装，每个版本按 6 target 发布产物，安装端按宿主 triple 下载。
+EasyBot 支持**进程外适配器插件**：插件用 Rust 编写并编译为**独立可执行文件**，宿主把它作为子进程启动，双方通过 stdin/stdout 逐行 JSON（`easybot-plugin-protocol`）通信。**不使用 `dlopen`**——官方 Linux 发行版是 musl 全静态二进制，没有动态加载器，进程内加载不可能成功。除手动放入 `plugins/` 目录外，插件可经**插件市场**（GitHub Releases 分发）安装，每个版本按 6 target 发布产物（`{name}-{triple}[.exe]`），安装端按宿主 triple 下载。
 
-**信任模型**（详见 `docs/18 plugin-security.md`）：ed25519 签名校验解锁生产模式动态插件。**签名只证作者 + 完整性，不证代码安全**——插件无沙箱，以宿主权限进程内运行，生产隔离用容器化兜底。
+**信任模型**（详见 `docs/18 plugin-security.md`）：ed25519 签名校验解锁生产模式动态插件。**签名只证作者 + 完整性，不证代码安全**——插件以**独立子进程**运行，提供崩溃隔离，但 **v1 不是安全沙箱**（无 seccomp/降权），生产隔离用容器化兜底。
 
-每个插件提供两个 C ABI 入口函数（`declare_plugin!` 宏生成）：
+插件入口是 `src/main.rs` 里的一行：
 
-```c
-uint32_t easybot_abi_version();
-void* easybot_plugin_create();
+```rust
+easybot_plugin_sdk::run_plugin!(MyAdapter, MyAdapter::new);
 ```
 
 ### 5.2 插件清单
@@ -746,7 +745,7 @@ description: "第三方 IM 平台适配器"
 version: "1.0.0"
 sdk_version: 1
 author: "Your Name"
-library: "libmy_adapter.so"
+command: "my-adapter"      # 入口可执行文件名（相对插件目录；Windows 为 my-adapter.exe）
 enabled: true            # 可选，缺省启用
 ```
 
@@ -764,19 +763,16 @@ EasyBot 启动
 2. 每个子目录读取 plugin.yaml（enabled=false → 跳过）
     │
     ▼
-3. 有 plugin.sig.json → 对库文件重新验签（失败 → SignatureVerificationFailed）
+3. 有 plugin.sig.json → 对入口可执行文件重新验签（失败 → SignatureVerificationFailed）
     │
     ▼
-4. 加载动态库（.so / .dylib / .dll）
+4. 校验入口存在且可执行（失败 → LibraryNotFound / 不可执行）
     │
     ▼
-5. 调用 easybot_abi_version() 检查兼容性（不匹配 → AbiVersionMismatch）
+5. 生成 AdapterFactory，注册到 AdapterRegistry（此阶段不 spawn 进程）
     │
     ▼
-6. 调用 easybot_plugin_create() 创建适配器
-    │
-    ▼
-7. 注册到 AdapterRegistry
+6. 首次创建适配器时 spawn 插件进程：handshake（校验 PROTOCOL_VERSION）→ init → connect
     │
     ▼
 8. 自动检测凭据，若存在则启动适配器
@@ -789,9 +785,10 @@ EasyBot 启动
 `easybot-plugin-sdk` crate 为插件开发者提供：
 
 - `PlatformAdapter` trait 完整导出
-- `declare_plugin!()` 宏：一行声明入口函数
+- `run_plugin!()` 宏：一行启动进程外插件服务端（放在 `src/main.rs`）
 - 核心类型（`InboundMessage`、`SendResult`、`GatewayError` 等）
-- `testing` feature：`PluginTestHost` 内存宿主（离线测试）
+- `testing` feature：`PluginTestHost`（内存宿主）+ `ProcessPluginTestHost`（进程外宿主，真实 stdio 协议）
+- `easybot-plugin-protocol`：协议类型（宿主与插件共用）
 
 开发者工作流（DX）：
 - `easybot plugin new <name>` 脚手架生成独立可构建工程（SDK git tag 依赖）
@@ -987,7 +984,7 @@ Production (high-availability):
 | 考量点 | 推荐做法 |
 |--------|----------|
 | **异步 IO** | 网关 IO 密集型，必须选择异步运行时（Rust tokio、Python asyncio、Node.js、Go goroutine） |
-| **插件加载** | Rust: libloading + cdylib / Python: importlib / Node: require() / Go: plugin |
+| **插件加载** | Rust: 进程外子进程 + stdio JSON / Python: importlib / Node: require() / Go: plugin |
 | **WebSocket** | 推荐标准化 JSON 帧协议 |
 | **存储** | 会话存储推荐 SQL（SQLite/PostgreSQL），消息体可存 JSON 列 |
 | **容器化** | Docker 打包，配置通过环境变量注入 |

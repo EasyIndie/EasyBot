@@ -46,6 +46,7 @@ pub const FILES: &[&str] = &[
     "Cargo.toml",
     ".cargo/config.toml",
     "src/lib.rs",
+    "src/main.rs",
     "plugin.yaml",
     "tests/unit.rs",
     "tests/host_test.rs",
@@ -55,12 +56,12 @@ pub const FILES: &[&str] = &[
     ".github/workflows/plugin-publish.yml",
 ];
 
-/// `Cargo.toml`：cdylib + SDK git tag 依赖 + release 对齐主仓。
+/// `Cargo.toml`：bin（进程外插件）+ SDK git tag 依赖 + release 对齐主仓。
 pub const CARGO_TOML: &str = r#"# __EASYBOT_DESCRIPTION__
 #
 # EasyBot 插件工程（由 `easybot plugin new` 脚手架生成）。
-# SDK 走 git tag 依赖——构建时自动拉取主仓，产物是自包含 cdylib，
-# 作者无需 clone EasyBot 主仓。
+# SDK 走 git tag 依赖——构建时自动拉取主仓，作者无需 clone EasyBot 主仓。
+# 产物是**独立可执行文件**（进程外插件），通过 stdin/stdout JSON 协议与宿主通信。
 
 [package]
 name = "__EASYBOT_NAME__"
@@ -70,13 +71,18 @@ description = "__EASYBOT_DESCRIPTION__"
 publish = false
 
 [lib]
-# cdylib：宿主用 libloading 进程内加载的共享库。
-# rlib：让 `cargo test` 能链接本 crate（integration tests 需要）。
-crate-type = ["cdylib", "rlib"]
+# rlib：让 `cargo test` 与 `src/main.rs` 能链接本 crate。
+# （旧式 cdylib 已废弃：静态链接的宿主没有动态加载器，无法 dlopen。）
+crate-type = ["rlib"]
+
+[[bin]]
+# 进程外插件入口：产物名 = bin 名（= 包名），宿主 spawn 它。
+name = "__EASYBOT_NAME__"
+path = "src/main.rs"
 
 [dependencies]
 # SDK git 依赖。tag 由脚手架按当前 EasyBot 版本生成；升级 SDK 时改这里。
-# `testing` feature 提供 PluginTestHost，供 `cargo test` 离线模拟宿主。
+# `testing` feature 提供 PluginTestHost / ProcessPluginTestHost，供 `cargo test` 离线模拟宿主。
 easybot-plugin-sdk = { git = "https://github.com/EasyIndie/EasyBot.git", tag = "__EASYBOT_SDK_TAG__", package = "easybot-plugin-sdk", features = ["testing"] }
 
 serde = { version = "1", features = ["derive"] }
@@ -93,14 +99,12 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
 # [patch."https://github.com/EasyIndie/EasyBot.git"]
 # easybot-plugin-sdk = { path = "../EasyBot/crates/easybot-plugin-sdk" }
 
-# release 对齐 EasyBot 主仓：fat LTO + strip + panic=abort。
-# panic=abort 是硬要求——跨 FFI 边界不得 unwind，cdylib 内 panic 直接终止进程。
+# release 对齐 EasyBot 主仓：fat LTO + strip。
 [profile.release]
 opt-level = 3
 lto = "fat"
 codegen-units = 1
 strip = "symbols"
-panic = "abort"
 debug = 0
 "#;
 
@@ -121,7 +125,7 @@ pub const SRC_LIB_RS: &str = r#"//! __EASYBOT_DISPLAY_NAME__ — EasyBot 适配�
 //!   - 方法论：  https://github.com/EasyIndie/EasyBot/blob/main/docs/17%20plugin-methodology.md
 //!
 //! 构建 / 测试：
-//!   cargo build --release     # 产出自包含 cdylib（git 依赖 SDK，无需 clone 主仓）
+//!   cargo build --release     # 产出自包含可执行文件（git 依赖 SDK，无需 clone 主仓）
 //!   cargo test                # 单元 + PluginTestHost 离线测试（无需启动真实网关）
 
 use easybot_plugin_sdk::prelude::*;
@@ -139,7 +143,7 @@ pub struct __EASYBOT_STRUCT_NAME__ {
 }
 
 impl __EASYBOT_STRUCT_NAME__ {
-    /// 构造器（`declare_plugin!` 的入口）。
+    /// 构造器（`run_plugin!` 的入口）。
     ///
     /// 若平台需要非默认初始化，可在此注入 HTTP client 等依赖——测试用 wiremock
     /// 替换（见 docs/17 plugin-methodology.md「传输可注入」）。
@@ -291,21 +295,38 @@ impl PlatformAdapter for __EASYBOT_STRUCT_NAME__ {
     }
 }
 
-// 声明插件入口点（FFI）。宿主经 `easybot_plugin_create` 创建适配器实例。
-// 库文件名 = `lib{package-name}.{so|dylib|dll}`（Rust 用下划线连接 crate 名）。
-declare_plugin!(__EASYBOT_STRUCT_NAME__, __EASYBOT_STRUCT_NAME__::new);
+// 适配器实现到此为止。**进程入口在 `src/main.rs`**（进程外插件）:
+//     easybot_plugin_sdk::run_plugin!(__EASYBOT_STRUCT_NAME__, __EASYBOT_STRUCT_NAME__::new);
 "#;
 
-/// `plugin.yaml`：插件清单（安装端据此识别平台名 / ABI / 作者）。
+/// `src/main.rs`：进程外插件入口（`run_plugin!`）。
+pub const SRC_MAIN_RS: &str = r#"//! 进程外插件入口。
+//!
+//! 宿主把本可执行文件作为**子进程**启动，双方通过 stdin/stdout 逐行 JSON
+//! 协议通信（`handshake → init → connect → 收发 → shutdown`）。
+//!
+//! `run_plugin!` 负责：建 tokio 运行时、响应协议请求、驱动 `PlatformAdapter`
+//! 生命周期，并把适配器发布到事件总线的事件回传给宿主。
+//!
+//! 适配器实现见 `src/lib.rs`。
+
+use __EASYBOT_CRATE_NAME__::__EASYBOT_STRUCT_NAME__;
+
+easybot_plugin_sdk::run_plugin!(__EASYBOT_STRUCT_NAME__, __EASYBOT_STRUCT_NAME__::new);
+"#;
+
+/// `plugin.yaml`：插件清单（安装端据此识别平台名 / ABI / 入口 / 作者）。
 pub const PLUGIN_YAML: &str = r#"# __EASYBOT_DISPLAY_NAME__ 插件清单
 #
 # 构建产物复制到宿主 `plugins/__EASYBOT_NAME__/` 后，宿主以此清单识别插件：
 #   name        安装名（也是平台名，须与 src/lib.rs 的 `platform_name()` 一致）
+#   command     入口可执行文件名（相对插件目录；Windows 需写 `__EASYBOT_NAME__.exe`）
 #   sdk_version 编译所用 SDK 的 ABI 版本（须等于 SDK 的 EASYBOT_PLUGIN_ABI_VERSION）
 #
 # 本地手动安装（dev）：
 #   mkdir -p ~/.easybot/plugins/__EASYBOT_NAME__
-#   cp target/release/lib__EASYBOT_CRATE_NAME__.{so,dylib} ~/.easybot/plugins/__EASYBOT_NAME__/
+#   cargo build --release
+#   cp target/release/__EASYBOT_NAME__ ~/.easybot/plugins/__EASYBOT_NAME__/   # Windows: __EASYBOT_NAME__.exe
 #   cp plugin.yaml ~/.easybot/plugins/__EASYBOT_NAME__/
 
 name: "__EASYBOT_NAME__"
@@ -314,6 +335,7 @@ description: "__EASYBOT_DESCRIPTION__"
 version: "0.1.0"
 sdk_version: __EASYBOT_SDK_VERSION__
 author: "__EASYBOT_AUTHOR__"
+command: "__EASYBOT_NAME__"
 "#;
 
 /// `tests/unit.rs`：纯逻辑单元测试（无宿主、无需 tokio 运行时）。
@@ -427,7 +449,7 @@ cargo test
 
 # 3. 本地联调：装入宿主 plugins 目录（dev 环境自动加载）
 mkdir -p ~/.easybot/plugins/__EASYBOT_NAME__
-cp target/release/lib__EASYBOT_CRATE_NAME__.{so,dylib} ~/.easybot/plugins/__EASYBOT_NAME__/
+cp target/release/__EASYBOT_NAME__ ~/.easybot/plugins/__EASYBOT_NAME__/   # Windows: __EASYBOT_NAME__.exe
 cp plugin.yaml ~/.easybot/plugins/__EASYBOT_NAME__/
 
 # 4. 在宿主配置中启用（若平台需要凭据）
@@ -462,9 +484,10 @@ easybot plugin install __EASYBOT_NAME__
 
 ```
 .
-├── Cargo.toml                  # cdylib + SDK git 依赖（tag 由脚手架按当前 EasyBot 版本生成）
+├── Cargo.toml                  # bin（进程外插件）+ SDK git 依赖（tag 由脚手架按当前 EasyBot 版本生成）
 ├── src/lib.rs                  # PlatformAdapter 骨架（TODO 占位，按平台补全）
-├── plugin.yaml                 # 插件清单（name / sdk_version / author）
+├── src/main.rs                 # 进程外入口：run_plugin!
+├── plugin.yaml                 # 插件清单（name / command / sdk_version / author）
 ├── tests/unit.rs               # 单元测试：身份 / 能力 / 状态
 ├── tests/host_test.rs          # PluginTestHost 集成测试：宿主模拟
 └── .github/workflows/
