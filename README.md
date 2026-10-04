@@ -392,7 +392,7 @@ easybot/
 ├── tests/
 │   ├── integration/              # 集成测试
 │   ├── e2e/                      # 端到端测试
-│   ├── plugins/                  # 插件测试（mock-adapter）
+│   ├── plugins/                  # 进程外插件测试宿主（ipc-mock-plugin）
 │   └── fixtures/                 # 共享测试 fixture
 ├── docs/                        # 文档
 ├── scripts/                     # 工具脚本
@@ -435,8 +435,8 @@ cargo test --workspace --features "default,plugin-system"
 cargo test -p easybot-core
 cargo test -p easybot-api
 
-# 集成测试（需要先编译 mock-adapter）
-cargo build -p mock-adapter && cargo test -p integration-tests
+# 集成测试（需要先编译进程外插件测试宿主）
+cargo build -p ipc-mock-plugin && cargo test -p integration-tests
 
 # 配置/环境相关测试
 cargo test -p easybot-core config::tests
