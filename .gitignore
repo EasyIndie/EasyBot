@@ -41,3 +41,6 @@ manage-service.ps1
 
 # Build.rs 生成的模板产物（统一输出至此目录，未来新增无需改 .gitignore）
 crates/easybot-api/templates/gen/
+
+# 前端开发期依赖（node/vitest/eslint，仅开发工具链，非运行时产物）
+crates/easybot-api/templates/node_modules/

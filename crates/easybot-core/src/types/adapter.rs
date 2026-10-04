@@ -148,7 +148,8 @@ pub struct BotInfo {
 /// 适配器配置（来源自配置文件）
 ///
 /// `enabled` 支持三态：
-/// - `None`（默认）：自动检测 — 凭据环境变量已设置则启用
+/// - `None`（默认）：自动检测 — 凭据环境变量已设置则启用；
+///   无凭据要求的适配器（如个人微信）**默认不启用**，需显式 `Some(true)`
 /// - `Some(true)`：强制启用，即使未检测到凭据
 /// - `Some(false)`：强制禁用，即使凭据已设置
 #[derive(Clone, serde::Serialize, serde::Deserialize, ToSchema)]
@@ -566,6 +567,16 @@ pub trait PlatformAdapter: Send + Sync {
     /// 发送媒体消息（可选）
     async fn send_media(&self, _params: SendMediaParams) -> Result<SendResult, GatewayError> {
         Err(GatewayError::capability_not_supported("send_media"))
+    }
+
+    /// 发送媒体组 / 相册（可选）
+    ///
+    /// 一次发送多张媒体（如 Telegram `sendMediaGroup`）。默认不支持。
+    async fn send_media_group(
+        &self,
+        _params: SendMediaGroupParams,
+    ) -> Result<SendResult, GatewayError> {
+        Err(GatewayError::capability_not_supported("send_media_group"))
     }
 
     /// 发送交互式消息（可选）

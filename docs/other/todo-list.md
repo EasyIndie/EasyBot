@@ -94,16 +94,42 @@
 
 ---
 
-## 待办 — 适配器协议审查遗留缺口（2026-08-12）
+## 适配器协议审查遗留缺口（2026-08-12）
 
 五平台适配器协议审查（Telegram/Discord/飞书/QQ/微信）后整理的功能缺口。下表中"平台限制"项已在"平台限制"节列出，此处仅登记可实现或需决策的项目。
 
+### 已完成
+
+> ✅ 2026-10-02 **Telegram album 出站（media group 多图）** — 新增
+> `PlatformAdapter::send_media_group`（默认 `CapabilityNotSupported`）与
+> `SendMediaGroupParams`；`POST /api/v1/messages/send` 支持可选 `media_group`。
+> Telegram 走 `sendMediaGroup`（URL → JSON body，base64 → multipart `attach://`；
+> 单条退化为普通发送，贴纸 / 超 10 条拒绝）；其余平台返回 `CapabilityNotSupported`。
+
+> ✅ 2026-10-02 **QQ 公/私域机器人自动检测** — 默认保守 intent，Identify
+> 被拒（close 4013/4014）时自动翻转公/私域频道 intent 位重试一次；显式
+> `extra.intents` 覆盖优先。
+
+### 待办
+
 | 平台 | 缺口 | 状态 | 说明 |
 |------|------|------|------|
-| **Telegram** | album 出站（media group 多图） | 待实现 | `SendMediaParams` 目前仅支持单媒体出站，需扩展媒体模型支持一次发送多图 |
 | **飞书** | 视频封面上传 | 待决策 | 飞书视频消息支持 `cover` 参数，但 `SendMediaParams` 无封面字段承载；是否扩展媒体模型需决策 |
-| **QQ** | 公/私域机器人自动检测 | 待实现 | 无官方端点可运行时探测，目前公域机器人需手动 `config.extra.intents` |
-| **Discord** | >2500 guild 单分片拒连 | 待实现 | `/gateway/bot` 失败时回退单分片，超大服务器仍可能被 4010 拒连；大集群需完整分片协商 |
+| **Discord** | >2500 guild 分片 | ⚠️ 已实现（边缘待加固） | 已通过 `/gateway/bot` 动态获取分片数并按分片 spawn（含测试）；仅 `/gateway/bot` 本身失败回退单分片时，超大集群仍可能被 4010 拒连 |
+
+---
+
+## 全量审计跟进（2026-10-02）
+
+针对全量代码审计（架构/模块化/迭代效率/质量/测试/冗余/资源）建议完成：
+
+- [x] **核心大模块拆分** — `api_key.rs` 拆为 `auth/api_key/{mod,keys,audit,billing,grants,tests}.rs`；
+  `manager.rs`/`sqlite.rs`/`plugin/manager.rs` 测试抽取为子模块；`manager.rs` 重连逻辑拆出 `reconnect.rs`
+- [x] **覆盖率门禁** — 新增 `codecov.yml`（project `target: auto`，patch `75%`）；`coverage.yml` 设 `fail_ci_if_error: true` 并移除 `continue-on-error`
+- [x] **依赖升级** — `cargo update`；`utoipa` 5→6 / `utoipa-swagger-ui` 9→10；`serde_yaml`（已弃用）→ `serde_norway` 0.9（package 别名）
+- [x] **去重** — 移除未使用的直接 `rand_core 0.9` 依赖（剩余 0.9 来自 tungstenite，上游阻塞）
+- [x] **微信适配器测试补齐** — `send_mock.rs` 12→33 项
+- [x] **文档修正** — 飞书 SDK 版本注释、`security_audit.md` 重复版本来源更正、Discord 分片状态
 
 ---
 

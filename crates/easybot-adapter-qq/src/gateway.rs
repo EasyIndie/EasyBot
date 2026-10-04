@@ -50,7 +50,12 @@ impl crate::QqAdapter {
         let mut session_id: Option<String> = None;
         // 默认订阅保守集（群/C2C + 私域频道消息）；公域机器人可通过
         // config.extra["intents"] 覆盖为 PUBLIC_GUILD_MESSAGES | GROUP_AND_C2C_EVENT。
-        let intents = intents_override.unwrap_or(crate::types::intents::DEFAULT);
+        //
+        // 公/私域频道 intent 互斥且无官方运行时探测端点：默认用保守集（私域），
+        // 若 Identify 因 invalid/disallowed intents 被拒（close 4013/4014）则自动
+        // 翻转频道 intent 位重试一次（见下方 close 分支）。显式配置时不自动切换。
+        let mut active_intents = intents_override.unwrap_or(crate::types::intents::DEFAULT);
+        let mut intent_auto_switch = intents_override.is_none();
         loop {
             // 每次重连前刷新 access token
             if token_store.needs_refresh()
@@ -219,7 +224,7 @@ impl crate::QqAdapter {
                     "op": 2,
                     "d": {
                         "token": token_str,
-                        "intents": intents,
+                        "intents": active_intents,
                         "shard": [0, 1],
                     }
                 });
@@ -281,6 +286,8 @@ impl crate::QqAdapter {
                                         if !identified && !resumed
                                             && payload.t.as_deref() == Some("READY") {
                                                 identified = true;
+                                                // Identify 已被接受：当前 intent 集有效，不再自动切换。
+                                                intent_auto_switch = false;
                                                 // 保存 session_id 用于后续 RESUME
                                                 if let Some(d) = &payload.d
                                                     && let Ok(ready) = serde_json::from_value::<crate::types::ReadyData>(d.clone())
@@ -318,7 +325,26 @@ impl crate::QqAdapter {
                                     _ => { tracing::debug!("QQ unknown op: {}", payload.op); }
                                 }
                             }
-                            Some(Ok(Message::Close(_))) | None => { break; }
+                            Some(Ok(Message::Close(frame))) => {
+                                if let Some(frame) = frame {
+                                    let code = u16::from(frame.code);
+                                    // 4013 = invalid intents，4014 = disallowed intents。
+                                    // 公/私域机器人会自动翻转频道 intent 位后重连重试一次。
+                                    if intent_auto_switch && matches!(code, 4013 | 4014) {
+                                        active_intents = flip_guild_intent(active_intents);
+                                        intent_auto_switch = false;
+                                        session_id = None;
+                                        tracing::warn!(
+                                            "QQ Gateway identify rejected (close {}) — \
+                                             retrying with guild intent {:#010x}",
+                                            code,
+                                            active_intents,
+                                        );
+                                    }
+                                }
+                                break;
+                            }
+                            None => { break; }
                             _ => {}
                         }
                     }
@@ -830,5 +856,58 @@ impl crate::QqAdapter {
             }
             _ => {}
         }
+    }
+}
+
+/// 翻转频道消息 intent 位：私域 `GUILD_MESSAGES` ↔ 公域 `PUBLIC_GUILD_MESSAGES`。
+///
+/// QQ 公/私域机器人的频道消息 intent 互斥，且无官方运行时探测端点。默认订阅
+/// 私域 intent；当 Identify 以 close 4013/4014（invalid / disallowed intents）被拒时，
+/// 翻转该位后重试一次。群/C2C intent（`GROUP_AND_C2C_EVENT`）保持不变。
+fn flip_guild_intent(intents: u32) -> u32 {
+    use crate::types::intents as i;
+    if intents & i::GUILD_MESSAGES != 0 {
+        (intents & !i::GUILD_MESSAGES) | i::PUBLIC_GUILD_MESSAGES
+    } else {
+        (intents & !i::PUBLIC_GUILD_MESSAGES) | i::GUILD_MESSAGES
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::intents;
+
+    #[test]
+    fn flip_guild_intent_switches_private_to_public() {
+        let private = intents::GROUP_AND_C2C_EVENT | intents::GUILD_MESSAGES;
+        let flipped = flip_guild_intent(private);
+        assert_eq!(
+            flipped & intents::PUBLIC_GUILD_MESSAGES,
+            intents::PUBLIC_GUILD_MESSAGES
+        );
+        assert_eq!(flipped & intents::GUILD_MESSAGES, 0);
+        assert_eq!(
+            flipped & intents::GROUP_AND_C2C_EVENT,
+            intents::GROUP_AND_C2C_EVENT
+        );
+    }
+
+    #[test]
+    fn flip_guild_intent_switches_public_to_private() {
+        let public = intents::GROUP_AND_C2C_EVENT | intents::PUBLIC_GUILD_MESSAGES;
+        let flipped = flip_guild_intent(public);
+        assert_eq!(flipped & intents::GUILD_MESSAGES, intents::GUILD_MESSAGES);
+        assert_eq!(flipped & intents::PUBLIC_GUILD_MESSAGES, 0);
+        assert_eq!(
+            flipped & intents::GROUP_AND_C2C_EVENT,
+            intents::GROUP_AND_C2C_EVENT
+        );
+    }
+
+    #[test]
+    fn flip_guild_intent_is_idempotent_pair() {
+        let base = intents::GROUP_AND_C2C_EVENT | intents::GUILD_MESSAGES;
+        assert_eq!(flip_guild_intent(flip_guild_intent(base)), base);
     }
 }

@@ -31,6 +31,8 @@ struct RegistryEntry {
     display_name: String,
     /// 凭据环境变量名列表（用于自动检测：所有变量均已设置时自动启用）
     credential_env_vars: Vec<String>,
+    /// 无凭据要求时是否自动启用。`false` 表示必须显式 `enabled: true`（如个人微信）。
+    auto_enable_without_credentials: bool,
 }
 
 impl AdapterRegistry {
@@ -53,6 +55,22 @@ impl AdapterRegistry {
         factory: AdapterFactory,
         credential_env_vars: &[&str],
     ) {
+        self.register_with_policy(platform, display_name, factory, credential_env_vars, true)
+            .await;
+    }
+
+    /// 同 [`register`]，但可指定「无凭据要求时是否自动启用」策略。
+    ///
+    /// `auto_enable_without_credentials = false` 用于个人微信这类**无凭据但默认应关闭**
+    /// 的适配器：仅当配置显式 `enabled: true` 时才启动；插件等仍用默认 `true` 自动启用。
+    pub async fn register_with_policy(
+        &self,
+        platform: &str,
+        display_name: &str,
+        factory: AdapterFactory,
+        credential_env_vars: &[&str],
+        auto_enable_without_credentials: bool,
+    ) {
         let mut factories = self.factories.write().await;
         factories.insert(
             platform.to_string(),
@@ -60,6 +78,7 @@ impl AdapterRegistry {
                 factory,
                 display_name: display_name.to_string(),
                 credential_env_vars: credential_env_vars.iter().map(|s| s.to_string()).collect(),
+                auto_enable_without_credentials,
             },
         );
     }
@@ -109,6 +128,15 @@ impl AdapterRegistry {
             .get(platform)
             .map(|e| e.credential_env_vars.clone())
             .unwrap_or_default()
+    }
+
+    /// 无凭据要求时该平台是否自动启用（未注册/未设置时默认 `true`）
+    pub async fn auto_enable_without_credentials(&self, platform: &str) -> bool {
+        let factories = self.factories.read().await;
+        factories
+            .get(platform)
+            .map(|e| e.auto_enable_without_credentials)
+            .unwrap_or(true)
     }
 
     /// 列出所有已注册平台的凭据环境变量名

@@ -1,0 +1,15 @@
+{
+  "name": "easybot-frontend",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "lint": "eslint js tests"
+  },
+  "devDependencies": {
+    "eslint": "^10.11.0",
+    "globals": "^17.13.0",
+    "jsdom": "^25.0.0",
+    "vitest": "^2.1.0"
+  }
+}

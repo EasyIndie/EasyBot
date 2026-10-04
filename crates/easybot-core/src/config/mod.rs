@@ -234,6 +234,13 @@ pub fn validate_url_for_ssrf(url: &str) -> Result<(), SsrError> {
 ///
 /// 将 local YAML 值递归合并到 base 中。
 pub fn merge_configs(base: &mut serde_yaml::Value, local: serde_yaml::Value) {
+    // 空文档（例如只含注释的 gateway.local.yaml）会解析为 Value::Null。此时应视为
+    // “无覆盖”并直接返回；否则会落入下方 `(base, local) => *base = local` 分支，
+    // 把整个基础配置替换为 Null，反序列化后所有字段回落默认值
+    // （如 server.port 由 8081 静默变回 8080）。
+    if local.is_null() {
+        return;
+    }
     match (base, local) {
         (base @ serde_yaml::Value::Mapping(_), serde_yaml::Value::Mapping(local_map)) => {
             // SAFETY: Already matched as Mapping in the outer pattern
@@ -594,7 +601,8 @@ pub fn generate_local_config_example() -> String {
 
 # ── 适配器控制 ──────────────────────────────
 # 每个适配器支持以下字段：
-#   enabled:    true | false          — 强制启用/禁用（不写则自动检测凭据）
+#   enabled:    true | false          — 强制启用/禁用（不写则自动检测凭据；
+#                                       个人微信这类无凭据适配器不写=禁用，需显式 true）
 #   token:      "xxx"                 — 覆盖凭据（通常从 .env 读取）
 #   base_url:   "https://..."         — 自定义 API 地址（测试/代理场景）
 #
@@ -616,9 +624,9 @@ pub fn generate_local_config_example() -> String {
 #   # QQ（凭据: QQ_APP_ID + QQ_CLIENT_SECRET）
 #   qq:
 #     enabled: false
-#   # 个人微信（无需强制凭据，支持扫码登录）
+#   # 个人微信（扫码登录，无需凭据；默认不启用，需显式 enabled: true）
 #   wechat:
-#     enabled: false
+#     enabled: true
 #     base_url: "http://192.168.1.100:8080"
 
 # ── 服务端覆盖 ─────────────────────────────
@@ -807,6 +815,22 @@ adapters:
             .get("wechat")
             .expect("wechat adapter present");
         assert_eq!(wechat.enabled, Some(false));
+    }
+
+    #[test]
+    fn test_merge_configs_null_local_is_noop() {
+        // 回归：只含注释的 gateway.local.yaml 解析为 Value::Null。若 merge_configs
+        // 落入 `(base, local) => *base = local` 分支，会把整个基础配置替换为 Null，
+        // 反序列化后所有字段回落默认值（server.port 8080）。Null local 必须是 no-op。
+        let base = serde_yaml::from_str::<serde_yaml::Value>("server:\n  port: 9090\n")
+            .expect("base should parse");
+        let mut merged = base;
+        merge_configs(&mut merged, serde_yaml::Value::Null);
+        let config: GatewayConfig = serde_yaml::from_value(merged).expect("merged should parse");
+        assert_eq!(
+            config.server.port, 9090,
+            "Null local 不得把端口重置为默认值"
+        );
     }
 
     #[tokio::test]

@@ -1,0 +1,38 @@
+name: Frontend
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "crates/easybot-api/templates/**"
+      - ".github/workflows/frontend.yml"
+  pull_request:
+    paths:
+      - "crates/easybot-api/templates/**"
+      - ".github/workflows/frontend.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: crates/easybot-api/templates
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: crates/easybot-api/templates/package-lock.json
+      - run: npm ci
+      - run: npm test
+      - run: npm run lint
