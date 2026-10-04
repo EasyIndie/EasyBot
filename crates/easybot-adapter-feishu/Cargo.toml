@@ -15,8 +15,9 @@ tracing.workspace = true
 async-trait.workspace = true
 chrono.workspace = true
 base64.workspace = true
-# 飞书官方 SDK · 当前锁定 0.1.2
-# 审计状态: 2026-06-24 已审阅 token 刷新/WebSocket 重连路径，未见已知漏洞
+# 飞书官方 SDK（`^0.3.1`，当前解析到 crates.io 最新 0.3.12）
+# 审计状态: 2026-06-24 已审阅 token 刷新/WebSocket 重连路径，未见已知漏洞；
+#           2026-10-02 复核：0.3.12 仍固定依赖 `tokio-tungstenite ^0.26`（上游未升级）。
 # 升级时需验证: token 自动刷新逻辑、WebSocket 重连指数退避、TLS 证书校验
 larksuite-oapi-sdk-rs = { version = "0.3.1", features = ["ws"] }
 

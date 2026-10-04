@@ -1307,6 +1307,7 @@ async fn test_send_message_replays_persisted_idempotent_response_and_rejects_reu
         text: "commercial-once".into(),
         parse_mode: None,
         media: None,
+        media_group: None,
         keyboard: None,
         reply_to: None,
         metadata: None,

@@ -69,6 +69,8 @@ pub struct SendMessageRequest {
     pub parse_mode: Option<ParseMode>,
     /// 媒体附件（可选，如果提供则发送媒体消息）
     pub media: Option<MediaAttachment>,
+    /// 媒体组 / 相册多图（可选；优先级高于 media 与 keyboard）
+    pub media_group: Option<Vec<MediaAttachment>>,
     /// 行内键盘（可选，如果提供则发送交互式消息，优先级低于 media）
     pub keyboard: Option<InlineKeyboard>,
     /// 被回复消息 ID（可选）
@@ -378,7 +380,20 @@ pub async fn send_message(
     // 分发：media > keyboard > 纯文本
     const SEND_TIMEOUT_SECS: u64 = 15;
     let send_fut = async {
-        if let Some(media) = req.media {
+        if let Some(media_group) = req.media_group {
+            state
+                .adapter_manager
+                .send_media_group(
+                    &platform,
+                    SendMediaGroupParams {
+                        chat_id: chat_id.clone(),
+                        media: media_group,
+                        text: Some(req.text.clone()),
+                        reply_to: req.reply_to,
+                    },
+                )
+                .await
+        } else if let Some(media) = req.media {
             state
                 .adapter_manager
                 .send_media(

@@ -1091,7 +1091,12 @@ fn scan_plugins_for_production(
 /// 消除 5 个适配器注册代码的重复模式：创建 factory → 注册到 registry → 日志输出。
 #[allow(unused_macros)]
 macro_rules! register_adapter {
-    ($registry:expr, $eb:expr, $platform:literal, $display:literal, $ty:ty, $creds:expr) => {{
+    // 默认：无凭据要求时自动启用
+    ($registry:expr, $eb:expr, $platform:literal, $display:literal, $ty:ty, $creds:expr) => {
+        register_adapter!($registry, $eb, $platform, $display, $ty, $creds, true)
+    };
+    // 带策略：$auto = 无凭据时是否自动启用（false = 需显式 enabled: true）
+    ($registry:expr, $eb:expr, $platform:literal, $display:literal, $ty:ty, $creds:expr, $auto:expr) => {{
         let eb_cloned = $eb.clone();
         let factory: easybot_core::adapter::AdapterFactory = std::sync::Arc::new(move |config| {
             let eb = eb_cloned.clone();
@@ -1112,7 +1117,7 @@ macro_rules! register_adapter {
             })
         });
         $registry
-            .register($platform, $display, factory, $creds)
+            .register_with_policy($platform, $display, factory, $creds, $auto)
             .await;
         tracing::info!("Registered built-in adapter: {}", $platform);
     }};
@@ -1173,7 +1178,8 @@ async fn register_builtin_adapters(
         "wechat",
         "个人微信",
         easybot_adapter_wechat::WeChatAdapter,
-        &[]
+        &[],
+        false // 无凭据但默认关闭：需显式 adapters.wechat.enabled: true
     );
 
     #[cfg(not(any(

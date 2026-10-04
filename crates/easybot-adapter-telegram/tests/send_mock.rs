@@ -6,9 +6,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use easybot_core::types::adapter::{AdapterConfig, AdapterState, PlatformAdapter};
+use easybot_core::types::error::GatewayError;
 use easybot_core::types::message::{
     AnswerCallbackParams, Button, InlineKeyboard, KeyboardRow, MediaAttachment, MediaType,
-    OutboundMessage, ParseMode, SendInteractiveParams, SendMediaParams, SendTextParams,
+    OutboundMessage, ParseMode, SendInteractiveParams, SendMediaGroupParams, SendMediaParams,
+    SendTextParams,
 };
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -981,4 +983,212 @@ async fn test_answer_callback_query_success() {
     assert_eq!(body["callback_query_id"], "cb_123");
     assert_eq!(body["show_alert"], serde_json::Value::Bool(true));
     assert_eq!(body["cache_time"], serde_json::Value::Number(60.into()));
+}
+
+// ── send_media_group（相册 / 多图）──
+
+fn group_image(url: &str, caption: Option<&str>) -> MediaAttachment {
+    MediaAttachment {
+        media_type: MediaType::Image,
+        url: Some(url.to_string()),
+        data: None,
+        mime_type: "image/jpeg".to_string(),
+        filename: Some("photo.jpg".to_string()),
+        caption: caption.map(|c| c.to_string()),
+        thumbnail_url: None,
+        file_size: None,
+        duration: None,
+    }
+}
+
+fn send_media_group_params() -> SendMediaGroupParams {
+    SendMediaGroupParams {
+        chat_id: "12345".to_string(),
+        media: vec![
+            group_image("https://example.com/a.jpg", Some("first")),
+            group_image("https://example.com/b.jpg", None),
+        ],
+        text: Some("album caption".to_string()),
+        reply_to: None,
+    }
+}
+
+fn media_group_success_body() -> serde_json::Value {
+    serde_json::json!({
+        "ok": true,
+        "result": [
+            {"message_id": 111, "date": 1000002, "chat": {"id": 12345, "type": "private"},
+             "from": {"id": 1, "is_bot": true, "first_name": "TestBot"}},
+            {"message_id": 112, "date": 1000003, "chat": {"id": 12345, "type": "private"},
+             "from": {"id": 1, "is_bot": true, "first_name": "TestBot"}}
+        ]
+    })
+}
+
+#[tokio::test]
+async fn test_send_media_group_success() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/bottest-token/sendMediaGroup"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(media_group_success_body()))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let adapter = make_adapter(mock_server.address().port()).await;
+    let result = adapter
+        .send_media_group(send_media_group_params())
+        .await
+        .unwrap();
+
+    assert!(result.success, "send_media_group should succeed");
+    assert_eq!(result.message_id, Some("111".to_string()));
+
+    mock_server.verify().await;
+}
+
+#[tokio::test]
+async fn test_send_media_group_sends_media_array() {
+    let mock_server = MockServer::start().await;
+
+    let captured = Arc::new(std::sync::Mutex::new(None::<serde_json::Value>));
+    let cap = captured.clone();
+
+    Mock::given(method("POST"))
+        .and(path("/bottest-token/sendMediaGroup"))
+        .and(move |req: &wiremock::Request| {
+            if let Ok(body) = serde_json::from_slice::<serde_json::Value>(&req.body) {
+                *cap.lock().unwrap() = Some(body);
+            }
+            true
+        })
+        .respond_with(ResponseTemplate::new(200).set_body_json(media_group_success_body()))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let adapter = make_adapter(mock_server.address().port()).await;
+    adapter
+        .send_media_group(send_media_group_params())
+        .await
+        .unwrap();
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let body = captured.lock().unwrap().take().unwrap();
+    assert_eq!(body["chat_id"], "12345");
+    let media = body["media"].as_array().unwrap();
+    assert_eq!(media.len(), 2, "media group should carry 2 items");
+    assert_eq!(media[0]["type"], "photo");
+    assert_eq!(media[0]["media"], "https://example.com/a.jpg");
+    assert_eq!(media[0]["caption"], "first");
+    assert_eq!(media[1]["media"], "https://example.com/b.jpg");
+    assert!(
+        media[1].get("caption").is_none(),
+        "second item without caption must not inherit text"
+    );
+}
+
+#[tokio::test]
+async fn test_send_media_group_single_delegates_to_send_photo() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/bottest-token/sendPhoto"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(send_media_success_body()))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let adapter = make_adapter(mock_server.address().port()).await;
+    let params = SendMediaGroupParams {
+        chat_id: "12345".to_string(),
+        media: vec![group_image("https://example.com/a.jpg", None)],
+        text: None,
+        reply_to: None,
+    };
+    let result = adapter.send_media_group(params).await.unwrap();
+    assert!(
+        result.success,
+        "single-item group should delegate to send_media"
+    );
+
+    mock_server.verify().await;
+}
+
+#[tokio::test]
+async fn test_send_media_group_base64_multipart() {
+    let mock_server = MockServer::start().await;
+
+    Mock::given(method("POST"))
+        .and(path("/bottest-token/sendMediaGroup"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(media_group_success_body()))
+        .expect(1)
+        .mount(&mock_server)
+        .await;
+
+    let adapter = make_adapter(mock_server.address().port()).await;
+    let mut a = group_image("https://example.com/a.jpg", None);
+    a.url = None;
+    a.data = Some("aGVsbG8=".to_string()); // "hello"
+    let mut b = a.clone();
+    b.data = Some("d29ybGQ=".to_string()); // "world"
+    let params = SendMediaGroupParams {
+        chat_id: "12345".to_string(),
+        media: vec![a, b],
+        text: Some("album".to_string()),
+        reply_to: None,
+    };
+
+    let result = adapter.send_media_group(params).await.unwrap();
+    assert!(result.success, "base64 group should upload via multipart");
+
+    mock_server.verify().await;
+}
+
+#[tokio::test]
+async fn test_send_media_group_sticker_rejected() {
+    let adapter = make_adapter(1).await;
+    let mut sticker = group_image("https://example.com/s.webp", None);
+    sticker.media_type = MediaType::Sticker;
+    let params = SendMediaGroupParams {
+        chat_id: "12345".to_string(),
+        media: vec![sticker, group_image("https://example.com/a.jpg", None)],
+        text: None,
+        reply_to: None,
+    };
+
+    let err = adapter.send_media_group(params).await.unwrap_err();
+    assert!(matches!(err, GatewayError::CapabilityNotSupported(_)));
+}
+
+#[tokio::test]
+async fn test_send_media_group_exceeds_limit() {
+    let adapter = make_adapter(1).await;
+    let media = (0..11)
+        .map(|i| group_image(&format!("https://example.com/{}.jpg", i), None))
+        .collect();
+    let params = SendMediaGroupParams {
+        chat_id: "12345".to_string(),
+        media,
+        text: None,
+        reply_to: None,
+    };
+
+    let err = adapter.send_media_group(params).await.unwrap_err();
+    assert!(matches!(err, GatewayError::Internal(_)));
+}
+
+#[tokio::test]
+async fn test_send_media_group_empty_rejected() {
+    let adapter = make_adapter(1).await;
+    let params = SendMediaGroupParams {
+        chat_id: "12345".to_string(),
+        media: vec![],
+        text: None,
+        reply_to: None,
+    };
+
+    let err = adapter.send_media_group(params).await.unwrap_err();
+    assert!(matches!(err, GatewayError::Internal(_)));
 }

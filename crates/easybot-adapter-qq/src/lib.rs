@@ -988,8 +988,9 @@ impl PlatformAdapter for QqAdapter {
             let hb = self.heartbeat.clone();
             let chat_types = self.chat_types.clone();
             // 可选覆盖 Gateway intent 订阅集（config.extra["intents"]，数字位掩码）。
-            // 公域机器人可设为 `1<<30 | 1<<25`（PUBLIC_GUILD_MESSAGES | GROUP_AND_C2C_EVENT）；
-            // 缺失时 gateway_loop 使用默认保守集（群/C2C + 私域频道消息）。
+            // 公域机器人可设为 `1<<30 | 1<<25`（PUBLIC_GUILD_MESSAGES | GROUP_AND_C2C_EVENT）。
+            // 缺省时 gateway_loop 使用默认保守集（群/C2C + 私域频道消息），
+            // 并会在 Identify 被拒（close 4013/4014）时自动翻转公/私域频道 intent 位重试一次。
             let intents_override = self
                 .config
                 .as_ref()
