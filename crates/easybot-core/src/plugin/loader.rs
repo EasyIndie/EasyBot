@@ -1,51 +1,27 @@
-//! 插件加载器
+//! 插件加载器（**进程外**）
 //!
-//! 从 `plugins/` 目录发现并加载动态库插件。
-//! 所有 `unsafe` 代码隔离在此文件中。
+//! 从 `plugins/` 目录发现并加载**可执行文件形态**的插件：每个插件是一个独立进程，
+//! 通过 stdin/stdout 逐行 JSON 协议（`easybot-plugin-protocol`）与宿主通信。
 //!
-//! 本文件是唯一需要 `unsafe` 代码的模块（FFI / 动态库加载），
-//! 因此显式允许 unsafe——workspace lint 规则 `unsafe_code = "deny"` 对此文件豁免。
-#![allow(unsafe_code)]
+//! 旧式 cdylib（`dlopen`）路径**已移除**：静态链接的宿主二进制没有动态加载器，
+//! `dlopen` 不可能成功（详见 `docs/other/rfc-out-of-process-plugins.md`）。
 //!
-//! # 安全性
+//! 本模块**不含任何 `unsafe`**（无 FFI）；适配器实现见
+//! [`IpcPluginAdapter`](super::ipc::IpcPluginAdapter)。
 //!
-//! - `PluginLibrary` 通过 `Arc<Library>` 管理动态库生命周期
-//! - 工厂闭包捕获 `Arc<Library>`，确保适配器存活期间库不被卸载
-//! - 所有裸指针操作限制在 `create_adapter()` 与 [`PluginAdapterProxy::drop`]（回调
-//!   插件的 `easybot_plugin_destroy` 释放插件自有的内存）内
-//! - ABI 版本号在创建适配器前校验
+//! # 安全模型
 //!
-//! # 沙箱限制
+//! 插件以**独立子进程**运行（崩溃隔离），但**v1 不是安全沙箱**：子进程默认
+//! 继承宿主用户权限，可读写文件与网络。防护措施：
 //!
-//! **Warning**: 原生动态库插件（`.so`/`.dylib`/`.dll`）在宿主进程内运行，
-//! **不受沙箱保护**。插件代码享有与 EasyBot 进程完全相同的权限：
+//! 1. **路径校验**（[`PluginManifest::command_path`]）: 拒绝绝对路径与 `..` 穿越；
+//! 2. **启动验签**（`plugin.sig.json` 覆盖入口可执行文件字节）+ 发布者信任；
+//! 3. **协议版本校验**（握手时 `PROTOCOL_VERSION` 不匹配即拒绝）。
 //!
-//! - 文件系统访问（包括数据库文件和凭证文件）
-//! - 网络访问（可绕过 EasyBot 的 HTTP 客户端）
-//! - 内存访问（可读取进程内所有数据）
-//!
-//! **当前实现的防护措施：**
-//!
-//! 1. **路径校验** ([`PluginManifest::library_path()`]):
-//!    - 拒绝绝对路径（防止加载任意位置的文件）
-//!    - 拒绝 `..` 目录穿越（防止离开插件目录）
-//!
-//! 2. **Lint 规则**（workspace）:
-//!    - `unsafe_code = "deny"` — 禁止插件使用 unsafe 代码
-//!
-//! **建议的安全实践：**
-//! - 仅从可信来源安装插件
-//! - 在容器化环境中运行 EasyBot
-//! - 生产部署前审计插件源码
-//! - 参见 [SECURITY.md] 了解更多
+//! 生产隔离请用容器化（参见 `docs/18 plugin-security.md`）。
 
-use async_trait::async_trait;
-use libloading::{Library, Symbol};
 use std::collections::HashMap;
-use std::ffi::c_void;
-use std::mem::ManuallyDrop;
 use std::path::{Path, PathBuf};
-use std::ptr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{info, warn};
@@ -55,17 +31,7 @@ use super::signing::PluginSignature;
 use super::signing::trust::PublisherTrust;
 use crate::adapter::{AdapterFactory, AdapterRegistry};
 use crate::bus::EventBus;
-use crate::types::adapter::{
-    AdapterConfig, AdapterRuntimeConfig, AdapterState, AdapterStatusSummary, Capability,
-    ConnectResult, HealthReport, HealthStatus, InitResult, PlatformAdapter,
-};
-use crate::types::error::GatewayError;
-use crate::types::message::{
-    AnswerCallbackParams, ChatFilter, ChatInfo, DeleteResult, DraftResult, EditMessageParams,
-    EditResult, SendDraftParams, SendInteractiveParams, SendMediaParams, SendResult,
-    SendTextParams,
-};
-use crate::types::session::SessionSource;
+use crate::types::adapter::PlatformAdapter;
 
 /// 插件加载错误
 #[derive(Debug, thiserror::Error)]
@@ -79,24 +45,19 @@ pub enum PluginError {
     #[error("Failed to parse manifest {path}: {detail}")]
     ManifestParseError { path: PathBuf, detail: String },
 
-    #[error("Library not found: {0}")]
-    LibraryNotFound(PathBuf),
+    #[error("Plugin entry not found: {0}")]
+    EntryNotFound(PathBuf),
 
-    #[error("Failed to load library {path}: {detail}")]
-    LibraryLoadError { path: PathBuf, detail: String },
+    #[error("Plugin entry is not executable: {path}")]
+    EntryNotExecutable { path: PathBuf },
 
-    #[error("Required symbol '{symbol}' not found in {path}: {detail}")]
-    SymbolNotFound {
-        path: PathBuf,
-        symbol: String,
-        detail: String,
-    },
-
-    #[error("ABI version mismatch: plugin uses v{got}, host expects v{expected}")]
-    AbiVersionMismatch { expected: u32, got: u32 },
-
-    #[error("Plugin returned null adapter pointer")]
-    NullAdapter,
+    #[error(
+        "Plugin '{name}' at {path} is a legacy cdylib (only `library`, no `command`). \
+         In-process plugins are no longer supported (the host is statically linked and \
+         cannot dlopen): rebuild it as an executable and set `command` in plugin.yaml. \
+         See docs/other/plugin-cdylib-to-process-migration.md"
+    )]
+    LegacyCdylibPlugin { name: String, path: PathBuf },
 
     #[error("Plugin platform '{0}' conflicts with already registered platform")]
     PlatformConflict(String),
@@ -109,284 +70,6 @@ pub enum PluginError {
 
     #[error("Plugin publisher '{0}' is not trusted")]
     UntrustedPublisher(String),
-}
-
-/// 已加载的插件库包装
-///
-/// 使用 `Arc<Library>` 允许多个工厂闭包共享同一个动态库句柄。
-/// 当所有引用释放时，库自动卸载。
-pub struct PluginLibrary {
-    inner: Arc<Library>,
-}
-
-// SAFETY: Library 自身不是 Send/Sync，但 Arc<Library> 通过引用计数管理，
-// 且所有实际内存访问发生在工厂闭包内部（通过 `unsafe` 方法）。
-// PluginLibrary 提供安全的封装，外部代码通过安全接口访问。
-unsafe impl Send for PluginLibrary {}
-unsafe impl Sync for PluginLibrary {}
-
-impl PluginLibrary {
-    /// 包装一个已加载的 Library
-    ///
-    /// # Safety
-    ///
-    /// `lib` 必须保持有效，直到所有从它创建的适配器都被销毁。
-    pub unsafe fn new(lib: Library) -> Self {
-        Self {
-            inner: Arc::new(lib),
-        }
-    }
-
-    /// 从插件创建适配器实例（包装为 [`PluginAdapterProxy`]）
-    ///
-    /// # Safety
-    ///
-    /// 返回的 `Box<dyn PlatformAdapter>` 内部是 [`PluginAdapterProxy`]，其 Drop 会调用
-    /// 插件的 `easybot_plugin_destroy`——**插件释放自己分配的内存**（见代理文档）。
-    /// 本 `PluginLibrary` 实例必须比所有适配器存活得更久。
-    pub unsafe fn create_adapter(&self) -> Result<Box<dyn PlatformAdapter>, PluginError> {
-        unsafe {
-            // 先解析析构符号再 create：插件若缺 `easybot_plugin_destroy`，宁可报错
-            // 也不 create——否则无人能释放插件分配的实例。
-            let destroy: Symbol<unsafe extern "C" fn(*mut c_void)> = self
-                .inner
-                .get(b"easybot_plugin_destroy")
-                .map_err(|e| PluginError::SymbolNotFound {
-                    path: PathBuf::from("<plugin>"),
-                    symbol: "easybot_plugin_destroy".into(),
-                    detail: e.to_string(),
-                })?;
-
-            let create: Symbol<unsafe extern "C" fn() -> *mut c_void> = self
-                .inner
-                .get(b"easybot_plugin_create")
-                .map_err(|e| PluginError::SymbolNotFound {
-                    path: PathBuf::from("<plugin>"),
-                    symbol: "easybot_plugin_create".into(),
-                    detail: e.to_string(),
-                })?;
-
-            let raw_ptr = create();
-            if raw_ptr.is_null() {
-                return Err(PluginError::NullAdapter);
-            }
-
-            // `Box<dyn PlatformAdapter>` 是胖指针（128 bits），插件方通过
-            // `Box<Box<dyn PlatformAdapter>>` 包成瘦指针传回。这里只**借读**内层
-            // 胖指针、不取得所有权（`ptr::read` 位拷贝 + `ManuallyDrop` 防宿主 drop）；
-            // 真正释放由插件的 `easybot_plugin_destroy` 完成（见 [`PluginAdapterProxy::Drop`]）。
-            let adapter: ManuallyDrop<Box<dyn PlatformAdapter>> =
-                ManuallyDrop::new(ptr::read(raw_ptr as *const Box<dyn PlatformAdapter>));
-
-            Ok(Box::new(PluginAdapterProxy {
-                lib: self.inner.clone(),
-                raw_ptr,
-                adapter,
-                destroy: *destroy,
-            }))
-        }
-    }
-
-    /// 验证插件 ABI 版本与主机匹配
-    fn check_abi_version(&self) -> Result<(), PluginError> {
-        unsafe {
-            let abi_version: Symbol<unsafe extern "C" fn() -> u32> = self
-                .inner
-                .get(b"easybot_abi_version")
-                .map_err(|e| PluginError::SymbolNotFound {
-                    path: PathBuf::from("<plugin>"),
-                    symbol: "easybot_abi_version".into(),
-                    detail: e.to_string(),
-                })?;
-
-            let version = abi_version();
-            let expected = EASYBOT_PLUGIN_ABI_VERSION;
-            if version != expected {
-                return Err(PluginError::AbiVersionMismatch {
-                    expected,
-                    got: version,
-                });
-            }
-            Ok(())
-        }
-    }
-}
-
-/// 插件适配器代理——宿主侧的安全包装。
-///
-/// # 为什么需要代理（FFI 分配器契约）
-///
-/// 插件在**插件进程内**用 `easybot_plugin_create` 分配 `Box<Box<dyn PlatformAdapter>>`
-/// 内存，宿主经 FFI 拿到裸指针。旧实现 `Box::from_raw` 后宿主直接 drop——宿主用
-/// **自己的**全局分配器去释放插件分配的内存。macOS（宿主/插件都动态链接系统 libc）
-/// 两侧恰好共用同一堆，无感；但 Linux 宿主是 **musl-static**（内置静态 musl malloc），
-/// 插件 malloc 是另一份堆——跨堆释放即 UB（SIGABRT / 堆损坏）。
-///
-/// 契约：**谁分配谁释放**。宿主只借读插件的胖指针（不拥有其内存），代理 Drop 时调用
-/// 插件的 `easybot_plugin_destroy`——插件用同一全局分配器释放自己创建的内存（自洽）。
-/// 代理持有 `Arc<Library>` 保证 .so 存活期间代理有效。
-///
-/// 与 SDK 测试（`ffi.rs`）中「只借读 + 手动 destroy」的用法一致，是同一契约的宿主侧落地。
-struct PluginAdapterProxy {
-    /// 保持动态库存活（Drop 时 `destroy` 仍需库内代码；纯生命周期守卫，不读取）
-    #[allow(dead_code)]
-    lib: Arc<Library>,
-    /// 插件 `easybot_plugin_create` 返回的裸指针（指向插件分配的 `Box<Box<dyn PlatformAdapter>>`）
-    raw_ptr: *mut c_void,
-    /// 借读自 `raw_ptr` 的胖指针（数据指针 + vtable）。宿主**不拥有**其内存，
-    /// 借 `ManuallyDrop` 防止宿主侧误 drop（double-free）。
-    adapter: ManuallyDrop<Box<dyn PlatformAdapter>>,
-    /// 插件导出的析构函数（插件侧释放自己的内存）
-    destroy: unsafe extern "C" fn(*mut c_void),
-}
-
-// SAFETY: 代理与 `Box<dyn PlatformAdapter>` 等价对待——底层插件适配器满足
-// `PlatformAdapter: Send + Sync`；裸指针 `raw_ptr` 仅在 Drop 时交给插件的
-// destroy（插件侧同一堆，自洽），不参与跨线程数据竞争。
-unsafe impl Send for PluginAdapterProxy {}
-unsafe impl Sync for PluginAdapterProxy {}
-
-impl Drop for PluginAdapterProxy {
-    fn drop(&mut self) {
-        // SAFETY: `raw_ptr` 由本插件的 `easybot_plugin_create` 返回；`destroy` 是
-        // 本插件导出的 `easybot_plugin_destroy`（幂等、接受空指针）。插件用同一
-        // 全局分配器释放自己分配的内存（alloc/free 自洽）；`lib` 的 Arc 保证本
-        // 调用执行期间 .so 不被卸载。
-        unsafe { (self.destroy)(self.raw_ptr) }
-    }
-}
-
-#[async_trait]
-impl PlatformAdapter for PluginAdapterProxy {
-    fn platform_name(&self) -> &str {
-        self.adapter.platform_name()
-    }
-
-    fn display_name(&self) -> &str {
-        self.adapter.display_name()
-    }
-
-    fn capabilities(&self) -> &[Capability] {
-        self.adapter.capabilities()
-    }
-
-    fn set_event_bus(&mut self, bus: Arc<EventBus>) {
-        self.adapter.set_event_bus(bus);
-    }
-
-    async fn init(&mut self, config: AdapterConfig) -> Result<InitResult, GatewayError> {
-        self.adapter.init(config).await
-    }
-
-    async fn connect(&mut self) -> Result<ConnectResult, GatewayError> {
-        self.adapter.connect().await
-    }
-
-    async fn disconnect(&mut self) -> Result<(), GatewayError> {
-        self.adapter.disconnect().await
-    }
-
-    fn state(&self) -> AdapterState {
-        self.adapter.state()
-    }
-
-    fn is_connected(&self) -> bool {
-        self.adapter.is_connected()
-    }
-
-    async fn retry_transport(&mut self) -> Result<bool, GatewayError> {
-        self.adapter.retry_transport().await
-    }
-
-    fn heartbeat_age_ms(&self) -> Option<i64> {
-        self.adapter.heartbeat_age_ms()
-    }
-
-    fn heartbeat_success_age_ms(&self) -> Option<i64> {
-        self.adapter.heartbeat_success_age_ms()
-    }
-
-    fn heartbeat_failure_count(&self) -> Option<u32> {
-        self.adapter.heartbeat_failure_count()
-    }
-
-    fn health_status(&self) -> HealthStatus {
-        self.adapter.health_status()
-    }
-
-    async fn health(&self) -> HealthReport {
-        self.adapter.health().await
-    }
-
-    async fn send(&self, params: SendTextParams) -> Result<SendResult, GatewayError> {
-        self.adapter.send(params).await
-    }
-
-    async fn send_media(&self, params: SendMediaParams) -> Result<SendResult, GatewayError> {
-        self.adapter.send_media(params).await
-    }
-
-    async fn send_interactive(
-        &self,
-        params: SendInteractiveParams,
-    ) -> Result<SendResult, GatewayError> {
-        self.adapter.send_interactive(params).await
-    }
-
-    async fn send_typing(&self, chat_id: &str) -> Result<(), GatewayError> {
-        self.adapter.send_typing(chat_id).await
-    }
-
-    async fn answer_callback_query(
-        &self,
-        params: AnswerCallbackParams,
-    ) -> Result<(), GatewayError> {
-        self.adapter.answer_callback_query(params).await
-    }
-
-    async fn send_draft(&self, params: SendDraftParams) -> Result<DraftResult, GatewayError> {
-        self.adapter.send_draft(params).await
-    }
-
-    async fn edit_message(&self, params: EditMessageParams) -> Result<EditResult, GatewayError> {
-        self.adapter.edit_message(params).await
-    }
-
-    async fn delete_message(
-        &self,
-        chat_id: &str,
-        message_id: &str,
-    ) -> Result<DeleteResult, GatewayError> {
-        self.adapter.delete_message(chat_id, message_id).await
-    }
-
-    async fn get_chat_info(&self, chat_id: &str) -> Result<ChatInfo, GatewayError> {
-        self.adapter.get_chat_info(chat_id).await
-    }
-
-    async fn list_chats(&self, filter: Option<ChatFilter>) -> Result<Vec<ChatInfo>, GatewayError> {
-        self.adapter.list_chats(filter).await
-    }
-
-    fn runtime_config(&self) -> AdapterRuntimeConfig {
-        self.adapter.runtime_config()
-    }
-
-    fn status_summary(&self) -> AdapterStatusSummary {
-        self.adapter.status_summary()
-    }
-
-    async fn enrich_source(&self, source: &SessionSource) -> Option<SessionSource> {
-        self.adapter.enrich_source(source).await
-    }
-
-    async fn cursor_state(&self) -> Option<serde_json::Value> {
-        self.adapter.cursor_state().await
-    }
-
-    async fn restore_cursor_state(&self, state: serde_json::Value) {
-        self.adapter.restore_cursor_state(state).await
-    }
 }
 
 /// 单次插件加载的结果
@@ -441,14 +124,17 @@ impl Default for PluginLoadPolicy {
     }
 }
 
-/// 插件加载器
+/// 插件加载器（进程外）
 ///
-/// 扫描指定目录，加载所有有效插件。
+/// 扫描指定目录，发现所有有效插件（可执行文件形态）。
+/// 注意：**不** 在此阶段 spawn 进程；进程在适配器工厂被调用时启动。
 pub struct PluginLoader {
     plugins_dir: PathBuf,
     policy: PluginLoadPolicy,
-    /// platform_name → (library, display_name)
-    loaded: RwLock<HashMap<String, (Arc<PluginLibrary>, String)>>,
+    /// EasyBot 配置根目录（注入子进程 `EASYBOT_HOME`；`None` 时子进程继承宿主环境）
+    home: Option<PathBuf>,
+    /// platform_name → (入口可执行文件, display_name)
+    loaded: RwLock<HashMap<String, (PathBuf, String)>>,
 }
 
 impl PluginLoader {
@@ -462,8 +148,15 @@ impl PluginLoader {
         Self {
             plugins_dir,
             policy,
+            home: None,
             loaded: RwLock::new(HashMap::new()),
         }
+    }
+
+    /// 设置 EasyBot 配置根目录（注入子进程 `EASYBOT_HOME`）。
+    pub fn with_home(mut self, home: Option<PathBuf>) -> Self {
+        self.home = home;
+        self
     }
 
     /// 扫描并加载所有有效插件
@@ -560,51 +253,44 @@ impl PluginLoader {
             return Err(PluginError::DisabledPlugin(manifest.name.clone()));
         }
 
-        // 2. 定位动态库（含路径穿越安全检查）
-        let lib_path = manifest
-            .library_path(dir)
-            .map_err(|e| PluginError::ManifestParseError {
-                path: manifest_path.clone(),
-                detail: e,
-            })?;
-        if !lib_path.exists() {
-            return Err(PluginError::LibraryNotFound(lib_path));
+        // 2. 旧式 cdylib 清单（仅 `library`、无 `command`）：明确告警并给出迁移指引。
+        //    v0.0.42 起插件必须是可执行文件；`library` 仅作为元数据别名被读取，
+        //    不再有 dlopen 路径（静态宿主没有动态加载器）。
+        if manifest.is_legacy_cdylib() {
+            return Err(PluginError::LegacyCdylibPlugin {
+                name: manifest.name.clone(),
+                path: dir.to_path_buf(),
+            });
         }
 
-        // 2.5 签名校验（在 dlopen 之前执行，避免加载未经验证的代码）
+        // 3. 定位入口可执行文件（含路径穿越安全检查）
+        let command_path =
+            manifest
+                .command_path(dir)
+                .map_err(|e| PluginError::ManifestParseError {
+                    path: manifest_path.clone(),
+                    detail: e,
+                })?;
+        if !command_path.exists() {
+            return Err(PluginError::EntryNotFound(command_path));
+        }
+        if !is_executable(&command_path) {
+            return Err(PluginError::EntryNotExecutable {
+                path: command_path.clone(),
+            });
+        }
+
+        // 4. 签名校验（覆盖入口可执行文件字节；在 spawn 之前执行）
         if self.policy.verify_signatures {
-            self.verify_signature(dir, &lib_path, &manifest)?;
+            self.verify_signature(dir, &command_path, &manifest)?;
         }
 
-        // 3. 加载动态库
-        // SAFETY: dlopen/dlsym 是 unsafe 操作，因为动态库中的代码
-        // 在执行构造函数时立即运行。我们已经验证了文件存在性与签名。
-        let library = unsafe {
-            Library::new(&lib_path).map_err(|e| PluginError::LibraryLoadError {
-                path: lib_path.clone(),
-                detail: e.to_string(),
-            })?
-        };
-
-        let plugin_lib = unsafe { PluginLibrary::new(library) };
-
-        // 4. 验证 ABI 版本
-        plugin_lib.check_abi_version()?;
-
-        // 5. 创建临时适配器提取元信息
-        // SAFETY: 暂存适配器后立即释放，PluginLibrary 在此期间保持存活
-        let (platform_name, display_name) = unsafe {
-            let adapter = plugin_lib.create_adapter()?;
-            let name = adapter.platform_name().to_string();
-            let display = manifest
-                .display_name
-                .clone()
-                .unwrap_or_else(|| adapter.display_name().to_string());
-            // drop adapter 会通过 vtable 调用 plugin 的析构函数
-            // 此时 Library 仍然加载，所以是安全的
-            drop(adapter);
-            (name, display)
-        };
+        // 5. 平台标识：以清单 name 为准（协议握手中插件自述会再次校验）
+        let platform_name = manifest.name.clone();
+        let display_name = manifest
+            .display_name
+            .clone()
+            .unwrap_or_else(|| manifest.name.clone());
 
         // 6. 检查平台名冲突
         {
@@ -614,13 +300,12 @@ impl PluginLoader {
             }
         }
 
-        // 7. 存储库引用和显示名
-        let arc_lib = Arc::new(plugin_lib);
+        // 7. 记录入口路径与显示名
         {
             let mut loaded = self.loaded.write().await;
             loaded.insert(
                 platform_name.clone(),
-                (arc_lib.clone(), display_name.clone()),
+                (command_path.clone(), display_name.clone()),
             );
         }
 
@@ -630,7 +315,7 @@ impl PluginLoader {
         })
     }
 
-    /// 校验插件签名（`plugin.sig.json` 覆盖动态库字节）
+    /// 校验插件签名（`plugin.sig.json` 覆盖入口可执行文件字节）
     ///
     /// - 有签名文件：验签 + （可选）发布者信任校验；失败 → `SignatureVerificationFailed` / `UntrustedPublisher`
     /// - 无签名文件：strict 拒绝；lenient 仅告警（向后兼容手动放置的插件）
@@ -685,42 +370,38 @@ impl PluginLoader {
 
     /// 为已加载的插件生成 AdapterFactory
     ///
-    /// 工厂闭包捕获 `Arc<Library>`，确保适配器存活期间库不被卸载。
+    /// 工厂闭包捕获入口路径，调用时 spawn 插件进程并完成 `init`。
     pub async fn get_factory(
         &self,
         platform_name: &str,
         event_bus: Arc<EventBus>,
     ) -> Option<AdapterFactory> {
         let loaded = self.loaded.read().await;
-        let (lib, _display_name) = loaded.get(platform_name)?.clone();
+        let (command, _display_name) = loaded.get(platform_name)?.clone();
         let platform = platform_name.to_string();
+        let home = self.home.clone();
         drop(loaded);
 
         Some(Arc::new(move |config| {
-            let lib = lib.clone();
+            let command = command.clone();
             let eb = event_bus.clone();
             let p = platform.clone();
+            let home = home.clone();
             Box::pin(async move {
-                // SAFETY: 适配器创建涉及从动态库加载函数指针
-                // Arc<Library> 确保库在闭包执行期间保持存活
-                unsafe {
-                    let mut adapter = lib
-                        .create_adapter()
-                        .map_err(|e| format!("plugin create failed: {}", e))?;
-
-                    adapter.set_event_bus(eb);
-
-                    let init_result = adapter
-                        .init(config)
-                        .await
-                        .map_err(|e| format!("plugin '{}' init failed: {}", p, e))?;
-                    if !init_result.ok {
-                        return Err(init_result
-                            .error
-                            .unwrap_or_else(|| format!("plugin '{}' init returned error", p)));
-                    }
-                    Ok(adapter)
+                let mut adapter =
+                    super::ipc::IpcPluginAdapter::new(command, p.clone(), p.clone(), home);
+                adapter.set_event_bus(eb);
+                let init_result = adapter
+                    .init(config)
+                    .await
+                    .map_err(|e| format!("plugin '{}' init failed: {}", p, e))?;
+                if !init_result.ok {
+                    return Err(init_result
+                        .error
+                        .unwrap_or_else(|| format!("plugin '{}' init returned error", p)));
                 }
+                let boxed: Box<dyn PlatformAdapter> = Box::new(adapter);
+                Ok(boxed)
             })
         }))
     }
@@ -746,14 +427,28 @@ impl PluginLoader {
 
     /// 卸载一个已加载的插件（禁用/卸载时调用）
     ///
-    /// 从 `loaded` 表中移除平台并释放其对 `Arc<Library>` 的引用。
-    /// 若运行中的适配器（或其工厂）仍持有该库的引用，库不会真正 unload，
-    /// 直到适配器停止且工厂从注册表注销。
+    /// 从 `loaded` 表中移除平台。运行中的适配器（及其 spawn 的插件进程）
+    /// 由 `AdapterManager` 停止。
     ///
     /// 返回该平台此前是否已加载。
     pub async fn unload(&self, platform: &str) -> bool {
         let mut loaded = self.loaded.write().await;
         loaded.remove(platform).is_some()
+    }
+}
+
+/// 判断文件是否可执行（Unix 检查 owner/group/other 任一执行位；其它平台仅要求存在）。
+fn is_executable(path: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::metadata(path)
+            .map(|m| m.permissions().mode() & 0o111 != 0)
+            .unwrap_or(false)
+    }
+    #[cfg(not(unix))]
+    {
+        path.exists()
     }
 }
 
@@ -765,34 +460,53 @@ mod tests {
     use super::*;
 
     /// 创建临时插件目录，包含一个指定内容的子目录（代表一个插件）
+    ///
+    /// `entry_exists`：是否写入占位入口文件（`test-entry`，并置可执行位——
+    /// 进程外插件要求入口可执行）。
     fn create_plugin_subdir(
         parent: &Path,
         name: &str,
         manifest_content: &str,
-        lib_exists: bool,
+        entry_exists: bool,
     ) -> PathBuf {
         let dir = parent.join(name);
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("plugin.yaml"), manifest_content).unwrap();
-        if lib_exists {
-            // 写入一个占位文件充当 "库文件"
-            std::fs::write(dir.join("libtest.so"), b"dummy").unwrap();
+        if entry_exists {
+            // 写入一个占位文件充当插件入口（可执行文件形态）
+            let entry = dir.join("test-entry");
+            std::fs::write(&entry, b"dummy").unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let mut perms = std::fs::metadata(&entry).unwrap().permissions();
+                perms.set_mode(0o755);
+                std::fs::set_permissions(&entry, perms).unwrap();
+            }
         }
         dir
     }
 
     #[test]
     fn test_plugin_error_messages() {
-        let err = PluginError::AbiVersionMismatch {
-            expected: 1,
-            got: 2,
+        let err = PluginError::EntryNotFound(PathBuf::from("/x/entry"));
+        assert!(err.to_string().contains("/x/entry"), "{}", err);
+
+        let err = PluginError::EntryNotExecutable {
+            path: PathBuf::from("/x/entry"),
+        };
+        assert!(err.to_string().contains("/x/entry"), "{}", err);
+
+        let err = PluginError::LegacyCdylibPlugin {
+            name: "old-plugin".into(),
+            path: PathBuf::from("/plugins/old-plugin"),
         };
         let msg = err.to_string();
-        assert!(msg.contains("v1"), "expected 'v1' in '{}'", msg);
-        assert!(msg.contains("v2"), "expected 'v2' in '{}'", msg);
-
-        let err = PluginError::NullAdapter;
-        assert!(err.to_string().contains("null"));
+        assert!(
+            msg.contains("old-plugin") && msg.contains("legacy cdylib"),
+            "{}",
+            msg
+        );
 
         let err = PluginError::PlatformConflict("test".into());
         assert!(err.to_string().contains("test"));
@@ -883,14 +597,14 @@ mod tests {
 display_name: "Test"
 version: "1.0"
 sdk_version: 1
-library: "libnonexistent.so"
+command: "nonexistent-entry"
 "#,
             false, // lib does NOT exist
         );
 
         let loader = PluginLoader::new(dir.parent().unwrap().to_path_buf());
         let result = loader.load_single(&dir).await;
-        assert!(matches!(result, Err(PluginError::LibraryNotFound(_))));
+        assert!(matches!(result, Err(PluginError::EntryNotFound(_))));
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -911,7 +625,7 @@ library: "libnonexistent.so"
         std::fs::create_dir_all(&bad_yaml).unwrap();
         std::fs::write(bad_yaml.join("plugin.yaml"), "bad: [").unwrap();
 
-        // 子目录3：缺失库文件（但 manifest 有效）
+        // 子目录3：缺失入口文件（但 manifest 有效）
         let missing_lib = base.join("missing-lib");
         std::fs::create_dir_all(&missing_lib).unwrap();
         std::fs::write(
@@ -920,7 +634,7 @@ library: "libnonexistent.so"
 display_name: "Missing Lib"
 version: "1.0"
 sdk_version: 1
-library: "libmissing.so"
+command: "missing-entry"
 "#,
         )
         .unwrap();
@@ -981,7 +695,7 @@ display_name: "Disabled"
 version: "1.0"
 sdk_version: 1
 enabled: false
-library: "libtest.so"
+command: "test-entry"
 "#,
             true, // lib exists but should not be loaded
         );
@@ -991,6 +705,42 @@ library: "libtest.so"
         assert!(
             matches!(result, Err(PluginError::DisabledPlugin(name)) if name == "disabled-plugin")
         );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn test_legacy_cdylib_manifest_is_rejected_with_migration_hint() {
+        // 旧式 cdylib 清单（仅 `library`、无 `command`）：必须明确拒绝并给出迁移指引，
+        // 而不是模糊的「入口不存在/不可执行」。
+        let dir = std::env::temp_dir().join(format!("plugin-test-legacy-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        create_plugin_subdir(
+            dir.parent().unwrap(),
+            dir.file_name().unwrap().to_str().unwrap(),
+            r#"name: "legacy-plugin"
+display_name: "Legacy"
+version: "1.0"
+sdk_version: 1
+library: "liblegacy.so"
+"#,
+            true, // 即使文件存在且可执行，也只能被迁移指引拒绝
+        );
+
+        let loader = PluginLoader::new(dir.parent().unwrap().to_path_buf());
+        let result = loader.load_single(&dir).await;
+        match &result {
+            Err(err) => {
+                let PluginError::LegacyCdylibPlugin { name, .. } = err else {
+                    panic!("expected LegacyCdylibPlugin, got {:?}", result.map(|_| ()));
+                };
+                assert_eq!(name, "legacy-plugin");
+                let msg = err.to_string();
+                assert!(msg.contains("legacy cdylib"), "{msg}");
+                assert!(msg.contains("plugin-cdylib-to-process-migration"), "{msg}");
+            }
+            Ok(_) => panic!("expected LegacyCdylibPlugin, got Ok"),
+        }
 
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -1009,7 +759,7 @@ library: "libtest.so"
 display_name: "Unsigned"
 version: "1.0"
 sdk_version: 1
-library: "libtest.so"
+command: "test-entry"
 "#,
             true, // lib exists but no plugin.sig.json
         );
@@ -1041,18 +791,18 @@ library: "libtest.so"
 display_name: "Unsigned"
 version: "1.0"
 sdk_version: 1
-library: "libtest.so"
+command: "test-entry"
 "#,
             true,
         );
 
-        // lenient：无签名仅告警，继续走到 dlopen（假库 → LibraryLoadError，而非签名错误）
+        // lenient：无签名仅告警，继续完成加载（进程外不再有 dlopen 步骤）
         let loader = PluginLoader::new(dir.parent().unwrap().to_path_buf());
         let result = loader.load_single(&dir).await;
         assert!(
-            matches!(result, Err(PluginError::LibraryLoadError { .. })),
+            result.is_ok(),
             "lenient should proceed past signature check, got: {:?}",
-            result.map(|_| ())
+            result.as_ref().err()
         );
 
         let _ = std::fs::remove_dir_all(&dir);
@@ -1094,13 +844,13 @@ library: "libtest.so"
 display_name: "Signed"
 version: "1.0"
 sdk_version: 1
-library: "libtest.so"
+command: "test-entry"
 "#,
             true,
         );
 
-        // 签名内容与实际库文件（b"dummy"）不符 → 验签失败（dlopen 之前即拒）
-        write_sig_file(&dir, "libtest.so", b"different-content", "pub-a");
+        // 签名内容与实际入口文件（b"dummy"）不符 → 验签失败（spawn 之前即拒）
+        write_sig_file(&dir, "test-entry", b"different-content", "pub-a");
 
         let loader = PluginLoader::new(dir.parent().unwrap().to_path_buf());
         let result = loader.load_single(&dir).await;
@@ -1124,13 +874,13 @@ library: "libtest.so"
 display_name: "Signed"
 version: "1.0"
 sdk_version: 1
-library: "libtest.so"
+command: "test-entry"
 "#,
             true,
         );
 
         // 签名有效（覆盖 b"dummy"），但发布者未加入信任 → UntrustedPublisher
-        write_sig_file(&dir, "libtest.so", b"dummy", "pub-a");
+        write_sig_file(&dir, "test-entry", b"dummy", "pub-a");
         let empty_trust = Arc::new(crate::plugin::signing::trust::TrustStore::default());
 
         let loader = PluginLoader::with_policy(
@@ -1158,12 +908,12 @@ library: "libtest.so"
 display_name: "Signed"
 version: "1.0"
 sdk_version: 1
-library: "libtest.so"
+command: "test-entry"
 "#,
             true,
         );
 
-        let (_sig, pk_b64) = write_sig_file(&dir, "libtest.so", b"dummy", "pub-a");
+        let (_sig, pk_b64) = write_sig_file(&dir, "test-entry", b"dummy", "pub-a");
         let mut trust = crate::plugin::signing::trust::TrustStore::default();
         trust.add("pub-a", &pk_b64);
 
@@ -1171,12 +921,12 @@ library: "libtest.so"
             dir.parent().unwrap().to_path_buf(),
             PluginLoadPolicy::strict(Some(Arc::new(trust))),
         );
-        // 签名 + 信任都通过 → 走到 dlopen（假库 → LibraryLoadError，而非签名/信任错误）
+        // 签名 + 信任都通过 → 加载成功（进程外不再有 dlopen 步骤）
         let result = loader.load_single(&dir).await;
         assert!(
-            matches!(result, Err(PluginError::LibraryLoadError { .. })),
-            "should pass signature+trust and reach dlopen, got: {:?}",
-            result.map(|_| ())
+            result.is_ok(),
+            "should pass signature+trust and load, got: {:?}",
+            result.as_ref().err()
         );
 
         let _ = std::fs::remove_dir_all(&dir);

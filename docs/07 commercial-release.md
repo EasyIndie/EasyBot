@@ -18,7 +18,7 @@ git push origin v0.1.0
 
 1. **CHANGELOG**：`[Unreleased]` 下新增 `[0.0.Y] - YYYY-MM-DD` 条目（Keep a Changelog，中文）。
 2. **版本号同步**：`Cargo.toml`（`version`）、`Cargo.lock`（`cargo update --workspace`）、`compose.quickstart.yml`、`crates/easybot-api/src/routes/update.rs`（`#[schema(example)]`）、`crates/easybot-api/tests/routes.rs`（`current_version` 断言）、`routes__health_response.snap`、`openapi_v1_contract.snap`（`version`+`example`）、`docs/01 user-guide.md`（health JSON/下载 URL/时间戳行）、`docs/other/windows-deployment.md`（版本要求）。`deploy-kit/deploy.sh` 注释示例按约定指向**下一个**版本。
-3. **前置构建**：`cargo build -p mock-adapter`（集成测试依赖）+ `cargo build`（CLI 测试硬编码 `target/debug/easybot`）。`cargo clean` 或全新检出后必做。
+3. **前置构建**：`cargo build -p ipc-mock-plugin`（集成测试依赖）+ `cargo build`（CLI 测试硬编码 `target/debug/easybot`）。`cargo clean` 或全新检出后必做。
 4. **预检**：`bash scripts/release-preflight.sh`。**不要管道到 `tail`**（会吞退出码）；用 `> /tmp/log 2>&1; echo EXIT_CODE=$?`。门禁含 Actions 40 位 SHA 固定（`test-actions-pinning.sh`）、openapi 快照、`--init`、bash -n、版本/CHANGELOG/必需文件检查。预检以 `--features "default,plugin-system"` 构建并运行 CLI，使第 5 步的 workspace 测试直接复用正确的插件版 `target/debug/easybot`（否则裸 `cargo run/build` 会把该二进制重建成无插件版，令 `cli::test_*` 误报失败）。
 5. **测试**：`cargo test --workspace --features "default,plugin-system" --locked` + `cargo fmt --all --check`。注意 APFS 共享空间：构建前检查磁盘，满盘会被误判为测试失败。
 6. **提交**（3 个）：`docs: align documentation with current implementation` / `ci: pin <action> action to commit SHA` / `release: bump v0.0.X → v0.0.Y`。

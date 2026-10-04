@@ -49,8 +49,8 @@ jobs:
       - name: Clippy
         run: bash scripts/ci-step.sh "clippy" cargo clippy --workspace --features "default,plugin-system" --all-targets --locked -- -D warnings
 
-      - name: Build mock-adapter
-        run: bash scripts/ci-step.sh "mock-adapter build" cargo build -p mock-adapter --locked
+      - name: Build ipc-mock-plugin
+        run: bash scripts/ci-step.sh "ipc-mock-plugin build" cargo build -p ipc-mock-plugin --locked
 
       - name: Build CLI test binary
         run: bash scripts/ci-step.sh "CLI binary build" cargo build -p easybot-bin --bin easybot --features "default,plugin-system" --locked

@@ -6,17 +6,18 @@ license.workspace = true
 
 [dependencies]
 easybot-core = { path = "../easybot-core" }
+easybot-plugin-protocol = { path = "../easybot-plugin-protocol" }
 
 serde.workspace = true
 serde_json.workspace = true
 async-trait.workspace = true
-# PluginTestHost 仅在 testing feature 下引入
-tokio = { workspace = true, optional = true }
+# 进程外插件服务端运行时需要异步 IO + 运行时
+tokio = { workspace = true, features = ["rt", "io-util", "io-std", "macros"] }
 
 [features]
 default = []
 # 测试宿主（PluginTestHost）：插件仓库以 `features = ["testing"]` 依赖 SDK 时启用
-testing = ["dep:tokio"]
+testing = ["easybot-core/plugin-system"]
 
 [lints]
 workspace = true

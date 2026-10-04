@@ -102,8 +102,14 @@ pub struct PluginArtifact {
     /// 篡改元数据中的公钥即需伪造对应私钥签名，因此可信。
     #[serde(default)]
     pub public_key: Option<String>,
-    /// 动态库文件名（相对插件目录）；缺省按平台规则推断
-    #[serde(default)]
+    /// 插件入口文件名（相对插件目录）。
+    ///
+    /// - **进程外插件（现行）**：可执行文件名，`easybot-plugin.json` 里写作 `command`；
+    /// - **旧式 cdylib 插件**：动态库文件名，写作 `library`。
+    ///
+    /// 两者共用本字段（`command` 为规范名，`library` 作为别名兼容存量元数据）；
+    /// 缺省按平台规则推断。
+    #[serde(default, alias = "command")]
     pub library: Option<String>,
 }
 
@@ -195,5 +201,31 @@ impl PluginRegistryError {
             self,
             PluginRegistryError::NetworkError(_) | PluginRegistryError::RateLimited
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn artifact_accepts_command_field() {
+        let json = r#"{"url":"https://x/a","sha256":"ab","command":"my-plugin"}"#;
+        let a: PluginArtifact = serde_json::from_str(json).expect("parse");
+        assert_eq!(a.library.as_deref(), Some("my-plugin"));
+    }
+
+    #[test]
+    fn artifact_accepts_legacy_library_field() {
+        let json = r#"{"url":"https://x/a","sha256":"ab","library":"libmy.so"}"#;
+        let a: PluginArtifact = serde_json::from_str(json).expect("parse");
+        assert_eq!(a.library.as_deref(), Some("libmy.so"));
+    }
+
+    #[test]
+    fn artifact_without_entry_name_defaults_to_none() {
+        let json = r#"{"url":"https://x/a","sha256":"ab"}"#;
+        let a: PluginArtifact = serde_json::from_str(json).expect("parse");
+        assert!(a.library.is_none());
     }
 }
