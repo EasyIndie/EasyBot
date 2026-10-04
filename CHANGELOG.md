@@ -1,14 +1,104 @@
-# Changelog
-
-All notable changes to EasyBot will be documented in this file.
-
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-
 ## [Unreleased]
+
+## [0.0.42] - 2026-10-04
+
+### Added
+
+- **QQ 公/私域机器人 intent 自动降级探测** — QQ 公/私域机器人的频道消息
+  intent（`GUILD_MESSAGES` / `PUBLIC_GUILD_MESSAGES`）互斥且官方无运行时探测端点。
+  适配器默认订阅群/C2C + 私域频道消息的保守集；当 Identify 以 close 4013/4014
+  （invalid / disallowed intents）被拒时，自动翻转频道 intent 位并重连重试一次
+  （Identify 成功收到 `READY` 后不再切换）。显式配置 `config.extra.intents` 时
+  保持既有语义，不自动切换。
+
+- **Telegram 相册 / 多图出站（`send_media_group`）** — 新增
+  `SendMediaGroupParams` 与 `PlatformAdapter::send_media_group`（默认实现返回
+  `CapabilityNotSupported`），`POST /api/v1/messages/send` 增加可选 `media_group`
+  字段（优先级高于 `media`）。Telegram 适配器将 2–10 条媒体经 `sendMediaGroup`
+  一次发出：纯 URL 走 JSON body，含 base64 走 multipart + `attach://`；单条自动
+  退化为普通 `send_media`，贴纸与超过 10 条明确拒绝。Discord / 飞书 / QQ / 微信
+  未实现该能力，经 trait 默认实现返回 `CapabilityNotSupported`。
+- **管理后台前端测试与类型工具链** — 在 `crates/easybot-api/templates/` 新增 **dev-only**
+  工具链（`package.json` + vitest + jsdom + eslint，**不进运行时产物**）：`tests/utils.test.js`
+  29 项断言覆盖 `parsePrometheus` / `fmtDuration` / `statusBadgeClass` / `msgTypeLabel` /
+  `escapeHtml` 等纯函数；新增 `.github/workflows/frontend.yml`（npm ci/test/lint，Action 固定 SHA，
+  通过仓库 pinning 门禁）；新增 `js/types.d.ts` 手写类型契约（对照 OpenAPI）。
+- **进程外插件 PoC（Linux 静态宿主插件路线验证）** — 在 `tests/integration` 内新增自包含的
+  进程外插件示例（`ipc-mock-plugin` 插件进程 + `IpcPluginAdapter` 宿主代理 + 端到端测试），
+  并验证 **musl 静态（`static-pie`）宿主**可拉起进程外插件完成完整生命周期（握手/连接/双向
+  事件/发送），**全程不依赖 dlopen**。结论与迁移建议见 `docs/other/plugin-out-of-process-poc.md`。
+
+### Changed
+
+- **核心大模块拆分（可维护性，对外 API 不变）** — `auth/api_key.rs`（3169 行）拆为
+  `auth/api_key/{mod,keys,audit,billing,grants,tests}.rs`；`adapter/manager.rs`、
+  `storage/sqlite.rs`、`plugin/manager.rs` 的 `#[cfg(test)]` 测试模块抽出为
+  `*/tests.rs` 子模块，`adapter/manager.rs` 的重连分类与退避逻辑抽出为
+  `adapter/manager/reconnect.rs`。
+- **依赖升级（兼容范围内）** — `cargo update` 批量升级间接依赖；`utoipa` 5→6、
+  `utoipa-swagger-ui` 9→10（OpenAPI 快照随之更新，属 schema 表达变化，无语义变更）；
+  `serde_yaml`（上游已归档弃用）改用维护 fork `serde_norway` 0.9，以 `package` 别名
+  保持全部 `serde_yaml::` 调用不变。
+- **微信适配器测试补齐** — `tests/send_mock.rs` 由 12 项扩充至 33 项，覆盖媒体类型映射
+  （image/video/audio/document/sticker/animation）、CDN 上传错误路径、`getuploadurl` 业务
+  错误、缺失 `x-encrypted-param`、非法 base64、能力声明与全部“不支持”操作。
+- **覆盖率门禁** — 新增仓库根 `codecov.yml`：project（`target: auto` + `threshold: 1%`）
+  与 patch（`target: 75%`）阈值；`coverage.yml` 移除 `continue-on-error` 并设
+  `fail_ci_if_error: true`。在分支保护中把 `codecov/project`、`codecov/patch` 设为
+  required 后即可阻止不达标的合并。
+- **管理后台前端模块化（对外行为不变）** — `templates/js/admin.js`（2752 行单文件）
+  拆为 11 个文件（`00-utils` / `10-core` / `21-overview` … `29-apikey-dialogs` / `30-tail`，
+  全部 ≤683 行），由 `build.rs` 按文件名排序内联，拼接顺序保持原相对顺序；设计 token
+  收敛到单一 `templates/css/tokens.css`（admin/home/docs 三页共用）；Tab 支持 hash 深链
+  （`#/logs` 等，支持刷新/收藏/前进后退）。
+- **管理后台前端无障碍与文档搜索** — Tab 栏 emoji 改为内联 SVG 图标（`currentColor`，
+  随主题/激活态变色）+ 完整 ARIA tabs 语义（`aria-controls` / `aria-labelledby` +
+  roving tabindex）；文档页搜索由“仅过滤侧边栏标题”升级为**标题+正文全文匹配**
+  （隐藏不匹配章节，并显示“匹配 N / 总数”）。
+- **个人微信适配器改为默认关闭（行为变更）** — 微信无凭据要求（扫码登录），此前会被
+  **无条件自动启用**，导致每次启动都尝试连接微信 API 并后台重试；现改为 **opt-in**：
+  仅当配置显式 `adapters.wechat.enabled: true` 时才启动。其余四个适配器（凭据检测）与
+  插件适配器的自动启用逻辑不变。实现为注册表新增「无凭据时是否自动启用」策略位
+  （`AdapterRegistry::register_with_policy`），默认 `true` 保持向后兼容。
+
+### Breaking Changes
+
+- **插件架构改为「进程外」——cdylib / `dlopen` 路径已移除** — 官方 Linux 发行版是
+  musl **全静态**二进制（无 `INTERP`/动态加载器），`dlopen` 在任何情况下都不可能成功，
+  因此进程内插件在发行版上**完全无法加载**（与插件自身如何编译无关）。现改为：插件编译为
+  **独立可执行文件**，宿主将其作为**子进程**启动，双方通过 stdin/stdout 逐行 JSON
+  （新 crate `easybot-plugin-protocol`）通信。
+  - **迁移**：`declare_plugin!` → `run_plugin!`（放 `src/main.rs`）；产物 cdylib → bin；
+    `plugin.yaml` 的 `library` → `command`（`library` 仍作为别名兼容）。
+    详见 `docs/other/plugin-cdylib-to-process-migration.md`。
+  - **收益**：崩溃隔离（插件退出 → `HealthStatus::Down` → 宿主重连/spawn）、静态宿主可用、
+    无 FFI 跨堆分配器问题（旧「FFI 分配器契约」随架构废止）。
+  - **注意**：v1 仅提供**崩溃隔离**，**不是安全沙箱**（无 seccomp/降权）；
+    生产隔离仍依赖容器化，见 `docs/18 plugin-security.md`。
+  - 移除 `libloading` 依赖、SDK `ffi.rs`/`declare_plugin!`、`PluginAdapterProxy` 与
+    测试用 `tests/plugins/mock-adapter`（cdylib）。
+  - 加载器**只保留一套**：`PluginLoader`（`loader.rs`）直接实现进程外扫描/验签/工厂，
+    删除了重复且不做签名校验的 `ProcessPluginLoader`；旧式清单（仅 `library`）现返回
+    `PluginError::LegacyCdylibPlugin`（错误信息含迁移指引），安装落位名与
+    `PluginManifest::command_path()` 缺省推导统一为 `{name}`（Windows `{name}.exe`）。
+  - 顺带修复 `plugins/example-slack-plugin` 参考样例：它自 cdylib 时代起就无法编译
+    （API 漂移 + 未在 workspace 内），现已迁移为进程外插件、加入 `workspace.exclude`
+    并验证可构建、可完成协议握手。
+
+### Removed
+
+- **移除未使用的 `rand_core` 直接依赖** — easybot-core 的 CSPRNG 统一经
+  `getrandom::rand_core`（0.10 系）重导出使用，原先直接声明的 `rand_core 0.9` 未被引用；
+  移除后消除一处版本重复（剩余 0.9 来自 tungstenite 传递依赖，属上游）。
 
 ### Fixed
 
+- **修复 `gateway.local.yaml` 为空（仅注释）时静默重置全部配置** — `config::merge_configs`
+  在 `local` 非 Mapping 时执行 `*base = local`；只含注释的 `gateway.local.yaml` 解析为
+  `Value::Null`，于是**整个基础配置被替换为 Null**，再反序列化时所有字段回落 serde 默认值
+  （例如在 `gateway.yaml` 里把 `server.port` 改成 8081 会被静默重置回 8080，
+  `server.adminPassword` / `storage.path` 等一并失效）。现 Null local 视为“无覆盖”直接返回，
+  并补充回归测试 `test_merge_configs_null_local_is_noop`。
 - **发布流程两处陷阱修复（不影响发布产物）** —
   - `scripts/release-preflight.sh` 的 `cargo run -p easybot-bin`（不带特性）会把
     `target/debug/easybot` 重建成无插件版，导致随后 `cargo test --workspace` 的
@@ -18,6 +108,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     不再依赖 `github.ref_type`：此前用 `workflow_dispatch` 在分支 ref 上重跑发布时
     `docker/metadata-action` 的 `type=semver` 产生 0 个标签，`docker` 作业以
     `tag is needed when pushing to registry` 失败。
+- **管理后台前端修复** — 补定义 `--bg-subtle`、修正未定义的 `var(--primary)`（调试面板
+  日志颜色）；`api()` 增加非 JSON/空响应防御并附带 `err.status`；指标可视化中
+  method/path/platform 插值统一 `escapeHtml`；`PUT /config` 的 409 语义化（提示
+  “需审阅后重启”而非“保存失败”）；会话删除/改名、Key 吊销/删除、插件卸载与目标授权
+  删除等 6 处原生 `confirm()/prompt()` 替换为可样式化的自研 modal（含焦点管理与 Enter/ESC）。
 
 ## [0.0.41] - 2026-10-01
 

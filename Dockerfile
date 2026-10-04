@@ -16,10 +16,10 @@ ENV CARGO_NET_RETRY=5 \
 COPY Cargo.toml Cargo.lock ./
 COPY crates/ ./crates/
 COPY bin/ ./bin/
-# 插件入门示例已解耦为独立仓库 EasyIndie/easybot-hello-adapter（非 workspace 成员）。
-# 仅 Cargo.toml + 最小 stub 用于 workspace 成员解析（--bin easybot 跳过测试编译）。
-COPY tests/plugins/mock-adapter/Cargo.toml tests/plugins/mock-adapter/
-COPY tests/plugins/mock-adapter/src/ tests/plugins/mock-adapter/src/
+# 进程外插件测试宿主（workspace 成员）：仅需源码进入上下文以便解析成员
+# （--bin easybot 跳过测试编译）。入口示例已独立为 EasyIndie/easybot-hello-adapter。
+COPY tests/plugins/ipc-mock-plugin/Cargo.toml tests/plugins/ipc-mock-plugin/
+COPY tests/plugins/ipc-mock-plugin/src/ tests/plugins/ipc-mock-plugin/src/
 COPY tests/integration/Cargo.toml tests/integration/
 COPY tests/integration/src/ tests/integration/src/
 COPY tests/e2e/Cargo.toml tests/e2e/

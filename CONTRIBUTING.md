@@ -88,7 +88,7 @@ cargo test -p easybot-core
 cargo test -p easybot-adapter-telegram
 
 # Run integration tests
-cargo build -p mock-adapter && cargo test -p integration-tests
+cargo build -p ipc-mock-plugin && cargo test -p integration-tests
 
 # Run E2E tests
 cargo test -p e2e-tests

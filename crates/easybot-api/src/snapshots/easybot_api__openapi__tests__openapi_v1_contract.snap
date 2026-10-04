@@ -1,6 +1,5 @@
 ---
 source: crates/easybot-api/src/openapi.rs
-assertion_line: 407
 expression: "ApiDoc::openapi()"
 ---
 {
@@ -11,7 +10,7 @@ expression: "ApiDoc::openapi()"
     "license": {
       "name": "GPL-3.0"
     },
-    "version": "0.0.41"
+    "version": "0.0.42"
   },
   "servers": [
     {
@@ -646,7 +645,6 @@ expression: "ApiDoc::openapi()"
         "operationId": "list_rotation_transitions",
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -747,7 +745,6 @@ expression: "ApiDoc::openapi()"
         },
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -1082,7 +1079,6 @@ expression: "ApiDoc::openapi()"
         },
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -1171,7 +1167,6 @@ expression: "ApiDoc::openapi()"
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -1313,7 +1308,6 @@ expression: "ApiDoc::openapi()"
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -1391,7 +1385,6 @@ expression: "ApiDoc::openapi()"
         },
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -1420,9 +1413,7 @@ expression: "ApiDoc::openapi()"
               }
             }
           },
-          "409": {
-            "description": ""
-          },
+          "409": {},
           "429": {
             "description": "Global, IP, or subject quota exceeded",
             "content": {
@@ -1874,7 +1865,6 @@ expression: "ApiDoc::openapi()"
         "operationId": "live",
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -3154,7 +3144,6 @@ expression: "ApiDoc::openapi()"
         "operationId": "ready",
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -3164,7 +3153,6 @@ expression: "ApiDoc::openapi()"
             }
           },
           "503": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -3559,7 +3547,6 @@ expression: "ApiDoc::openapi()"
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {}
@@ -3586,9 +3573,7 @@ expression: "ApiDoc::openapi()"
               }
             }
           },
-          "404": {
-            "description": ""
-          },
+          "404": {},
           "429": {
             "description": "Global, IP, or subject quota exceeded",
             "content": {
@@ -3640,7 +3625,6 @@ expression: "ApiDoc::openapi()"
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -3731,7 +3715,6 @@ expression: "ApiDoc::openapi()"
         },
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -3819,7 +3802,6 @@ expression: "ApiDoc::openapi()"
         ],
         "responses": {
           "200": {
-            "description": "",
             "content": {
               "application/json": {
                 "schema": {
@@ -4180,7 +4162,7 @@ expression: "ApiDoc::openapi()"
     "schemas": {
       "AdapterConfig": {
         "type": "object",
-        "description": "适配器配置（来源自配置文件）\n\n`enabled` 支持三态：\n- `None`（默认）：自动检测 — 凭据环境变量已设置则启用\n- `Some(true)`：强制启用，即使未检测到凭据\n- `Some(false)`：强制禁用，即使凭据已设置",
+        "description": "适配器配置（来源自配置文件）\n\n`enabled` 支持三态：\n- `None`（默认）：自动检测 — 凭据环境变量已设置则启用；\n  无凭据要求的适配器（如个人微信）**默认不启用**，需显式 `Some(true)`\n- `Some(true)`：强制启用，即使未检测到凭据\n- `Some(false)`：强制禁用，即使凭据已设置",
         "properties": {
           "api_key": {
             "type": [
@@ -4340,10 +4322,10 @@ expression: "ApiDoc::openapi()"
           "health": {
             "oneOf": [
               {
-                "type": "null"
+                "$ref": "#/components/schemas/HealthStatus"
               },
               {
-                "$ref": "#/components/schemas/HealthStatus"
+                "type": "null"
               }
             ]
           },
@@ -4688,11 +4670,11 @@ expression: "ApiDoc::openapi()"
           "parse_mode": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/ParseMode",
                 "description": "文本解析模式"
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -4964,10 +4946,10 @@ expression: "ApiDoc::openapi()"
           "limits": {
             "oneOf": [
               {
-                "type": "null"
+                "$ref": "#/components/schemas/CapabilityLimits"
               },
               {
-                "$ref": "#/components/schemas/CapabilityLimits"
+                "type": "null"
               }
             ]
           },
@@ -5112,10 +5094,10 @@ expression: "ApiDoc::openapi()"
           "chat_type": {
             "oneOf": [
               {
-                "type": "null"
+                "$ref": "#/components/schemas/ChatType"
               },
               {
-                "$ref": "#/components/schemas/ChatType"
+                "type": "null"
               }
             ]
           },
@@ -5392,11 +5374,11 @@ expression: "ApiDoc::openapi()"
           "keyboard": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/InlineKeyboard",
                 "description": "更新后的键盘（可选）"
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -5421,22 +5403,22 @@ expression: "ApiDoc::openapi()"
           "keyboard": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/InlineKeyboard",
                 "description": "更新后的行内键盘（可选）"
+              },
+              {
+                "type": "null"
               }
             ]
           },
           "parse_mode": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/ParseMode",
                 "description": "文本解析模式"
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -5560,11 +5542,11 @@ expression: "ApiDoc::openapi()"
           "metadata": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/EventMetadata",
                 "description": "事件元数据"
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -5704,11 +5686,11 @@ expression: "ApiDoc::openapi()"
           "callback": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/CallbackData",
                 "description": "按钮回调"
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -5730,11 +5712,11 @@ expression: "ApiDoc::openapi()"
           "command": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/CommandData",
                 "description": "斜杠命令"
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -5801,11 +5783,11 @@ expression: "ApiDoc::openapi()"
           "reply_to": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/MessageReference",
                 "description": "回复引用"
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -6163,11 +6145,11 @@ expression: "ApiDoc::openapi()"
           "role": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/SenderRole",
                 "description": "发送者角色"
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -6748,24 +6730,34 @@ expression: "ApiDoc::openapi()"
           "keyboard": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/InlineKeyboard",
                 "description": "行内键盘（可选，如果提供则发送交互式消息，优先级低于 media）"
+              },
+              {
+                "type": "null"
               }
             ]
           },
           "media": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/MediaAttachment",
                 "description": "媒体附件（可选，如果提供则发送媒体消息）"
+              },
+              {
+                "type": "null"
               }
             ]
+          },
+          "media_group": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "items": {
+              "$ref": "#/components/schemas/MediaAttachment"
+            },
+            "description": "媒体组 / 相册多图（可选；优先级高于 media 与 keyboard）"
           },
           "metadata": {
             "description": "平台特有元数据"
@@ -6773,11 +6765,11 @@ expression: "ApiDoc::openapi()"
           "parse_mode": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/ParseMode",
                 "description": "文本解析模式（markdown / html / none）"
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -7043,11 +7035,11 @@ expression: "ApiDoc::openapi()"
           "user_role": {
             "oneOf": [
               {
-                "type": "null"
-              },
-              {
                 "$ref": "#/components/schemas/SenderRole",
                 "description": "发送者角色"
+              },
+              {
+                "type": "null"
               }
             ]
           },
@@ -7176,7 +7168,7 @@ expression: "ApiDoc::openapi()"
           },
           "current_version": {
             "type": "string",
-            "example": "0.0.41"
+            "example": "0.0.42"
           },
           "last_checked": {
             "type": [
