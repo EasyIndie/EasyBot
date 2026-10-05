@@ -102,56 +102,19 @@ jobs:
           MACOSX_DEPLOYMENT_TARGET: ${{ matrix.macos-deployment-target || '' }}
         run: cargo build --release --features "default,plugin-system" --target ${{ matrix.target }} --locked
 
-      - name: Check macOS signing credentials
-        if: inputs.operation == 'build' && contains(matrix.target, 'apple-darwin')
-        id: check-macos-cert
-        env:
-          CERT: ${{ secrets.APPLE_DEVELOPER_ID_CERT_BASE64 }}
-        run: |
-          if [ -n "$CERT" ]; then
-            echo "available=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "available=false" >> "$GITHUB_OUTPUT"
-            echo "No Apple signing certificate - macOS binary will be unsigned"
-          fi
-
+      # 签名/公证逻辑与 release.yml 共用同一个 composite action（单一来源）。
+      # 历史实现在此额外调用了 `xcrun stapler staple` —— 裸 Mach-O 不支持 stapling，
+      # 配置凭据后会直接失败，已随本次收敛一并移除。
       - name: Sign and notarize macOS binary
-        if: steps.check-macos-cert.outputs.available == 'true'
-        env:
-          CERT_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_CERT_BASE64 }}
-          CERT_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_CERT_PASSWORD }}
-          NOTARY_API_KEY: ${{ secrets.APPLE_NOTARY_API_KEY_BASE64 }}
-          NOTARY_API_KEY_ID: ${{ secrets.APPLE_NOTARY_API_KEY_ID }}
-          NOTARY_ISSUER: ${{ secrets.APPLE_NOTARY_API_ISSUER }}
-        run: |
-          BINARY="target/${{ matrix.target }}/release/easybot${{ matrix.suffix }}"
-
-          echo "$CERT_BASE64" | base64 --decode > certificate.p12
-          security create-keychain -p temp temp.keychain
-          security default-keychain -s temp.keychain
-          security unlock-keychain -p temp temp.keychain
-          security import certificate.p12 -k temp.keychain \
-            -P "$CERT_PASSWORD" -T /usr/bin/codesign
-          security set-key-partition-list \
-            -S apple-tool:,apple: -s -k temp temp.keychain
-
-          DEVELOPER_ID=$(security find-identity -v -p basic |
-            grep "Developer ID Application" | head -1 | sed 's/.*"\(.*\)"/\1/')
-          codesign --force --sign "$DEVELOPER_ID" \
-            --timestamp --options runtime "$BINARY"
-
-          if [ -n "$NOTARY_API_KEY" ]; then
-            echo "$NOTARY_API_KEY" | base64 --decode > auth_key.p8
-            zip -r "$BINARY.zip" "$BINARY"
-            xcrun notarytool submit "$BINARY.zip" \
-              --key auth_key.p8 --key-id "$NOTARY_API_KEY_ID" \
-              --issuer "$NOTARY_ISSUER" --wait
-            xcrun stapler staple "$BINARY"
-            rm -f "$BINARY.zip" auth_key.p8
-          fi
-
-          rm -f certificate.p12
-          security delete-keychain temp.keychain
+        if: inputs.operation == 'build' && contains(matrix.target, 'apple-darwin')
+        uses: ./.github/actions/macos-sign-notarize
+        with:
+          binary: target/${{ matrix.target }}/release/easybot${{ matrix.suffix }}
+          cert-base64: ${{ secrets.APPLE_DEVELOPER_ID_CERT_BASE64 }}
+          cert-password: ${{ secrets.APPLE_DEVELOPER_ID_CERT_PASSWORD }}
+          notary-api-key: ${{ secrets.APPLE_NOTARY_API_KEY_BASE64 }}
+          notary-key-id: ${{ secrets.APPLE_NOTARY_API_KEY_ID }}
+          notary-issuer: ${{ secrets.APPLE_NOTARY_API_ISSUER }}
 
       - name: Prepare artifact
         if: inputs.operation == 'build'

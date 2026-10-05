@@ -1,0 +1,126 @@
+name: macOS sign and notarize
+description: >
+  Sign a macOS Mach-O binary with a Developer ID Application certificate (Hardened
+  Runtime) and submit it to Apple's notary service. Credentials are passed in as
+  inputs, so this action is reusable by any repository (or any job that built a
+  macOS binary) — see docs/other/macos-notarization.md.
+
+  Without credentials the action emits a warning and leaves the binary unsigned
+  (current default). Set `on-missing: fail` to hard-fail the job instead.
+
+inputs:
+  binary:
+    description: "Path to the built Mach-O binary, relative to the workspace root"
+    required: true
+  cert-base64:
+    description: "Developer ID Application certificate (p12), base64-encoded"
+    required: false
+    default: ""
+  cert-password:
+    description: "Password set when exporting the p12"
+    required: false
+    default: ""
+  notary-api-key:
+    description: "App Store Connect API key (.p8), base64-encoded"
+    required: false
+    default: ""
+  notary-key-id:
+    description: "App Store Connect API Key ID"
+    required: false
+    default: ""
+  notary-issuer:
+    description: "App Store Connect API Issuer ID (UUID)"
+    required: false
+    default: ""
+  on-missing:
+    description: "'warn' (default) publishes an unsigned binary; 'fail' aborts the job"
+    required: false
+    default: "warn"
+
+outputs:
+  signed:
+    description: "'true' when the binary was signed and notarized"
+    value: ${{ steps.check.outputs.available }}
+
+runs:
+  using: composite
+  steps:
+    - name: Check Apple credentials
+      id: check
+      shell: bash
+      env:
+        CERT_BASE64: ${{ inputs.cert-base64 }}
+        CERT_PASSWORD: ${{ inputs.cert-password }}
+        NOTARY_API_KEY: ${{ inputs.notary-api-key }}
+        NOTARY_API_KEY_ID: ${{ inputs.notary-key-id }}
+        NOTARY_ISSUER: ${{ inputs.notary-issuer }}
+        ON_MISSING: ${{ inputs.on-missing }}
+      run: |
+        set -euo pipefail
+        if [ -n "$CERT_BASE64" ] && [ -n "$CERT_PASSWORD" ] \
+          && [ -n "$NOTARY_API_KEY" ] && [ -n "$NOTARY_API_KEY_ID" ] && [ -n "$NOTARY_ISSUER" ]; then
+          echo "available=true" >> "$GITHUB_OUTPUT"
+          exit 0
+        fi
+
+        echo "available=false" >> "$GITHUB_OUTPUT"
+        if [ "$ON_MISSING" = "fail" ]; then
+          echo "::error::Apple signing/notarization credentials are required (on-missing: fail). See docs/other/macos-notarization.md"
+          exit 1
+        fi
+        echo "::warning::Apple signing/notarization credentials are incomplete; publishing an UNSIGNED macOS binary (users will hit a Gatekeeper prompt). See docs/other/macos-notarization.md"
+
+    - name: Sign and notarize
+      if: steps.check.outputs.available == 'true'
+      shell: bash
+      env:
+        CERT_BASE64: ${{ inputs.cert-base64 }}
+        CERT_PASSWORD: ${{ inputs.cert-password }}
+        NOTARY_API_KEY: ${{ inputs.notary-api-key }}
+        NOTARY_API_KEY_ID: ${{ inputs.notary-key-id }}
+        NOTARY_ISSUER: ${{ inputs.notary-issuer }}
+        BINARY: ${{ inputs.binary }}
+      run: |
+        set -euo pipefail
+
+        [ -f "$BINARY" ] || { echo "::error::binary not found: $BINARY"; exit 1; }
+
+        KEYCHAIN="easybot-signing.keychain"
+        cleanup() {
+          rm -f certificate.p12 auth_key.p8 "$BINARY.zip"
+          security delete-keychain "$KEYCHAIN" 2>/dev/null || true
+        }
+        trap cleanup EXIT
+
+        # 1. 导入证书到临时 keychain
+        echo "$CERT_BASE64" | base64 --decode > certificate.p12
+        security create-keychain -p temp "$KEYCHAIN"
+        security default-keychain -s "$KEYCHAIN"
+        security unlock-keychain -p temp "$KEYCHAIN"
+        security import certificate.p12 -k "$KEYCHAIN" \
+          -P "$CERT_PASSWORD" -T /usr/bin/codesign
+        security set-key-partition-list \
+          -S apple-tool:,apple: -s -k temp "$KEYCHAIN"
+
+        # 2. 签名（Hardened Runtime + 安全时间戳）
+        DEVELOPER_ID=$(security find-identity -v -p basic |
+          grep "Developer ID Application" | head -1 | sed 's/.*"\(.*\)"/\1/')
+        [ -n "$DEVELOPER_ID" ] || { echo "::error::no 'Developer ID Application' identity in the imported p12"; exit 1; }
+        echo "Signing with: $DEVELOPER_ID"
+        codesign --force --sign "$DEVELOPER_ID" \
+          --timestamp --options runtime "$BINARY"
+        codesign --verify --strict --verbose=2 "$BINARY"
+
+        # 3. 公证
+        echo "$NOTARY_API_KEY" | base64 --decode > auth_key.p8
+        zip -q -r "$BINARY.zip" "$BINARY"
+        OUT=$(xcrun notarytool submit "$BINARY.zip" \
+          --key auth_key.p8 --key-id "$NOTARY_API_KEY_ID" \
+          --issuer "$NOTARY_ISSUER" --wait 2>&1) || true
+        echo "$OUT"
+        # `notarytool --wait` 对 "Invalid" 结果也可能返回 0：显式断言 Accepted。
+        grep -q 'status: Accepted' <<<"$OUT" \
+          || { echo "::error::notarization was not accepted (expected 'status: Accepted')"; exit 1; }
+        # Raw Mach-O executables do not support stapling. The accepted
+        # notarization ticket remains available to Gatekeeper online.
+        echo "macOS binary signed and notarized: $BINARY"
