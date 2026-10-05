@@ -23,6 +23,11 @@ concurrency:
 jobs:
   coverage:
     runs-on: ubuntu-latest
+    env:
+      # secrets context 不能出现在 if 表达式（job/step 级均解析失败）→ 经 job env 中转，step if 判空。
+      # 未配置 → CODECOV_TOKEN 为空串 → 上传步骤跳过（工作流绿 = Codecov 尚未启用）；
+      # 配置后上传失败（token 过期／网络／分支保护策略）仍会红灯告警（fail_ci_if_error: true）。
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: ./.github/actions/setup-rust
@@ -47,11 +52,24 @@ jobs:
         run: bash scripts/ci-step.sh "llvm-cov" cargo llvm-cov --workspace --features "default,plugin-system" --locked --lcov --output-path lcov.info
 
       - name: Upload coverage to Codecov
+        if: ${{ env.CODECOV_TOKEN != '' }}
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7
         with:
-          token: ${{ secrets.CODECOV_TOKEN }}
+          token: ${{ env.CODECOV_TOKEN }}
           files: lcov.info
           fail_ci_if_error: true
+
+      - name: Coverage upload skipped (CODECOV_TOKEN not configured)
+        if: ${{ env.CODECOV_TOKEN == '' }}
+        shell: bash
+        run: |
+          echo "::notice title=Codecov upload skipped::CODECOV_TOKEN is not configured — lcov.info was generated but not uploaded."
+          {
+            echo "### Coverage upload skipped"
+            echo ""
+            echo "\`CODECOV_TOKEN\` is not configured, so \`lcov.info\` was generated but not uploaded to Codecov."
+            echo "Run \`gh secret set CODECOV_TOKEN\` (or set it in Settings → Secrets) to enable the Codecov gate."
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Cache summary
         if: always()

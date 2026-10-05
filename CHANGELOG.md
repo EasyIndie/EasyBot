@@ -1,6 +1,15 @@
 ## [Unreleased]
 
-## [Unreleased]
+### Fixed
+
+- **`Coverage` 工作流在未配置 `CODECOV_TOKEN` 时必然红灯** — 仓库启用分支保护后，Codecov
+  要求受保护分支的上传必须携带 token；而本仓库只配置了 `GHCR_PRUNE_TOKEN`，
+  `CODECOV_TOKEN` 展开为空串，`Upload coverage to Codecov` 自 2026-10-04 起每次都以
+  `Token required because branch is protected` 失败（push 与每周一 schedule 均失败）。
+  现按 `GHCR_PRUNE_TOKEN` 的同一模式改为**经 job env 中转 + step 判空**：未配置 token 时
+  跳过上传并在 Step Summary 中提示（工作流保持绿，覆盖率仍照常生成）；配置 token 后上传
+  失败依旧红灯（`fail_ci_if_error: true` 不变），门禁语义不受影响。
+- 合并 `CHANGELOG.md` 顶部重复的 `## [Unreleased]` 标题。
 
 ## [0.0.43] - 2026-10-05
 
