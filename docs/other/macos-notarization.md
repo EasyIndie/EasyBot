@@ -124,6 +124,31 @@ inputs（不绑定本仓库的 secret 名），因此可直接被其它仓库/�
 
 > 建议用**团队级密码管理器**保存 `certificate.p12` / `.p8` 与密码本体——它们是团队资产，不是项目资产。
 
+## Windows（Authenticode 签名）
+
+对称地，Windows 产物用 `.github/actions/windows-sign`（同为 composite action，凭据走 inputs）：
+
+| Secret | 值 |
+|---|---|
+| `WINDOWS_CODE_SIGNING_CERT_BASE64` | 代码签名证书（`.pfx`，base64 编码） |
+| `WINDOWS_CODE_SIGNING_CERT_PASSWORD` | 导出 pfx 时的密码 |
+
+```yaml
+      - name: Sign Windows binary
+        if: contains(matrix.target, 'windows-msvc')
+        uses: EasyIndie/EasyBot/.github/actions/windows-sign@v0.0.43
+        with:
+          binary: target/${{ matrix.target }}/release/myapp.exe
+          cert-base64: ${{ secrets.WINDOWS_CODE_SIGNING_CERT_BASE64 }}
+          cert-password: ${{ secrets.WINDOWS_CODE_SIGNING_CERT_PASSWORD }}
+```
+
+行为与 macOS 侧一致：缺凭据默认**告警 + 发布未签名产物**，传 `on-missing: fail` 改为硬失败；
+签名后独立复核（`Get-AuthenticodeSignature`），并检查是否带时间戳证书。
+
+> 证书与 macOS 的 Developer ID 类似是**团队级资产**（OV/EV 代码签名证书，一般 1–3 年有效），
+> 所有 Windows 应用共用一份。未签名的 Windows 产物用户会看到 SmartScreen「未知发布者」提示。
+
 ## 没有 Mac 时：用 `rcodesign` 替代
 
 上面第 1 步依赖 macOS 的 Keychain Access。若手上没有 Mac，可用纯 Rust 的
