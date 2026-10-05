@@ -274,64 +274,19 @@ jobs:
           MACOSX_DEPLOYMENT_TARGET: ${{ matrix.macos-deployment-target || '' }}
         run: cargo build --release --features "default,plugin-system" --target ${{ matrix.target }} --locked
 
-      # ── macOS 签名 + 公证（可选，凭据存在时自动执行） ──
-      - name: Check macOS signing credentials
-        if: contains(matrix.target, 'apple-darwin')
-        id: check-macos-cert
-        env:
-          CERT: ${{ secrets.APPLE_DEVELOPER_ID_CERT_BASE64 }}
-          CERT_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_CERT_PASSWORD }}
-          NOTARY_API_KEY: ${{ secrets.APPLE_NOTARY_API_KEY_BASE64 }}
-          NOTARY_API_KEY_ID: ${{ secrets.APPLE_NOTARY_API_KEY_ID }}
-          NOTARY_ISSUER: ${{ secrets.APPLE_NOTARY_API_ISSUER }}
-        run: |
-          if [ -n "$CERT" ] && [ -n "$CERT_PASSWORD" ] && [ -n "$NOTARY_API_KEY" ] && [ -n "$NOTARY_API_KEY_ID" ] && [ -n "$NOTARY_ISSUER" ]; then
-            echo "available=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "available=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::Apple signing/notarization secrets are incomplete; publishing an unsigned macOS binary."
-          fi
-
+      # ── macOS 签名 + 公证（凭据存在时自动执行）──
+      # 逻辑收敛在 .github/actions/macos-sign-notarize（可被其它仓库/其它 job 复用）；
+      # 缺凭据时默认告警并发布未签名二进制，可传 on-missing: fail 改为硬失败。
       - name: Sign and notarize macOS binary
-        if: steps.check-macos-cert.outputs.available == 'true'
-        env:
-          CERT_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_CERT_BASE64 }}
-          CERT_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_CERT_PASSWORD }}
-          NOTARY_API_KEY: ${{ secrets.APPLE_NOTARY_API_KEY_BASE64 }}
-          NOTARY_API_KEY_ID: ${{ secrets.APPLE_NOTARY_API_KEY_ID }}
-          NOTARY_ISSUER: ${{ secrets.APPLE_NOTARY_API_ISSUER }}
-        run: |
-          BINARY="target/${{ matrix.target }}/release/easybot${{ matrix.suffix }}"
-
-          # 1. 导入证书到临时 keychain
-          echo "$CERT_BASE64" | base64 --decode > certificate.p12
-          security create-keychain -p temp temp.keychain
-          security default-keychain -s temp.keychain
-          security unlock-keychain -p temp temp.keychain
-          security import certificate.p12 -k temp.keychain \
-            -P "$CERT_PASSWORD" -T /usr/bin/codesign
-          security set-key-partition-list \
-            -S apple-tool:,apple: -s -k temp temp.keychain
-
-          # 2. 签名（启用 Hardened Runtime）
-          DEVELOPER_ID=$(security find-identity -v -p basic |
-            grep "Developer ID Application" | head -1 | sed 's/.*"\(.*\)"/\1/')
-          codesign --force --sign "$DEVELOPER_ID" \
-            --timestamp --options runtime "$BINARY"
-
-          # 3. 公证
-          echo "$NOTARY_API_KEY" | base64 --decode > auth_key.p8
-          zip -r "$BINARY.zip" "$BINARY"
-          xcrun notarytool submit "$BINARY.zip" \
-            --key auth_key.p8 --key-id "$NOTARY_API_KEY_ID" \
-            --issuer "$NOTARY_ISSUER" --wait
-          # Raw Mach-O executables do not support stapling. The accepted
-          # notarization ticket remains available to Gatekeeper online.
-          rm -f "$BINARY.zip" auth_key.p8
-
-          # 清理证书
-          rm -f certificate.p12
-          security delete-keychain temp.keychain
+        if: contains(matrix.target, 'apple-darwin')
+        uses: ./.github/actions/macos-sign-notarize
+        with:
+          binary: target/${{ matrix.target }}/release/easybot${{ matrix.suffix }}
+          cert-base64: ${{ secrets.APPLE_DEVELOPER_ID_CERT_BASE64 }}
+          cert-password: ${{ secrets.APPLE_DEVELOPER_ID_CERT_PASSWORD }}
+          notary-api-key: ${{ secrets.APPLE_NOTARY_API_KEY_BASE64 }}
+          notary-key-id: ${{ secrets.APPLE_NOTARY_API_KEY_ID }}
+          notary-issuer: ${{ secrets.APPLE_NOTARY_API_ISSUER }}
 
       - name: Check Windows signing credentials
         if: contains(matrix.target, 'windows-msvc')
