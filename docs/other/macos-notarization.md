@@ -67,7 +67,82 @@ EasyBot 发布工作流支持可选 macOS 代码签名 + Apple 公证。启用�
 
 ## 不设置凭据时
 
-商业 Release 会失败并停止发布，不会产生未签名的 macOS 资产。开发构建不受此门禁影响。
+**默认行为是「告警 + 继续发布未签名的 macOS 二进制」**，不是中止发布：
+
+```
+##[warning]Apple signing/notarization credentials are incomplete;
+           publishing an UNSIGNED macOS binary (users will hit a Gatekeeper prompt).
+```
+
+未签名的 macOS 产物用户首次运行会被 Gatekeeper 拦下，需要右键 → 打开，或：
+
+```bash
+xattr -d com.apple.quarantine ./easybot
+```
+
+若要让发布在缺凭据时**硬失败**（推荐用于正式商业发布），在调用处传 `on-missing: fail`：
+
+```yaml
+        uses: ./.github/actions/macos-sign-notarize
+        with:
+          binary: target/${{ matrix.target }}/release/easybot${{ matrix.suffix }}
+          on-missing: fail          # ← 缺凭据直接报错，不发布未签名产物
+          cert-base64: ${{ secrets.APPLE_DEVELOPER_ID_CERT_BASE64 }}
+          # ...
+```
+
+> ⚠️ 历史文档曾声称「商业 Release 会失败并停止发布」——那是**错误的**：工作流里没有任何强制门禁，
+> 只有上述告警。现已改为可显式选择 `warn`（默认，保持向后兼容）/ `fail`。
+
+## 在其它项目复用
+
+签名 + 公证逻辑已抽成 composite action **`.github/actions/macos-sign-notarize`**，凭据全部走
+inputs（不绑定本仓库的 secret 名），因此可直接被其它仓库/其它 job 调用：
+
+```yaml
+      - name: Sign and notarize macOS binary
+        if: contains(matrix.target, 'apple-darwin')
+        uses: EasyIndie/EasyBot/.github/actions/macos-sign-notarize@v0.0.43
+        with:
+          binary: target/${{ matrix.target }}/release/myapp
+          cert-base64: ${{ secrets.APPLE_DEVELOPER_ID_CERT_BASE64 }}
+          cert-password: ${{ secrets.APPLE_DEVELOPER_ID_CERT_PASSWORD }}
+          notary-api-key: ${{ secrets.APPLE_NOTARY_API_KEY_BASE64 }}
+          notary-key-id: ${{ secrets.APPLE_NOTARY_API_KEY_ID }}
+          notary-issuer: ${{ secrets.APPLE_NOTARY_API_ISSUER }}
+```
+
+**关于「每个项目都要重做一遍吗」**：不用。Developer ID 证书与 App Store Connect API Key 都是
+**按 Apple Developer 团队**签发的（不是按项目）——生成一次即可被所有 macOS 应用复用，证书 5 年有效。
+真正重复的只是「把同一组 5 个值填进每个仓库的 secrets」，可通过下列方式消除：
+
+| 方式 | 适用 |
+|---|---|
+| **Organization / Environment secrets** | 同一 org 内的所有仓库共享，零复制；轮换只改一处（推荐） |
+| `gh secret set <NAME> -R <repo> < file` 脚本 | 跨 org / 个人账号仓库 |
+| fastlane `match` | 把证书存进加密的私有仓库或对象存储，CI 里自动安装（跨 CI 平台） |
+
+> 建议用**团队级密码管理器**保存 `certificate.p12` / `.p8` 与密码本体——它们是团队资产，不是项目资产。
+
+## 没有 Mac 时：用 `rcodesign` 替代
+
+上面第 1 步依赖 macOS 的 Keychain Access。若手上没有 Mac，可用纯 Rust 的
+[`rcodesign`](https://crates.io/crates/apple-codesign)（`cargo install apple-codesign`）：
+在 Linux/Windows 上生成 CSR、用 PEM 私钥 + 证书直接签名、并提交公证（`rcodesign notary-submit`），
+无需手工拼 p12。
+
+**用手工 `openssl` 合成 p12 时的坑**：OpenSSL 3.x 默认用 AES-256/PBKDF2，macOS 的
+`security import` 解不开（报 `MAC verification failed`）。必须显式指定旧算法，并带上 Apple 的
+Developer ID G2 中间证书：
+
+```bash
+curl -fsSLO https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer
+openssl x509 -inform DER -in DeveloperIDG2CA.cer -out DeveloperIDG2CA.pem
+cat cert.pem DeveloperIDG2CA.pem > chain.pem
+openssl pkcs12 -export -inkey developerid.key -in chain.pem -out certificate.p12 \
+  -name "Developer ID Application" -passout "pass:$P12_PASSWORD" \
+  -keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES -macalg sha1
+```
 
 ## 常见问题
 
