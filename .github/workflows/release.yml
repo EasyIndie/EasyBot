@@ -288,35 +288,16 @@ jobs:
           notary-key-id: ${{ secrets.APPLE_NOTARY_API_KEY_ID }}
           notary-issuer: ${{ secrets.APPLE_NOTARY_API_ISSUER }}
 
-      - name: Check Windows signing credentials
-        if: contains(matrix.target, 'windows-msvc')
-        id: check-windows-cert
-        shell: pwsh
-        env:
-          CERT: ${{ secrets.WINDOWS_CODE_SIGNING_CERT_BASE64 }}
-          CERT_PASSWORD: ${{ secrets.WINDOWS_CODE_SIGNING_CERT_PASSWORD }}
-        run: |
-          if ($env:CERT -and $env:CERT_PASSWORD) { "available=true" >> $env:GITHUB_OUTPUT }
-          else {
-            "available=false" >> $env:GITHUB_OUTPUT
-            Write-Warning "Windows code-signing secrets are incomplete; publishing an unsigned Windows binary."
-          }
-
+      # ── Windows Authenticode 签名（凭据存在时自动执行）──
+      # 逻辑收敛在 .github/actions/windows-sign（可被其它仓库/其它 job 复用）；
+      # 缺凭据时默认告警并发布未签名二进制，可传 on-missing: fail 改为硬失败。
       - name: Sign Windows binary
-        if: steps.check-windows-cert.outputs.available == 'true'
-        shell: pwsh
-        env:
-          CERT_BASE64: ${{ secrets.WINDOWS_CODE_SIGNING_CERT_BASE64 }}
-          CERT_PASSWORD: ${{ secrets.WINDOWS_CODE_SIGNING_CERT_PASSWORD }}
-        run: |
-          $binary = "target/${{ matrix.target }}/release/easybot${{ matrix.suffix }}"
-          [IO.File]::WriteAllBytes("certificate.pfx", [Convert]::FromBase64String($env:CERT_BASE64))
-          $password = ConvertTo-SecureString $env:CERT_PASSWORD -AsPlainText -Force
-          $cert = Import-PfxCertificate -FilePath certificate.pfx -CertStoreLocation Cert:\CurrentUser\My -Password $password
-          $signature = Set-AuthenticodeSignature -FilePath $binary -Certificate $cert -HashAlgorithm SHA256 -TimestampServer "http://timestamp.digicert.com"
-          if ($signature.Status -ne "Valid") { throw "Authenticode signing failed: $($signature.StatusMessage)" }
-          Remove-Item "Cert:\CurrentUser\My\$($cert.Thumbprint)" -Force
-          Remove-Item certificate.pfx -Force
+        if: contains(matrix.target, 'windows-msvc')
+        uses: ./.github/actions/windows-sign
+        with:
+          binary: target/${{ matrix.target }}/release/easybot${{ matrix.suffix }}
+          cert-base64: ${{ secrets.WINDOWS_CODE_SIGNING_CERT_BASE64 }}
+          cert-password: ${{ secrets.WINDOWS_CODE_SIGNING_CERT_PASSWORD }}
 
       - name: Prepare artifact
         shell: bash

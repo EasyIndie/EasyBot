@@ -1,0 +1,101 @@
+name: Windows sign
+description: >
+  Authenticode-sign a Windows PE binary with a pfx code-signing certificate and a
+  DigiCert RFC 3161 timestamp. Credentials are passed in as inputs, so this action
+  is reusable by any repository (or any job that built a Windows binary).
+
+  Without credentials the action emits a warning and leaves the binary unsigned
+  (current default). Set `on-missing: fail` to hard-fail the job instead.
+
+inputs:
+  binary:
+    description: "Path to the built PE binary, relative to the workspace root"
+    required: true
+  cert-base64:
+    description: "Code-signing certificate (pfx), base64-encoded"
+    required: false
+    default: ""
+  cert-password:
+    description: "Password of the exported pfx"
+    required: false
+    default: ""
+  timestamp-server:
+    description: "Authenticode timestamp server (RFC 3161)"
+    required: false
+    default: "http://timestamp.digicert.com"
+  on-missing:
+    description: "'warn' (default) publishes an unsigned binary; 'fail' aborts the job"
+    required: false
+    default: "warn"
+
+outputs:
+  signed:
+    description: "'true' when the binary was Authenticode-signed"
+    value: ${{ steps.check.outputs.available }}
+
+runs:
+  using: composite
+  steps:
+    - name: Check Windows signing credentials
+      id: check
+      shell: pwsh
+      env:
+        CERT_BASE64: ${{ inputs.cert-base64 }}
+        CERT_PASSWORD: ${{ inputs.cert-password }}
+        ON_MISSING: ${{ inputs.on-missing }}
+      run: |
+        if ($env:CERT_BASE64 -and $env:CERT_PASSWORD) {
+          "available=true" >> $env:GITHUB_OUTPUT
+          exit 0
+        }
+        "available=false" >> $env:GITHUB_OUTPUT
+        if ($env:ON_MISSING -eq 'fail') {
+          throw "Windows code-signing credentials are required (on-missing: fail)."
+        }
+        Write-Warning "Windows code-signing secrets are incomplete; publishing an UNSIGNED Windows binary (users will see an unknown-publisher SmartScreen prompt)."
+
+    - name: Sign Windows binary
+      if: steps.check.outputs.available == 'true'
+      shell: pwsh
+      env:
+        CERT_BASE64: ${{ inputs.cert-base64 }}
+        CERT_PASSWORD: ${{ inputs.cert-password }}
+        TIMESTAMP_SERVER: ${{ inputs.timestamp-server }}
+        BINARY: ${{ inputs.binary }}
+      run: |
+        $ErrorActionPreference = 'Stop'
+
+        if (-not (Test-Path $env:BINARY)) { throw "binary not found: $($env:BINARY)" }
+
+        # 临时文件/证书存储条目必须无条件清理（含异常路径）
+        $pfx = Join-Path $env:RUNNER_TEMP 'easysign.pfx'
+        $cert = $null
+        try {
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:CERT_BASE64))
+          $password = ConvertTo-SecureString $env:CERT_PASSWORD -AsPlainText -Force
+          $cert = Import-PfxCertificate -FilePath $pfx `
+            -CertStoreLocation Cert:\CurrentUser\My -Password $password
+          if (-not $cert) { throw "pfx contained no usable certificate" }
+          Write-Host "Signing with: $($cert.Subject) (thumbprint $($cert.Thumbprint))"
+
+          $signature = Set-AuthenticodeSignature -FilePath $env:BINARY `
+            -Certificate $cert -HashAlgorithm SHA256 `
+            -TimestampServer $env:TIMESTAMP_SERVER
+          if ($signature.Status -ne 'Valid') {
+            throw "Authenticode signing failed: $($signature.Status) — $($signature.StatusMessage)"
+          }
+
+          # 独立复核：确认签名与时间戳都真的落在文件上
+          $verify = Get-AuthenticodeSignature -FilePath $env:BINARY
+          if ($verify.Status -ne 'Valid') {
+            throw "signature verification failed: $($verify.Status)"
+          }
+          if (-not $verify.TimeStamperCertificate) {
+            Write-Warning "No timestamp certificate on the signature — the signature will expire with the certificate."
+          }
+          Write-Host "Windows binary Authenticode-signed: $env:BINARY"
+        }
+        finally {
+          if ($cert) { Remove-Item "Cert:\CurrentUser\My\$($cert.Thumbprint)" -Force -ErrorAction SilentlyContinue }
+          Remove-Item $pfx -Force -ErrorAction SilentlyContinue
+        }
