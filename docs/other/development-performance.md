@@ -58,7 +58,9 @@ Docker Desktop 数据文件的表观大小并不等于可回收空间，以 `doc
 - coverage 另在每周一运行，可手动触发；安全审计与灾备门禁保持独立。覆盖率门禁由仓库根 `codecov.yml`
   定义（project `target: auto` + `threshold: 1%`，patch `target: 75%`），需在分支保护中把
   `codecov/project` 与 `codecov/patch` 设为 required 才能阻止不达标合并；`coverage.yml`
-  已设 `fail_ci_if_error: true`，上传失败会显式报错（不再 `continue-on-error`）。
+  已设 `fail_ci_if_error: true`，**配置了** `CODECOV_TOKEN` 后上传失败会显式报错
+  （不再 `continue-on-error`）。token 经 job env 中转后由 step `if` 判空：未配置时跳过上传
+  并在 Step Summary 中提示（工作流保持绿），避免「尚未接入 Codecov」被误报成 CI 红灯。
 
 CI 的 protoc 固定为官方 v23.4 发布包，并在各 runner 上校验 SHA-256 后安装。
 不依赖 Homebrew、apt 或 Node.js setup action，以避免 runner 全局状态警告和
