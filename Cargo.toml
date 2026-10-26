@@ -92,7 +92,7 @@ futures = "0.3"
 tokio-stream = { version = "0.1", features = ["sync"] }
 tokio-tungstenite = { version = "0.30", default-features = false }
 dashmap = "6"
-parking_lot = "0.12"
+parking_lot = "0.13"
 async-trait = "0.1"
 
 # OpenAPI / Swagger
