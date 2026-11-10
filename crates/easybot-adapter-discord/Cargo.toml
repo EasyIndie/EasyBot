@@ -18,7 +18,7 @@ base64.workspace = true
 
 # Discord Gateway SDK (v0.17)
 twilight-gateway = { version = "0.17", default-features = false, features = ["rustls-platform-verifier", "twilight-http", "zlib"] }
-twilight-model = "0.17"
+twilight-model = "0.18"
 
 [dev-dependencies]
 wiremock = "0.6"
