@@ -15,6 +15,17 @@ updates:
     commit-message:
       prefix: "chore"
       include: "scope"
+    groups:
+      # 所有 minor/patch 升级合并成**一个** PR；major 仍单独成 PR（需要人工评审）。
+      #
+      # 这不只是省 CI：`audit` 是分支保护的必需检查，而 dependabot 默认「一依赖一 PR」。
+      # 当 RustSec 一次公布多条 advisory（2026-10-09 那次是 14 条）时，任何单个 PR 都只
+      # 修一条，`audit` 永远无法转绿 → 所有依赖 PR 互相死锁（2026-11-10 实际发生过）。
+      # 分组后一轮升级只产生一个 PR，可一次清完全部 advisory。
+      cargo-minor-patch:
+        applies-to: version-updates
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
 
   # ── GitHub Actions updates ──────────────────────────────────────────
   - package-ecosystem: "github-actions"
@@ -31,3 +42,31 @@ updates:
     commit-message:
       prefix: "chore"
       include: "scope"
+    groups:
+      # Actions 版本升级已全部固定为 40 位 SHA，成组更新可把 5~6 个 PR 收敛为 1 个。
+      github-actions:
+        applies-to: version-updates
+        patterns: ["*"]
+
+  # ── 前端 npm（仅开发依赖，crates/easybot-api/templates） ─────────────
+  # 该目录此前没有 version-updates 配置，只靠 security updates 兜底触发，
+  # 导致 vite/vitest/minimatch 之类只能等安全通告才升级。
+  - package-ecosystem: "npm"
+    directory: "/crates/easybot-api/templates"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "Asia/Shanghai"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "javascript"
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+    groups:
+      npm-minor-patch:
+        applies-to: version-updates
+        patterns: ["*"]
+        update-types: ["minor", "patch"]

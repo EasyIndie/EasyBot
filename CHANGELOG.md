@@ -2,6 +2,12 @@
 
 ### Security
 
+- **前端开发依赖 `minimatch` 强制升级到 11（清掉最后一条 Dependabot 告警）** —
+  `eslint` → `@eslint/config-array` 只声明 `minimatch ^10.2.x`，而 advisory 要求 `>= 11.0.1`，
+  上游 eslint 10.14.0 仍未跟进。在 `crates/easybot-api/templates/package.json` 加
+  `overrides.minimatch = "^11.0.1"`（实际解析到 11.0.6），`npm install` 后 `npm audit`
+  报 `found 0 vulnerabilities`；`eslint` 与 `vitest` 均已实测通过（29/29）。
+  该依赖仅为前端开发期使用（`npm ci` + `npm test` + `npm run lint`），不进二进制也不进镜像。
 - **依赖树中的 14 个 RUSTSEC 漏洞（含 1 个 critical）全部清除** — 自 2026-10 起
   `Security Audit` 工作流在 `main` 上持续红灯，并把 `audit` 作为必需检查的 PR 全部
   卡死（10 个 dependabot PR 全部 `BLOCKED`）。根因是 RustSec 在 10/09–10/28 期间连续
@@ -22,6 +28,21 @@
   （需 rusqlite 0.41 / 更晚的 sqlx）。已在 `deny.toml` 与 `.cargo/audit.toml`
   中带理由忽略：触发条件要求本地攻击者已能写入配置目录内的数据库文件**及其**
   `-wal` 兄弟文件，属于本地已失陷场景；sqlx 升级后立即移除该忽略。
+
+### Changed
+
+- **依赖升级改为分组（`groups`），避免 `audit` 门禁再次死锁** —
+  dependabot 原为「一依赖一 PR」，当 RustSec 一次公布多条 advisory 时，
+  没有任何单个 PR 能让必需检查 `audit` 转绿，全部 PR 互相阻塞。现将
+  **cargo / github-actions / npm** 三个生态的 minor+patch 升级各自合并为一个 PR
+  （major 仍单独成 PR 供人工评审），并把前端 `crates/easybot-api/templates`
+  从未配置的 npm 生态正式纳入每周 version-updates（此前只靠 security updates 兜底）。
+- **merge queue 改为批量构建，减少条目被反复取消** — ruleset 的 merge queue 从
+  `max_entries_to_build: 2 / min_entries_to_merge_wait_minutes: 0` 调整为
+  `5 / 5`：原先队列每合入一条就改变基底，正在跑的下一个条目的 `merge_group` 构建随即被取消
+  重建（macOS runner 排队最久，`cross-check` 的 macOS 任务因此多次被取消，现象是 job
+  没有任何 step、恰好 15 分钟整 `cancelled`，**并非 job 超时**）。改为批量后一轮最多
+  合并 5 条、只跑一次全量 CI。
 
 ### Fixed
 
