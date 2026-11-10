@@ -147,6 +147,17 @@ gh api -X PATCH repos/EasyIndie/EasyBot/branches/main/protection/required_pull_r
 1. `gh pr view <n> --json mergeStateStatus,reviewDecision`：`BLOCKED` + `REVIEW_REQUIRED` 表示评审门禁未满足（单人时改 required approvals=0）。
 2. `gh pr view <n> --json statusCheckRollup`：任一 required check 失败/缺失都不会入队。
 3. `strict_required_status_checks_policy` 要求分支为最新；过旧请先 rebase（Dependabot 会自动 rebase）。
+4. `gh pr merge <n>` 对**已启用 auto-merge** 的 PR 是空操作；要立即入队先 `gh pr merge <n> --disable-auto` 再 `gh pr merge <n>`。
+5. 入队后仍可能被「队列基底变化」（别的条目先合入）取消重建；若某个 PR 被弹出队列，重新执行第 4 步即可。`cross-check` 的 macOS 任务因 runner 紧张最容易被这一波取消（现象：job 无任何 step、恰好 15 分钟整 `cancelled`，不是超时）。
+
+### 依赖升级策略
+
+`.github/dependabot.yml` 对 **cargo / github-actions / npm(前端)** 三个生态都开启了 `groups`：
+
+- minor + patch 合并为**一个** PR，major 单独成 PR（需人工评审）。
+- 原因不只是省 CI：`audit` 是必需检查，而「一依赖一 PR」在 RustSec 一次公布多条 advisory 时会让所有依赖 PR **互相死锁**（2026-10-09 一次公布 14 条，10 个 dependabot PR 全部 `BLOCKED`，单个 PR 永远凑不齐一次绿）。分组后一轮升级一个 PR，可一次清完。
+- 前端 npm 目录（`crates/easybot-api/templates`）此前只有 security updates 兜底，现同样纳入每周 version-updates。
+- 因 MSRV 而暂缓的升级（如 `parking_lot` 0.13 要求 Rust 1.95 > `rust-version`）应关 PR 并在此说明，而不是静默抬高 MSRV。
 
 ## Feature Flags
 
