@@ -60,6 +60,14 @@
   没有任何 step、恰好 15 分钟整 `cancelled`，**并非 job 超时**）。改为批量后一轮最多
   合并 5 条、只跑一次全量 CI。
 
+
+- **Discord 适配器升级到 twilight 0.18** — 0.18 去掉了 `MessageCreate` 的
+  newtype + `Box<Message>` 包装（内部字段变私有，`msg.0` 不再可见），改为
+  `struct MessageCreate { channel_type, #[serde(flatten)] message: Message }` 并实现
+  `Deref<Target = Message>`。适配器相应改为 `msg.guild_id` / `&msg.message`
+  （`crates/easybot-adapter-discord/src/lib.rs`）。`twilight-*` 现已成组升级，
+  `cargo deny` 的 `multiple-versions` 也保持干净。
+
 ### Fixed
 
 - **`Coverage` 工作流在未配置 `CODECOV_TOKEN` 时必然红灯** — 仓库启用分支保护后，Codecov

@@ -538,7 +538,7 @@ impl DiscordAdapter {
                             heartbeat.beat_success(); // stream-health: message received
 
                             // Resolve guild owner from cache
-                            let guild_id_str = msg.0.guild_id.map(|g| g.to_string());
+                            let guild_id_str = msg.guild_id.map(|g| g.to_string());
                             let owner_id = guild_id_str.as_ref().and_then(|gid| {
                                 guild_owner_cache.try_lock().ok()
                                     .and_then(|cache| cache.get(gid).cloned())
@@ -583,7 +583,7 @@ impl DiscordAdapter {
                                     .and_then(|cache| cache.get(gid).cloned())
                             });
                             if let Some(inbound) = DiscordAdapter::convert_message(
-                                &msg.0,
+                                &msg.message,
                                 &bot_user_id,
                                 owner_id.as_deref(),
                                 guild_name.as_deref(),
