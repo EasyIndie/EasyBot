@@ -56,7 +56,7 @@ jobs:
         run: bash scripts/ci-step.sh "CLI binary build" cargo build -p easybot-bin --bin easybot --features "default,plugin-system" --locked
 
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@4076c08d76dba979c11a7285295b0716c1d67908 # v2
+        uses: taiki-e/install-action@ab6895351a88b908e96a4697860d4ffea5e57dbe # v2
         with:
           tool: cargo-nextest
 
