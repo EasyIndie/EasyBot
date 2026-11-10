@@ -7,10 +7,10 @@
     "lint": "eslint js tests"
   },
   "devDependencies": {
-    "eslint": "^10.11.0",
-    "globals": "^17.13.0",
+    "eslint": "^10.14.0",
+    "globals": "^17.14.0",
     "jsdom": "^31.0.0",
-    "vitest": "^5.0.3"
+    "vitest": "^5.1.0"
   },
   "overrides": {
     "minimatch": "^11.0.1"
