@@ -15,7 +15,30 @@ updates:
     commit-message:
       prefix: "chore"
       include: "scope"
+    ignore:
+      # 0.3.13 新增 `p256 ^0.13` → elliptic-curve 0.13 → crypto-bigint 0.5.5，而 crypto-bigint
+      # 的 advisory 要求 >= 0.7.6（p256 0.13 的 `^0.5` 范围到不了）。在 `audit` 是必需检查的
+      # 前提下它无法合并，精确忽略这一版；0.3.14+ 仍会正常提 PR（上游换掉 p256 后即可升级）。
+      - dependency-name: "larksuite-oapi-sdk-rs"
+        versions: [">= 0.3.13, < 0.3.14"]
+      # 0.13 把 MSRV 抬到 Rust 1.95，超过本仓库声明的 `rust-version = "1.94"`；
+      # 0.12 系列继续收 patch。
+      - dependency-name: "parking_lot"
+        versions: [">= 0.13.0, < 0.14.0"]
+      # 0.40.1 无条件调用 `libc::statx` 读取 GPU 设备属性，而 libc 只在
+      # `target_env = "gnu"` / android / musl v1.2.3（需显式开启 unstable cfg）下提供该符号
+      # → 本仓库的主发布产物（x86_64/aarch64 musl 静态二进制）全部编译失败。
+      # 上游尚未修复（master 仍是同一段代码），等 0.41+ 再升。
+      - dependency-name: "sysinfo"
+        versions: [">= 0.40.0, < 0.41.0"]
     groups:
+      # twilight 的每个 crate 之间是硬依赖（`twilight-gateway` 内部依赖同版本的
+      # `twilight-http` / `twilight-model`），major 必须成组升级：单独升其中一两个会让
+      # 同一 crate 出现两个版本，`cargo deny` 的 `multiple-versions = "deny"` 直接拦下。
+      # 必须排在 `cargo-minor-patch` 之前（先匹配者生效）。
+      twilight:
+        applies-to: version-updates
+        patterns: ["twilight-*"]
       # 所有 minor/patch 升级合并成**一个** PR；major 仍单独成 PR（需要人工评审）。
       #
       # 这不只是省 CI：`audit` 是分支保护的必需检查，而 dependabot 默认「一依赖一 PR」。
@@ -26,6 +49,12 @@ updates:
         applies-to: version-updates
         patterns: ["*"]
         update-types: ["minor", "patch"]
+        exclude-patterns:
+          # larksuite 0.3.13 新增 `p256 ^0.13` → elliptic-curve 0.13 → crypto-bigint 0.5.5，
+          # 而 crypto-bigint 已进入 advisory（需 >= 0.7.6，p256 0.13 的 ^0.5 范围到不了）。
+          # 升上去会直接把 `audit` 弄红，故踢出分组、单独成 PR 跟踪：等上游换掉 p256
+          # 再合；免得一条被卡的依赖把整组的合法升级（本次是 `aes`）一起挡住。
+          - "larksuite-oapi-sdk-rs"
 
   # ── GitHub Actions updates ──────────────────────────────────────────
   - package-ecosystem: "github-actions"

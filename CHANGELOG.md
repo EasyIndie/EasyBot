@@ -37,6 +37,22 @@
   **cargo / github-actions / npm** 三个生态的 minor+patch 升级各自合并为一个 PR
   （major 仍单独成 PR 供人工评审），并把前端 `crates/easybot-api/templates`
   从未配置的 npm 生态正式纳入每周 version-updates（此前只靠 security updates 兜底）。
+- **被 `audit` / MSRV / 交叉编译卡住的依赖改为「精确忽略版本」** — `dependabot.yml` 新增
+  `ignore`，只忽略确知不可用的区间，更高版本（上游修好后）仍会正常提 PR：
+  - `larksuite-oapi-sdk-rs`：`>= 0.3.13, < 0.3.14`（引入 p256 0.13 → crypto-bigint 0.5.5）；
+  - `parking_lot`：`>= 0.13.0, < 0.14.0`（MSRV 1.95 > `rust-version` 1.94）；
+  - `sysinfo`：`>= 0.40.0, < 0.41.0`——0.40.1 无条件调用 `libc::statx`，而 libc 仅在
+    `target_env = "gnu"` / android / musl v1.2.3（需显式开启 unstable cfg）下导出该符号，
+    导致本仓库主发布产物（musl 静态二进制）编译失败；上游 master 仍是同一段代码。
+- **被 `audit` 卡住的依赖不再毒化整组升级** — 分组后的第一轮实测立刻暴露了这个问题：
+  `cargo-minor-patch` 组里 `aes` 0.9.3→0.9.4 本身无害，但同组的
+  `larksuite-oapi-sdk-rs` 0.3.12→0.3.13 **新增 `p256 ^0.13`**，连带拉入
+  `elliptic-curve 0.13` → `crypto-bigint 0.5.5`（advisory 要求 `>= 0.7.6`，而 p256 0.13
+  的范围是 `^0.5`，根本升不上去），整组 PR 因此 `audit` 红灯。现把该 crate 放进
+  `exclude-patterns`，单独成 PR 跟踪，`aes` 等合法升级得以单独落地。
+- **`twilight-*` 单独成组，major 同步升级** — 它们之间是硬依赖（`twilight-gateway`
+  内部依赖同版本的 `twilight-http` / `twilight-model`），dependabot 只升其中一两个会让
+  同一 crate 出现两个版本，直接被 `cargo deny` 的 `multiple-versions = "deny"` 拦下。
 - **merge queue 改为批量构建，减少条目被反复取消** — ruleset 的 merge queue 从
   `max_entries_to_build: 2 / min_entries_to_merge_wait_minutes: 0` 调整为
   `5 / 5`：原先队列每合入一条就改变基底，正在跑的下一个条目的 `merge_group` 构建随即被取消
