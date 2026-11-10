@@ -157,7 +157,10 @@ gh api -X PATCH repos/EasyIndie/EasyBot/branches/main/protection/required_pull_r
 - minor + patch 合并为**一个** PR，major 单独成 PR（需人工评审）。
 - 原因不只是省 CI：`audit` 是必需检查，而「一依赖一 PR」在 RustSec 一次公布多条 advisory 时会让所有依赖 PR **互相死锁**（2026-10-09 一次公布 14 条，10 个 dependabot PR 全部 `BLOCKED`，单个 PR 永远凑不齐一次绿）。分组后一轮升级一个 PR，可一次清完。
 - 前端 npm 目录（`crates/easybot-api/templates`）此前只有 security updates 兜底，现同样纳入每周 version-updates。
+- `twilight-*` 单独成组（必须先于 `cargo-minor-patch` 匹配）：它们的各个 crate 是硬依赖，major 不同步升级会让同一 crate 出现两版，被 `cargo deny` 的 `multiple-versions = "deny"` 拦下。
+- **被 `audit` 卡住的依赖 `exclude-patterns` 出分组 + `ignore` 精确忽略该版本**，而不是让整组一起红：例如 `larksuite-oapi-sdk-rs` 0.3.13 引入 `p256 0.13` → `crypto-bigint 0.5.5`（advisory 要求 `>= 0.7.6`，超出 p256 的 `^0.5` 范围），只能等上游换栈。用版本区间 `>= 0.3.13, < 0.3.14` 而不是 `"*"`，上游修好后的更高版本仍会正常提 PR。
 - 因 MSRV 而暂缓的升级（如 `parking_lot` 0.13 要求 Rust 1.95 > `rust-version`）应关 PR 并在此说明，而不是静默抬高 MSRV。
+- 因**交叉编译**而暂缓的升级也要同样处理：`sysinfo` 0.40 无条件调用 `libc::statx`（该符号在 musl 下默认不导出），会让本仓库的 musl 静态发布产物编译失败，故忽略 `>= 0.40.0, < 0.41.0`，等上游修复。
 
 ## Feature Flags
 
