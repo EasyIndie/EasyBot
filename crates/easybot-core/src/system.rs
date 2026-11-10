@@ -70,16 +70,66 @@ pub struct BinaryInfo {
     pub profile: String,
 }
 
+/// `System` 初始化失败时的降级快照：所有数值归零，字符串标 `Unavailable`。
+///
+/// 调用方（`/system` 接口）靠它保持 200：拿不到负载数据不应该让整个系统页 500。
+fn degraded_system_info() -> SystemInfo {
+    SystemInfo {
+        os: OsInfo {
+            name: "Unavailable".into(),
+            version: "Unavailable".into(),
+            hostname: "Unavailable".into(),
+            kernel: None,
+        },
+        cpu: CpuInfo {
+            brand: "Unknown".into(),
+            cores: 0,
+            usage: 0.0,
+            load_avg_1: None,
+            load_avg_5: None,
+            load_avg_15: None,
+        },
+        memory: MemoryInfo {
+            total_gb: 0.0,
+            used_gb: 0.0,
+            percent: 0.0,
+        },
+        disk: DiskInfo {
+            total_gb: 0.0,
+            used_gb: 0.0,
+            percent: 0.0,
+        },
+        process: ProcessInfo {
+            memory_mb: 0.0,
+            cpu_percent: 0.0,
+            uptime: 0,
+            start_time: 0,
+        },
+        binary: BinaryInfo {
+            profile: if cfg!(debug_assertions) {
+                "debug".into()
+            } else {
+                "release".into()
+            },
+        },
+    }
+}
+
 /// 采集系统信息（首次调用约耗时 100-200ms）
 pub fn collect_system_info() -> SystemInfo {
-    // sysinfo 0.33 API:
-    //   - System::new() creates a System without refreshing anything
-    //   - call refresh_*() methods to populate data
-    let mut sys = System::new();
+    // sysinfo 0.40 API:
+    //   - `System::new()` / `Disks::new_with_refreshed_list()` / `System::load_average()` /
+    //     `System::physical_core_count()` 等构造器与静态查询**均返回 `Result`**；
+    //     实例方法（`refresh_*` / `cpus()` / `total_memory()` / `process()`）仍是不可失败的。
+    //   - 采集失败不应让 `/system` 接口整个 500，因此逐项降级为 0 / None。
+    let mut sys = match System::new() {
+        Ok(sys) => sys,
+        Err(_) => return degraded_system_info(),
+    };
 
     // CPU
     sys.refresh_cpu_all();
-    let cpu_cores = System::physical_core_count().unwrap_or(sys.cpus().len());
+    let cpu_cores = System::physical_core_count().unwrap_or_else(|_| sys.cpus().len());
     let cpu_brand = if !sys.cpus().is_empty() {
         sys.cpus()[0].brand().to_string()
     } else {
@@ -87,8 +137,8 @@ pub fn collect_system_info() -> SystemInfo {
     };
     let cpu_usage = sys.global_cpu_usage() as f64;
 
-    // 负载均值（Windows 不可用）
-    let load_avg = System::load_average();
+    // 负载均值（Windows 不可用；0.40 起返回 Result）
+    let load_avg = System::load_average().unwrap_or_default();
     let load_avg_1 = if load_avg.one > 0.0 {
         Some(load_avg.one)
     } else {
@@ -116,15 +166,17 @@ pub fn collect_system_info() -> SystemInfo {
     };
 
     // 磁盘：取容量最大的分区（即主磁盘，自动跳过 /proc 等虚拟分区且避免 APFS 重复计数）
-    let disks = Disks::new_with_refreshed_list();
-    let (disk_total, disk_used) = disks
-        .iter()
-        .max_by_key(|d| d.total_space())
-        .map(|d| {
-            let used = d.total_space().saturating_sub(d.available_space());
-            (d.total_space(), used)
-        })
-        .unwrap_or((0, 0));
+    let (disk_total, disk_used) = match Disks::new_with_refreshed_list() {
+        Ok(disks) => disks
+            .iter()
+            .max_by_key(|d| d.total_space())
+            .map(|d| {
+                let used = d.total_space().saturating_sub(d.available_space());
+                (d.total_space(), used)
+            })
+            .unwrap_or((0, 0)),
+        Err(_) => (0, 0),
+    };
     let disk_percent = if disk_total > 0 {
         (disk_used as f64 / disk_total as f64) * 100.0
     } else {
@@ -154,10 +206,10 @@ pub fn collect_system_info() -> SystemInfo {
 
     SystemInfo {
         os: OsInfo {
-            name: System::name().unwrap_or_else(|| "Unknown".into()),
-            version: System::long_os_version().unwrap_or_else(|| "Unknown".into()),
-            hostname: System::host_name().unwrap_or_else(|| "Unknown".into()),
-            kernel: System::kernel_version(),
+            name: System::name().unwrap_or_else(|_| "Unknown".into()),
+            version: System::long_os_version().unwrap_or_else(|_| "Unknown".into()),
+            hostname: System::host_name().unwrap_or_else(|_| "Unknown".into()),
+            kernel: System::kernel_version().ok(),
         },
         cpu: CpuInfo {
             brand: cpu_brand,

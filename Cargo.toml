@@ -80,7 +80,7 @@ ed25519-dalek = { version = "3", features = ["pkcs8", "rand_core"] }
 
 # 可观测性
 prometheus = { version = "0.14", features = ["process"] }
-sysinfo = "0.39"
+sysinfo = "0.40"
 
 # 动态库加载
 

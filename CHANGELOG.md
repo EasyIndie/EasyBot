@@ -44,6 +44,16 @@
   没有任何 step、恰好 15 分钟整 `cancelled`，**并非 job 超时**）。改为批量后一轮最多
   合并 5 条、只跑一次全量 CI。
 
+
+- **`sysinfo` 0.39 → 0.40（构造器与静态查询改为 `Result`）** — 0.40 把
+  `System::new()` / `System::new_all()` / `Disks::new_with_refreshed_list()` /
+  `System::load_average()` / `System::physical_core_count()` 以及
+  `System::{name,long_os_version,host_name,kernel_version}` 等**全部改成返回 `Result`**
+  （实例方法 `refresh_*` / `cpus()` / `total_memory()` / `process()` 仍是不可失败的）。
+  `crates/easybot-core/src/system.rs` 已适配：逐项降级（负载/磁盘失败取 0 或 `None`），
+  并新增 `degraded_system_info()` —— `System` 初始化失败时 `/system` 仍返回 200 的全零
+  快照，而不是整页 500。
+
 ### Fixed
 
 - **`Coverage` 工作流在未配置 `CODECOV_TOKEN` 时必然红灯** — 仓库启用分支保护后，Codecov
