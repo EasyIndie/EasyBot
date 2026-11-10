@@ -1,5 +1,28 @@
 ## [Unreleased]
 
+### Security
+
+- **依赖树中的 14 个 RUSTSEC 漏洞（含 1 个 critical）全部清除** — 自 2026-10 起
+  `Security Audit` 工作流在 `main` 上持续红灯，并把 `audit` 作为必需检查的 PR 全部
+  卡死（10 个 dependabot PR 全部 `BLOCKED`）。根因是 RustSec 在 10/09–10/28 期间连续
+  公布了多个漏洞，而单个 dependabot PR 只能修其中一项，永远无法让 `audit` 转绿。
+  本次合并修复：
+  - `utoipa-swagger-ui` 10.0.1 → 10.0.2，把构建期依赖 `zip` 8.6.0 → 9.5.0
+    （RUSTSEC-2026-0367/0368/0369/0429，含 symlink 逃逸与 SUID 提权，1 个 critical）；
+  - `pulldown-cmark` 0.13.4 → 0.13.6（RUSTSEC-2026-0414/0433，wikilink 解析 DoS）；
+  - `rustls` 0.23.45 → 0.23.46（RUSTSEC-2026-0346~0349，TLS 密钥泄漏 / ECH 降级）；
+  - `rustls-webpki` 0.103.15 → 0.103.16（RUSTSEC-2026-0382，证书链校验绕过）；
+  - `webpki-roots` / `webpki-root-certs` 1.0.9 → 1.0.11（RUSTSEC-2026-0381/0383，
+    内置根证书信任了被吊销的 emSign 中间证书）；
+  - `ctutils` 0.4.2 → 0.4.8（RUSTSEC-2026-0385，非常量时间掩码比较）；
+  - `tokio` 1.53.1 → 1.54.1（RUSTSEC-2026-0386，`AsyncFd` 违反 I/O safety）。
+  `cargo audit --deny warnings --no-yanked` 与 `cargo deny check` 现已全绿。
+- **`libsqlite3-sys`（CVE-2026-119375 / RUSTSEC-2026-0459）暂以文档化忽略处理** —
+  sqlx 0.9.0 把 `libsqlite3-sys` 限定在 `>=0.30.1, <0.38.0`，而修复版为 0.39
+  （需 rusqlite 0.41 / 更晚的 sqlx）。已在 `deny.toml` 与 `.cargo/audit.toml`
+  中带理由忽略：触发条件要求本地攻击者已能写入配置目录内的数据库文件**及其**
+  `-wal` 兄弟文件，属于本地已失陷场景；sqlx 升级后立即移除该忽略。
+
 ### Fixed
 
 - **`Coverage` 工作流在未配置 `CODECOV_TOKEN` 时必然红灯** — 仓库启用分支保护后，Codecov
