@@ -1,7 +1,14 @@
 name: Pull Request Labeler
 
+# `pull_request` 来自 fork 时 GITHUB_TOKEN 恒为只读（fork PR 无写权限，与 permissions
+# 声明无关），labeler 打标签会以 `Resource not accessible by integration` 失败。
+# 改用 `pull_request_target`：在基仓库上下文执行、token 可写。
+# 安全前提：本 workflow 不 checkout 也不执行 PR 的代码，labeler 只按基分支的
+# `.github/labeler.yml` 规则读 PR 的文件列表 —— 因此不存在「fork 代码拿到写 token」的风险。
+# 若将来要在此 workflow 里 checkout PR 代码，必须同时设置 persist-credentials: false
+# 并审慎评估，否则请退回 `pull_request`。
 on:
-  pull_request:
+  pull_request_target:
     types: [opened, reopened, synchronize]
 
 permissions:
