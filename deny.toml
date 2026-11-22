@@ -14,6 +14,12 @@ ignore = [
     # unreachable until an upstream sqlx release picks up rusqlite 0.41. Exposure requires
     # a local attacker able to write both files in the config directory; revisit on sqlx bump.
     "RUSTSEC-2026-0459",
+    # chrono is unmaintained (RUSTSEC-2026-0543, no patched version available).
+    # It is a direct workspace dependency (all adapters + sqlx `chrono` feature), so the
+    # "workspace" unmaintained policy catches it. Actual usage is `Utc::now()` timestamps
+    # and RFC3339 parsing only — no known vulnerability, only a maintenance risk.
+    # Revisit when the adapters migrate to `jiff`/`time`.
+    "RUSTSEC-2026-0543",
 ]
 
 [licenses]
