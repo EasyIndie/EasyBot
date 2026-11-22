@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## [0.0.44] - 2026-11-23
+
 ### Security
 
 - **前端开发依赖 `minimatch` 强制升级到 11（清掉最后一条 Dependabot 告警）** —
