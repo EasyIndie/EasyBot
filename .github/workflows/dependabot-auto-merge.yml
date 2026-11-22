@@ -26,11 +26,41 @@ jobs:
       # Patch/minor dependency bumps are safe to auto-merge once the
       # required checks (full CI + merge queue) pass. Major bumps stay
       # manual — they can carry breaking changes.
+      #
+      # `main` 的 ruleset 启用了 merge queue（SQUASH），`gh pr merge --auto` 在这种分支上
+      # 只是写下 autoMergeRequest，**并不会把 PR 放进队列**：2026-11 实测 #195 从 11-16
+      # 起就带着 auto-merge、检查全绿却始终停在 OPEN，#199 同样卡在 CLEAN，最终都是人工
+      # 调 `enqueuePullRequest` 才合入。因此第 1 步只保留 `--auto` 作为“意图标记”
+      # （同时兼容将来若关闭队列），真正生效靠第 2 步显式入队：入队后由 merge queue
+      # 自己构建 merge group 跑全量 CI，通过才落库，语义与 auto-merge 等价。
       - name: Enable auto-merge for patch and minor
         if: |
           steps.metadata.outputs.update-type == 'version-update:semver-patch' ||
           steps.metadata.outputs.update-type == 'version-update:semver-minor'
-        run: gh pr merge --auto --squash "$PR_URL"
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        # 已存在其它 merge method 的 autoMergeRequest 时 `gh` 会报错（dependabot 复用
+        # 分支的场景），不影响下一步入队，因此不因它中断。
+        run: gh pr merge --auto --squash "$PR_URL" || true
+
+      - name: Enqueue into the merge queue
+        if: |
+          github.event.pull_request.state == 'open' &&
+          !github.event.pull_request.draft &&
+          (steps.metadata.outputs.update-type == 'version-update:semver-patch' ||
+           steps.metadata.outputs.update-type == 'version-update:semver-minor')
+        env:
+          PR_ID: ${{ github.event.pull_request.node_id }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -uo pipefail
+          if out=$(gh api graphql \
+            -f query='mutation($id: ID!) { enqueuePullRequest(input: {pullRequestId: $id}) { mergeQueueEntry { position state } } }' \
+            -f id="$PR_ID" 2>&1); then
+            echo "已加入 merge queue：$out"
+          else
+            # 常见且无害：PR 已在队列中、必需检查尚未通过、或存在冲突。auto-merge 标记
+            # 仍在，GitHub 会在条件满足时处理；用 warning 把真实原因留在 job summary 里。
+            echo "::warning::enqueue 未成功（通常是已在队列中、必需检查未通过或存在冲突）：$out"
+          fi
