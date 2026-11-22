@@ -402,10 +402,7 @@ fn is_uuid(s: &str) -> bool {
         }
     }
     // 无连字符 UUID: 32 chars
-    if len == 32 && s.chars().all(|c| c.is_ascii_hexdigit()) {
-        return true;
-    }
-    false
+    len == 32 && s.chars().all(|c| c.is_ascii_hexdigit())
 }
 
 /// `/metrics` 端点处理器

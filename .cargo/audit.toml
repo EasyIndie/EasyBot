@@ -5,4 +5,9 @@ ignore = [
     # `libsqlite3-sys >=0.30.1, <0.38.0`; the patched 0.39 arrives with rusqlite 0.41,
     # which needs a newer sqlx. See deny.toml for the full justification.
     "RUSTSEC-2026-0459",
+    # chrono is unmaintained (RUSTSEC-2026-0543, no patched version). It is a direct
+    # workspace dep (adapters + sqlx `chrono` feature) and only used for UTC timestamps,
+    # so the "unmaintained" status carries no known vulnerability. Migration to
+    # `jiff`/`time` is a separate refactor; see deny.toml for the same exemption.
+    "RUSTSEC-2026-0543",
 ]
