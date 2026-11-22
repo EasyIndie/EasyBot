@@ -449,11 +449,11 @@ impl QqAdapter {
 
     /// 判断错误是否为"资源不存在"（级联到下一个端点），
     /// 如果是鉴权/限流/其他错误则立即返回，不级联。
+    ///
+    /// 判定表（含 `11255` / `err_code 40011028`）与解析逻辑锁步维护在
+    /// `auth::is_not_found_response` / `auth::is_not_found_error`。
     fn is_not_found_error(e: &GatewayError) -> bool {
-        let msg = e.to_string();
-        // QQ 业务错误码 11263 = 资源不存在（频道/群/用户）
-        // HTTP 404 = 端点不存在
-        msg.contains("404") || msg.contains("11263")
+        auth::is_not_found_error(e)
     }
 
     /// 发送消息到 QQ，根据已知的 chat type 直接路由到正确端点。
