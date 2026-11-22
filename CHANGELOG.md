@@ -28,9 +28,24 @@
   （需 rusqlite 0.41 / 更晚的 sqlx）。已在 `deny.toml` 与 `.cargo/audit.toml`
   中带理由忽略：触发条件要求本地攻击者已能写入配置目录内的数据库文件**及其**
   `-wal` 兄弟文件，属于本地已失陷场景；sqlx 升级后立即移除该忽略。
+- **`url` / `rustix` 两条 RUSTSEC 修复，`chrono` 转为未维护并文档化豁免** —
+  `audit` 在 `main` 上剩余的三处红灯：RUSTSEC-2026-0592（`url` 2.5.8 处理嵌套
+  `blob:` URL 时在 `Url::origin()` 栈溢出）升到 2.5.9；RUSTSEC-2026-0486
+  （`rustix` 1.1.5 的 xattr 在零长度缓冲区下把未写入字节标记为已初始化）升到 1.1.6；
+  RUSTSEC-2026-0543 把 `chrono` 0.4.45 标记为**未维护**（无修复版本）。`chrono` 是
+  直接 workspace 依赖（6 个适配器 + sqlx `chrono` feature），实际用法仅
+  `Utc::now()` 时间戳与 RFC3339 解析，属维护风险而非已知漏洞 —— 先在 `deny.toml` 与
+  `.cargo/audit.toml` 双处带理由豁免，迁移 `jiff`/`time` 另行安排。
 
 ### Changed
 
+- **`Pull Request Labeler` 改用 `pull_request_target`，修 fork PR 打标签失败** —
+  来自 fork 的 PR 上，`on: pull_request` 的 `GITHUB_TOKEN` 恒为只读（workflow 里写
+  `pull-requests: write` 也不生效），labeler 每次以
+  `HttpError: Resource not accessible by integration` 失败；同仓的 dependabot 分支则正常，
+  所以问题长期只在 fork PR 上出现。该 workflow **不 checkout、不执行** PR 代码，只按
+  基分支的 `.github/labeler.yml` 读变更文件列表来打标签，改用 `pull_request_target`
+  不存在写 token 被 fork 代码滥用的路径，workflow 注释里已写明该前提。
 - **依赖升级改为分组（`groups`），避免 `audit` 门禁再次死锁** —
   dependabot 原为「一依赖一 PR」，当 RustSec 一次公布多条 advisory 时，
   没有任何单个 PR 能让必需检查 `audit` 转绿，全部 PR 互相阻塞。现将
@@ -70,6 +85,17 @@
 
 ### Fixed
 
+- **QQ 适配器：级联发送漏判 `11255`/`40011028`，重启后 DM 主动消息发不出去** —
+  `chat_types` 缓存为空时（网关刚重启），`try_send_cascade` 按
+  `channel → group → C2C` 回退；而 QQ 以用户 openid 打
+  `/v2/groups/{openid}/messages` 返回的是 HTTP 400 +
+  `{"code":11255,"err_code":40011028,"message":"请求的资源不存在(用户/群已注销)"}`。
+  旧判定只认 `404` / `11263`，级联于是在 group 这一级中止，
+  `/v2/users/{openid}/messages` 永远不会被尝试 —— 外部表现是「时而能发、时而不能发」
+  （用户私聊一次 bot 后缓存命中、直连 C2C 即恢复）。现把 `11255` / `40011028`
+  纳入「资源不存在」，两处字符串解析统一抽到 `auth::split_qq_api_error`，并在
+  `crates/easybot-adapter-qq/tests/send_mock.rs` 增加「频道 404 → 群返回 11255 → C2C 成功」
+  的回归用例。
 - **`Coverage` 工作流在未配置 `CODECOV_TOKEN` 时必然红灯** — 仓库启用分支保护后，Codecov
   要求受保护分支的上传必须携带 token；而本仓库只配置了 `GHCR_PRUNE_TOKEN`，
   `CODECOV_TOKEN` 展开为空串，`Upload coverage to Codecov` 自 2026-10-04 起每次都以
