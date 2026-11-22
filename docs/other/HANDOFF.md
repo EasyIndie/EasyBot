@@ -1,6 +1,6 @@
 # 交接上下文（压缩版）
 
-> 目的：替代长对话历史。**保持简短，勿扩写。** 最后更新：2026-10-05。
+> 目的：替代长对话历史。**保持简短，勿扩写。** 最后更新：2026-11-23。
 
 ## 环境 / 命令速查
 
@@ -8,11 +8,11 @@
 |---|---|
 | 仓库根 | WSL `/mnt/e/EasyBot` |
 | cargo | 先 `export PATH="/root/.cargo/bin:$PATH"` |
-| 全量测试 | `cargo test --workspace --features "default,plugin-system" --locked`（当前 **861 passed**） |
+| 全量测试 | `cargo test --workspace --features "default,plugin-system" --locked`（当前 **864 passed**） |
 | 插件测试 | 先 `cargo build -p ipc-mock-plugin`；再 `cargo test -p easybot-core --features plugin-system --test ipc_adapter` |
 | 前端测试 | `cd crates/easybot-api/templates && npm test`（29）/ `npm run lint` |
 | 发布预检 | `bash scripts/release-preflight.sh`（**禁止 `\| tail`**，用 `> /tmp/log 2>&1; echo $?`） |
-| 推送门禁 | `.githooks/pre-push` → `scripts/verify-push.sh`（需 PATH 有 cargo，约 20 min） |
+| 推送门禁 | `.githooks/pre-push` → `scripts/verify-push.sh`（需 PATH 有 cargo，约 20 min）。**代理环境下 e2e wiremock 用例会假失败**（`NO_PROXY` 里的 `127.*` 不被 reqwest 识别），先 `unset http_proxy https_proxy HTTP_PROXY HTTPS_PROXY` |
 | 规范 | **不 git commit 除非用户要求**；`cargo fmt --all --check` + `clippy -D warnings` 必须干净 |
 
 **`/tmp` 是 7.8G tmpfs 且常被他人占满** —— 大文件/构建请放 `/mnt/e/...`（盘子大）。
@@ -22,10 +22,9 @@
 | 事项 | 说明 |
 |---|---|
 | 凭据 | git credential helper 可用（40 字符 token）；`git push` / API 均可 |
-| `main` 保护 | **必须走 PR**（`pull_request` 规则，0 必需审批 + 必需状态检查）。直接 push main 被拒 |
-| 可用流程 | 推分支 → `POST /repos/EasyIndie/EasyBot/pulls` → 等 CI 全绿 → `PUT .../pulls/<n>/merge`（`merge_method: rebase`）→ tag push |
-| 取 token | `printf 'protocol=https\nhost=github.com\n\n' \| git credential fill \| sed -n 's/^password=//p'` |
-| 无 `gh` CLI | 一律用 curl + GitHub REST API |
+| `gh` CLI | 已装：WSL 里走 `/mnt/c/Program\ Files/GitHub\ CLI/gh.exe`（Windows 路径参数如 `--body-file` 需用 `E:\...` 形式） |
+| `main` 保护 | ruleset「Default」：必须走 PR + **14 项必需状态检查** + **merge queue（SQUASH）**；admin 有 bypass（`git push` 直推可行，v0.0.43/v0.0.44 发布即如此） |
+| 可用流程 | 推分支 → `gh pr create` → 等 CI 全绿 → **显式入队**：`gh api graphql -f query='mutation{enqueuePullRequest(input:{pullRequestId:"PR_ID"}){mergeQueueEntry{position state}}}'`（`gh pr merge --auto` / `--squash` 在 merge queue 分支上只写 autoMergeRequest，**不会入队**；dependabot PR 已由 workflow 自动入队） |
 
 **rebase-merge 陷阱**：分支若基于**旧 main** 再 rebase，merge 时会重放导致提交标题错配（本项目已踩）。**正确做法**：分支从 `origin/main` 最新处切出。
 
@@ -33,7 +32,7 @@
 
 | 仓库 | main | tag | 状态 |
 |---|---|---|---|
-| `EasyIndie/EasyBot` | `aedc4e7` | **v0.0.42 / v0.0.43** | 均已发布（各 15 产物：6 平台二进制 + SPDX SBOM + deploy-kit + version.json） |
+| `EasyIndie/EasyBot` | `4b39bb0` | **v0.0.43 / v0.0.44** | 均已发布（各 15 产物：6 平台二进制 + SPDX SBOM + deploy-kit + version.json） |
 | `EasyIndie/easybot-hello-adapter` | `2d4ba06` | **v0.2.0** | 已发布（6 平台可执行文件 + ed25519 签名） |
 
 **已合并 PR**：#148（v0.0.42 主体，118 文件）、#153（release.yml 修 ABI 路径）、#154（v0.0.43 双重 init 修复）。
