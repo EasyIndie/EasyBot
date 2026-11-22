@@ -144,21 +144,47 @@ pub(crate) fn qq_api_error_msg(method: &str, path: &str, status: u16, body: &str
 /// 适配 `send_with_token_retry` 的谓词：解析 `qq_api_error_msg` 产物 → 委托
 /// `is_qq_token_invalid_response`。生产者/解析器同在本文件，锁步维护。
 pub(crate) fn is_token_invalid_error(e: &GatewayError) -> bool {
+    match split_qq_api_error(e) {
+        Some((status, body)) => is_qq_token_invalid_response(status, body),
+        None => false,
+    }
+}
+
+/// 判断是否为「资源不存在」——三级回退 `channel → group → C2C` 的**继续**条件。
+///
+/// QQ 对同一个语义有多种返回形态，**漏掉任何一种都会让回退在错误的那一级中断**：
+/// - HTTP 404：端点不存在
+/// - 业务码 11263：资源不存在（频道/群/用户）
+/// - 业务码 11255 / `err_code` 40011028：「请求的资源不存在(用户/群已注销)」——
+///   拿**用户 openid** 去打 `/v2/groups/{openid}/messages` 时返回的就是这个（2026-11 实测）。
+///   漏判后果很具体：`chat_types` 缓存为空时（如网关刚重启），发给 DM 会话的主动消息会停在
+///   group 端点、永远到不了 `/v2/users/…`；而同一目标在收到过一次入站消息后又能发成功
+///   （缓存命中 → 直连 C2C），表现为「时而能发、时而不能发」。
+pub(crate) fn is_not_found_response(status: u16, body: &str) -> bool {
+    status == 404 || body.contains("11263") || body.contains("11255") || body.contains("40011028")
+}
+
+/// 适配 `try_send_cascade` 的谓词：解析 `qq_api_error_msg` 产物 → 委托 `is_not_found_response`。
+pub(crate) fn is_not_found_error(e: &GatewayError) -> bool {
+    match split_qq_api_error(e) {
+        Some((status, body)) => is_not_found_response(status, body),
+        None => false,
+    }
+}
+
+/// 解析 `qq_api_error_msg` 产物 `QQ API error (METHOD path): STATUS - body` → `(STATUS, body)`。
+///
+/// 非该格式（网络层 `Transient`、配置错误、解析失败等）一律 `None`：这些错误的语义不是
+/// “端点选错了”，不应参与级联判定。
+fn split_qq_api_error(e: &GatewayError) -> Option<(u16, &str)> {
     let GatewayError::Internal(msg) = e else {
-        return false;
+        return None;
     };
-    let Some(rest) = msg.strip_prefix("QQ API error (") else {
-        return false;
-    };
-    let Some(after) = rest.split("): ").nth(1) else {
-        return false;
-    };
+    let rest = msg.strip_prefix("QQ API error (")?;
+    let after = rest.split("): ").nth(1)?;
     let mut parts = after.splitn(2, " - ");
-    let Some(status) = parts.next().and_then(|s| s.parse::<u16>().ok()) else {
-        return false;
-    };
-    let body = parts.next().unwrap_or("");
-    is_qq_token_invalid_response(status, body)
+    let status = parts.next()?.parse::<u16>().ok()?;
+    Some((status, parts.next().unwrap_or("")))
 }
 
 #[cfg(test)]
@@ -168,6 +194,44 @@ mod tests {
     #[test]
     fn auth_header_format() {
         assert_eq!(qq_auth_header("abc123"), "QQBot abc123");
+    }
+
+    #[test]
+    fn not_found_response_covers_all_qq_shapes() {
+        // 端点不存在
+        assert!(is_not_found_response(404, ""));
+        // 业务码 11263（频道/群/用户不存在）
+        assert!(is_not_found_response(
+            400,
+            r#"{"code":11263,"message":"资源不存在"}"#
+        ));
+        // 业务码 11255 / err_code 40011028：用户 openid 打群端点时 QQ 的真实返回
+        assert!(is_not_found_response(
+            400,
+            r#"{"message":"请求的资源不存在(用户/群已注销)","code":11255,"err_code":40011028}"#
+        ));
+        // 鉴权/限流/平台内部错误不是“端点选错了”，必须终止级联
+        assert!(!is_not_found_response(401, ""));
+        assert!(!is_not_found_response(
+            400,
+            r#"{"code":11244,"message":"token not exist or expire"}"#
+        ));
+        assert!(!is_not_found_response(500, r#"{"code":12000}"#));
+    }
+
+    #[test]
+    fn not_found_error_parses_error_msg_and_ignores_transient() {
+        let err = GatewayError::Internal(qq_api_error_msg(
+            "POST",
+            "/v2/groups/48395B1DDFE2FFCCB57775A50C960403/messages",
+            400,
+            r#"{"message":"请求的资源不存在(用户/群已注销)","code":11255,"err_code":40011028}"#,
+        ));
+        assert!(is_not_found_error(&err));
+        // 网络层瞬态错误不得参与级联判定
+        assert!(!is_not_found_error(&GatewayError::Transient(
+            "QQ POST /v2/users/x/messages failed: timeout".into()
+        )));
     }
 
     #[test]

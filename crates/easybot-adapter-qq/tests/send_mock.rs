@@ -218,6 +218,63 @@ async fn test_send_message_success() {
     assert_eq!(adapter.state(), AdapterState::Connected);
 }
 
+/// 回归测试：`chat_types` 缓存为空（例如网关刚重启）时，发给 **DM 会话**的主动消息必须能级联到
+/// C2C 端点，而不是停在 group 端点。
+///
+/// 真实场景（2026-11 实测于 OrzMC 测试服）：以用户 openid 打 `/v2/groups/{openid}/messages`，
+/// QQ 返回 HTTP 400 + `{"code":11255,"err_code":40011028,"message":"请求的资源不存在(用户/群已注销)"}`。
+/// 旧实现只把 `11263` / `404` 当“资源不存在”，于是级联在这里中止 → DM 主动消息永远发不出去；
+/// 而同一目标在收到过一次入站消息后（缓存命中 → 直连 C2C）又能发成功，表现为「时而能发时而不能发」。
+#[tokio::test]
+async fn test_send_cascade_falls_through_business_not_found_to_c2c() {
+    let mock_server = MockServer::start().await;
+    mock_qq_token(&mock_server).await;
+    mock_qq_bot_info(&mock_server).await;
+
+    let dm_openid = "48395B1DDFE2FFCCB57775A50C960403";
+
+    // ① 频道端点：404（不是频道）→ 继续级联
+    Mock::given(method("POST"))
+        .and(path(format!("/channels/{dm_openid}/messages")))
+        .respond_with(ResponseTemplate::new(404))
+        .mount(&mock_server)
+        .await;
+
+    // ② 群端点：QQ 对“用户 openid 当群用”的真实返回 → 必须继续级联
+    Mock::given(method("POST"))
+        .and(path(format!("/v2/groups/{dm_openid}/messages")))
+        .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
+            "message": "请求的资源不存在(用户/群已注销)",
+            "code": 11255,
+            "err_code": 40011028
+        })))
+        .mount(&mock_server)
+        .await;
+
+    // ③ C2C 端点：成功
+    Mock::given(method("POST"))
+        .and(path(format!("/v2/users/{dm_openid}/messages")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "id": "msg_c2c_ok",
+            "timestamp": "2026-11-22T00:00:00+00:00"
+        })))
+        .mount(&mock_server)
+        .await;
+
+    let mut adapter = easybot_adapter_qq::QqAdapter::new();
+    adapter
+        .init(qq_config_with_auth(mock_server.address().port()))
+        .await
+        .unwrap();
+    adapter.connect().await.unwrap();
+
+    let mut params = send_text_params();
+    params.chat_id = dm_openid.to_string();
+    let result = adapter.send(params).await.unwrap();
+    assert!(result.success);
+    assert_eq!(result.message_id, Some("msg_c2c_ok".to_string()));
+}
+
 /// 回归测试：QQ API 以 HTTP 500 + 业务错误码 11244
 /// （"token not exist or expire"）返回 token 失效时，send 应主动刷新 token 并重试一次。
 #[tokio::test]
