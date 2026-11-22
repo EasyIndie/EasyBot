@@ -46,6 +46,14 @@
   所以问题长期只在 fork PR 上出现。该 workflow **不 checkout、不执行** PR 代码，只按
   基分支的 `.github/labeler.yml` 读变更文件列表来打标签，改用 `pull_request_target`
   不存在写 token 被 fork 代码滥用的路径，workflow 注释里已写明该前提。
+- **dependabot PR 不再「检查全绿也不合入」** — `main` 的 ruleset 启用了 merge queue
+  （SQUASH），而 `Dependabot auto-merge` 只调 `gh pr merge --auto --squash`：在这种分支上
+  `--auto` 只写下 `autoMergeRequest`，**不会把 PR 放进队列**。#195 自 11-16 起就带着
+  auto-merge、检查全绿却始终停在 OPEN，#199 同样卡在 CLEAN，两个都是人工调
+  `enqueuePullRequest` 才合入的。现在工作流在 `--auto` 之后显式入队（GraphQL
+  `enqueuePullRequest`，失败只出 `::warning::` 并把原因写进 job summary）；patch/minor
+  仍自动、major 仍人工评审。顺带补建了 `.github/dependabot.yml` 引用却一直不存在的
+  `rust` 标签（此前每个 cargo PR 都在报 `The following labels could not be found: rust`）。
 - **依赖升级改为分组（`groups`），避免 `audit` 门禁再次死锁** —
   dependabot 原为「一依赖一 PR」，当 RustSec 一次公布多条 advisory 时，
   没有任何单个 PR 能让必需检查 `audit` 转绿，全部 PR 互相阻塞。现将
@@ -74,8 +82,12 @@
   重建（macOS runner 排队最久，`cross-check` 的 macOS 任务因此多次被取消，现象是 job
   没有任何 step、恰好 15 分钟整 `cancelled`，**并非 job 超时**）。改为批量后一轮最多
   合并 5 条、只跑一次全量 CI。
-
-
+- **macOS 公证与 Windows Authenticode 签名抽成可复用 composite action** —
+  `release.yml` 与 `platform-matrix.yml` 里两段（已开始分叉的）内联逻辑收敛为
+  `.github/actions/macos-sign-notarize` 与 `.github/actions/windows-sign`：凭据全部走
+  `inputs`，无凭据时只打 warning 并发布未签名二进制（`on-missing: fail` 可改为硬失败）。
+  外部仓库可直接 `uses: EasyIndie/EasyBot/.github/actions/…@v0.0.44` 复用，
+  用法见 `docs/other/macos-notarization.md`。
 - **Discord 适配器升级到 twilight 0.18** — 0.18 去掉了 `MessageCreate` 的
   newtype + `Box<Message>` 包装（内部字段变私有，`msg.0` 不再可见），改为
   `struct MessageCreate { channel_type, #[serde(flatten)] message: Message }` 并实现
