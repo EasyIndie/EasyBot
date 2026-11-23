@@ -100,7 +100,7 @@ utoipa = "6"
 utoipa-swagger-ui = "10"
 
 # QR 码生成
-qrcode = { version = "0.14", default-features = false }
+qrcode = { version = "0.15", default-features = false }
 
 # 语义版本比较
 semver = "1"
