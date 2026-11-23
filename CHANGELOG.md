@@ -1,5 +1,43 @@
 ## [Unreleased]
 
+### Added
+
+- **日志时间戳可跟随本地时区**（`logging.timezone` / `EASYBOT_LOG_TIMEZONE`）——
+  默认 `local`：输出 RFC3339 带偏移（`2026-11-23T06:58:22.559237+08:00`），与宿主机、
+  nginx/caddy、游戏服日志可直接对齐；`utc` 保持升级前的 `…Z` 形态（6 位小数 + `Z`），
+  已有解析规则不受影响。容器里也可直接用环境变量覆盖（`EASYBOT_LOG_TIMEZONE=utc`）。
+- **文件日志的按大小轮转**（`logging.file.*`）——`output: "file"` 从此有真正的磁盘上限：
+  `path`（默认 `{配置目录}/logs/easybot.log`）、`maxSizeMB`（默认 50，`0` = 不按大小轮转）、
+  `maxFiles`（默认 5）、`compress`（轮转产物 gzip）。写满即改名为 `.1`，旧的依次后移为
+  `.2`…`.N`，超出份数的最旧文件删除，单条日志不会被拆到两个文件里。默认配置稳态占用约
+  `50 MB × 6`。
+
+### Changed
+
+- **`logging.output: "file"` 由「按天轮转、无上限」改为「按大小轮转」** —— 旧实现用
+  `tracing-appender` 的 DAILY 轮转，单日暴增可以写满磁盘；升级后日志文件名变为
+  `easybot.log` + `.1/.1.gz`…，30 天清扫保留为兜底（并显式跳过正在写入的文件）。
+- **高频轮询端点的访问日志降到 debug** —— `/api/v1/live`、`/api/v1/health`、`/api/v1/system`、
+  `/api/v1/metrics`、`/api/v1/logs`、`/metrics`、`/health` 的 `request completed` 不再以
+  info 输出（管理后台日志页 1s、概览页 5s/10s、容器 healthcheck 30s 轮询是主要日志来源）；
+  业务请求仍为 info，排障时用 `--debug` 或 `RUST_LOG=easybot_api=debug` 打开。
+- **`compose.quickstart.yml` 内置日志轮转与时区** —— 补 `logging.driver/options`
+  （`max-size: 20m`、`max-file: 5`，与生产编排一致）与 `TZ`（默认 UTC，可 `TZ=Asia/Shanghai` 覆盖）；
+  README 的 `docker run` 示例补 `-e TZ=` 与 `--log-opt max-size/max-file`。
+- **文档补齐日志运维章节** —— `docs/01 user-guide.md` 新增 §4.7「日志与磁盘占用」：
+  输出位置与轮转责任对照表、文件轮转配置与磁盘占用估算、Docker `json-file` **默认不轮转**
+  的 `docker run` / compose 两种写法、时区语义与 `tzdata` 依赖、降噪说明。
+
+### Fixed
+
+- **Alpine 镜像缺 `tzdata`，`TZ` 环境变量不生效**（#203）—— 发布镜像
+  （`Dockerfile.release`，Alpine 3.22）此前没有 `/usr/share/zoneinfo`，容器内 `date` 与日志
+  只能回落 UTC；现 `apk add --no-cache tzdata`，`docker run -e TZ=Asia/Shanghai` 即可让
+  容器时间与日志时间戳使用本地时区。开发镜像（`Dockerfile`，debian-slim）同样补装 `tzdata`。
+- **`logging.output: "file"` 没有大小上限，长期运行会写满磁盘**（#204）—— 见上文
+  「按大小轮转」与「Docker `json-file` 默认不轮转」的文档提示；默认值即可给出
+  约 300 MB 的可预期上限，不再依赖宿主机全局 `log-opts` 兜底。
+
 ## [0.0.44] - 2026-11-23
 
 ### Security

@@ -38,6 +38,7 @@ FROM debian:bookworm-slim@sha256:60eac759739651111db372c07be67863818726f754804b8
 RUN apt-get update && apt-get install -y \
     ca-certificates \
     curl \
+    tzdata \
     && rm -rf /var/lib/apt/lists/*
 RUN useradd -r -u 10001 --user-group -m -s /bin/bash easybot \
     && mkdir -p /var/lib/easybot/data /var/lib/easybot/logs /var/lib/easybot/plugins /etc/easybot \

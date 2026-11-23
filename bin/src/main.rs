@@ -95,11 +95,13 @@ fn confirm_applied_migrations(applied: &[easybot_core::storage::migration::Appli
 
 /// 删除指定目录中超过 `cutoff` 时间的 easybot 日志文件。
 ///
-/// 日志文件命名格式为 `easybot.YYYY-MM-DD`（由 tracing-appender DAILY rotation 生成）。
-/// 此函数会扫描日志目录，删除修改时间早于 `cutoff` 的 `.log` 文件（排除当前正在写入的文件）。
+/// 现状是「按大小轮转」(`easybot.log` + `.1`/`.1.gz` …)，大小与份数已由
+/// `logging.file.maxSizeMB/maxFiles` 兜住；这里保留 30 天清扫，主要用来清理
+/// 升级前遗留的 `easybot.YYYY-MM-DD.log` 与任何异常残留。活跃文件（`active`）永不删除。
 fn cleanup_old_logs(
     log_dir: &std::path::Path,
     cutoff: std::time::SystemTime,
+    active: Option<&std::path::Path>,
 ) -> std::io::Result<()> {
     let dir = match std::fs::read_dir(log_dir) {
         Ok(d) => d,
@@ -116,6 +118,10 @@ fn cleanup_old_logs(
             .map(|n| n.starts_with("easybot"))
             .unwrap_or(false);
         if !is_log {
+            continue;
+        }
+        // 正在写入的文件不参与清理（空闲进程的 mtime 也可能很旧）
+        if active.is_some_and(|a| a == path) {
             continue;
         }
         match entry.metadata().and_then(|m| m.modified()) {
@@ -223,18 +229,37 @@ async fn main() -> anyhow::Result<()> {
     // 吸入环形缓冲并把全局最大级别抬到 TRACE（详见 bin/src/logging.rs）。
     let collector_filter =
         logging::build_filter(&log_level, std::env::var("RUST_LOG").ok().as_deref());
+    // 文件日志配置要活到 config 被移交给 AppState 之后（下面的保留策略日志要用）
+    let file_log_cfg = config.logging.file.clone();
+    // 文件日志路径：配置为空时用 {config_dir}/logs/easybot.log，相对路径按 config_dir 解析
+    let log_file_path = {
+        let configured = config.logging.file.path.trim();
+        if configured.is_empty() {
+            paths.logs_dir.join("easybot.log")
+        } else {
+            let candidate = std::path::Path::new(configured);
+            if candidate.is_absolute() {
+                candidate.to_path_buf()
+            } else {
+                home.join(candidate)
+            }
+        }
+    };
+
     let make_writer: BoxMakeWriter = match log_output.as_str() {
         "stdout" => BoxMakeWriter::new(std::io::stdout),
         "file" => {
-            // 确保日志目录存在
-            let _ = std::fs::create_dir_all(&paths.logs_dir);
-            match tracing_appender::rolling::RollingFileAppender::builder()
-                .rotation(tracing_appender::rolling::Rotation::DAILY)
-                .filename_prefix("easybot")
-                .build(&paths.logs_dir)
-            {
-                Ok(file_appender) => {
-                    let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
+            // 按大小轮转（logrotate 风格）：单文件上限 + 保留份数 + 可选 gzip。
+            // 旧实现是 tracing_appender 的 DAILY 轮转，没有大小上限，长期运行仍会写满磁盘。
+            let rotation = logging::RotationConfig {
+                path: log_file_path.clone(),
+                max_bytes: file_log_cfg.max_size_mb.saturating_mul(1024 * 1024),
+                max_files: file_log_cfg.max_files,
+                compress: file_log_cfg.compress,
+            };
+            match logging::SizeRotatingWriter::new(rotation) {
+                Ok(writer) => {
+                    let (non_blocking, guard) = tracing_appender::non_blocking(writer);
                     if let Ok(mut guard_holder) = _file_log_guard.lock() {
                         *guard_holder = Some(guard);
                     }
@@ -242,7 +267,8 @@ async fn main() -> anyhow::Result<()> {
                 }
                 Err(e) => {
                     eprintln!(
-                        "[warn] Failed to create file appender (falling back to stderr): {e}"
+                        "[warn] Failed to create log file appender at {} (falling back to stderr): {e}",
+                        log_file_path.display()
                     );
                     BoxMakeWriter::new(std::io::stderr)
                 }
@@ -251,21 +277,50 @@ async fn main() -> anyhow::Result<()> {
         _ => BoxMakeWriter::new(std::io::stderr),
     };
 
-    if log_format == "json" {
-        Registry::default()
-            .with(
-                fmt::layer()
-                    .json()
-                    .with_writer(make_writer)
-                    .with_filter(filter),
-            )
-            .with((*log_collector).clone().with_filter(collector_filter))
-            .init();
-    } else {
-        Registry::default()
-            .with(fmt::layer().with_writer(make_writer).with_filter(filter))
-            .with((*log_collector).clone().with_filter(collector_filter))
-            .init();
+    // 时间戳时区：`EASYBOT_LOG_TIMEZONE`（utc/local）优先于 logging.timezone
+    let log_timezone = std::env::var("EASYBOT_LOG_TIMEZONE")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| config.logging.timezone.clone());
+    let timer = logging::log_timer(&log_timezone);
+
+    // 时间戳要跟随 logging.timezone：ChronoLocal 输出 `+08:00` 偏移，ChronoUtc 输出 `Z`。
+    // 两种 timer 是不同的泛型参数，所以用宏避免把 4 种组合各写一遍。
+    macro_rules! init_subscriber {
+        ($timer:expr) => {{
+            if log_format == "json" {
+                Registry::default()
+                    .with(
+                        fmt::layer()
+                            .json()
+                            .with_timer($timer)
+                            .with_writer(make_writer)
+                            .with_filter(filter),
+                    )
+                    .with((*log_collector).clone().with_filter(collector_filter))
+                    .init();
+            } else {
+                Registry::default()
+                    .with(
+                        fmt::layer()
+                            .with_timer($timer)
+                            .with_writer(make_writer)
+                            .with_filter(filter),
+                    )
+                    .with((*log_collector).clone().with_filter(collector_filter))
+                    .init();
+            }
+        }};
+    }
+
+    match timer {
+        logging::LogTimer::Local => init_subscriber!(fmt::time::ChronoLocal::rfc_3339()),
+        // 保持升级前的形态：`2026-11-23T12:10:40.951998Z`（6 位小数 + Z），
+        // 而不是 rfc_3339() 的 `+00:00`，避免已有日志解析规则失效。
+        logging::LogTimer::Utc => init_subscriber!(fmt::time::ChronoUtc::new(
+            "%Y-%m-%dT%H:%M:%S%.6fZ".to_string()
+        )),
     }
 
     tracing::info!(
@@ -836,6 +891,7 @@ async fn main() -> anyhow::Result<()> {
     // 启动日志文件清理后台任务（删除超过 30 天的旧日志，防止无限堆积）
     if log_output == "file" {
         let log_dir = paths.logs_dir.clone();
+        let active_log = log_file_path.clone();
         let cleanup_interval = std::time::Duration::from_secs(86_400); // 每天清理一次
         tokio::spawn(async move {
             tokio::time::sleep(cleanup_interval).await;
@@ -843,12 +899,17 @@ async fn main() -> anyhow::Result<()> {
                 tokio::time::sleep(cleanup_interval).await;
                 let cutoff =
                     std::time::SystemTime::now() - std::time::Duration::from_secs(30 * 86_400); // 30 天
-                if let Err(e) = cleanup_old_logs(&log_dir, cutoff) {
+                if let Err(e) = cleanup_old_logs(&log_dir, cutoff, Some(&active_log)) {
                     tracing::warn!("Log cleanup failed: {}", e);
                 }
             }
         });
-        tracing::info!("Log file cleanup task started (max 30 days, interval: 24h)");
+        tracing::info!(
+            "Log retention: size rotation ({} MB x {}, compress: {}) + 30-day sweep every 24h",
+            file_log_cfg.max_size_mb,
+            file_log_cfg.max_files,
+            file_log_cfg.compress
+        );
     }
 
     // 发布网关启动事件

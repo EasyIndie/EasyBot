@@ -446,6 +446,46 @@ pub struct LoggingConfig {
 
     #[serde(default = "default_log_output")]
     pub output: String,
+
+    /// 日志时间戳的时区：`local`（跟随 `TZ`，RFC3339 带偏移）/ `utc`（默认 `Z` 结尾）。
+    ///
+    /// `local` 依赖系统时区库：Docker 镜像已内置 tzdata；裸机/systemd/Windows 用 OS 的。
+    /// 无法解析时区时会退回 UTC，不会失败。也可用 `EASYBOT_LOG_TIMEZONE` 覆盖。
+    #[serde(default = "default_log_timezone")]
+    pub timezone: String,
+
+    /// `output: "file"` 时的文件位置与轮转策略
+    #[serde(default)]
+    pub file: FileLoggingConfig,
+}
+
+/// 文件日志的文件位置与轮转策略（仅 `logging.output: "file"` 生效）
+///
+/// 轮转按**大小**触发（logrotate 风格）：当前写入 `easybot.log`，写满后依次
+/// 重命名为 `easybot.log.1`、`.2` …，超过 `maxFiles` 的最旧文件被删除；
+/// `compress: true` 时轮转产物为 `.gz`。
+#[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct FileLoggingConfig {
+    /// 日志文件路径。空 = `{config_dir}/logs/easybot.log`；相对路径按 `config_dir` 解析。
+    #[serde(default)]
+    pub path: String,
+
+    /// 单个文件大小上限（MB）。`0` = 不按大小轮转（仅受外部/系统限制）。
+    #[serde(
+        default = "default_log_max_size_mb",
+        rename = "maxSizeMB",
+        alias = "maxSizeMb"
+    )]
+    pub max_size_mb: u64,
+
+    /// 保留的轮转文件个数（不含正在写入的那个）。`0` = 轮转时直接丢弃。
+    #[serde(default = "default_log_max_files")]
+    pub max_files: usize,
+
+    /// 轮转后的旧文件是否 gzip 压缩
+    #[serde(default)]
+    pub compress: bool,
 }
 
 fn default_log_level() -> String {
@@ -457,6 +497,26 @@ fn default_log_format() -> String {
 fn default_log_output() -> String {
     "stdout".to_string()
 }
+fn default_log_timezone() -> String {
+    "local".to_string()
+}
+fn default_log_max_size_mb() -> u64 {
+    50
+}
+fn default_log_max_files() -> usize {
+    5
+}
+
+impl Default for FileLoggingConfig {
+    fn default() -> Self {
+        Self {
+            path: String::new(),
+            max_size_mb: default_log_max_size_mb(),
+            max_files: default_log_max_files(),
+            compress: false,
+        }
+    }
+}
 
 impl Default for LoggingConfig {
     fn default() -> Self {
@@ -464,6 +524,8 @@ impl Default for LoggingConfig {
             level: "info".to_string(),
             format: "text".to_string(),
             output: "stdout".to_string(),
+            timezone: default_log_timezone(),
+            file: FileLoggingConfig::default(),
         }
     }
 }
@@ -488,5 +550,70 @@ impl Default for ServerConfig {
             admin_password: default_admin_password(),
             service_name: default_service_name(),
         }
+    }
+}
+
+#[cfg(test)]
+mod logging_tests {
+    use super::*;
+
+    #[test]
+    fn logging_defaults_keep_utc_compatible_rotation() {
+        let cfg = LoggingConfig::default();
+        assert_eq!(cfg.level, "info");
+        assert_eq!(cfg.format, "text");
+        assert_eq!(cfg.output, "stdout");
+        // 默认跟随 TZ；容器里没有 tzdata 时 chrono 会退回 UTC，不会失败
+        assert_eq!(cfg.timezone, "local");
+        assert_eq!(cfg.file.max_size_mb, 50);
+        assert_eq!(cfg.file.max_files, 5);
+        assert!(!cfg.file.compress);
+    }
+
+    #[test]
+    fn logging_parses_timezone_and_file_rotation() {
+        let yaml = r#"
+logging:
+  level: "debug"
+  output: "file"
+  timezone: "utc"
+  file:
+    path: "/var/log/easybot/easybot.log"
+    maxSizeMB: 10
+    maxFiles: 2
+    compress: true
+"#;
+        let cfg: GatewayConfig = serde_yaml::from_str(yaml).expect("parse config");
+        assert_eq!(cfg.logging.level, "debug");
+        assert_eq!(cfg.logging.output, "file");
+        assert_eq!(cfg.logging.timezone, "utc");
+        assert_eq!(
+            cfg.logging.file.path,
+            "/var/log/easybot/easybot.log".to_string()
+        );
+        assert_eq!(cfg.logging.file.max_size_mb, 10);
+        assert_eq!(cfg.logging.file.max_files, 2);
+        assert!(cfg.logging.file.compress);
+    }
+
+    #[test]
+    fn logging_accepts_max_size_mb_alias() {
+        // serde 的 camelCase 会把 max_size_mb 变成 maxSizeMb；配置里两种写法都要认
+        let yaml = r#"
+logging:
+  file:
+    maxSizeMb: 7
+"#;
+        let cfg: GatewayConfig = serde_yaml::from_str(yaml).expect("parse config");
+        assert_eq!(cfg.logging.file.max_size_mb, 7);
+        // 未写 timezone 时按默认 local，而不是解析失败
+        assert_eq!(cfg.logging.timezone, "local");
+    }
+
+    #[test]
+    fn logging_omitted_section_uses_defaults() {
+        let cfg: GatewayConfig = serde_yaml::from_str("server:\n  port: 8080\n").expect("parse");
+        assert_eq!(cfg.logging.output, "stdout");
+        assert_eq!(cfg.logging.file.max_files, 5);
     }
 }

@@ -9,6 +9,10 @@ FROM alpine:3.22@sha256:14358309a308569c32bdc37e2e0e9694be33a9d99e68afb0f5ff33cc
 # an unfixed CVE (e.g. openssl 3.5.8-r0 in v3.22/main fixes CVE-2026-14456).
 RUN apk upgrade --no-cache
 
+# tzdata：让 `-e TZ=Asia/Shanghai` 真正生效（Alpine 默认不带 /usr/share/zoneinfo，
+# 缺它时容器内 `date` 与日志时间戳只能回落到 UTC）。约 3 MB。
+RUN apk add --no-cache tzdata
+
 RUN addgroup -S -g 10001 easybot \
     && adduser -S -D -H -u 10001 -G easybot easybot \
     && mkdir -p /var/lib/easybot/data /var/lib/easybot/logs /var/lib/easybot/plugins /etc/easybot \

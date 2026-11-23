@@ -61,6 +61,14 @@ logging:
   level: "info"             # debug / info / warn / error
   format: "text"            # text / json
   output: "stdout"          # stdout / file
+  timezone: "local"         # local（跟随 TZ，RFC3339 带偏移）/ utc（Z 结尾）；EASYBOT_LOG_TIMEZONE 可覆盖
+
+  # 仅 output: "file" 生效。容器里推荐 leave stdout + Docker log-opts（见 docs/01）。
+  # file:
+  #   path: ""              # 空 = {配置目录}/logs/easybot.log；相对路径按配置目录解析
+  #   maxSizeMB: 50         # 单文件上限（MB），0 = 不按大小轮转
+  #   maxFiles: 5           # 保留份数（不含当前文件）
+  #   compress: true        # 旧文件 gzip
 
 # ── Webhook 回调配置 ────────────────────────────────────
 # webhooks:

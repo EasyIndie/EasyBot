@@ -6,3 +6,11 @@
 server:
   host: "0.0.0.0"
   port: 8080
+
+# 容器内推荐 stdout：由 Docker 的 json-file 驱动 + log-opts 轮转（见 docs/01）。
+# 镜像已内置 tzdata，`-e TZ=Asia/Shanghai` 会让时间戳变成 +08:00。
+logging:
+  level: "info"
+  format: "text"
+  output: "stdout"
+  timezone: "local"
