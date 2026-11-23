@@ -21,6 +21,8 @@ clap.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 tracing-appender.workspace = true
+# 文件日志轮转产物的 gzip 压缩（logging.file.compress）
+flate2 = "1"
 serde_yaml.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true

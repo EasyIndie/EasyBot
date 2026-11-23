@@ -135,10 +135,13 @@ docker run -d --name easybot \
   -e EASYBOT_ALLOW_PLAINTEXT=true \
   -e EASYBOT_ADMIN_PASSWORD='替换为强密码' \
   -e TELEGRAM_BOT_TOKEN='你的Telegram令牌' \
+  -e TZ=Asia/Shanghai \
   ghcr.io/easyindie/easybot:latest
 
 curl http://127.0.0.1:8080/api/v1/live
 ```
+
+> **`-e TZ=Asia/Shanghai`：** 镜像已内置 `tzdata`，设置后容器内 `date`、日志时间戳都按该时区（RFC3339 带 `+08:00` 偏移）；不设置则为 UTC。日志时间戳的基准由 `logging.timezone` 控制（默认 `local`，即跟随 `TZ`；设 `utc` 可回到 `Z` 结尾）。
 
 #### 方式二：docker compose（quickstart）
 
@@ -343,7 +346,14 @@ storage:
 logging:
   level: "info"                  # debug / info / warn / error
   format: "text"                 # text / json
-  output: "stdout"               # stdout / file
+  output: "stdout"               # stdout / file（file 见下方「文件日志与轮转」）
+  timezone: "local"              # local：跟随 TZ，RFC3339 带偏移（+08:00）
+                                 # utc：`Z` 结尾（旧行为）
+  # file:                        # 仅 output: "file" 时生效
+  #   path: ""                   # 空 = {配置目录}/logs/easybot.log；相对路径按配置目录解析
+  #   maxSizeMB: 50              # 单文件上限（MB）；0 = 不按大小轮转
+  #   maxFiles: 5                # 保留份数（不含当前文件）
+  #   compress: true             # 旧文件 gzip
 
 # ── Webhook ──
 # webhooks:
@@ -388,7 +398,79 @@ CLI 参数 (--dir) → 环境变量 (EASYBOT_HOME) → gateway.local.yaml → ga
 → ${VAR_NAME} 替换 → .env 文件 → 代码内建默认值
 ```
 
-### 4.7 配置变更
+### 4.7 日志与磁盘占用
+
+日志的两条独立“阀门”：**应用写多大**（`logging.*`）与**容器 JSON 日志留多久**（Docker `log-opts`）。长期 24×7 运行时两者都要设，否则可能把盘写满（写满后表现为重启或写 SQLite 时才失败，很难第一时间关联到日志）。
+
+#### 输出位置
+
+| `logging.output` | 去向 | 轮转责任 |
+|---|---|---|
+| `stdout`（默认，容器推荐） | 容器 stdout → Docker `json-file` | **Docker `log-opts`**（默认无限增长，必须显式设置） |
+| `file` | `{配置目录}/logs/easybot.log`（或 `logging.file.path`） | **应用自己**（按大小轮转，见下） |
+
+#### 文件日志与轮转（`output: "file"`）
+
+```yaml
+logging:
+  output: "file"
+  file:
+    path: ""            # 空 = {配置目录}/logs/easybot.log；相对路径按配置目录解析
+    maxSizeMB: 50       # 单文件上限；0 = 不按大小轮转
+    maxFiles: 5         # 保留份数（不含当前文件）；0 = 轮转即丢弃
+    compress: true      # 旧文件 gzip
+```
+
+- 轮转是 **logrotate 风格、按大小触发**：当前文件写满即改名为 `easybot.log.1`，旧文件依次后移为 `.2` … `.N`，超过 `maxFiles` 的最旧文件删除；`compress: true` 时轮转产物为 `.gz`。
+- 上例的稳态磁盘占用约 `50 MB × (1 + 5) ≈ 300 MB`（压缩后更少）。
+- 单条日志不会被拆到两个文件里（写满时先轮转再写）。
+- 相对路径按配置目录解析，也可以给绝对路径（如 `/var/log/easybot/easybot.log`，注意该目录需对运行用户可写）。
+- 旧版本用的是“每天一个 `easybot.YYYY-MM-DD.log`、保留 30 天”的按时间轮转，**没有大小上限**，长期运行仍会被单日暴增写满；升级后会自动改用 `easybot.log` + 大小轮转。
+
+#### Docker：JSON 日志必须显式轮转
+
+Docker `json-file` 驱动**默认不轮转**（`max-size` 不设即无限增长）。裸 `docker run` 加参数：
+
+```bash
+docker run -d --name easybot \
+  --log-driver json-file \
+  --log-opt max-size=50m --log-opt max-file=3 \
+  ... ghcr.io/easyindie/easybot:latest
+```
+
+Compose（`compose.quickstart.yml` 已内置）：
+
+```yaml
+services:
+  easybot:
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
+```
+
+生产编排 `deploy/docker-compose.production.yml` 同样已设（EasyBot 20 MB × 5，Caddy 50 MB × 5），见[商用上线门禁](05%20commercial-readiness.md)。
+
+#### 时间戳时区
+
+```yaml
+logging:
+  timezone: "local"   # 默认：跟随 TZ，输出 RFC3339 带偏移，如 2026-11-23T06:58:22.559+08:00
+                      # utc：输出 ...Z（旧行为）
+```
+
+- 也可用环境变量 `EASYBOT_LOG_TIMEZONE=utc|local` 覆盖配置（容器里改起来更方便）。
+- `local` 依赖系统时区数据：发布镜像**已内置 `tzdata`**，`-e TZ=Asia/Shanghai` 即可生效；裸机/systemd/Windows 用操作系统的时区库。若解析不出时区，会安全退回 UTC，不会启动失败。
+
+#### 降噪
+
+管理后台日志页（1s）、概览页（5s/10s）与容器 healthcheck（30s）轮询的端点
+（`/api/v1/live`、`/api/v1/health`、`/api/v1/system`、`/api/v1/metrics`、`/api/v1/logs`）
+的 `request completed` 只在 **debug** 级别输出；业务请求仍是 info。需要排障时用
+`easybot --debug` 或 `RUST_LOG=easybot_api=debug` 打开。
+
+### 4.8 配置变更
 
 运行组件使用启动时的一致配置快照。修改配置文件后，通过受审阅的滚动重启应用；`PUT /api/v1/config` 会返回 409 并留下审计记录，防止部分组件更新、部分组件仍使用旧值。生产环境先在预生产运行 readiness、消息和回滚检查，再逐实例替换。
 

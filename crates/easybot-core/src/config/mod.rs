@@ -456,6 +456,12 @@ pub fn generate_env_example() -> String {
 # PostgreSQL（可选，默认：SQLite）
 # DATABASE_URL=postgresql://user:password@localhost:5432/easybot
 
+# 日志时间戳时区：local（跟随 TZ，RFC3339 带偏移）/ utc（Z 结尾）。默认 local。
+# EASYBOT_LOG_TIMEZONE=local
+
+# 容器时区（镜像内置 tzdata）：设置后容器时间与日志时间戳使用该时区
+# TZ=Asia/Shanghai
+
 # 透传各平台原始 payload 到 WebSocket 事件（开发调试用）
 # EASYBOT_RAW_PAYLOAD_ENABLED=true
 
@@ -554,6 +560,11 @@ logging:
   level: "info"
   format: "text"
   output: "stdout"
+  timezone: "local"         # local 跟随 TZ（RFC3339 带偏移）/ utc
+  # file:                   # output 为 "file" 时生效（按大小轮转）
+  #   maxSizeMB: 50
+  #   maxFiles: 5
+  #   compress: true
 
 # ── 插件系统（插件市场 + 开发者工作流）──────────────────────────
 # 插件目录默认为 {config_dir}/plugins；可在 gateway.local.yaml 覆盖。

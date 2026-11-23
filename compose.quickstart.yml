@@ -28,9 +28,18 @@ services:
       - easybot_data:/var/lib/easybot
       # 可选：挂载自定义配置覆盖镜像内置默认配置
       # - ./deploy/gateway.container.yaml:/etc/easybot/gateway.yaml:ro
+    # Docker 的 json-file 驱动**默认不轮转**（不设 max-size 就无限增长，写满磁盘后
+    # 表现为重启或写 SQLite 时才失败）。与生产编排一致：20 MB × 5 ≈ 100 MB 上限。
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
     environment:
       - EASYBOT_HOME=/var/lib/easybot
       - EASYBOT_ALLOW_PLAINTEXT=true
+      # 容器内时区（镜像内置 tzdata）：日志时间戳随之变成 +08:00 等本地偏移
+      - TZ=${TZ:-UTC}
       - EASYBOT_ADMIN_PASSWORD
       - EASYBOT_ADMIN_PASSWORD_FILE
       # SECURITY: 生产环境优先使用 *_FILE（Docker secrets / bind mount）而非环境变量，

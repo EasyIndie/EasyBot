@@ -168,6 +168,8 @@ docker run -d --name easybot \
   -e EASYBOT_ALLOW_PLAINTEXT=true \
   -e EASYBOT_ADMIN_PASSWORD='替换为强密码' \
   -e TELEGRAM_BOT_TOKEN='你的Telegram令牌' \
+  -e TZ=Asia/Shanghai \
+  --log-driver json-file --log-opt max-size=50m --log-opt max-file=3 \
   ghcr.io/easyindie/easybot:latest
 
 # 查看状态
@@ -176,6 +178,8 @@ curl http://127.0.0.1:8080/api/v1/live
 
 > 💡 管理后台：`http://127.0.0.1:8080/admin`。其他平台令牌（`DISCORD_BOT_TOKEN` / `FEISHU_APP_ID`+`FEISHU_APP_SECRET` / `QQ_APP_ID`+`QQ_CLIENT_SECRET` / 微信扫码）见[用户手册](docs/01%20user-guide.md)。
 > ⚠️ `EASYBOT_ALLOW_PLAINTEXT=true` 是发布镜像的硬性启动要求：应用监听器仅支持 HTTP，必须置于可信 TLS 反向代理后或受信主机上。
+> 📝 `-e TZ=`：镜像内置 `tzdata`，设置后容器时间与日志时间戳按该时区（RFC3339 带偏移）；不设则为 UTC。
+> 🗑 `--log-opt max-size/max-file`：Docker `json-file` 驱动**默认不轮转**，不设会无限增长把盘写满。长期运行请务必设置，或用 `logging.output: "file"` 走应用自带的按大小轮转（见[用户手册 §4.7](docs/01%20user-guide.md)）。
 
 ### Docker Compose 部署（使用已发布镜像）
 
@@ -261,7 +265,8 @@ storage:
 logging:
   level: "info"             # debug / info / warn / error
   format: "text"            # text / json
-  output: "stdout"          # stdout / file
+  output: "stdout"          # stdout / file（file 走应用内按大小轮转）
+  timezone: "local"         # local 跟随 TZ（RFC3339 带偏移）/ utc
 ```
 
 ```bash

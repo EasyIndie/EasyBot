@@ -52,7 +52,7 @@ sqlx = { version = "0.9", features = ["runtime-tokio", "sqlite", "postgres", "ch
 
 # 日志
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["json", "env-filter", "registry"] }
+tracing-subscriber = { version = "0.3", features = ["json", "env-filter", "registry", "chrono"] }
 tracing-appender = "0.2"
 
 # CLI

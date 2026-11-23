@@ -271,6 +271,23 @@ impl Server {
     }
 }
 
+/// 管理后台 / 探针的高频轮询路径：这些请求不携带业务语义，`info` 级别下纯属噪音。
+///
+/// 覆盖 `/api/v1/logs`（日志页 1s 轮询）、`/api/v1/system`（概览页 5s）、
+/// `/api/v1/metrics`（指标页 10s）、`/api/v1/health` 与 `/api/v1/live`
+/// （Docker healthcheck 30s、负载均衡探针）。
+fn is_polling_path(path: &str) -> bool {
+    const EXACT: [&str; 6] = [
+        "/api/v1/live",
+        "/api/v1/health",
+        "/api/v1/system",
+        "/api/v1/metrics",
+        "/metrics",
+        "/health",
+    ];
+    EXACT.contains(&path) || path.starts_with("/api/v1/logs")
+}
+
 /// Helper: match adapter start/stop actions on dynamic platform segments.
 /// e.g. "/adapters/{platform}/start" or "/adapters/{platform}/stop"
 fn matches_adapter_action(method: &Method, path: &str) -> bool {
@@ -303,14 +320,29 @@ async fn security_headers_middleware(req: Request<axum::body::Body>, next: Next)
     let response = next.run(req).await;
     let (mut parts, body) = response.into_parts();
     let elapsed_ms = started.elapsed().as_millis();
-    tracing::info!(
-        "request completed request_id={} method={} path={} status={} elapsed_ms={}",
-        request_id,
-        method,
-        path,
-        parts.status.as_u16(),
-        elapsed_ms
-    );
+    // 高频轮询端点（管理后台日志页 1s、概览页 5s/10s、容器 healthcheck 30s）
+    // 在 info 级别下能轻松刷出每天数 MB 的日志（见 #204），降到 debug：
+    // `--debug` 或 `RUST_LOG=easybot_api=debug` 时仍可看到。
+    let quiet = is_polling_path(&path);
+    if quiet {
+        tracing::debug!(
+            "request completed request_id={} method={} path={} status={} elapsed_ms={}",
+            request_id,
+            method,
+            path,
+            parts.status.as_u16(),
+            elapsed_ms
+        );
+    } else {
+        tracing::info!(
+            "request completed request_id={} method={} path={} status={} elapsed_ms={}",
+            request_id,
+            method,
+            path,
+            parts.status.as_u16(),
+            elapsed_ms
+        );
+    }
 
     // Content-Security-Policy
     parts.headers.insert(
@@ -701,4 +733,39 @@ pub fn create_router(state: AppState) -> Router {
         .route_layer(metrics_middleware)
         .layer(middleware::from_fn(security_headers_middleware))
         .with_state(state.clone())
+}
+
+#[cfg(test)]
+mod polling_path_tests {
+    use super::is_polling_path;
+
+    #[test]
+    fn polling_endpoints_are_quiet() {
+        for path in [
+            "/api/v1/live",
+            "/api/v1/health",
+            "/api/v1/system",
+            "/api/v1/metrics",
+            "/api/v1/logs",
+            "/api/v1/logs?tail=50",
+            "/metrics",
+            "/health",
+        ] {
+            assert!(is_polling_path(path), "{path} should be quiet");
+        }
+    }
+
+    #[test]
+    fn business_endpoints_stay_at_info() {
+        for path in [
+            "/api/v1/messages/send",
+            "/api/v1/sessions",
+            "/api/v1/adapters/qq/start",
+            "/api/v1/system/update-check",
+            "/admin",
+            "/ws",
+        ] {
+            assert!(!is_polling_path(path), "{path} must stay at info");
+        }
+    }
 }

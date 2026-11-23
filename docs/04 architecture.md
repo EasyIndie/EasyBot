@@ -876,7 +876,8 @@ storage:
 logging:
   level: "info"
   format: "text"
-  output: "stdout"
+  output: "stdout"      # stdout / file（file 走应用内按大小轮转）
+  timezone: "local"     # local 跟随 TZ（RFC3339 带偏移）/ utc
 
 adapters:
   telegram:

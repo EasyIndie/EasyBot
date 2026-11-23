@@ -5479,6 +5479,31 @@ expression: "ApiDoc::openapi()"
           }
         }
       },
+      "FileLoggingConfig": {
+        "type": "object",
+        "description": "文件日志的文件位置与轮转策略（仅 `logging.output: \"file\"` 生效）\n\n轮转按**大小**触发（logrotate 风格）：当前写入 `easybot.log`，写满后依次\n重命名为 `easybot.log.1`、`.2` …，超过 `maxFiles` 的最旧文件被删除；\n`compress: true` 时轮转产物为 `.gz`。",
+        "properties": {
+          "compress": {
+            "type": "boolean",
+            "description": "轮转后的旧文件是否 gzip 压缩"
+          },
+          "maxFiles": {
+            "type": "integer",
+            "description": "保留的轮转文件个数（不含正在写入的那个）。`0` = 轮转时直接丢弃。",
+            "minimum": 0
+          },
+          "maxSizeMB": {
+            "type": "integer",
+            "format": "int64",
+            "description": "单个文件大小上限（MB）。`0` = 不按大小轮转（仅受外部/系统限制）。",
+            "minimum": 0
+          },
+          "path": {
+            "type": "string",
+            "description": "日志文件路径。空 = `{config_dir}/logs/easybot.log`；相对路径按 `config_dir` 解析。"
+          }
+        }
+      },
       "GatewayConfig": {
         "type": "object",
         "description": "网关主配置",
@@ -5893,6 +5918,10 @@ expression: "ApiDoc::openapi()"
         "type": "object",
         "description": "日志配置",
         "properties": {
+          "file": {
+            "$ref": "#/components/schemas/FileLoggingConfig",
+            "description": "`output: \"file\"` 时的文件位置与轮转策略"
+          },
           "format": {
             "type": "string"
           },
@@ -5901,6 +5930,10 @@ expression: "ApiDoc::openapi()"
           },
           "output": {
             "type": "string"
+          },
+          "timezone": {
+            "type": "string",
+            "description": "日志时间戳的时区：`local`（跟随 `TZ`，RFC3339 带偏移）/ `utc`（默认 `Z` 结尾）。\n\n`local` 依赖系统时区库：Docker 镜像已内置 tzdata；裸机/systemd/Windows 用 OS 的。\n无法解析时区时会退回 UTC，不会失败。也可用 `EASYBOT_LOG_TIMEZONE` 覆盖。"
           }
         }
       },
