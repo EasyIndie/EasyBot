@@ -37,7 +37,7 @@ jobs:
       # `UNPROCESSABLE: Pull request 13 of 14 required status checks have not
       # succeeded` 拒绝（2026-11 实测 #205 / #206）—— 因此这里必须**等检查跑完再入队**，
       # 否则会退化成和 `--auto` 一样的“永不合并”。
-      - name: Wait for required checks, then enqueue into the merge queue
+      - name: Enqueue into the merge queue (retry until required checks pass)
         if: |
           github.event.pull_request.state == 'open' &&
           !github.event.pull_request.draft &&
@@ -50,29 +50,25 @@ jobs:
         run: |
           set -uo pipefail
 
-          # CLEAN = 与 base 同步且必需检查全过；BLOCKED/UNKNOWN = 检查仍在跑；
-          # BEHIND = base 前进后需要 dependabot 重新 rebase（继续等）。
+          # 不用 mergeStateStatus 当判据：本 job 自身也是一个 check，等它变成 CLEAN 会
+          # **自锁死**（2026-11 实测 #205 / #206：唯一 pending 的检查就是 `dependabot` 自己）。
+          # 改成反复调 enqueue，由 GitHub 用它自己的必需检查清单给结论：未就绪时返回
+          # `required status checks have not succeeded`，就绪即入队。
           for i in $(seq 1 40); do
-            state=$(gh pr view "$PR_URL" --json mergeStateStatus --jq .mergeStateStatus 2>/dev/null || echo UNKNOWN)
-            case "$state" in
-              CLEAN) echo "必需检查已全部通过（第 $i 次轮询），开始入队"; break ;;
-              DIRTY)
-                echo "::warning::$PR_URL 存在冲突，跳过自动入队，需人工处理"
-                exit 0
-                ;;
-              *) echo "第 $i/40 次：mergeStateStatus=$state，等待必需检查…"; sleep 45 ;;
+            if out=$(gh api graphql \
+              -f query='mutation($id: ID!) { enqueuePullRequest(input: {pullRequestId: $id}) { mergeQueueEntry { position state } } }' \
+              -f id="$PR_ID" 2>&1); then
+              echo "已加入 merge queue（第 $i 次尝试）：$out"
+              exit 0
+            fi
+            case "$out" in
+              *"required status checks have not succeeded"*|*"not mergeable"*|*"still in progress"*)
+                echo "第 $i/40 次：必需检查尚未全部通过，45s 后重试" ;;
+              *"is closed"*|*"already in the merge queue"*|*"already queued"*)
+                echo "无需入队：$out"; exit 0 ;;
+              *)
+                echo "::warning::enqueue 失败，交人工处理：$out"; exit 0 ;;
             esac
+            sleep 45
           done
-
-          if [ "${state:-}" != "CLEAN" ]; then
-            echo "::warning::等待 30 分钟后仍未通过必需检查（最后状态 $state），请人工检查后再入队：$PR_URL"
-            exit 0
-          fi
-
-          if out=$(gh api graphql \
-            -f query='mutation($id: ID!) { enqueuePullRequest(input: {pullRequestId: $id}) { mergeQueueEntry { position state } } }' \
-            -f id="$PR_ID" 2>&1); then
-            echo "已加入 merge queue：$out"
-          else
-            echo "::warning::enqueue 未成功（可能已在队列中或检查刚失效），请人工确认：$out"
-          fi
+          echo "::warning::等待 30 分钟后仍未入队，请人工检查：$PR_URL"
