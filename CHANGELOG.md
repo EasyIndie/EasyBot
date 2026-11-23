@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## [0.0.45] - 2026-11-24
+
 ### Added
 
 - **日志时间戳可跟随本地时区**（`logging.timezone` / `EASYBOT_LOG_TIMEZONE`）——
@@ -27,6 +29,9 @@
 - **文档补齐日志运维章节** —— `docs/01 user-guide.md` 新增 §4.7「日志与磁盘占用」：
   输出位置与轮转责任对照表、文件轮转配置与磁盘占用估算、Docker `json-file` **默认不轮转**
   的 `docker run` / compose 两种写法、时区语义与 `tzdata` 依赖、降噪说明。
+- **依赖升级** —— `qrcode` 0.14.1 → 0.15.0（管理后台二维码渲染）；前端开发依赖
+  `eslint` 10.14.0 → 10.15.0、`jsdom` → 31.0.1、`vitest` → 5.1.1（仅开发期使用，
+  不进二进制也不进镜像）。
 
 ### Fixed
 
@@ -37,6 +42,15 @@
 - **`logging.output: "file"` 没有大小上限，长期运行会写满磁盘**（#204）—— 见上文
   「按大小轮转」与「Docker `json-file` 默认不轮转」的文档提示；默认值即可给出
   约 300 MB 的可预期上限，不再依赖宿主机全局 `log-opts` 兜底。
+- **dependabot PR 恢复全自动合并**（#207 #208 #209）—— v0.0.44 引入的「`--auto` 之后显式入队」
+  仍会失败，PR 长期停在 `CLEAN` 无人合并。三步修正：
+  - **入队太早**：工作流创建后 2 秒就调 `enqueuePullRequest`，必需检查未完成时 GitHub
+    返回 `13 of 14 required status checks have not succeeded`；曾尝试先轮询
+    `mergeStateStatus == CLEAN`，结果**自锁死**——该工作流自身也是一个必需检查，等
+    `CLEAN` 永远等不到。最终改为**以固定间隔反复重试入队**；
+  - **重试条件靠文案**：白名单漏了 GitHub 的另一措辞 `are in progress`；改为按**错误类别**
+    （`UNPROCESSABLE`）匹配，不再匹配文案。
+  修复后端到端验证通过：#205 第 14 次尝试入队、#206 第 18 次尝试，全程无人工介入。
 
 ## [0.0.44] - 2026-11-23
 

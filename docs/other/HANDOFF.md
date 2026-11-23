@@ -23,7 +23,7 @@
 |---|---|
 | 凭据 | git credential helper 可用（40 字符 token）；`git push` / API 均可 |
 | `gh` CLI | 已装：WSL 里走 `/mnt/c/Program\ Files/GitHub\ CLI/gh.exe`（Windows 路径参数如 `--body-file` 需用 `E:\...` 形式） |
-| `main` 保护 | ruleset「Default」：必须走 PR + **14 项必需状态检查** + **merge queue（SQUASH）**；admin 有 bypass（`git push` 直推可行，v0.0.43/v0.0.44 发布即如此） |
+| `main` 保护 | ruleset「Default」：必须走 PR + **14 项必需状态检查** + **merge queue（SQUASH）**；admin 有 bypass（`git push` 直推可行，v0.0.43/v0.0.44/v0.0.45 发布即如此） |
 | 可用流程 | 推分支 → `gh pr create` → 等 CI 全绿 → **显式入队**：`gh api graphql -f query='mutation{enqueuePullRequest(input:{pullRequestId:"PR_ID"}){mergeQueueEntry{position state}}}'`（`gh pr merge --auto` / `--squash` 在 merge queue 分支上只写 autoMergeRequest，**不会入队**；dependabot PR 已由 workflow 自动入队） |
 
 **rebase-merge 陷阱**：分支若基于**旧 main** 再 rebase，merge 时会重放导致提交标题错配（本项目已踩）。**正确做法**：分支从 `origin/main` 最新处切出。
@@ -32,7 +32,7 @@
 
 | 仓库 | main | tag | 状态 |
 |---|---|---|---|
-| `EasyIndie/EasyBot` | `4b39bb0` | **v0.0.43 / v0.0.44** | 均已发布（各 15 产物：6 平台二进制 + SPDX SBOM + deploy-kit + version.json） |
+| `EasyIndie/EasyBot` | `4b39bb0` | **v0.0.43 / v0.0.44 / v0.0.45** | 均已发布（各 15 产物：6 平台二进制 + SPDX SBOM + deploy-kit + version.json） |
 | `EasyIndie/easybot-hello-adapter` | `2d4ba06` | **v0.2.0** | 已发布（6 平台可执行文件 + ed25519 签名） |
 
 **已合并 PR**：#148（v0.0.42 主体，118 文件）、#153（release.yml 修 ABI 路径）、#154（v0.0.43 双重 init 修复）。
