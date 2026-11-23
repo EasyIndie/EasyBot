@@ -62,10 +62,16 @@ jobs:
               exit 0
             fi
             case "$out" in
-              *"required status checks have not succeeded"*|*"not mergeable"*|*"still in progress"*)
-                echo "第 $i/40 次：必需检查尚未全部通过，45s 后重试" ;;
+              # 已合并/关闭/已入队：目的已达成，不用再试
               *"is closed"*|*"already in the merge queue"*|*"already queued"*)
                 echo "无需入队：$out"; exit 0 ;;
+              # 必需检查未就绪在 GitHub 侧有两种措辞（实测都出现过）：
+              #   "Pull request 13 of 14 required status checks have not succeeded"
+              #   "Pull request 9 of 14 required status checks are in progress"
+              # 两者都是 UNPROCESSABLE —— 按错误**类别**重试，而不是逐个匹配措辞，
+              # 免得下次换句话又把重试路径漏掉。
+              *UNPROCESSABLE*|*"required status checks"*|*"not mergeable"*|*"in progress"*)
+                echo "第 $i/40 次：必需检查尚未全部通过，45s 后重试" ;;
               *)
                 echo "::warning::enqueue 失败，交人工处理：$out"; exit 0 ;;
             esac
