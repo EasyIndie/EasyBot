@@ -36,7 +36,22 @@ pub struct AdapterManager {
     /// Saved adapter configs, keyed by platform name.  Populated on every
     /// successful `start()` call so the health monitor can reconnect without
     /// external input.  Configs contain tokens — kept in memory only.
+    ///
+    /// **Semantics**: only platforms that were actually started (or attempted)
+    /// live here — this map is the health monitor's "known platforms" list.
+    /// A platform that was skipped at startup (explicit `enabled: false`, or
+    /// credentials missing) MUST NOT appear here, otherwise the health monitor
+    /// would treat it as "config exists but no instance" and resurrect it
+    /// (see issue #226).
     configs: RwLock<HashMap<String, AdapterConfig>>,
+    /// Adapter configs as **declared** in the gateway config file, keyed by
+    /// platform name.  Seeded by `start_all()` for *every* platform in the
+    /// config — including explicitly disabled ones — so `plugin enable` can
+    /// hot-start a plugin adapter with its configured credentials/extra.
+    ///
+    /// Deliberately kept separate from [`Self::configs`]: declaration is not
+    /// intent to run, so this map must never drive the health monitor.
+    declared_configs: RwLock<HashMap<String, AdapterConfig>>,
     /// Last connect-failure classification per platform, written by the
     /// background connect task before the status cache is updated.  Read by
     /// `reconnect_adapter` so a transient connect failure is not misclassified
@@ -70,6 +85,7 @@ impl AdapterManager {
             statuses: RwLock::new(HashMap::new()),
             event_bus: None,
             configs: RwLock::new(HashMap::new()),
+            declared_configs: RwLock::new(HashMap::new()),
             last_connect_error_kind: RwLock::new(HashMap::new()),
             reconnect_info: RwLock::new(HashMap::new()),
             cursor_states: RwLock::new(HashMap::new()),
@@ -515,10 +531,16 @@ impl AdapterManager {
     /// 获取单个适配器状态（优先实时查询，已停止适配器回退缓存）
     /// 读取启动时保存的适配器配置（含 `enabled: false` 的平台）。
     ///
+    /// 优先返回运行中平台的实际配置（已注入凭据），其次回退到配置文件里
+    /// 声明的配置。
+    ///
     /// 供插件热启用使用：`plugin enable` 时据此构造 `AdapterConfig`，
     /// 再由 [`start`](Self::start) 注入环境变量凭据并启动。
     pub async fn saved_config(&self, platform: &str) -> Option<AdapterConfig> {
-        self.configs.read().await.get(platform).cloned()
+        if let Some(config) = self.configs.read().await.get(platform) {
+            return Some(config.clone());
+        }
+        self.declared_configs.read().await.get(platform).cloned()
     }
 
     pub async fn get_status(&self, platform: &str) -> Option<AdapterStatusSummary> {
@@ -594,12 +616,16 @@ impl AdapterManager {
         let mut succeeded = Vec::new();
         let mut failed = Vec::new();
 
-        // 记住**全部**配置（含 `enabled: false` 的平台）：插件热启用
+        // 记住**全部**声明配置（含 `enabled: false` 的平台）：插件热启用
         // （`plugin enable`）需要拿到该平台的凭据/extra 才能启动适配器。
+        //
+        // 注意：只写 `declared_configs`，**不**写 `configs` —— `configs` 是
+        // 健康监控的「已知平台」清单，被跳过的平台一旦进入就会被当成
+        // 「有配置、无实例」而自动拉起（issue #226）。
         {
-            let mut saved = self.configs.write().await;
+            let mut declared = self.declared_configs.write().await;
             for (platform, cfg) in &configs {
-                saved.entry(platform.clone()).or_insert_with(|| cfg.clone());
+                declared.insert(platform.clone(), cfg.clone());
             }
         }
 
@@ -751,10 +777,14 @@ impl AdapterManager {
             let mut locked = self.adapters.write().await;
             locked.drain().collect()
         };
-        // Clear all saved configs
+        // Clear all saved configs (both running and declared)
         {
             let mut configs = self.configs.write().await;
             configs.clear();
+        }
+        {
+            let mut declared = self.declared_configs.write().await;
+            declared.clear();
         }
         for (name, mut adapter) in adapters {
             if let Err(e) = adapter.disconnect().await {
@@ -838,7 +868,14 @@ impl AdapterManager {
 
     /// Internal: one iteration of the health check.
     async fn run_health_check(&self, reconnect_state: &mut HashMap<String, ReconnectState>) {
-        // 先收集所有已知平台（只 clone 轻量的 String key，避免全量 config clone）
+        // 先收集所有已知平台（只 clone 轻量的 String key，避免全量 config clone）。
+        //
+        // `configs` 只包含**实际启动过**（或尝试过启动）的平台：
+        // - `start()` 成功后写入（含 connect 失败待重试的）；
+        // - `stop()` 显式停止时移除，阻止健康监控再次拉起。
+        // 配置文件里声明但启动时被跳过的平台（显式 `enabled: false`、凭据缺失）
+        // 只在 `declared_configs` 里，不参与健康检查 —— 否则会被
+        // `needs_reconnect = true`（“有配置、无实例”）重新拉起（issue #226）。
         let platforms: Vec<String> = { self.configs.read().await.keys().cloned().collect() };
 
         for platform in &platforms {

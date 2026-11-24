@@ -1,5 +1,18 @@
 ## [Unreleased]
 
+### Fixed
+
+- **显式 `enabled: false` 的适配器被健康监控重新拉起（禁用失效）**（#226）—— v0.0.46 为
+  `plugin enable` 热启用把**全部**平台配置（含 `enabled: false`）写进 `AdapterManager::configs`，
+  而健康监控以该 map 的 key 作为「已知平台」遍历，于是被禁用的平台在启动时被跳过后变成
+  「有配置、无实例」→ `needs_reconnect = true` → 30 秒后被 `reconnect_adapter()` 偷偷拉起
+  （无凭据要求的微信甚至开始空转扫码登录，并按 20 次上限反复重试）。现拆成两个 map：
+  `declared_configs`（配置里声明的平台，含已禁用的，仅供 `plugin enable` 读取）与
+  `configs`（**真正启动过**的平台，健康监控/重连的唯一来源，仅由 `start()` 写入、`stop()`
+  移除）。同时修复「配置里列了但凭据未设置而被跳过」的平台被健康监控拉起的问题。
+  回归测试：`test_health_monitor_never_resurrects_explicitly_disabled_adapter` /
+  `test_health_monitor_skips_adapter_with_missing_credentials`。
+
 ## [0.0.46] - 2026-11-24
 
 ### Added

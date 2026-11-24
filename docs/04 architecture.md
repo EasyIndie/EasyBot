@@ -714,7 +714,8 @@ interface AdapterManager {
 }
 ```
 
-- 自动检测凭据环境变量启用适配器（`enabled: None` = auto）
+- 自动检测凭据环境变量启用适配器（`enabled: None` = auto，`Some(false)` = 强制关闭，`Some(true)` = 强制启用）
+- **被跳过的平台不进入健康监控**：`AdapterManager` 用两个 map 区分「配置里声明的平台」（`declared_configs`，含 `enabled: false`，仅供 `plugin enable` 热启用读取）与「真正启动过的平台」（`configs`，健康监控/重连的唯一来源，仅由 `start()` 写入、`stop()` 移除）。因此 `enabled: false` 或凭据缺失而被跳过的平台不会被当作「有配置、无实例」重新拉起。
 - 健康监控每 30 秒检查所有适配器心跳（120s 过期阈值 → Degraded）
 - **分级响应**：传输重试 `retry_transport()`（不鉴权，5 次/30s）→ 完整重连 `reconnect_adapter()`（含鉴权，指数退避 5s→300s）→ 慢重试（20 次后 30min 间隔）
 - **错误分类**（结构化优先）：`AuthFailed/Unauthorized/Forbidden` → 永久（立即 Failed）；`Transient/RequestTimeout/RateLimited` → 瞬态（分级重试）。启发式兜底且网络信号优先——网络层失败（如 `"QQ auth failed: ... connection timed out"`）判瞬态，凭据被拒才判永久。适配器网络层错误用 `GatewayError::Transient` 标记，connect 失败用 `ConnectResult::failed(_, kind)` 透传分类。
