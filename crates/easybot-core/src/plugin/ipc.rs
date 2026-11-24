@@ -44,6 +44,12 @@ const DEFAULT_CALL_TIMEOUT: Duration = Duration::from_secs(30);
 /// 插件优雅退出的等待上限：超时后强杀，避免 `disable`/卸载被卡住。
 const PLUGIN_EXIT_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// 单行 stdout 上限：超过视为插件失控（刷日志/死循环），断开并判故障。
+const MAX_LINE_BYTES: usize = 8 * 1024 * 1024;
+
+/// 事件回传速率上限（每分钟）。插件无沙箱，刷事件会打满宿主 CPU/事件总线。
+const MAX_EVENTS_PER_MINUTE: u32 = 6_000;
+
 /// 插件自述健康状态的编码：未上报（旧插件）。
 const HEALTH_UNREPORTED: u8 = 0;
 /// 插件自述健康。
@@ -52,6 +58,52 @@ const HEALTH_HEALTHY: u8 = 1;
 const HEALTH_DEGRADED: u8 = 2;
 /// 插件自述失败。
 const HEALTH_DOWN: u8 = 3;
+
+/// 事件回传速率限制器（固定窗口，每分钟重置）。
+///
+/// 进程外插件无沙箱，一个刷事件的插件可以打满宿主 CPU 与事件总线；
+/// 超限事件直接丢弃并计数（不影响响应/心跳通道）。
+#[derive(Debug)]
+struct EventRateLimiter {
+    window_start: std::time::Instant,
+    count: u32,
+    limit: u32,
+    dropped: u64,
+}
+
+impl EventRateLimiter {
+    fn new(limit: u32) -> Self {
+        Self {
+            window_start: std::time::Instant::now(),
+            count: 0,
+            limit,
+            dropped: 0,
+        }
+    }
+
+    /// 是否允许该事件通过（超限则记一次丢弃并返回 false）。
+    fn allow(&mut self) -> bool {
+        self.allow_at(std::time::Instant::now())
+    }
+
+    fn allow_at(&mut self, now: std::time::Instant) -> bool {
+        if now.duration_since(self.window_start) >= Duration::from_secs(60) {
+            self.window_start = now;
+            self.count = 0;
+        }
+        if self.limit != 0 && self.count >= self.limit {
+            self.dropped = self.dropped.saturating_add(1);
+            return false;
+        }
+        self.count = self.count.saturating_add(1);
+        true
+    }
+
+    /// 累计丢弃数。
+    fn dropped(&self) -> u64 {
+        self.dropped
+    }
+}
 
 /// 计算进程外插件的健康状态。
 ///
@@ -278,9 +330,30 @@ fn spawn_reader(
     reported_health: Arc<AtomicU8>,
 ) {
     tokio::spawn(async move {
-        let mut lines = BufReader::new(stdout).lines();
-        while let Ok(Some(line)) = lines.next_line().await {
-            let Ok(value) = serde_json::from_str::<Value>(&line) else {
+        let mut reader = BufReader::new(stdout);
+        // 事件回传速率窗口（每分钟重置）。超限事件直接丢弃并计数，
+        // 避免无沙箱插件把宿主 EventBus / CPU 打满。
+        let mut event_limiter = EventRateLimiter::new(MAX_EVENTS_PER_MINUTE);
+
+        loop {
+            // 有界读取：`lines()` 不限制单行长度，插件写一行几百 MB 就能把宿主撑爆。
+            let mut buf: Vec<u8> = Vec::new();
+            match reader.read_until(b'\n', &mut buf).await {
+                Ok(0) => break, // EOF
+                Ok(_) => {}
+                Err(_) => break,
+            }
+            if buf.len() > MAX_LINE_BYTES {
+                tracing::error!(
+                    platform = %platform,
+                    bytes = buf.len(),
+                    limit = MAX_LINE_BYTES,
+                    "plugin exceeded stdout line limit; treating as unhealthy"
+                );
+                break;
+            }
+            let line = String::from_utf8_lossy(&buf);
+            let Ok(value) = serde_json::from_str::<Value>(line.trim()) else {
                 continue;
             };
 
@@ -302,6 +375,18 @@ fn spawn_reader(
             } else if let Ok(note) = serde_json::from_value::<Notification>(value) {
                 match note.method.as_str() {
                     methods::NOTIFY_EVENT => {
+                        if !event_limiter.allow() {
+                            let dropped = event_limiter.dropped();
+                            if dropped == 1 || dropped.is_multiple_of(1_000) {
+                                tracing::warn!(
+                                    platform = %platform,
+                                    dropped,
+                                    limit = MAX_EVENTS_PER_MINUTE,
+                                    "plugin exceeds event rate limit; dropping events"
+                                );
+                            }
+                            continue;
+                        }
                         if let Some(bus) = &event_bus {
                             let event_type = note
                                 .params
@@ -804,5 +889,40 @@ mod heartbeat_tests {
             plugin_health_status(HEALTH_HEALTHY, now + 5_000, now, THRESHOLD),
             HealthStatus::Healthy
         );
+    }
+}
+
+#[cfg(test)]
+mod rate_limit_tests {
+    use super::*;
+
+    #[test]
+    fn allows_up_to_limit_then_drops() {
+        let mut limiter = EventRateLimiter::new(3);
+        assert!(limiter.allow());
+        assert!(limiter.allow());
+        assert!(limiter.allow());
+        assert!(!limiter.allow());
+        assert!(!limiter.allow());
+        assert_eq!(limiter.dropped(), 2);
+    }
+
+    #[test]
+    fn window_resets_after_a_minute() {
+        let mut limiter = EventRateLimiter::new(1);
+        let now = std::time::Instant::now();
+        assert!(limiter.allow_at(now));
+        assert!(!limiter.allow_at(now));
+        // 60s 后窗口重置
+        assert!(limiter.allow_at(now + Duration::from_secs(60)));
+    }
+
+    #[test]
+    fn zero_limit_disables_throttling() {
+        let mut limiter = EventRateLimiter::new(0);
+        for _ in 0..10_000 {
+            assert!(limiter.allow());
+        }
+        assert_eq!(limiter.dropped(), 0);
     }
 }
