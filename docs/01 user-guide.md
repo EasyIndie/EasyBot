@@ -284,6 +284,16 @@ easybot --init  ──→  编辑 .env  ──→  easybot --debug
 
 系统自动检测已设置令牌的平台，自动启用对应适配器。
 
+**启用规则**（`adapters.<platform>.enabled`）：
+
+| 值 | 含义 |
+|---|---|
+| 缺省（`None`） | 自动：凭据环境变量齐全则启用；无凭据的平台（如个人微信）不启用 |
+| `true` | 强制启用（即使凭据未就绪） |
+| `false` | 强制关闭：启动时跳过，**健康监控也不会把它重新拉起**（不会被当作「有配置、无实例」重连） |
+
+> 个人微信无凭据（扫码登录），自 v0.0.44 起**默认关闭**，需显式 `adapters.wechat.enabled: true` 才会启动。
+
 ### 4.3 环境变量（.env）
 
 ```bash
@@ -301,7 +311,7 @@ FEISHU_APP_SECRET=xxxxxxxxxxxxxxxxxxxxxxxx
 QQ_APP_ID=your_app_id
 QQ_CLIENT_SECRET=your_client_secret
 
-# 微信 — 扫码登录，无需环境变量
+# 微信 — 扫码登录，无需环境变量（需在 gateway.yaml 写 adapters.wechat.enabled: true）
 ```
 
 **优先级：** Shell export / Docker `environment:` > `.env` 文件 > `gateway.yaml` 默认值
@@ -573,11 +583,23 @@ QQ_CLIENT_SECRET=your_secret
 
 基于 [iLink Bot API v2](https://github.com/Tencent/openclaw-weixin)（官方 OpenClaw 平台）实现，**无需环境变量**，启动后扫码登录。协议版本 `channel_version: "2.2.0"`。
 
+个人微信无凭据要求，自 v0.0.44 起是 **opt-in**：仅在配置里显式开启才会启动（否则启动日志为
+`Skipping adapter 'wechat' (个人微信) — no credentials; requires explicit enabled: true`）。
+
+```yaml
+# gateway.yaml 或 gateway.local.yaml
+adapters:
+  wechat:
+    enabled: true      # 开启个人微信（扫码登录）
+```
+
 ```bash
 # 查看日志中的扫码信息
 easybot --debug
 # [INFO] easybot_adapter_wechat::adapter 个人微信适配器启动，请扫描屏幕二维码登录
 ```
+
+想要关闭时写 `enabled: false` 即可（启动时跳过，且健康监控不会把它重新拉起）。
 
 **发送消息：** `target: "wechat:{wxid}"`
 
@@ -1258,7 +1280,7 @@ wscat -c ws://localhost:8080/api/v1/ws
 | Discord | Bot Token | [Discord Developer Portal](https://discord.com/developers/applications) |
 | 飞书 | App ID + App Secret | [飞书开放平台](https://open.feishu.cn/app) |
 | QQ | App ID + Client Secret | [QQ 开放平台](https://bot.q.qq.com/) |
-| 微信 | 扫码登录 | 启动后扫描屏幕二维码 |
+| 微信 | 扫码登录（需 `adapters.wechat.enabled: true`） | 启动后扫描屏幕二维码 |
 
 ---
 

@@ -84,7 +84,12 @@ logging:
 #       - discord
 
 # ── 适配器自定义配置（按需覆盖默认值）──────────────────
+# 启用规则：`enabled` 缺省 = 自动（凭据环境变量齐全则启用）
+#           `true` = 强制启用；`false` = 强制关闭（健康监控不会把它重新拉起）
+# 个人微信无凭据，**默认关闭**，需显式 `wechat.enabled: true` 才启动扫码登录
 # adapters:
+#   wechat:
+#     enabled: true                      # 个人微信：opt-in，默认不启动
 #   telegram:
 #     apiUrl: "https://api.telegram.org"  # 自定义 API 地址（代理 / 自建）
 #   discord:

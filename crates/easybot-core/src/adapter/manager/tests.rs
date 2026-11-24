@@ -342,6 +342,19 @@ async fn test_start_all_skips_disabled() {
         result.failed.is_empty(),
         "disabled adapter should not fail either"
     );
+    // 声明配置保留（plugin enable 需要），但不得进入健康监控的已知平台清单（#226）
+    assert!(
+        manager
+            .declared_configs
+            .read()
+            .await
+            .contains_key("test-mock"),
+        "declared config must be kept for plugin enable"
+    );
+    assert!(
+        !manager.configs.read().await.contains_key("test-mock"),
+        "disabled adapter must not enter the health-monitor platform list"
+    );
 }
 
 #[tokio::test]
@@ -720,6 +733,7 @@ async fn test_stop_all_clears_configs() {
 
     // stop_all now clears configs as well
     assert!(manager.configs.read().await.is_empty());
+    assert!(manager.declared_configs.read().await.is_empty());
 }
 
 #[tokio::test]
@@ -1099,5 +1113,131 @@ async fn health_monitor_disables_on_unauthorized_connect_error() {
     assert!(
         state.permanent_failure,
         "Unauthorized connect error must disable the adapter"
+    );
+}
+
+// ── issue #226 回归：被跳过的平台不得被健康监控拉起 ──────────
+
+#[tokio::test]
+async fn test_health_monitor_never_resurrects_explicitly_disabled_adapter() {
+    // v0.0.46 回归：`start_all` 为插件热启用把**全部**配置塞进 `self.configs`，
+    // 健康监控把它当作「已知平台」遍历 → `enabled: false` 的平台“有配置、无实例”
+    // → `needs_reconnect = true` → 被偷偷拉起。
+    let event_bus = Arc::new(EventBus::new());
+    let mut rx = event_bus.subscribe(event_types::ADAPTER_RECONNECTING);
+    let manager = Arc::new(AdapterManager::new().with_event_bus(event_bus));
+    AdapterManager::init_self_ref(&manager).await;
+    register_mock_adapter(&manager).await;
+
+    let mut configs = HashMap::new();
+    configs.insert(
+        "test-mock".to_string(),
+        AdapterConfig {
+            enabled: Some(false),
+            token: Some("declared-token".into()),
+            api_key: None,
+            base_url: None,
+            extra: serde_json::json!({}),
+        },
+    );
+
+    let result = manager.start_all(configs).await;
+    assert!(
+        result.succeeded.is_empty(),
+        "disabled adapter must not start: {:?}",
+        result.succeeded
+    );
+
+    // 声明配置仍需保留（`plugin enable` 热启用依赖它）
+    let declared = manager
+        .saved_config("test-mock")
+        .await
+        .expect("declared config must stay readable for plugin enable");
+    assert_eq!(declared.enabled, Some(false));
+    assert_eq!(declared.token.as_deref(), Some("declared-token"));
+
+    // 一次健康检查 tick：不得重连、不得启动
+    let mut reconnect_state = HashMap::new();
+    manager.run_health_check(&mut reconnect_state).await;
+
+    assert!(
+        !manager.adapters.read().await.contains_key("test-mock"),
+        "health monitor must not instantiate a disabled adapter"
+    );
+    assert!(
+        manager.get_status("test-mock").await.is_none(),
+        "health monitor must not create a status entry for a disabled adapter"
+    );
+    assert!(
+        !reconnect_state.contains_key("test-mock"),
+        "health monitor must not track reconnect state for a disabled adapter"
+    );
+    assert!(
+        tokio::time::timeout(Duration::from_millis(300), rx.recv())
+            .await
+            .is_err(),
+        "disabled adapter must not publish ADAPTER_RECONNECTING"
+    );
+}
+
+#[tokio::test]
+async fn test_health_monitor_skips_adapter_with_missing_credentials() {
+    // 同类回归：配置里声明了（`enabled` 缺省）但凭据未设置的平台同样被跳过，
+    // 健康监控不得到把它拉起（否则会对没有凭据的适配器反复重连）。
+    let manager = new_manager().await;
+    let registry = manager.registry();
+    registry
+        .register(
+            "cred-mock",
+            "Cred Mock",
+            Arc::new(|config| {
+                Box::pin(async move {
+                    let mut adapter = MockTestAdapter::new();
+                    adapter.platform = "cred-mock".into();
+                    let result = adapter.init(config).await.map_err(|e| e.to_string())?;
+                    if !result.ok {
+                        return Err(result.error.unwrap_or_default());
+                    }
+                    let boxed: Box<dyn PlatformAdapter> = Box::new(adapter);
+                    Ok(boxed)
+                })
+            }),
+            &["EASYBOT_TEST_MISSING_CRED_TOKEN"],
+        )
+        .await;
+
+    // 确保凭据变量确实未设置
+    // SAFETY: 测试环境，单线程执行
+    unsafe { std::env::remove_var("EASYBOT_TEST_MISSING_CRED_TOKEN") };
+
+    let mut configs = HashMap::new();
+    configs.insert(
+        "cred-mock".to_string(),
+        AdapterConfig {
+            enabled: None,
+            token: None,
+            api_key: None,
+            base_url: None,
+            extra: serde_json::json!({}),
+        },
+    );
+
+    let result = manager.start_all(configs).await;
+    assert!(
+        result.succeeded.is_empty(),
+        "adapter without credentials must not start: {:?}",
+        result.succeeded
+    );
+
+    let mut reconnect_state = HashMap::new();
+    manager.run_health_check(&mut reconnect_state).await;
+
+    assert!(
+        !manager.adapters.read().await.contains_key("cred-mock"),
+        "health monitor must not start an adapter whose credentials are missing"
+    );
+    assert!(
+        manager.get_status("cred-mock").await.is_none(),
+        "health monitor must not create a status entry for a skipped adapter"
     );
 }
