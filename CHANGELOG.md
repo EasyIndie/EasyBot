@@ -17,6 +17,21 @@
 
 ### Changed
 
+- **媒体下载统一到 `easybot_adapter_kit::media`（#211 第三批）** —— 此前 4 个适配器各写一份，
+  防护能力互不一致：
+
+  | 适配器 | 原实现 | 问题 |
+  |---|---|---|
+  | 飞书 | 流式 25 MB 上限 | 无 SSRF 校验 |
+  | QQ / Discord | 只看 `Content-Length` | chunked 响应可绕过，随后 `resp.bytes()` **无界** |
+  | 微信 | SSRF + 60s 超时 | `resp.bytes()` **无界** |
+
+  现统一为一份实现，四件事绑在一起、无法「只拿一半」：**SSRF 校验 + 流式计数上限
+  （默认 25 MB）+ 总超时（60s）+ 错误分类**（网络 → `Transient`，超限/非法 URL → `InvalidRequest`）。
+  `download_full()` 同时返回 `Content-Type`（QQ/Discord 上传需要）。
+
+  自建媒体服务器若确实使用内网地址，显式设置 `EASYBOT_ALLOW_PRIVATE_MEDIA_URLS=1` 放行
+  （默认严格，防止 API 调用方拿网关去抓自己的管理接口再转发到 IM 平台）。
 - **`plugin enable` 立即生效（与 `disable` 对称）**（#215）—— 此前 `enable` 只写清单、
   **下次启动才生效**，装好插件后还必须重启整个网关。现在 `enable` 会重新加载插件目录
   （**含启动验签**，`--production` 下未签名/未受信任发布者仍拒绝）→ 注册工厂 → 启动适配器；

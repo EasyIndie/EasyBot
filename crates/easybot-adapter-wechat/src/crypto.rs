@@ -7,7 +7,6 @@ use easybot_core::types::error::GatewayError;
 use easybot_core::types::message::MediaAttachment;
 use std::path::PathBuf;
 use std::sync::OnceLock;
-use std::time::Duration;
 
 /// 凭据文件路径（位于 EasyBot 配置根目录下）
 const CREDENTIALS_FILE: &str = ".wechat-credentials.json";
@@ -358,56 +357,12 @@ pub(crate) fn md5_hex(data: &[u8]) -> String {
     format!("{:x}", md5::compute(data))
 }
 
-/// 从 URL 下载文件内容
-pub(crate) async fn download_media(
-    url: &str,
-    client: &reqwest::Client,
-) -> Result<Vec<u8>, GatewayError> {
-    // SECURITY: Validate URL to prevent SSRF attacks
-    if easybot_core::config::validate_url_for_ssrf(url).is_err() {
-        return Err(GatewayError::Internal(
-            "Media URL targets an internal/blocked host".into(),
-        ));
-    }
-
-    let resp =
-        client.get(url).send().await.map_err(|e| {
-            GatewayError::Internal(format!("Failed to download media from URL: {}", e))
-        })?;
-
-    if !resp.status().is_success() {
-        return Err(GatewayError::Internal(format!(
-            "Failed to download media: HTTP {}",
-            resp.status().as_u16()
-        )));
-    }
-
-    tokio::time::timeout(Duration::from_secs(60), resp.bytes())
-        .await
-        .map_err(|_| GatewayError::Internal("Media download timeout (60s)".to_string()))?
-        .map(|b| b.to_vec())
-        .map_err(|e| GatewayError::Internal(format!("Failed to read media bytes: {}", e)))
-}
-
 /// 从 MediaAttachment 获取文件数据（优先 URL，其次 base64 data）
 pub(crate) async fn resolve_media_data(
     media: &MediaAttachment,
     client: &reqwest::Client,
 ) -> Result<Vec<u8>, GatewayError> {
-    if let Some(ref url) = media.url {
-        download_media(url, client).await
-    } else if let Some(ref b64_data) = media.data {
-        use base64::Engine;
-        base64::engine::general_purpose::STANDARD
-            .decode(b64_data)
-            .map_err(|e| {
-                GatewayError::Internal(format!("Failed to decode base64 media data: {}", e))
-            })
-    } else {
-        Err(GatewayError::Internal(
-            "Media attachment has neither url nor data".to_string(),
-        ))
-    }
+    easybot_adapter_kit::media::resolve(client, media).await
 }
 
 #[cfg(test)]

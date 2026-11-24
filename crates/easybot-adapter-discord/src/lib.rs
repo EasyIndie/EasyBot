@@ -1077,57 +1077,16 @@ impl PlatformAdapter for DiscordAdapter {
                 .unwrap_or_else(|| "file".to_string());
             (decoded, fname, params.media.mime_type.clone())
         } else if let Some(file_url) = &params.media.url {
-            // 网络层失败 → SendResult::fail(retryable=true)，与 send/send_interactive 约定一致
-            let resp = match client.get(file_url).send().await {
-                Ok(r) => r,
-                Err(e) => {
-                    self.errors.fetch_add(1, Ordering::Relaxed);
-                    let fail = SendResult::fail(format!("Media download failed: {}", e), true);
-                    if let Some(bus) = &self.event_bus {
-                        bus.publish_send_result(
-                            event_types::MESSAGE_FAILED,
-                            "discord",
-                            &params.chat_id,
-                            &fail,
-                        );
-                    }
-                    return Ok(fail);
-                }
-            };
-            let ct = resp
-                .headers()
-                .get("content-type")
-                .and_then(|v| v.to_str().ok())
-                .unwrap_or("application/octet-stream")
-                .to_string();
-            // SECURITY: Reject oversized downloads to prevent OOM
-            const MAX_DOWNLOAD_BYTES: u64 = 25 * 1024 * 1024; // 25MB
-            if let Some(content_length) = resp.content_length()
-                && content_length > MAX_DOWNLOAD_BYTES
+            // SECURITY: 统一走 kit —— SSRF 校验 + 流式 25 MB 上限 + 60s 超时。
+            // 此前只校验 `Content-Length`（chunked 响应可绕过），随后 `resp.bytes()` 无界。
+            let downloaded = match easybot_adapter_kit::media::download_full(client, file_url).await
             {
-                self.errors.fetch_add(1, Ordering::Relaxed);
-                let fail = SendResult::fail(
-                    format!(
-                        "Rejected media download: {} bytes exceeds {} limit",
-                        content_length, MAX_DOWNLOAD_BYTES
-                    ),
-                    false,
-                );
-                if let Some(bus) = &self.event_bus {
-                    bus.publish_send_result(
-                        event_types::MESSAGE_FAILED,
-                        "discord",
-                        &params.chat_id,
-                        &fail,
-                    );
-                }
-                return Ok(fail);
-            }
-            let data = match resp.bytes().await {
-                Ok(d) => d.to_vec(),
+                Ok(d) => d,
                 Err(e) => {
                     self.errors.fetch_add(1, Ordering::Relaxed);
-                    let fail = SendResult::fail(format!("Media download read failed: {}", e), true);
+                    // 网络层失败可重试；超限/非法 URL 不可重试
+                    let retryable = matches!(e, GatewayError::Transient(_));
+                    let fail = SendResult::fail(format!("Media download failed: {e}"), retryable);
                     if let Some(bus) = &self.event_bus {
                         bus.publish_send_result(
                             event_types::MESSAGE_FAILED,
@@ -1139,6 +1098,10 @@ impl PlatformAdapter for DiscordAdapter {
                     return Ok(fail);
                 }
             };
+            let ct = downloaded
+                .content_type
+                .unwrap_or_else(|| "application/octet-stream".to_string());
+            let data = downloaded.bytes;
             let fname = params
                 .media
                 .filename

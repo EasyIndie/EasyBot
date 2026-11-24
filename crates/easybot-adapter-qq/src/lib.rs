@@ -689,33 +689,22 @@ impl QqAdapter {
             let fname = media.filename.clone().unwrap_or_else(|| "file".to_string());
             Ok((decoded, fname, media.mime_type.clone()))
         } else if let Some(file_url) = &media.url {
-            let resp = client.get(file_url).send().await.map_err(|e| {
-                GatewayError::Internal(format!("QQ {}: download failed: {}", label, e))
-            })?;
-            // SECURITY: Reject oversized downloads to prevent OOM
-            if let Some(cl) = resp.content_length()
-                && cl > 25 * 1024 * 1024
-            {
-                return Err(GatewayError::Internal(format!(
-                    "Rejected {} download: {} bytes exceeds 25MB limit",
-                    label, cl,
-                )));
-            }
-            let ct = resp
-                .headers()
-                .get("content-type")
-                .and_then(|v| v.to_str().ok())
-                .unwrap_or("application/octet-stream")
-                .to_string();
-            let data = resp.bytes().await.map_err(|e| {
-                GatewayError::Internal(format!("QQ {}: download read failed: {}", label, e))
-            })?;
+            // SECURITY: 统一走 kit —— SSRF 校验 + 流式 25 MB 上限 + 60s 超时。
+            // 此前只校验 `Content-Length`（chunked 响应可绕过），随后 `resp.bytes()` 无界。
+            let downloaded = easybot_adapter_kit::media::download_full(client, file_url)
+                .await
+                .map_err(|e| {
+                    GatewayError::Internal(format!("QQ {}: download failed: {}", label, e))
+                })?;
             let fname = media
                 .filename
                 .clone()
                 .or_else(|| file_url.split('/').next_back().map(|s| s.to_string()))
                 .unwrap_or_else(|| "file".to_string());
-            Ok((data.to_vec(), fname, ct))
+            let ct = downloaded
+                .content_type
+                .unwrap_or_else(|| "application/octet-stream".to_string());
+            Ok((downloaded.bytes, fname, ct))
         } else {
             Err(GatewayError::Internal(format!(
                 "No media data or URL provided for QQ {}",
