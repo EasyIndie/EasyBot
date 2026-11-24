@@ -12,7 +12,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicI64, AtomicU8, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -41,6 +41,49 @@ use crate::types::message::{
 /// 单次请求的默认超时（插件无响应时不无限挂起）。
 const DEFAULT_CALL_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// 插件自述健康状态的编码：未上报（旧插件）。
+const HEALTH_UNREPORTED: u8 = 0;
+/// 插件自述健康。
+const HEALTH_HEALTHY: u8 = 1;
+/// 插件自述降级（正在重试）。
+const HEALTH_DEGRADED: u8 = 2;
+/// 插件自述失败。
+const HEALTH_DOWN: u8 = 3;
+
+/// 计算进程外插件的健康状态。
+///
+/// 与内置适配器的语义对齐（`CLAUDE.md`「心跳表示后台任务存活且正在重试」）：
+///
+/// | 条件 | 结果 |
+/// |---|---|
+/// | 插件自述 `down` | `Down` |
+/// | 插件自述 `degraded` | `Degraded` |
+/// | 从未上报心跳（旧插件） | `Healthy`（宽容，避免升级即误伤） |
+/// | 曾上报心跳但超过阈值未更新 | `Degraded` |
+/// | 其它 | `Healthy` |
+fn plugin_health_status(
+    reported: u8,
+    last_heartbeat_ms: i64,
+    now_ms: i64,
+    liveness_threshold_ms: i64,
+) -> HealthStatus {
+    match reported {
+        HEALTH_DOWN => HealthStatus::Down,
+        HEALTH_DEGRADED => HealthStatus::Degraded,
+        _ => {
+            if last_heartbeat_ms == 0 {
+                // 旧插件：没有心跳通道，只能按「子进程存活」判断
+                HealthStatus::Healthy
+            } else if now_ms.saturating_sub(last_heartbeat_ms) > liveness_threshold_ms {
+                // 曾经上报过，说明插件支持心跳；现在不再上报 → 后台任务卡住
+                HealthStatus::Degraded
+            } else {
+                HealthStatus::Healthy
+            }
+        }
+    }
+}
+
 /// 未决请求表：请求 id → 响应通道。
 type PendingMap = Mutex<HashMap<u64, oneshot::Sender<Result<Value, String>>>>;
 
@@ -66,6 +109,13 @@ pub struct IpcPluginAdapter {
     call_timeout: Duration,
     /// 子进程是否已退出（reader 任务在 EOF 时置位）。
     child_exited: Arc<std::sync::atomic::AtomicBool>,
+    /// 最近一次收到心跳的时间（epoch 毫秒；0 = 从未收到）。
+    ///
+    /// 旧版插件不发心跳，因此 0 必须按「宽容」处理（视为健康），
+    /// 否则升级宿主会让所有现存插件立刻变成 `Degraded`。
+    last_heartbeat_ms: Arc<AtomicI64>,
+    /// 插件自述的健康状态（0 = 未上报 / healthy，1 = degraded，2 = down）。
+    reported_health: Arc<AtomicU8>,
     /// 额外注入子进程的环境变量。
     extra_env: Vec<(String, String)>,
 }
@@ -100,6 +150,8 @@ impl IpcPluginAdapter {
             event_bus: None,
             call_timeout: DEFAULT_CALL_TIMEOUT,
             child_exited: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            last_heartbeat_ms: Arc::new(AtomicI64::new(0)),
+            reported_health: Arc::new(AtomicU8::new(HEALTH_UNREPORTED)),
             extra_env: Vec::new(),
         }
     }
@@ -175,6 +227,10 @@ impl IpcPluginAdapter {
         let pending: Arc<PendingMap> = Arc::new(Mutex::new(HashMap::new()));
         *self.pending.lock().unwrap() = pending.clone();
         self.child_exited.store(false, Ordering::SeqCst);
+        // 换代：新进程尚未上报心跳，回到「宽容」状态
+        self.last_heartbeat_ms.store(0, Ordering::SeqCst);
+        self.reported_health
+            .store(HEALTH_UNREPORTED, Ordering::SeqCst);
 
         let mut child = command.spawn().map_err(|e| {
             GatewayError::Internal(format!(
@@ -201,6 +257,8 @@ impl IpcPluginAdapter {
             self.event_bus.clone(),
             self.platform.clone(),
             self.child_exited.clone(),
+            self.last_heartbeat_ms.clone(),
+            self.reported_health.clone(),
         );
         Ok(())
     }
@@ -213,6 +271,8 @@ fn spawn_reader(
     event_bus: Option<Arc<EventBus>>,
     platform: String,
     child_exited: Arc<std::sync::atomic::AtomicBool>,
+    last_heartbeat_ms: Arc<AtomicI64>,
+    reported_health: Arc<AtomicU8>,
 ) {
     tokio::spawn(async move {
         let mut lines = BufReader::new(stdout).lines();
@@ -236,17 +296,38 @@ fn spawn_reader(
                 if let Some(tx) = pending.lock().unwrap().remove(&resp.id) {
                     let _ = tx.send(outcome);
                 }
-            } else if let Ok(note) = serde_json::from_value::<Notification>(value)
-                && note.method == methods::NOTIFY_EVENT
-                && let Some(bus) = &event_bus
-            {
-                let event_type = note
-                    .params
-                    .get("event")
-                    .and_then(Value::as_str)
-                    .unwrap_or("");
-                let data = note.params.get("data").cloned().unwrap_or(Value::Null);
-                bus.publish(GatewayEvent::new(event_type, platform.clone(), data));
+            } else if let Ok(note) = serde_json::from_value::<Notification>(value) {
+                match note.method.as_str() {
+                    methods::NOTIFY_EVENT => {
+                        if let Some(bus) = &event_bus {
+                            let event_type = note
+                                .params
+                                .get("event")
+                                .and_then(Value::as_str)
+                                .unwrap_or("");
+                            let data = note.params.get("data").cloned().unwrap_or(Value::Null);
+                            bus.publish(GatewayEvent::new(event_type, platform.clone(), data));
+                        }
+                    }
+                    methods::NOTIFY_HEARTBEAT => {
+                        let status = note
+                            .params
+                            .get("status")
+                            .and_then(Value::as_str)
+                            .unwrap_or("");
+                        let encoded = match status {
+                            "down" => HEALTH_DOWN,
+                            "degraded" => HEALTH_DEGRADED,
+                            // 未识别的取值不升级故障等级：宁可保守地视为健康，
+                            // 也不要因为插件笔误把适配器打成 Down。
+                            _ => HEALTH_HEALTHY,
+                        };
+                        reported_health.store(encoded, Ordering::SeqCst);
+                        last_heartbeat_ms
+                            .store(chrono::Utc::now().timestamp_millis(), Ordering::SeqCst);
+                    }
+                    _ => {}
+                }
             }
         }
 
@@ -382,21 +463,27 @@ impl PlatformAdapter for IpcPluginAdapter {
     }
 
     /// 子进程退出后即使状态仍为 Connected 也报告 Down，驱动宿主健康监测器重连。
+    ///
+    /// 子进程存活时进一步参考插件的心跳上报（见 [`plugin_health_status`]）：
+    /// 插件内部轮询失败、正在退避重试时应为 `Degraded`，而不是永远 `Healthy`。
     fn health_status(&self) -> HealthStatus {
         if self.child_exited() {
             return HealthStatus::Down;
         }
-        HealthStatus::Healthy
+        plugin_health_status(
+            self.reported_health.load(Ordering::SeqCst),
+            self.last_heartbeat_ms.load(Ordering::SeqCst),
+            chrono::Utc::now().timestamp_millis(),
+            crate::types::adapter::DEFAULT_LIVENESS_THRESHOLD_MS,
+        )
     }
 
     async fn health(&self) -> HealthReport {
         let connected = self.is_connected() && !self.child_exited();
         HealthReport {
-            status: if connected {
-                HealthStatus::Healthy
-            } else {
-                HealthStatus::Down
-            },
+            // 与 health_status() 保持一致：子进程存活但插件自述 degraded /
+            // 心跳过期时，不能对外声称 Healthy。
+            status: self.health_status(),
             connected,
             last_connected_at: None,
             last_error_at: None,
@@ -635,5 +722,71 @@ mod tests {
         assert!(path.exists());
         assert_eq!(tokio::fs::read(&path).await.unwrap(), b"hello");
         let _ = tokio::fs::remove_file(&path).await;
+    }
+}
+
+#[cfg(test)]
+mod heartbeat_tests {
+    use super::*;
+
+    const THRESHOLD: i64 = 120_000;
+
+    #[test]
+    fn legacy_plugin_without_heartbeat_stays_healthy() {
+        // 从未上报（旧插件）→ 宽容处理，不因升级宿主而被判故障
+        assert_eq!(
+            plugin_health_status(HEALTH_UNREPORTED, 0, 1_000_000, THRESHOLD),
+            HealthStatus::Healthy
+        );
+    }
+
+    #[test]
+    fn fresh_heartbeat_is_healthy() {
+        let now = 1_000_000;
+        assert_eq!(
+            plugin_health_status(HEALTH_HEALTHY, now - 1_000, now, THRESHOLD),
+            HealthStatus::Healthy
+        );
+    }
+
+    #[test]
+    fn stale_heartbeat_is_degraded() {
+        let now = 1_000_000;
+        assert_eq!(
+            plugin_health_status(HEALTH_HEALTHY, now - THRESHOLD - 1, now, THRESHOLD),
+            HealthStatus::Degraded
+        );
+    }
+
+    #[test]
+    fn plugin_reported_degraded_and_down_are_respected() {
+        let now = 1_000_000;
+        assert_eq!(
+            plugin_health_status(HEALTH_DEGRADED, now, now, THRESHOLD),
+            HealthStatus::Degraded
+        );
+        assert_eq!(
+            plugin_health_status(HEALTH_DOWN, now, now, THRESHOLD),
+            HealthStatus::Down
+        );
+    }
+
+    #[test]
+    fn stale_heartbeat_does_not_override_reported_down() {
+        let now = 1_000_000;
+        assert_eq!(
+            plugin_health_status(HEALTH_DOWN, now - THRESHOLD * 10, now, THRESHOLD),
+            HealthStatus::Down
+        );
+    }
+
+    #[test]
+    fn clock_skew_does_not_panic() {
+        // now 早于 last（系统时钟回拨）时应视为新鲜，而不是 panic/无意义结果
+        let now = 1_000;
+        assert_eq!(
+            plugin_health_status(HEALTH_HEALTHY, now + 5_000, now, THRESHOLD),
+            HealthStatus::Healthy
+        );
     }
 }

@@ -58,6 +58,9 @@ pub mod methods {
     // ── 通知（插件 → 宿主，无 id） ──
     /// 推送网关事件（宿主发布到事件总线）。
     pub const NOTIFY_EVENT: &str = "event";
+    /// 心跳上报（插件 → 宿主）：周期性上报自身健康判定，
+    /// 使进程外插件与内置适配器具备一致的 `Healthy/Degraded/Down` 语义。
+    pub const NOTIFY_HEARTBEAT: &str = "heartbeat";
     /// 推送日志（可选）。
     pub const NOTIFY_LOG: &str = "log";
 }
@@ -163,6 +166,22 @@ impl Notification {
         Self {
             method: methods::NOTIFY_EVENT.to_string(),
             params: serde_json::json!({ "event": event_type, "data": data }),
+        }
+    }
+
+    /// 构造心跳通知。
+    ///
+    /// `status` 取 `"healthy" | "degraded" | "down"`（插件用 `health()`
+    /// 的判定结果上报）；宿主据此在子进程存活的前提下仍能识别「正在重试」
+    /// 或「内部已失败」。旧插件不发心跳，宿主持宽容语义（视为健康）。
+    pub fn heartbeat(status: &str, consecutive_failures: u32, uptime_secs: u64) -> Self {
+        Self {
+            method: methods::NOTIFY_HEARTBEAT.to_string(),
+            params: serde_json::json!({
+                "status": status,
+                "consecutive_failures": consecutive_failures,
+                "uptime_secs": uptime_secs,
+            }),
         }
     }
 

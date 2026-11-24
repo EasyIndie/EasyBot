@@ -37,6 +37,10 @@ const FORWARDED_EVENTS: &[&str] = &[
     event_types::ADAPTER_RECONNECT_FAILED,
 ];
 
+/// 心跳上报间隔。宿主侧的健康阈值是 120s（`DEFAULT_LIVENESS_THRESHOLD_MS`），
+/// 20s 间隔可容忍连续 6 次丢失，既够灵敏又不会被偶发调度延迟打成 `Degraded`。
+const HEARTBEAT_INTERVAL: std::time::Duration = std::time::Duration::from_secs(20);
+
 /// 运行插件服务端（阻塞当前线程，直到 stdin 关闭或收到 `shutdown`）。
 pub fn run_plugin<T>(adapter: T)
 where
@@ -82,19 +86,47 @@ where
 
     let stdin = tokio::io::stdin();
     let mut lines = BufReader::new(stdin).lines();
-    while let Ok(Some(line)) = lines.next_line().await {
-        let line = line.trim();
-        if line.is_empty() {
-            continue;
-        }
-        // 忽略无法解析的行
-        let Ok(request) = serde_json::from_str::<Request>(line) else {
-            continue;
-        };
-        let (response, shutdown) = handle(&mut adapter, request).await;
-        write_line(&out, &response).await;
-        if shutdown {
-            break;
+    // 心跳：按固定间隔上报插件的健康判定，使宿主能在「子进程存活但内部
+    // 正在重试/已失败」时报告 Degraded/Down（与内置适配器语义一致）。
+    // 首个 tick 立即触发，因此 connect 之前的初始状态也会被上报一次。
+    let mut ticker = tokio::time::interval(HEARTBEAT_INTERVAL);
+    ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+
+    loop {
+        tokio::select! {
+            line = lines.next_line() => {
+                let Ok(Some(line)) = line else {
+                    break; // stdin 关闭 → 宿主已退出
+                };
+                let line = line.trim();
+                if line.is_empty() {
+                    continue;
+                }
+                // 忽略无法解析的行
+                let Ok(request) = serde_json::from_str::<Request>(line) else {
+                    continue;
+                };
+                let (response, shutdown) = handle(&mut adapter, request).await;
+                write_line(&out, &response).await;
+                if shutdown {
+                    break;
+                }
+            }
+            _ = ticker.tick() => {
+                // adapter.health() 只读本地状态，不会发起网络请求。
+                let report = adapter.health().await;
+                let status = match report.status {
+                    easybot_core::HealthStatus::Healthy => "healthy",
+                    easybot_core::HealthStatus::Degraded => "degraded",
+                    easybot_core::HealthStatus::Down => "down",
+                };
+                let note = Notification::heartbeat(
+                    status,
+                    adapter.heartbeat_failure_count().unwrap_or(0),
+                    report.uptime.unwrap_or(0),
+                );
+                write_line(&out, &note).await;
+            }
         }
     }
 }
