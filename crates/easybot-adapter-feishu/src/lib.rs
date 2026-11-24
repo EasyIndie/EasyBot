@@ -253,17 +253,8 @@ impl FeishuAdapter {
 
     /// 获取或创建 HTTP 客户端（OnceLock 延迟初始化，首次调用时创建）
     fn client(&self) -> &reqwest::Client {
-        self.http_client.get_or_init(|| {
-            reqwest::Client::builder()
-                .timeout(Duration::from_secs(15))
-                .build()
-                .unwrap_or_else(|e| {
-                    tracing::error!("Failed to create Feishu HTTP client: {}", e);
-                    // Fallback to default client — connection will fail later
-                    // with a more descriptive error rather than panicking
-                    reqwest::Client::new()
-                })
-        })
+        self.http_client
+            .get_or_init(|| easybot_adapter_kit::http::client(Duration::from_secs(15)))
     }
 
     /// 返回 API 基础 URL（支持通过 config.base_url 覆盖）
@@ -1048,13 +1039,7 @@ impl FeishuAdapter {
 
         // 角色解析 HTTP 客户端：必须带超时，否则慢请求会阻塞事件 handler
         // （SDK 等待 handler 完成才回 ACK → 拖垮整个 WS 事件流）。
-        let feishu_http = reqwest::Client::builder()
-            .timeout(Duration::from_secs(10))
-            .build()
-            .unwrap_or_else(|e| {
-                tracing::error!("飞书角色解析 HTTP 客户端创建失败: {}", e);
-                reqwest::Client::new()
-            });
+        let feishu_http = easybot_adapter_kit::http::client(Duration::from_secs(10));
         let feishu_base_url = self.api_base_url().to_string();
         // SDK 约定 base_url 不含 /open-apis 后缀（WS 端点为 {domain}/callback/ws/endpoint）
         let sdk_base_url = self.sdk_base_url();
