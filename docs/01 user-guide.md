@@ -591,7 +591,7 @@ easybot [OPTIONS] [COMMAND]
   easybot plugin info <name>               # 插件详情（已装 + 市场版本）
   easybot plugin install <name>            # 安装（支持 publisher/name；--yes 接受信任确认；--file 离线）
   easybot plugin uninstall <name>          # 卸载
-  easybot plugin enable|disable <name>     # 启停（disable 立即停，enable 下次启动生效）
+  easybot plugin enable|disable <name>     # 启停（两者均立即生效，无需重启）
   easybot plugin update <name>             # 更新（默认 pin 当前版本；--latest 跨版本）
   easybot plugin trust <pub> --public-key <k>   # 信任发布者
   easybot plugin inspect <name>            # 检查插件（清单/签名/加载错误）
@@ -759,7 +759,7 @@ API Key 列表中的“调试”按钮可选择活跃 Target，并使用待测 K
 | `/plugins/catalog` | GET | 市场目录（`?query=` 搜索，5min 缓存） |
 | `/plugins/install` | POST | 安装插件（body: `publisher/name` + `channel`；首次未信任发布者返回 `needsTrustConfirmation`） |
 | `/plugins/{name}` | DELETE | 卸载插件 |
-| `/plugins/{name}/enable` | POST | 启用插件（下次启动生效） |
+| `/plugins/{name}/enable` | POST | 启用插件（立即注册并启动，失败自动回滚） |
 | `/plugins/{name}/disable` | POST | 禁用插件（立即停止适配器） |
 | `/metrics` | GET | Prometheus 指标 |
 | `/logs` | GET | 实时日志流（环形缓冲 5000 条） |

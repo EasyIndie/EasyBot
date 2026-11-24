@@ -146,4 +146,78 @@ command: "{bin_name}"
         adapter.disconnect().await.expect("disconnect failed");
         assert_eq!(adapter.state(), AdapterState::Stopped);
     }
+
+    /// `plugin enable` 必须**立即生效**（不再「下次启动生效」），
+    /// 与 `disable` 对称；两者都不需要重启网关。
+    #[tokio::test]
+    async fn test_plugin_enable_and_disable_are_hot() {
+        use easybot_core::adapter::AdapterManager;
+        use easybot_core::plugin::manager::PluginManager;
+        use easybot_core::types::config::PluginConfig;
+
+        let plugin_path = find_mock_plugin().expect(
+            "ipc-mock-plugin not found. Build it first with: cargo build -p ipc-mock-plugin",
+        );
+        let temp_dir = create_temp_plugin_dir(&plugin_path);
+        let plugins_dir = temp_dir.path().to_path_buf();
+
+        // 模拟「已安装但被禁用」：清单写 enabled: false
+        let manifest_path = plugins_dir.join("ipc-mock").join("plugin.yaml");
+        let manifest = std::fs::read_to_string(&manifest_path).unwrap();
+        std::fs::write(&manifest_path, format!("{manifest}enabled: false\n")).unwrap();
+
+        let event_bus = Arc::new(EventBus::new());
+        let adapter_manager = Arc::new(AdapterManager::new().with_event_bus(event_bus.clone()));
+        adapter_manager.init_self_ref().await;
+
+        let config = Arc::new(tokio::sync::RwLock::new(PluginConfig::default()));
+        let manager = PluginManager::new(
+            plugins_dir.clone(),
+            config,
+            adapter_manager.clone(),
+            event_bus.clone(),
+            false,
+        )
+        .await;
+
+        // 禁用状态：未注册、不可用
+        assert!(
+            adapter_manager.get_status("ipc-mock").await.is_none(),
+            "disabled plugin must not be registered"
+        );
+
+        // 启用 → 立即注册并启动
+        manager
+            .set_enabled("ipc-mock", true)
+            .await
+            .expect("hot enable should succeed");
+        let status = adapter_manager
+            .get_status("ipc-mock")
+            .await
+            .expect("enabled plugin must be registered immediately");
+        assert_eq!(status.platform, "ipc-mock");
+
+        // 禁用 → 立即停止（未连接则标记 Stopped）并注销工厂
+        manager
+            .set_enabled("ipc-mock", false)
+            .await
+            .expect("hot disable must not hang or fail");
+        let after = adapter_manager
+            .get_status("ipc-mock")
+            .await
+            .expect("status entry is kept for the API, but must be stopped");
+        assert_eq!(after.state, AdapterState::Stopped);
+        assert!(!after.connected, "disabled plugin must not stay connected");
+        assert!(
+            !adapter_manager.registry().has_platform("ipc-mock").await,
+            "disabled plugin factory must be unregistered"
+        );
+
+        // 再次启用 → 仍然可用（工厂已注销后重新注册）
+        manager
+            .set_enabled("ipc-mock", true)
+            .await
+            .expect("re-enable after disable should succeed");
+        assert!(adapter_manager.registry().has_platform("ipc-mock").await);
+    }
 }

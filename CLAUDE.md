@@ -151,7 +151,7 @@ init(config) → connect() → send()/... → disconnect()
 - **签名 ≠ 安全**：ed25519 只证「作者 + 完整性」，不证代码无害。插件无沙箱，以宿主权限运行。
 - **信任按发布者**：`--yes` 不自动加入 `.trust`；显式 `plugin trust <publisher> --public-key <k>` 才加入。
 - **更新默认 pin**：`plugin update` 默认当前版本，`--latest`/`--channel` 才跨版本。
-- **启停语义**：`disable` 写 `enabled:false` + 立即 stop+unregister；`enable` 下次启动生效（v1 不做热 dlopen）。
+- **启停语义**：`disable` 写 `enabled:false` + 立即 stop+unregister；`enable` 写 `enabled:true` → 重新加载目录（含启动验签）→ 注册工厂 → 启动适配器，**立即生效**；任一步失败回滚清单为 disabled。
 - **孤儿数据**：卸载/禁用后的会话/消息由现有 TTL 保留策略兜底，不级联删除。
 - **生产门禁**：`--production`/`EASYBOT_ENV=production` 启动扫描签名，未签名且未 `allowUntrusted` 则拒绝。
 

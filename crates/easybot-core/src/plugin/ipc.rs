@@ -41,6 +41,9 @@ use crate::types::message::{
 /// 单次请求的默认超时（插件无响应时不无限挂起）。
 const DEFAULT_CALL_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// 插件优雅退出的等待上限：超时后强杀，避免 `disable`/卸载被卡住。
+const PLUGIN_EXIT_TIMEOUT: Duration = Duration::from_secs(5);
+
 /// 插件自述健康状态的编码：未上报（旧插件）。
 const HEALTH_UNREPORTED: u8 = 0;
 /// 插件自述健康。
@@ -441,7 +444,20 @@ impl PlatformAdapter for IpcPluginAdapter {
         let _ = self.call(methods::DISCONNECT, Value::Null).await;
         let _ = self.call(methods::SHUTDOWN, Value::Null).await;
         if let Some(mut child) = self.child.lock().await.take() {
-            let _ = child.wait().await;
+            // 有界等待：插件若忽略 `shutdown`（或卡在自身清理逻辑里），
+            // 不能让宿主的 `plugin disable` / 卸载永久挂起 —— 超时后强杀。
+            match tokio::time::timeout(PLUGIN_EXIT_TIMEOUT, child.wait()).await {
+                Ok(_) => {}
+                Err(_) => {
+                    tracing::warn!(
+                        platform = %self.platform,
+                        "plugin did not exit within {:?}; killing it",
+                        PLUGIN_EXIT_TIMEOUT
+                    );
+                    let _ = child.kill().await;
+                    let _ = child.wait().await;
+                }
+            }
         }
         *self.stdin.lock().await = None;
         *self.state.lock().unwrap() = AdapterState::Stopped;

@@ -32,6 +32,7 @@ use super::signing::trust::{CompositePublisherTrust, TrustStore};
 use super::signing::{PluginSignature, SigningError, parse_public_key, verify_artifact};
 use crate::adapter::AdapterManager;
 use crate::bus::EventBus;
+use crate::types::adapter::AdapterConfig;
 use crate::types::config::PluginConfig;
 use crate::updater::types::{current_target_triple, is_newer_than};
 use std::collections::{HashMap, HashSet};
@@ -461,10 +462,11 @@ impl PluginManager {
         Ok(())
     }
 
-    /// 启用/禁用插件
+    /// 启用/禁用插件（**立即生效**，无需重启网关）
     ///
-    /// 禁用：写 `enabled:false` 并立即 stop+unregister（适配器停止）。
-    /// 启用：写回 `true`，**下次启动生效**（v1 不做热加载）。
+    /// - 禁用：写 `enabled:false` 并立即 stop+unregister（适配器停止）；
+    /// - 启用：写 `enabled:true` → 重新加载插件目录（含启动验签，策略与启动扫描一致）
+    ///   → 注册工厂 → 启动适配器。任一步失败则回滚清单并返回错误。
     pub async fn set_enabled(&self, name: &str, enabled: bool) -> Result<bool, PluginManagerError> {
         let _guard = self.op_lock.lock().await;
         let dir = self.plugins_dir.join(name);
@@ -482,10 +484,92 @@ impl PluginManager {
         std::fs::write(&tmp, yaml)?;
         std::fs::rename(&tmp, &manifest_path)?;
 
-        if !enabled && let Some(platform) = self.platforms.read().await.get(name).cloned() {
-            self.stop_adapter(name, &platform).await?;
+        if !enabled {
+            // 注意：不能写成 `if let Some(p) = self.platforms.read().await.get(name) {…}` ——
+            // `if let` 的临时值（读锁守卫）会活到整个 body，而 `stop_adapter` 里要取
+            // **写锁**，于是运行中的插件执行 `plugin disable` 会永久死锁。
+            let platform = { self.platforms.read().await.get(name).cloned() };
+            if let Some(platform) = platform {
+                self.stop_adapter(name, &platform).await?;
+            }
+            return Ok(false);
         }
-        Ok(enabled)
+
+        // ── 热启用 ──
+        match self.enable_now(name, &dir).await {
+            Ok(()) => Ok(true),
+            Err(e) => {
+                // 回滚清单，避免「清单说启用、实际没运行」
+                manifest.enabled = Some(false);
+                if let Ok(yaml) = serde_yaml::to_string(&manifest) {
+                    let tmp = dir.join("plugin.yaml.tmp");
+                    if std::fs::write(&tmp, yaml).is_ok() {
+                        let _ = std::fs::rename(&tmp, &manifest_path);
+                    }
+                }
+                Err(e)
+            }
+        }
+    }
+
+    /// 加载插件目录 → 注册工厂 → 启动适配器（`set_enabled(true)` 的实现）。
+    async fn enable_now(&self, name: &str, dir: &Path) -> Result<(), PluginManagerError> {
+        let result = self.loader.load_dir(dir).await?;
+        let platform = result.platform_name.clone();
+        let display_name = result.display_name.clone();
+
+        // 与启动扫描一致的验签策略已在 loader 内部执行（`--production` 下未签名直接拒绝）。
+        if !self
+            .loader
+            .register_platform(
+                self.adapter_manager.registry(),
+                self.event_bus.clone(),
+                &platform,
+            )
+            .await
+        {
+            self.loader.unload(&platform).await;
+            return Err(PluginManagerError::StopFailed {
+                platform,
+                detail: "plugin loaded but factory registration failed".to_string(),
+            });
+        }
+
+        // 用启动时保存的配置（含 `enabled:false` 的平台）；缺失则用空配置，
+        // 由 AdapterManager::inject_credentials 从环境变量补齐。
+        let config = self
+            .adapter_manager
+            .saved_config(&platform)
+            .await
+            .unwrap_or_else(|| AdapterConfig {
+                enabled: Some(true),
+                token: None,
+                api_key: None,
+                base_url: None,
+                extra: serde_json::Value::default(),
+            });
+        if let Err(e) = self.adapter_manager.start(&platform, config).await {
+            // 启动失败：注销工厂，保持与「未启用」一致的状态
+            self.adapter_manager.registry().unregister(&platform).await;
+            self.loader.unload(&platform).await;
+            return Err(PluginManagerError::StopFailed {
+                platform,
+                detail: e.to_string(),
+            });
+        }
+
+        self.platforms
+            .write()
+            .await
+            .insert(name.to_string(), platform.clone());
+        self.load_failures.write().await.remove(name);
+        tracing::info!(
+            "Plugin '{}' enabled and started live as '{}' ({})",
+            name,
+            platform,
+            display_name
+        );
+        Ok(())
     }
 
     /// 显式信任发布者（写入 `{plugins_dir}/.trust`）
