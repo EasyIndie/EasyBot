@@ -128,7 +128,9 @@ Dev 循环示例见 `docs/docker-compose.plugin-dev.yml`（该示例偏开发，
 | 优雅退出 | 5s（`PLUGIN_EXIT_TIMEOUT`） | 强杀子进程,`disable`/卸载不会挂起 |
 | stdout 单行 | 8 MB（`MAX_LINE_BYTES`） | 断开 stdout 读取并判定故障（防一行几百 MB 撑爆宿主内存） |
 | 事件回传 | 6000 条/分钟（`MAX_EVENTS_PER_MINUTE`） | 丢弃事件 + 每 1000 条 WARN 一次（响应/心跳通道不受影响） |
+| 内存（Unix） | 512 MB（`RLIMIT_AS`，`EASYBOT_PLUGIN_MEMORY_LIMIT_MB` 可调，`0` = 不限） | 插件内部分配失败 → 进程崩溃 → 宿主判 `Down` → 既有重连逻辑 |
 
-这些是**默认值**,不是可配置项也可以理解为「安全底线」——插件本身无沙箱,
-所以上限设在「正常插件用不到、失控插件立即被限制」的量级。真正的内存/CPU
-硬限制需要 cgroups 或 WASM 沙箱（见 Epic #140 的 B 摞,当前暂缓）。
+内存上限用 `RLIMIT_AS` 在 `pre_exec` 里设置 —— 超限只影响插件自身,
+不会让系统 OOM killer 去杀宿主（Linux OOM score 偏袒小进程,受害的往往是宿主机上的
+其它进程）。**Windows 需要 Job Object,尚未实现**;CPU 限制需要 cgroups 或 WASM 沙箱
+（见 Epic #140 的 B 摞,当前暂缓）。
