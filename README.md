@@ -27,7 +27,7 @@
 ### 核心特性
 
 - 🔌 **五平台支持** — Telegram、Discord、飞书/Lark、QQ、个人微信
-- 🧩 **插件系统** — 通过动态库加载第三方适配器，无需 fork 主仓库
+- 🧩 **插件系统** — 第三方适配器为独立可执行文件（进程外 + ed25519 签名），无需重编译主程序
 - 🔄 **双向通信** — REST API 发送消息 + WebSocket 实时接收消息推送
 - 🔐 **API 密钥认证** — 基于 Argon2 的安全认证机制
 - 📦 **多存储后端** — SQLite（默认）/ PostgreSQL
@@ -341,7 +341,7 @@ WebSocket 端点为**JSON 帧认证**：连接成功后发送认证帧，无需 
 
 ## 🧩 插件系统
 
-EasyBot 支持通过动态库加载第三方 IM 适配器插件。
+EasyBot 支持第三方 IM 适配器插件：插件编译为**独立可执行文件**，宿主以子进程方式启动，双方通过 stdin/stdout 逐行 JSON（`easybot-plugin-protocol`）通信。**不使用 `dlopen`** —— 官方 Linux 发行版是 musl 全静态二进制，没有动态加载器。好处是插件崩溃不会拖垮宿主，且插件无需与宿主同 libc。
 
 ```rust
 // 插件开发者只需依赖 easybot-plugin-sdk 并实现 PlatformAdapter trait
@@ -375,7 +375,7 @@ easybot/
 │   │   ├── src/auth/            # API 密钥认证（Argon2）
 │   │   ├── src/bus/             # 事件总线（tokio broadcast）
 │   │   ├── src/config/          # 配置加载（YAML + 环境变量）
-│   │   ├── src/plugin/          # 插件系统（动态库加载）
+│   │   ├── src/plugin/          # 插件系统（进程外子进程 + 签名/信任）
 │   │   ├── src/session/         # 会话管理
 │   │   ├── src/storage/         # 存储（SQLite / PostgreSQL）
 │   │   ├── src/types/           # 核心数据模型
@@ -484,7 +484,7 @@ init(config) → connect() → send()/send_media()/... → disconnect()
 | **P2 双向通信** | 事件总线、WebSocket 推送、Webhooks、入站消息处理、会话持久化、消息编辑/删除、适配器生命周期事件 | ✅ 完成 |
 | **P3 多平台** | Telegram ✅、Discord ✅（含 send_interactive + list_chats）、**飞书/Lark** ✅、**QQ** ✅（含 send_interactive + list_chats）、**个人微信** ✅（iLink Bot API 已验证；edit/delete/send_interactive/list_chats 平台不支持）— 五平台全部完成 | ✅ 完成 |
 | **P4 生产就绪** | API 密钥认证（Argon2）、速率限制、优雅关闭、PostgreSQL、Prometheus、Docker、TTL 保留、健康监控 + 自动重连、send_draft 流式传输、健康运行时间 | ✅ 95% |
-| **P5 插件系统** | 插件 SDK、动态库加载、插件注册、加载器测试、开发者文档 | ✅ 完成 |
+| **P5 插件系统** | 插件 SDK、进程外加载（stdio JSON 协议）、插件注册、加载器测试、开发者文档 | ✅ 完成 |
 
 > **P4 说明**: API Key 已支持细粒度权限；配置变更需审阅后重启生效（PUT /config 返回 409，见上表）；TLS 推荐由反向代理终止。`--production` 会强制检查生产安全配置。当前尚未提供进程内多租户隔离，多客户部署需使用独立实例和数据库。
 
