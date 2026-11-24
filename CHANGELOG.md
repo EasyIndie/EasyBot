@@ -22,6 +22,14 @@
   超时的 `http_client()`。该路径在 guild 数量多、网络抖动时会无限挂起，且占住
   `guild_fetch_permits` 信号量（上限 5）导致后续查询全部排队。现统一走
   `easybot_adapter_kit::http::client()`。
+- **进程外插件的心跳/健康语义与内置适配器对齐**（#214）—— 此前插件路径完全没有心跳通道：
+  `plugin/ipc.rs` 的健康判定只有「子进程活着 = `Healthy`」，`InitParams` 里也没有心跳端点，
+  于是插件内部轮询失败、正在退避重试时宿主仍报告健康，健康监测器不会介入。
+  - SDK 运行时每 **20s** 自动上报 `{"method":"heartbeat","params":{"status":…}}`
+    （取自 `adapter.health()` + `heartbeat_failure_count()`），插件作者无需手写协议；
+  - 宿主判定：自述 `down` → `Down`、自述 `degraded` → `Degraded`、从未上报（旧插件）→
+    `Healthy`、曾上报但 >120s 未更新 → `Degraded`、其它 → `Healthy`；旧插件行为不变；
+  - `health()` 与 `health_status()` 现在返回同一判定，不再出现「摘要健康、实际在重试」。
 
 ## [0.0.45] - 2026-11-24
 

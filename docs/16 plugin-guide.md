@@ -335,6 +335,29 @@ struct MyAdapter {
 - `heartbeat_age_ms()` 过期（> 120s）→ 健康监测器介入重连；`heartbeat_success_age_ms()` 过期 → `Degraded`（活着但消息流被阻塞，如 WiFi 断）。
 - **禁止**用独立定时器无条件 beat——那会让「任务已死」也显得活着，健康监测失效。
 
+### 心跳如何传给宿主（进程外）
+
+插件实现 `HealthReport` 后，SDK 运行时（`run_plugin!`）会**每 20s 自动**向宿主发一条
+`heartbeat` 通知，内容是 `adapter.health()` 的判定 + `heartbeat_failure_count()`：
+
+```text
+插件 → 宿主: {"method":"heartbeat","params":{"status":"degraded","consecutive_failures":3,"uptime_secs":120}}
+```
+
+宿主侧（`core/src/plugin/ipc.rs`）据此计算健康状态：
+
+| 情况 | 宿主报告 |
+|---|---|
+| 子进程退出 | `Down` |
+| 插件自述 `down` | `Down` |
+| 插件自述 `degraded` | `Degraded` |
+| 从未上报心跳（旧插件） | `Healthy`（宽容，升级宿主不会误伤存量插件） |
+| 曾上报但 > 120s 未更新 | `Degraded` |
+| 其它 | `Healthy` |
+
+因此**插件作者无需手写协议通知**：只要 `health()` / `heartbeat_failure_count()` 如实反映
+内部状态，心跳语义就与内置适配器一致。
+
 ---
 
 ## 资源上限（与内置适配器同标准）
