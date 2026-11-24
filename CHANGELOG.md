@@ -17,6 +17,11 @@
 
 ### Changed
 
+- **鉴权与 HTTP 客户端构造进一步统一（#211 第四批）** —— QQ / 飞书的 token 获取与角色解析
+  此前各自 `reqwest::Client::builder()`，现统一走 `easybot_adapter_kit::http::client()`
+  （连接超时 + `easybot/<version>` UA + 请求超时一致）。token 缓存/单飞刷新本就在
+  `easybot_core::http::{CachedTokenStore, send_with_token_retry}` 中复用，各适配器只保留
+  平台特有的「取 token 端点 + 鉴权头 + 错误分类」。
 - **媒体下载统一到 `easybot_adapter_kit::media`（#211 第三批）** —— 此前 4 个适配器各写一份，
   防护能力互不一致：
 

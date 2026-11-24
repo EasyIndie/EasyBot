@@ -64,10 +64,8 @@ async fn qq_fetch_access_token(
     client_secret: &str,
     auth_base_url: &str,
 ) -> Result<(String, u64), GatewayError> {
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(15))
-        .build()
-        .map_err(|e| GatewayError::Internal(format!("Failed to create HTTP client: {}", e)))?;
+    // 统一由 adapter-kit 构造（连接超时 + UA + 请求超时），避免各适配器参数漂移。
+    let client = easybot_adapter_kit::http::client(Duration::from_secs(15));
 
     let body = serde_json::json!({
         "appId": app_id,
