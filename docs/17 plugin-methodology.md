@@ -111,7 +111,7 @@ let sem = Arc::new(Semaphore::new(16));
 | 操作 | 语义 |
 |------|------|
 | `disable` | 写 `enabled: false` 并**立即** stop + unregister（`adapter_manager.stop(platform)`） |
-| `enable` | 写回 `true`，**下次启动生效**（v1 不做热加载） |
+| `enable` | 写回 `true` → 重新加载目录（含启动验签）→ 注册工厂 → 启动适配器，**立即生效**；失败回滚清单 |
 | 卸载 | stop + unregister 后删目录；`stop` 失败则拒绝卸载 |
 | 孤儿数据 | 卸载/禁用后的会话/消息由现有 **TTL 保留策略**兜底，不级联删除 |
 | 市场配置（registries/trustedPublishers）变更 | 需重启生效；dev 热加载仅指插件本体，不含市场源配置 |

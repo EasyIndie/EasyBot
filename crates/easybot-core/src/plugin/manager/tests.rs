@@ -370,9 +370,12 @@ async fn test_set_enabled_and_requires_easybot_gate() {
     let listed = manager.list_installed().await;
     assert!(!listed[0].enabled);
 
-    manager.set_enabled("slack", true).await.unwrap();
+    // v1.1 起 `enable` 立即生效（不再「下次启动生效」）：测试产物是假字节，
+    // 无法作为插件可执行文件加载 → 必须返回错误并**回滚清单**，
+    // 不能出现「清单说 enabled、实际没运行」。
+    manager.set_enabled("slack", true).await.unwrap_err();
     let listed = manager.list_installed().await;
-    assert!(listed[0].enabled);
+    assert!(!listed[0].enabled, "启用失败必须回滚清单为 disabled");
 
     let _ = std::fs::remove_dir_all(&home);
 }

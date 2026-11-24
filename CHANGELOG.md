@@ -17,6 +17,12 @@
 
 ### Changed
 
+- **`plugin enable` 立即生效（与 `disable` 对称）**（#215）—— 此前 `enable` 只写清单、
+  **下次启动才生效**，装好插件后还必须重启整个网关。现在 `enable` 会重新加载插件目录
+  （**含启动验签**，`--production` 下未签名/未受信任发布者仍拒绝）→ 注册工厂 → 启动适配器；
+  配置取自启动时保存的 `AdapterManager::saved_config`（`start_all` 现在会记住全部配置，
+  含 `enabled: false` 的平台），缺失时由 `inject_credentials` 从环境变量补齐。
+  任一步失败**回滚清单为 `disabled`** 并注销工厂。
 - **5 个适配器的手写缓存迁移到 `BoundedCache`** —— 此前各适配器的缓存各自实现，
   且行为不一致：Telegram / Discord 是「超限即 `clear()`」（命中率周期性归零后全量回填），
   飞书是「先清过期再逐出最早过期项」的手写近似 FIFO。现统一为
@@ -29,6 +35,13 @@
 
 ### Fixed
 
+- **`plugin disable` 在插件运行中会永久死锁** —— 原写法
+  `if !enabled && let Some(p) = self.platforms.read().await.get(name).cloned() { stop_adapter(..) }`：
+  `if let` 的临时值（读锁守卫）活到整个 body，而 `stop_adapter` 内要取同一把锁的**写锁**
+  → 死锁。只有插件**已加载运行**时才会进入 body（测试里 `platforms` 为空，因此一直没暴露）。
+  现改为先取出 `platform` 再调用。
+- **`IpcPluginAdapter::disconnect` 等待子进程退出没有上限** —— 插件忽略 `shutdown`
+  或卡在自身清理逻辑时，`plugin disable` / 卸载会永久挂起。现加 5s 上限，超时强杀。
 - **Discord guild owner 查询没有超时** — `gateway_shard_loop` 里用的是
   `reqwest::Client::new()`（无超时、无 UA），同文件其它 9 处 REST 调用都走带 15s
   超时的 `http_client()`。该路径在 guild 数量多、网络抖动时会无限挂起，且占住

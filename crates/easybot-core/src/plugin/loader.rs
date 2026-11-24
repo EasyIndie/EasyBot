@@ -229,6 +229,35 @@ impl PluginLoader {
         (succeeded, failed)
     }
 
+    /// 加载单个插件目录（`plugin enable` 的热加载路径）。
+    pub async fn load_dir(&self, dir: &Path) -> Result<PluginLoadResult, PluginError> {
+        self.load_single(dir).await
+    }
+
+    /// 把**单个**已加载插件注册到适配器注册表。
+    ///
+    /// 返回是否注册成功（插件不在 `loaded` 表时为 `false`）。
+    pub async fn register_platform(
+        &self,
+        registry: &AdapterRegistry,
+        event_bus: Arc<EventBus>,
+        platform: &str,
+    ) -> bool {
+        let display = {
+            let loaded = self.loaded.read().await;
+            loaded.get(platform).map(|(_, d)| d.clone())
+        };
+        let Some(display) = display else {
+            return false;
+        };
+        if let Some(factory) = self.get_factory(platform, event_bus).await {
+            registry.register(platform, &display, factory, &[]).await;
+            true
+        } else {
+            false
+        }
+    }
+
     /// 加载单个插件目录
     async fn load_single(&self, dir: &Path) -> Result<PluginLoadResult, PluginError> {
         // 1. 解析 plugin.yaml

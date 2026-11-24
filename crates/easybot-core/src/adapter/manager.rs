@@ -513,6 +513,14 @@ impl AdapterManager {
     }
 
     /// 获取单个适配器状态（优先实时查询，已停止适配器回退缓存）
+    /// 读取启动时保存的适配器配置（含 `enabled: false` 的平台）。
+    ///
+    /// 供插件热启用使用：`plugin enable` 时据此构造 `AdapterConfig`，
+    /// 再由 [`start`](Self::start) 注入环境变量凭据并启动。
+    pub async fn saved_config(&self, platform: &str) -> Option<AdapterConfig> {
+        self.configs.read().await.get(platform).cloned()
+    }
+
     pub async fn get_status(&self, platform: &str) -> Option<AdapterStatusSummary> {
         // 检查 pending connection（状态已在 start() 中写入 statuses）
         if self.pending_connections.read().await.contains(platform) {
@@ -585,6 +593,15 @@ impl AdapterManager {
     pub async fn start_all(&self, configs: HashMap<String, AdapterConfig>) -> StartAllResult {
         let mut succeeded = Vec::new();
         let mut failed = Vec::new();
+
+        // 记住**全部**配置（含 `enabled: false` 的平台）：插件热启用
+        // （`plugin enable`）需要拿到该平台的凭据/extra 才能启动适配器。
+        {
+            let mut saved = self.configs.write().await;
+            for (platform, cfg) in &configs {
+                saved.entry(platform.clone()).or_insert_with(|| cfg.clone());
+            }
+        }
 
         // 遍历所有已注册的适配器平台（而非仅配置文件中的平台）
         let platforms = self.registry.list_platforms().await;
