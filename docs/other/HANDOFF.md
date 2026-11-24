@@ -1,6 +1,6 @@
 # 交接上下文（压缩版）
 
-> 目的：替代长对话历史。**保持简短，勿扩写。** 最后更新：2026-11-23。
+> 目的：替代长对话历史。**保持简短，勿扩写。** 最后更新：2026-11-24。
 
 ## 环境 / 命令速查
 
@@ -8,7 +8,7 @@
 |---|---|
 | 仓库根 | WSL `/mnt/e/EasyBot` |
 | cargo | 先 `export PATH="/root/.cargo/bin:$PATH"` |
-| 全量测试 | `cargo test --workspace --features "default,plugin-system" --locked`（当前 **864 passed**） |
+| 全量测试 | `cargo test --workspace --features "default,plugin-system" --locked`（当前 **884 passed / 0 failed**） |
 | 插件测试 | 先 `cargo build -p ipc-mock-plugin`；再 `cargo test -p easybot-core --features plugin-system --test ipc_adapter` |
 | 前端测试 | `cd crates/easybot-api/templates && npm test`（29）/ `npm run lint` |
 | 发布预检 | `bash scripts/release-preflight.sh`（**禁止 `\| tail`**，用 `> /tmp/log 2>&1; echo $?`） |
@@ -32,12 +32,25 @@
 
 | 仓库 | main | tag | 状态 |
 |---|---|---|---|
-| `EasyIndie/EasyBot` | `4b39bb0` | **v0.0.43 / v0.0.44 / v0.0.45** | 均已发布（各 15 产物：6 平台二进制 + SPDX SBOM + deploy-kit + version.json） |
+| `EasyIndie/EasyBot` | 见 `git log -1` | **v0.0.43 / v0.0.44 / v0.0.45 / v0.0.46** | 均已发布（各 15 产物：6 平台二进制 + SPDX SBOM + deploy-kit + version.json） |
 | `EasyIndie/easybot-hello-adapter` | `2d4ba06` | **v0.2.0** | 已发布（6 平台可执行文件 + ed25519 签名） |
 
 **已合并 PR**：#148（v0.0.42 主体，118 文件）、#153（release.yml 修 ABI 路径）、#154（v0.0.43 双重 init 修复）。
 
 **已知瑕疵（用户选择「不修」= 方案 C）**：`main` 上 `67f203b` 标题是「feat!: migrate plugins…」但内容只有 `release.yml` 的 19 行修复。原因：rebase-merge 重放。**修复它需要改写已被 v0.0.42/v0.0.43 tag 锚定的提交 → 不划算，保持现状。**
+
+## v0.0.46 新增（适配器骨架 + 插件加固）
+
+- **`crates/easybot-adapter-kit`**：`BoundedCache`（容量+TTL，`get_mut`/`retain`）、
+  `http::{client,transport_error,status_error}`、`RetryTracker`、
+  `media::{download,download_full,resolve}`（SSRF + 流式 25MB + 60s）、
+  `conformance::run_all`（9 项契约断言）。5 个适配器全部接入，删 30 个重复单测。
+- **插件加固**：`enable` 立即生效（失败回滚清单）、心跳通道（SDK 每 20s 上报）、
+  资源上限（调用 30s / 退出 5s / stdout 单行 8MB / 事件 6000·min⁻¹ / 内存 RLIMIT_AS 512MB）。
+- **修掉的真实缺陷**：`plugin disable` 运行中死锁、`disconnect` 无界等待、
+  Discord guild owner 查询无超时、媒体下载三种不一致实现（一条恶意 URL 可打爆内存）。
+- **Epic #140**：B 摞（wasm 插件）已暂缓，长驻分支 `epic/140-plugin-model` 为空壳，
+  重启条件见 issue #140；A 摞（骨架/契约/加固）已全部合入 `main`。
 
 ## 本会话完成的大事（均已发布验证）
 

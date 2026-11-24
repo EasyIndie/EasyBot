@@ -91,6 +91,7 @@ Plugins (easybot-plugin-sdk)  进程外适配器插件（独立可执行文件 �
 | `crates/easybot-adapter-feishu` | 飞书 REST + WebSocket |
 | `crates/easybot-adapter-qq` | QQBot Gateway |
 | `crates/easybot-adapter-wechat` | 个人微信 iLink Bot API 长轮询（v2，channel_version=2.2.0） |
+| `crates/easybot-adapter-kit` | 适配器共享骨架：`BoundedCache` / `http::{client,transport_error,status_error}` / `RetryTracker` / `media::{download,resolve}`（SSRF+25MB+60s）/ `conformance::run_all`（9 项契约断言） |
 | `crates/easybot-plugin-sdk` | Re-exports core types for plugins + `run_plugin!` 服务端运行时；`testing` feature（PluginTestHost / ProcessPluginTestHost） |
 | `crates/easybot-plugin-protocol` | 进程外插件协议类型（Request/Response/Notification + 方法常量 + 生命周期类型） |
 | `crates/easybot-plugin-sign` | 发布者 ed25519 密钥对/签名工具（gen-keypair / sign，仅发布者 CI 用，主程序不持私钥） |
@@ -221,6 +222,8 @@ init(config) → connect() → send()/... → disconnect()
 | QQ file upload | `/v2/{users\|groups}/{id}/files` — JSON body: `{"file_type": 1|2|3, "srv_send_msg": bool, "file_data": "<base64>"}`。`srv_send_msg=true` 上传后自动发送（不含文本）；`srv_send_msg=false` 仅获取 `file_info`，再通过 `msg_type:7` + `media.file_info` 手动发送。 |
 | Health monitor | 分级响应：`retry_transport()`（纯传输重启，不鉴权）→ `reconnect_adapter()`（完整 stop+start，含鉴权）→ 30min 慢重试。错误分类 `classify_error()` **结构化优先**：`AuthFailed/Unauthorized/Forbidden` → 永久（立即 Failed），`Transient/RequestTimeout/RateLimited` → 瞬态（退避重试）；启发式兜底且**网络信号优先于永久关键词**（避免 `"X auth failed: <网络错误>"` 把瞬态网络失败误判为永久）。网络层错误用 `GatewayError::Transient` 标记，connect 失败用 `ConnectResult::failed(_, kind)` 透传分类（`reconnect_adapter` 按 kind 返回 typed error）。详见 `core/src/adapter/manager.rs`。 |
 | `retry_transport()` trait | `PlatformAdapter` 新增方法，默认 `Ok(false)` 回退到完整重连。`connect()` 含网络鉴权的适配器（Telegram/Discord/飞书）需覆盖为 `Ok(true)`，取消旧后台任务后直接重启，**跳过鉴权**。内置重试循环的适配器（QQ/微信）无需覆盖。**新适配器约定**：reqwest `send()` 网络层失败必须用 `GatewayError::Transient` 包裹；`connect()` 失败用 `ConnectResult::failed(error, kind)` 标记（网络→`Transient`，凭据拒绝→`Permanent`，未知→`None`）。详见 `core/src/types/adapter.rs`。 |
+| 适配器共享骨架 | 新适配器基于 `easybot-adapter-kit`：`BoundedCache`(容量+TTL)、`http::client`(统一超时+UA)、`http::transport_error`(网络错误必须包 `Transient`)、`RetryTracker`、`media::resolve`，并用 `conformance::run_all()` 代替手写生命周期测试。媒体下载**必须**走 `media`（SSRF 校验 + 流式 25MB 上限 + 60s 超时）；内网媒体地址需 `EASYBOT_ALLOW_PRIVATE_MEDIA_URLS=1` 显式放行。 |
+| 插件资源上限 | 调用超时 30s、优雅退出 5s（超时强杀）、stdout 单行 8MB、事件 6000 条/分钟、内存 `RLIMIT_AS` 512MB（`EASYBOT_PLUGIN_MEMORY_LIMIT_MB`，仅 Unix；Windows 未实现）。插件无沙箱，这些是「失控插件不拖垮宿主」的底线。 |
 | Heartbeat 语义 | 心跳表示"后台任务存活且正在重试"，不要求消息一定成功。各适配器在错误重试路径中调用 `heartbeat.beat()`（如 `polling_loop` 错误分支、`gateway_loop` 重连循环）。**禁止**使用独立定时器无条件 beat（飞书已修复）。心跳过期 120s → `HealthStatus::Degraded` → 健康监测器介入。 |
 | WeChat iLink API | v2 协议（与官方 openclaw-weixin SDK 一致），`channel_version: "2.2.0"` 常量 `CHANNEL_VERSION`。`message_id` 字段兼容整数和字符串（`deserialize_flexible_id`）。`sendmessage` 请求需 `message_type: 2, message_state: 2`。`getupdates` 需 `base_info.channel_version`。 |
 | Plugin 签名 ≠ 安全 | ed25519 签名只证作者+完整性，**不证代码安全**（VS Code 徽章被滥用教训）。插件无沙箱以宿主权限运行，生产隔离用容器化兜底（`docs/18 plugin-security.md`）。`docs/18 plugin-security.md` 信任模型含威胁模型表。 |
@@ -272,6 +275,8 @@ Full checklist: `docs/other/todo-list.md`. P4 deferred items:
 | Webhook 并发 | Semaphore 上限 16 并发分发 | `core/src/webhook/mod.rs` |
 | 速率限制 | IP 滑动窗口，Max 100,000 桶，5 分钟 LRU 清理 | `api/src/middleware/rate_limit.rs` |
 | 环形日志 | `LogCollector` 固定 5000 条环形缓冲 | `api/src/log_collector.rs` |
+| 插件子进程上限 | 内存 `RLIMIT_AS` 512MB（Unix）/ stdout 单行 8MB / 事件 6000 条·min⁻¹ / 退出等待 5s | `core/src/plugin/ipc.rs` |
+| 适配器缓存 | 统一 `BoundedCache`（容量 + 可选 TTL，按插入顺序淘汰） | `crates/easybot-adapter-kit/src/cache.rs` |
 | Prometheus 指标 | 固定标签集，路径归一化防标签爆炸 | `api/src/metrics.rs` |
 | 适配器重连 | 指数退避 5s→300s，最多 20 次封顶 | `core/src/adapter/manager.rs` |
 | 适配器缓存上限 | QQ 10K / Telegram 5K / Discord 5K / 飞书 30s TTL | 各 adapter crate |

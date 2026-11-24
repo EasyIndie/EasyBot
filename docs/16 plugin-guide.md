@@ -368,6 +368,8 @@ struct MyAdapter {
 | 后台任务 | 所有 `tokio::spawn` 循环须有 `Semaphore` 或 `JoinSet` 并发上限 |
 | 网络 | 发送带超时，避免悬挂 |
 | 日志 | 用 `tracing`（进宿主 `/logs` 环形缓冲），不要 print |
+| 内存（Unix） | 宿主给子进程设 `RLIMIT_AS = 512 MB`（`EASYBOT_PLUGIN_MEMORY_LIMIT_MB` 可调，`0` = 不限）；超限即进程退出并被判 `Down` |
+| stdout | **单行 ≤ 8 MB**；超限宿主断开读取并判故障，事件回传限 6000 条/分钟 |
 
 ---
 

@@ -198,6 +198,10 @@ docker run -d \
 | `EASYBOT_HOME` | 数据目录（默认 `/var/lib/easybot`） |
 | `EASYBOT_ADMIN_PASSWORD` | 管理后台密码（**必设**） |
 | `EASYBOT_ALLOW_PLAINTEXT` | release 构建启动硬性要求：确认应用置于可信 TLS 反代后/私网内（设为 `true`） |
+| `EASYBOT_LOG_TIMEZONE` | 日志时间戳时区：`local`（默认）/ `utc`，覆盖 `logging.timezone` |
+| `EASYBOT_RAW_PAYLOAD_ENABLED` | WebSocket 事件透传平台原始 payload（调试用，默认 `false`） |
+| `EASYBOT_ALLOW_PRIVATE_MEDIA_URLS` | 允许**内网/回环**媒体 URL（默认拒绝，见 §4.8） |
+| `EASYBOT_PLUGIN_MEMORY_LIMIT_MB` | 插件子进程内存上限（默认 512，`0` = 不限，仅 Unix） |
 
 ### 3.4 从源码构建
 
@@ -470,7 +474,26 @@ logging:
 的 `request completed` 只在 **debug** 级别输出；业务请求仍是 info。需要排障时用
 `easybot --debug` 或 `RUST_LOG=easybot_api=debug` 打开。
 
-### 4.8 配置变更
+### 4.8 媒体 URL 与出站访问
+
+发送媒体（`POST /api/v1/messages/send` 的 `media.url`）时，网关会**代你下载**该 URL 再上传到平台。
+这条出站请求受三重约束（实现：`easybot_adapter_kit::media`）：
+
+| 约束 | 默认 | 说明 |
+|---|---|---|
+| SSRF 校验 | 拒绝 `localhost` / `127.0.0.1` / `0.0.0.0` / 云元数据端点、非 http(s) 协议 | 否则 API 调用方可以让网关去抓**自己的管理接口**再把响应转发到 IM 平台 |
+| 大小上限 | 25 MB（流式计数，不信任 `Content-Length`） | 超限立即断开，避免一条链接把进程内存打满 |
+| 总超时 | 60 s（含响应体读取） | 网络错误按 `Transient` 处理，可重试 |
+
+自建媒体服务器确实使用内网地址时，显式放行：
+
+```bash
+EASYBOT_ALLOW_PRIVATE_MEDIA_URLS=1
+```
+
+> 这是需要**主动做出的决定**，不会被任何默认配置悄悄打开。放行后请自行保证该内网地址不暴露管理面。
+
+### 4.9 配置变更
 
 运行组件使用启动时的一致配置快照。修改配置文件后，通过受审阅的滚动重启应用；`PUT /api/v1/config` 会返回 409 并留下审计记录，防止部分组件更新、部分组件仍使用旧值。生产环境先在预生产运行 readiness、消息和回滚检查，再逐实例替换。
 

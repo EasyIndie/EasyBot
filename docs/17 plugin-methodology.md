@@ -60,11 +60,25 @@
 
 ---
 
-## 4. 缓存：必须带上限或 TTL
+## 4. 缓存：必须带上限或 TTL（用 `BoundedCache`）
 
 **所有适配器缓存必须有大小上限或 TTL 淘汰**，否则长期运行内存无界增长。
 
-参考内置常量模式：`CHAT_TYPE_CACHE_LIMIT`（QQ 10K）/ `ADMIN_CACHE_LIMIT` / `GUILD_CACHE_LIMIT`（Discord 5K）/ Telegram 5K / 飞书 30s TTL。
+新代码不要手写 `if cache.len() > LIMIT { cache.clear() }`（内置适配器曾这么做：超限即整体清空，
+命中率周期性归零后又要全量回填）——直接用共享骨架：
+
+```rust
+use easybot_adapter_kit::cache::BoundedCache;
+
+// 容量上限（按插入顺序淘汰最旧项）
+let mut admins: BoundedCache<i64, Vec<(i64, SenderRole)>> = BoundedCache::new(5_000);
+
+// 容量 + TTL
+let mut names: BoundedCache<String, Option<String>> =
+    BoundedCache::with_ttl(10_000, std::time::Duration::from_secs(30));
+```
+
+需要的接口：`get` / `get_mut`（命中后原地更新）/ `insert` / `remove` / `retain`（按前缀批量失效）/ `sweep`。
 
 ```rust
 const CHAT_TYPE_CACHE_LIMIT: usize = 10_000;
@@ -90,6 +104,9 @@ let sem = Arc::new(Semaphore::new(16));
 ## 6. 消息与媒体
 
 - `OutboundMessage` / `SendTextParams` 构造约定见 guide；文本发送走 `send()`。
+- **媒体字节一律走 `easybot_adapter_kit::media::resolve()`**：它把 SSRF 校验、流式 25 MB 上限、
+  60 s 超时绑在一起。不要自己 `resp.bytes()`（`Content-Length` 可被 chunked 响应绕过，
+  一条恶意链接即可打爆进程）。需要 `Content-Type` 时用 `media::download_full()`。
 - **media 按 chat type 区分**（QQ 教训）：同一份媒体代码不能对群聊/私聊/频道统一用一个 `msg_type`。以 QQ 为例：
   - **Channel**：`msg_type: 2`（rich media）
   - **Dm（C2C）**：`msg_type: 1`（image embed，v2 API 不支持 `2`）

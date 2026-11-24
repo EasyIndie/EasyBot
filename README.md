@@ -393,6 +393,7 @@ easybot/
 │   ├── easybot-adapter-feishu/   # 飞书适配器
 │   ├── easybot-adapter-qq/       # QQ 适配器
 │   ├── easybot-adapter-wechat/   # 微信适配器
+│   ├── easybot-adapter-kit/      # 适配器共享骨架（缓存/HTTP/重试/媒体/conformance）
 │   └── easybot-plugin-sdk/      # 插件 SDK
 ├── tests/
 │   ├── integration/              # 集成测试

@@ -69,8 +69,8 @@
 - **进程外插件补资源上限**（#216）—— 此前只有崩溃隔离与 30s 调用超时，缺少输出/事件层面的兜底：
   - stdout **单行 8 MB** 上限：`lines()` 不限制单行长度，插件写一行几百 MB 即可撑爆宿主内存；
     超限断开 stdout 读取并判故障；
-  - **事件回传 6000 条/分钟**限流：超限丢弃并每 1000 条 WARN 一次，响应/心跳通道不受影响；
-  内存硬限制（`RLIMIT_AS` / Windows Job Object）留作后续（需 cgroups/WASM 级别方案）。
+  - **事件回传 6000 条/分钟**限流：超限丢弃并每 1000 条 WARN 一次，响应/心跳通道不受影响。
+  内存上限见下方 `RLIMIT_AS` 条目（Windows Job Object 仍未实现）。
 - **Discord guild owner 查询没有超时** — `gateway_shard_loop` 里用的是
   `reqwest::Client::new()`（无超时、无 UA），同文件其它 9 处 REST 调用都走带 15s
   超时的 `http_client()`。该路径在 guild 数量多、网络抖动时会无限挂起，且占住
