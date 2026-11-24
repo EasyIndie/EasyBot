@@ -1,3 +1,4 @@
+#![allow(unsafe_code)]
 //! QQ 适配器 send() 的 HTTP mock 测试
 //!
 //! 使用 wiremock 模拟 QQ API，验证 connect() 和 send() 方法正确构造请求并解析响应。
@@ -1063,6 +1064,11 @@ async fn test_send_media_group_no_text_uses_direct_upload() {
 /// downgrade to group file upload (upload + msg_type: 7), not fail.
 #[tokio::test]
 async fn test_send_media_unknown_group_downgrades_on_40034011() {
+    // 媒体 URL 下载统一走 adapter-kit 的 SSRF 校验，mock server 监听 127.0.0.1
+    // 会被拒绝；本用例验证的是「msg_type:2 被拒 → 降级文件上传」，显式放行回环。
+    // SAFETY: 仅测试进程内设置；该 crate 无其它用例依赖 SSRF 拒绝行为
+    //（kit 自身的 SSRF 断言在独立测试二进制中执行）。
+    unsafe { std::env::set_var("EASYBOT_ALLOW_PRIVATE_MEDIA_URLS", "1") };
     let mock_server = MockServer::start().await;
     mock_qq_token(&mock_server).await;
     mock_qq_bot_info(&mock_server).await;

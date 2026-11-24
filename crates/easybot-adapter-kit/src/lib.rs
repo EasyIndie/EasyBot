@@ -16,6 +16,7 @@
 //! |---|---|
 //! | [`cache`] | 5 份 `if cache.len() > LIMIT { clear() }` |
 //! | [`http`] | 5 处 `Client::builder()` + 网络错误必须 `Transient` 的约定 |
+//! | [`media`] | 4 份媒体下载（防护能力互不一致：有的只看 `Content-Length`、有的无上限） |
 //! | [`retry`] | 5 份重连计数与重置时机 |
 //! | [`conformance`] | 5 份重复的生命周期单测 + 27 条文字约定 |
 //!
@@ -53,6 +54,7 @@
 pub mod cache;
 pub mod conformance;
 pub mod http;
+pub mod media;
 pub mod retry;
 
 pub use cache::BoundedCache;

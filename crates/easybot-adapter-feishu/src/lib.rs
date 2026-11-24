@@ -1255,48 +1255,11 @@ impl FeishuAdapter {
         }
     }
 
-    /// 获取媒体文件字节：优先下载 URL（带大小上限），否则解码 base64。
-    ///
-    /// SECURITY: 下载采用流式读取并计数，超过上限即拒绝——chunked 或无
-    /// Content-Length 头的响应同样受限，避免无界读入内存。
+    /// 获取媒体文件字节：优先下载 URL（SSRF 校验 + 流式 25 MB 上限 + 60s 超时），
+    /// 否则解码 base64。统一走 `easybot_adapter_kit::media`，避免各适配器
+    /// 防护能力不一致（此前这里没有 SSRF 校验）。
     async fn media_bytes(&self, media: &MediaAttachment) -> Result<Vec<u8>, GatewayError> {
-        const MAX_DOWNLOAD_BYTES: u64 = 25 * 1024 * 1024; // 25MB
-
-        if let Some(ref url) = media.url {
-            let client = self.client();
-            let resp =
-                client.get(url).send().await.map_err(|e| {
-                    GatewayError::Transient(format!("Download media failed: {}", e))
-                })?;
-            let mut resp = resp;
-            let mut total: u64 = 0;
-            let mut buf: Vec<u8> = Vec::new();
-            while let Some(chunk) = resp
-                .chunk()
-                .await
-                .map_err(|e| GatewayError::Internal(format!("Read media bytes failed: {}", e)))?
-            {
-                total += chunk.len() as u64;
-                if total > MAX_DOWNLOAD_BYTES {
-                    return Err(GatewayError::Internal(format!(
-                        "Rejected media download: exceeds {} limit",
-                        MAX_DOWNLOAD_BYTES
-                    )));
-                }
-                buf.extend_from_slice(&chunk);
-            }
-            Ok(buf)
-        } else if let Some(ref base64_data) = media.data {
-            // 解码 base64 数据作为文件内容
-            use base64::Engine;
-            base64::engine::general_purpose::STANDARD
-                .decode(base64_data)
-                .map_err(|e| GatewayError::Internal(format!("Base64 decode failed: {}", e)))
-        } else {
-            Err(GatewayError::InvalidRequest(
-                "No media data or URL provided".to_string(),
-            ))
-        }
+        easybot_adapter_kit::media::resolve(self.client(), media).await
     }
 
     /// 上传图片到飞书，返回 image_key。
