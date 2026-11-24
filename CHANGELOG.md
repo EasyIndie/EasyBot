@@ -1,5 +1,28 @@
 ## [Unreleased]
 
+### Added
+
+- **`easybot-adapter-kit`：适配器共享骨架** — 收拢 5 个适配器里重复实现的平台无关逻辑：
+  - `BoundedCache<K,V>`（容量上限 + 可选 TTL，按插入顺序淘汰，替代 5 份
+    `if cache.len() > LIMIT { clear() }` —— 手写版本超限即整体清空，命中率周期性归零）；
+  - `http::client()`（统一连接/请求超时 + `easybot/<version>` UA）、
+    `http::transport_error()`（网络层失败统一包 `GatewayError::Transient`）、
+    `http::status_error()`（401/403→永久、429→`RateLimited` 带 `retry_after_ms`、5xx→瞬态）；
+  - `RetryTracker`（连续失败计数 + 退避接线，成功即归零）；
+  - `conformance` 契约测试：把 `CLAUDE.md` 里的适配器约定变成可执行断言
+    （身份/能力/初始状态/健康语义/`init` 幂等/`disconnect` 幂等/`retry_transport` 安全）。
+- **5 个适配器全部通过 conformance** — 删除 30 个在各适配器里各抄一份的生命周期单测，
+  改为每个适配器一行 `conformance::run_all(...)`；Telegram / Discord 的 HTTP 客户端
+  改由 adapter-kit 统一构造。
+
+### Fixed
+
+- **Discord guild owner 查询没有超时** — `gateway_shard_loop` 里用的是
+  `reqwest::Client::new()`（无超时、无 UA），同文件其它 9 处 REST 调用都走带 15s
+  超时的 `http_client()`。该路径在 guild 数量多、网络抖动时会无限挂起，且占住
+  `guild_fetch_permits` 信号量（上限 5）导致后续查询全部排队。现统一走
+  `easybot_adapter_kit::http::client()`。
+
 ## [0.0.45] - 2026-11-24
 
 ### Added

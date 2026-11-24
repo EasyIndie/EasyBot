@@ -140,12 +140,8 @@ impl DiscordAdapter {
 
     /// 获取或创建缓存的 HTTP 客户端
     fn http_client(&self) -> &reqwest::Client {
-        self.http_client.get_or_init(|| {
-            reqwest::Client::builder()
-                .timeout(Duration::from_secs(15))
-                .build()
-                .expect("构建 reqwest Client 失败")
-        })
+        self.http_client
+            .get_or_init(|| easybot_adapter_kit::http::client(Duration::from_secs(15)))
     }
 
     /// 返回 REST API 基础 URL（支持通过 config.base_url 覆盖）
@@ -497,7 +493,9 @@ impl DiscordAdapter {
             | Intents::MESSAGE_CONTENT
             | Intents::GUILDS;
         let mut shard = Shard::new(shard_id, token.clone(), intents);
-        let http_client = reqwest::Client::new();
+        // 与其它 REST 路径共用同一套超时/UA 策略：此前这里用 `Client::new()`
+        // 既没有超时也没有 User-Agent，guild owner 查询可无限挂起。
+        let http_client = easybot_adapter_kit::http::client(Duration::from_secs(15));
 
         tracing::info!(
             "Discord Gateway connecting (shard {}/{} total)...",
@@ -1552,6 +1550,17 @@ impl PlatformAdapter for DiscordAdapter {
 mod tests {
     use super::*;
 
+    /// 平台无关的生命周期契约（init 幂等、disconnect 幂等、健康语义、
+    /// 状态摘要一致性等）统一由 adapter-kit 的 conformance 套件覆盖。
+    #[tokio::test]
+    async fn conformance() {
+        easybot_adapter_kit::conformance::run_all(
+            || Box::new(DiscordAdapter::new()),
+            easybot_adapter_kit::conformance::sample_config(),
+        )
+        .await;
+    }
+
     #[test]
     fn test_platform_name() {
         let adapter = DiscordAdapter::new();
@@ -1565,17 +1574,6 @@ mod tests {
     }
 
     #[test]
-    fn test_capabilities() {
-        let adapter = DiscordAdapter::new();
-        assert!(
-            adapter
-                .capabilities()
-                .iter()
-                .any(|c| c.name == CapabilityName::Text)
-        );
-    }
-
-    #[test]
     fn test_default_state() {
         let adapter = DiscordAdapter::new();
         assert_eq!(adapter.state(), AdapterState::Created);
@@ -1585,49 +1583,6 @@ mod tests {
     fn test_default() {
         let adapter = DiscordAdapter::default();
         assert_eq!(adapter.platform_name(), "discord");
-    }
-
-    #[test]
-    fn test_status_summary() {
-        let adapter = DiscordAdapter::new();
-        let s = adapter.status_summary();
-        assert_eq!(s.platform, "discord");
-        assert_eq!(s.display_name, "Discord");
-        assert!(!s.connected);
-        // health should be present (not None) — frontend relies on this
-        assert!(s.health.is_some(), "health should not be None");
-        assert_eq!(s.health.unwrap(), HealthStatus::Down);
-    }
-
-    #[tokio::test]
-    async fn test_disconnect_idempotent() {
-        let mut adapter = DiscordAdapter::new();
-        adapter.disconnect().await.unwrap();
-        assert_eq!(adapter.state(), AdapterState::Stopped);
-    }
-
-    #[tokio::test]
-    async fn test_double_disconnect() {
-        let mut adapter = DiscordAdapter::new();
-        adapter.disconnect().await.unwrap();
-        adapter.disconnect().await.unwrap();
-        assert_eq!(adapter.state(), AdapterState::Stopped);
-    }
-
-    #[tokio::test]
-    async fn test_health_before_init() {
-        let adapter = DiscordAdapter::new();
-        let h = adapter.health().await;
-        assert_eq!(h.status, HealthStatus::Down);
-        assert!(!h.connected);
-    }
-
-    #[tokio::test]
-    async fn test_runtime_config_before_init() {
-        let adapter = DiscordAdapter::new();
-        let r = adapter.runtime_config();
-        assert!(!r.enabled);
-        assert!(!r.token_configured);
     }
 
     #[tokio::test]

@@ -278,7 +278,8 @@ Full checklist: `docs/other/todo-list.md`. P4 deferred items:
 
 ### 新增功能时需注意
 
-- **所有适配器缓存必须有大小上限或 TTL 淘汰** — 参考 `CHAT_TYPE_CACHE_LIMIT` / `ADMIN_CACHE_LIMIT` / `GUILD_CACHE_LIMIT` 模式
+- **新适配器请基于 `easybot-adapter-kit`** — `BoundedCache`（有界缓存）/ `http::client`（统一超时+UA）/ `http::transport_error`（网络错误包 `Transient`）/ `RetryTracker`（重连计数），并用 `conformance::run_all()` 替代手写生命周期测试（init 幂等、disconnect 幂等、健康语义、状态摘要一致性）。详见 `crates/easybot-adapter-kit/src/lib.rs`。
+- **所有适配器缓存必须有大小上限或 TTL 淘汰** — 首选 `easybot_adapter_kit::BoundedCache`；历史代码参考 `CHAT_TYPE_CACHE_LIMIT` / `ADMIN_CACHE_LIMIT` / `GUILD_CACHE_LIMIT` 模式
 - **所有 tokio::spawn 循环必须考虑并发上限** — 使用 `Semaphore` 或 `JoinSet`
 - **SQLite 清理后需配合 WAL checkpoint** — 避免 WAL 文件无限增长
 - **内存 Session 清理必须匹配数据库 TTL** — `SessionManager::prune_expired()` 调用周期需与 `RetentionWorker` 一致

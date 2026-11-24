@@ -1634,6 +1634,19 @@ impl Default for FeishuAdapter {
 mod tests {
     use super::*;
 
+    /// 平台无关的生命周期契约（init 幂等、disconnect 幂等、健康语义、
+    /// 状态摘要一致性等）统一由 adapter-kit 的 conformance 套件覆盖。
+    #[tokio::test]
+    async fn conformance() {
+        easybot_adapter_kit::conformance::run_all(
+            || Box::new(FeishuAdapter::new()),
+            easybot_adapter_kit::conformance::sample_config_with_extra(
+                serde_json::json!({"app_id": "cli_conformance"}),
+            ),
+        )
+        .await;
+    }
+
     #[test]
     fn test_create_adapter() {
         let adapter = FeishuAdapter::new();
@@ -1690,46 +1703,6 @@ mod tests {
         assert!(result.ok);
     }
 
-    #[test]
-    fn test_capabilities() {
-        let adapter = FeishuAdapter::new();
-        let caps = adapter.capabilities();
-        assert!(
-            caps.iter()
-                .any(|c| c.name == CapabilityName::Text && c.supported)
-        );
-        assert!(
-            caps.iter()
-                .any(|c| c.name == CapabilityName::Group && c.supported)
-        );
-        assert!(
-            caps.iter()
-                .any(|c| c.name == CapabilityName::MessageEdit && c.supported)
-        );
-    }
-
-    #[test]
-    fn test_status_summary() {
-        let adapter = FeishuAdapter::new();
-        let status = adapter.status_summary();
-        assert_eq!(status.platform, "feishu");
-        assert_eq!(status.display_name, "飞书");
-        assert!(!status.connected);
-        // health should be present (not None) — frontend relies on this
-        assert!(status.health.is_some(), "health should not be None");
-        assert_eq!(status.health.unwrap(), HealthStatus::Down);
-    }
-
-    #[tokio::test]
-    async fn test_runtime_config_before_init() {
-        let adapter = FeishuAdapter::new();
-        let rc = adapter.runtime_config();
-        assert!(!rc.enabled);
-        assert!(!rc.token_configured);
-        // 未初始化时 extra 应为 null 或空对象
-        assert!(rc.extra.is_object() || rc.extra.is_null());
-    }
-
     #[tokio::test]
     async fn test_runtime_config_after_init() {
         let mut adapter = FeishuAdapter::new();
@@ -1750,31 +1723,6 @@ mod tests {
             rc.extra.get("app_id").and_then(|v| v.as_str()),
             Some("cli_xxx")
         );
-    }
-
-    #[tokio::test]
-    async fn test_health_before_init() {
-        let adapter = FeishuAdapter::new();
-        let health = adapter.health().await;
-        assert_eq!(health.status, HealthStatus::Down);
-        assert!(!health.connected);
-    }
-
-    #[tokio::test]
-    async fn test_disconnect_idempotent() {
-        let mut adapter = FeishuAdapter::new();
-        // 在 connect 之前调用 disconnect 不应 panic
-        let result = adapter.disconnect().await;
-        assert!(result.is_ok());
-        assert_eq!(adapter.state(), AdapterState::Stopped);
-    }
-
-    #[tokio::test]
-    async fn test_double_disconnect() {
-        let mut adapter = FeishuAdapter::new();
-        adapter.disconnect().await.unwrap();
-        adapter.disconnect().await.unwrap(); // 连续两次 disconnect
-        assert_eq!(adapter.state(), AdapterState::Stopped);
     }
 
     #[tokio::test]

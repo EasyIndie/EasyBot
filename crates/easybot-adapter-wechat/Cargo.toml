@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 easybot-core = { path = "../easybot-core" }
+easybot-adapter-kit = { path = "../easybot-adapter-kit" }
 
 tokio.workspace = true
 reqwest.workspace = true

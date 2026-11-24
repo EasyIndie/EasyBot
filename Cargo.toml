@@ -9,6 +9,7 @@ members = [
     "crates/easybot-adapter-feishu",
     "crates/easybot-adapter-qq",
     "crates/easybot-adapter-wechat",
+    "crates/easybot-adapter-kit",
     "crates/easybot-plugin-sdk",
     "crates/easybot-plugin-sign",
     "crates/easybot-plugin-protocol",

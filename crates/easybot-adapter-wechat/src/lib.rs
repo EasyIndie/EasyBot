@@ -2072,27 +2072,25 @@ mod tests {
     use super::crypto::{pkcs7_pad, url_encode_for_cdn};
     use super::*;
 
+    /// 平台无关的生命周期契约（init 幂等、disconnect 幂等、健康语义、
+    /// 状态摘要一致性等）统一由 adapter-kit 的 conformance 套件覆盖。
+    #[tokio::test]
+    async fn conformance() {
+        easybot_adapter_kit::conformance::run_all(
+            || Box::new(WeChatAdapter::new()),
+            easybot_adapter_kit::conformance::sample_config_with_extra(
+                serde_json::json!({"bot_token": "conformance-token"}),
+            ),
+        )
+        .await;
+    }
+
     #[test]
     fn test_create_adapter() {
         let adapter = WeChatAdapter::new();
         assert_eq!(adapter.platform_name(), "wechat");
         assert_eq!(adapter.state(), AdapterState::Created);
         assert!(!adapter.capabilities.is_empty());
-    }
-
-    #[test]
-    fn test_capabilities() {
-        let adapter = WeChatAdapter::new();
-        let caps = adapter.capabilities();
-        assert!(caps.iter().any(|c| c.name == CapabilityName::Text));
-        assert!(caps.iter().any(|c| c.name == CapabilityName::Image));
-        assert!(caps.iter().any(|c| c.name == CapabilityName::Audio));
-        assert!(caps.iter().any(|c| c.name == CapabilityName::Video));
-        assert!(caps.iter().any(|c| c.name == CapabilityName::Document));
-        // All media capabilities should be supported
-        for cap in caps {
-            assert!(cap.supported);
-        }
     }
 
     #[tokio::test]
@@ -2133,17 +2131,6 @@ mod tests {
             adapter.bot_token.read().await.clone(),
             Some("saved_token".to_string())
         );
-    }
-
-    #[test]
-    fn test_status_summary() {
-        let adapter = WeChatAdapter::new();
-        let status = adapter.status_summary();
-        assert_eq!(status.platform, "wechat");
-        assert!(!status.connected);
-        // health should be present (not None) — frontend relies on this
-        assert!(status.health.is_some(), "health should not be None");
-        assert_eq!(status.health.unwrap(), HealthStatus::Down);
     }
 
     #[test]
@@ -2332,37 +2319,6 @@ mod tests {
                 .to_string()
                 .contains("Not authenticated")
         );
-    }
-
-    #[tokio::test]
-    async fn test_disconnect_idempotent() {
-        let mut adapter = WeChatAdapter::new();
-        assert!(adapter.disconnect().await.is_ok());
-        assert_eq!(adapter.state(), AdapterState::Stopped);
-    }
-
-    #[tokio::test]
-    async fn test_double_disconnect() {
-        let mut adapter = WeChatAdapter::new();
-        adapter.disconnect().await.unwrap();
-        adapter.disconnect().await.unwrap();
-        assert_eq!(adapter.state(), AdapterState::Stopped);
-    }
-
-    #[tokio::test]
-    async fn test_health_before_init() {
-        let adapter = WeChatAdapter::new();
-        let health = adapter.health().await;
-        assert_eq!(health.status, HealthStatus::Down);
-        assert!(!health.connected);
-    }
-
-    #[tokio::test]
-    async fn test_runtime_config_before_init() {
-        let adapter = WeChatAdapter::new();
-        let rc = adapter.runtime_config();
-        assert!(!rc.enabled);
-        assert!(!rc.token_configured);
     }
 
     #[tokio::test]

@@ -1,0 +1,21 @@
+[package]
+name = "easybot-adapter-kit"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "适配器共享骨架：有界缓存、HTTP 客户端工厂、重试计数、契约测试（conformance）"
+repository.workspace = true
+
+[dependencies]
+easybot-core = { path = "../easybot-core" }
+reqwest.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+async-trait.workspace = true
+tokio = { workspace = true, features = ["macros", "rt"] }
+
+[lints]
+workspace = true
