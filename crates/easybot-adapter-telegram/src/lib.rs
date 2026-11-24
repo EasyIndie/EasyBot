@@ -11,7 +11,6 @@
 mod types;
 
 use std::borrow::Cow;
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
@@ -29,9 +28,13 @@ use easybot_core::types::message::*;
 use tokio::sync::{Mutex as AsyncMutex, broadcast};
 use types::*;
 
-/// 群组管理员列表缓存（chat_id → [(user_id, role)]）
-/// 初始通过 getChatAdministrators 填充，之后由 chat_member 事件实时更新
-type AdminCache = Arc<AsyncMutex<HashMap<i64, Vec<(i64, SenderRole)>>>>;
+/// 管理员缓存容量上限（防止无界增长；超限按插入顺序淘汰最旧群聊）。
+const ADMIN_CACHE_LIMIT: usize = 5_000;
+
+/// 群组管理员列表缓存（chat_id → [(user_id, role)]）。
+/// 初始通过 getChatAdministrators 填充，之后由 chat_member 事件实时更新。
+type AdminCache =
+    Arc<AsyncMutex<easybot_adapter_kit::cache::BoundedCache<i64, Vec<(i64, SenderRole)>>>>;
 
 /// Telegram Bot API 基础 URL
 const TELEGRAM_API: &str = "https://api.telegram.org/bot";
@@ -98,7 +101,9 @@ impl TelegramAdapter {
             cancel_tx: None,
             heartbeat: Heartbeat::new(),
             http_client: OnceLock::new(),
-            admin_cache: Arc::new(AsyncMutex::new(HashMap::new())),
+            admin_cache: Arc::new(AsyncMutex::new(
+                easybot_adapter_kit::cache::BoundedCache::new(ADMIN_CACHE_LIMIT),
+            )),
             last_offset: Arc::new(AtomicI64::new(0)),
             msg_semaphore: Arc::new(Semaphore::new(5)),
             auth_failed: Arc::new(AtomicBool::new(false)),
@@ -721,7 +726,7 @@ impl TelegramAdapter {
 
         // 1. 查缓存（异步锁，等待获取）
         {
-            let cache = admin_cache.lock().await;
+            let mut cache = admin_cache.lock().await;
             if let Some(admins) = cache.get(&chat_id) {
                 return admins
                     .iter()
@@ -741,11 +746,9 @@ impl TelegramAdapter {
             // 更新缓存（即使 role 为 None，也缓存空列表避免重复请求）
             {
                 let mut cache = admin_cache.lock().await;
+                // 容量上限由 BoundedCache 保证（按插入顺序淘汰最旧群聊），
+                // 不再「超限即整体清空」——清空会让命中率周期性归零并触发全量回填。
                 cache.insert(chat_id, admins);
-                const ADMIN_CACHE_LIMIT: usize = 5_000;
-                if cache.len() > ADMIN_CACHE_LIMIT {
-                    cache.clear();
-                }
             }
 
             return role;

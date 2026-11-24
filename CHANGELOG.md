@@ -15,6 +15,18 @@
   改为每个适配器一行 `conformance::run_all(...)`；Telegram / Discord 的 HTTP 客户端
   改由 adapter-kit 统一构造。
 
+### Changed
+
+- **5 个适配器的手写缓存迁移到 `BoundedCache`** —— 此前各适配器的缓存各自实现，
+  且行为不一致：Telegram / Discord 是「超限即 `clear()`」（命中率周期性归零后全量回填），
+  飞书是「先清过期再逐出最早过期项」的手写近似 FIFO。现统一为
+  `BoundedCache`（容量上限 + 可选 TTL + 按插入顺序淘汰）：
+  - Telegram：`ADMIN_CACHE_LIMIT`（5K 群聊管理员列表）；
+  - Discord：`GUILD_CACHE_LIMIT`（5K guild owner / guild name，原 4 处手写清空）；
+  - 飞书：`ROLE_CACHE_LIMIT` / `USER_NAME_CACHE_LIMIT`（10K，30s TTL）+ `EventDedup`（10K，300s TTL）。
+  QQ 的 `MemberDetailCache` 已是 LRU 实现，保持不动。另给 `BoundedCache` 补
+  `get_mut`（原地更新管理员列表）与 `retain`（按前缀批量失效，`im.chat.updated_v1` 事件用）。
+
 ### Fixed
 
 - **Discord guild owner 查询没有超时** — `gateway_shard_loop` 里用的是

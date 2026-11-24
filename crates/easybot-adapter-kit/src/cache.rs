@@ -107,6 +107,15 @@ where
         self.map.get(key).map(|e| &e.value)
     }
 
+    /// 可变借用（用于「命中后原地更新一条记录」的场景，如管理员列表）。
+    pub fn get_mut(&mut self, key: &K) -> Option<&mut V> {
+        if self.is_expired(key) {
+            self.remove(key);
+            return None;
+        }
+        self.map.get_mut(key).map(|e| &mut e.value)
+    }
+
     /// 是否存在且未过期。
     pub fn contains_key(&mut self, key: &K) -> bool {
         self.get(key).is_some()
@@ -139,6 +148,26 @@ where
     pub fn remove(&mut self, key: &K) -> Option<V> {
         self.order.retain(|k| k != key);
         self.map.remove(key).map(|e| e.value)
+    }
+
+    /// 保留满足条件的条目（用于「按前缀批量失效」，如聊天元数据变更）。
+    ///
+    /// 返回被移除的条目数。
+    pub fn retain<F>(&mut self, mut keep: F) -> usize
+    where
+        F: FnMut(&K, &mut V) -> bool,
+    {
+        let before = self.map.len();
+        let order = &mut self.order;
+        self.map.retain(|key, entry| {
+            if keep(key, &mut entry.value) {
+                true
+            } else {
+                order.retain(|k| k != key);
+                false
+            }
+        });
+        before - self.map.len()
     }
 
     /// 清空全部条目。
@@ -242,6 +271,22 @@ mod tests {
         std::thread::sleep(Duration::from_millis(50));
         assert_eq!(c.sweep(), 2);
         assert_eq!(c.sweep(), 0);
+    }
+
+    #[test]
+    fn retain_drops_matching_entries_and_keeps_order_consistent() {
+        let mut c = cache(4);
+        c.insert("chat1:a".into(), 1);
+        c.insert("chat1:b".into(), 2);
+        c.insert("chat2:a".into(), 3);
+        let removed = c.retain(|k, _| !k.starts_with("chat1:"));
+        assert_eq!(removed, 2);
+        assert_eq!(c.len(), 1);
+        // 淘汰队列同步清理：再插入两项不应误淘汰残留 key
+        c.insert("chat3:a".into(), 4);
+        c.insert("chat4:a".into(), 5);
+        assert_eq!(c.len(), 3);
+        assert_eq!(c.get(&"chat4:a".to_string()), Some(&5));
     }
 
     #[test]

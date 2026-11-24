@@ -9,13 +9,13 @@
 mod event;
 mod types;
 
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use async_trait::async_trait;
+use easybot_adapter_kit::cache::BoundedCache;
 use easybot_core::bus::EventBus;
 use easybot_core::capabilities;
 use easybot_core::http::{CachedTokenStore, TokenFetcher};
@@ -53,7 +53,7 @@ const USER_NAME_CACHE_TTL_SECS: u64 = 30;
 /// 平台在超时未收到 ACK 时会重推事件（慢 handler 触发），需幂等去重。
 /// 有界：容量上限 + 插入时淘汰过期项，防止重推风暴导致无界增长。
 struct EventDedup {
-    inner: Mutex<HashMap<String, Instant>>,
+    inner: Mutex<BoundedCache<String, ()>>,
 }
 
 impl EventDedup {
@@ -64,7 +64,7 @@ impl EventDedup {
 
     fn new() -> Self {
         Self {
-            inner: Mutex::new(HashMap::new()),
+            inner: Mutex::new(BoundedCache::with_ttl(Self::CAP, Self::TTL)),
         }
     }
 
@@ -74,18 +74,12 @@ impl EventDedup {
             return true; // 无 event_id 不参与去重
         }
         let mut map = self.inner.lock().unwrap_or_else(|p| p.into_inner());
-        // 插入时主动淘汰过期项，避免惰性清理导致的突增
-        map.retain(|_, t| t.elapsed() < Self::TTL);
-        if map.contains_key(event_id) {
+        let key = event_id.to_string();
+        if map.contains_key(&key) {
             return false;
         }
-        if map.len() >= Self::CAP {
-            // 容量上限：移除最旧的一项（近似 FIFO）
-            if let Some(oldest) = map.iter().min_by_key(|(_, t)| **t).map(|(k, _)| k.clone()) {
-                map.remove(&oldest);
-            }
-        }
-        map.insert(event_id.to_string(), Instant::now());
+        // 容量上限与 TTL 由 BoundedCache 保证（超限淘汰最旧项）
+        map.insert(key, ());
         true
     }
 }
@@ -214,7 +208,7 @@ pub struct FeishuAdapter {
     token_store: FeishuTokenStore,
     /// open_id → 昵称 缓存（含负缓存）。
     /// 把 contact/v3/users 调用摊薄到 TTL 窗口，避免 p2p/群消息每条都打联系人 API。
-    user_name_cache: Mutex<HashMap<String, (Option<String>, Instant)>>,
+    user_name_cache: Mutex<BoundedCache<String, Option<String>>>,
 }
 
 impl FeishuAdapter {
@@ -245,7 +239,10 @@ impl FeishuAdapter {
             heartbeat: Heartbeat::new(),
             http_client: std::sync::OnceLock::new(),
             token_store: FeishuTokenStore::new(),
-            user_name_cache: Mutex::new(HashMap::new()),
+            user_name_cache: Mutex::new(BoundedCache::with_ttl(
+                USER_NAME_CACHE_LIMIT,
+                Duration::from_secs(USER_NAME_CACHE_TTL_SECS),
+            )),
         }
     }
 
@@ -990,37 +987,21 @@ impl FeishuAdapter {
     /// 查询用户昵称缓存。返回 `Some(name)` 表示命中（`name=None` 为负缓存：最近查询失败/无名字）；
     /// `None` 表示未缓存，需要调 API。
     fn user_name_cached(&self, user_id: &str) -> Option<Option<String>> {
-        let cache = self
+        let mut cache = self
             .user_name_cache
             .lock()
             .unwrap_or_else(|p| p.into_inner());
-        if let Some((name, expiry)) = cache.get(user_id)
-            && expiry.elapsed() < Duration::from_secs(USER_NAME_CACHE_TTL_SECS)
-        {
-            return Some(name.clone());
-        }
-        None
+        cache.get(&user_id.to_string()).cloned()
     }
 
-    /// 写入用户昵称缓存。超限时先清过期条目，仍超限则逐出最早过期的一项（近似 FIFO），
-    /// 保证容量有界（对齐 CLAUDE.md 缓存约束）。
+    /// 写入用户昵称缓存。容量上限与 TTL 由 [`BoundedCache`] 保证
+    /// （超限按插入顺序淘汰最旧项），不再手写「先清过期再逐出最早」。
     fn cache_user_name(&self, user_id: &str, name: Option<String>) {
         let mut cache = self
             .user_name_cache
             .lock()
             .unwrap_or_else(|p| p.into_inner());
-        cache.insert(user_id.to_string(), (name, Instant::now()));
-        if cache.len() > USER_NAME_CACHE_LIMIT {
-            cache.retain(|_, (_, t)| t.elapsed() < Duration::from_secs(USER_NAME_CACHE_TTL_SECS));
-        }
-        if cache.len() > USER_NAME_CACHE_LIMIT
-            && let Some(oldest) = cache
-                .iter()
-                .min_by(|a, b| a.1.1.cmp(&b.1.1))
-                .map(|(k, _)| k.clone())
-        {
-            cache.remove(&oldest);
-        }
+        cache.insert(user_id.to_string(), name);
     }
 
     /// Cancel the old WebSocket task (if any) and spawn a new one.
@@ -1093,8 +1074,9 @@ impl FeishuAdapter {
         };
 
         // Role cache shared across event handlers
-        let role_cache: Arc<Mutex<HashMap<String, (SenderRole, Instant)>>> =
-            Arc::new(Mutex::new(HashMap::new()));
+        let role_cache: Arc<Mutex<BoundedCache<String, SenderRole>>> = Arc::new(Mutex::new(
+            BoundedCache::with_ttl(ROLE_CACHE_LIMIT, Duration::from_secs(ROLE_CACHE_TTL_SECS)),
+        ));
         let shared_token_store = self.token_store.clone();
         // 事件去重：按 header.event_id 丢弃平台重推的重复事件
         let event_dedup = Arc::new(EventDedup::new());
@@ -1532,7 +1514,7 @@ impl FeishuAdapter {
         client: &reqwest::Client,
         base_url: &str,
         token_store: &FeishuTokenStore,
-        role_cache: &Mutex<HashMap<String, (SenderRole, Instant)>>,
+        role_cache: &Mutex<BoundedCache<String, SenderRole>>,
     ) -> Option<SenderRole> {
         // 只处理群聊消息
         let chat_type = event_data
@@ -1553,12 +1535,8 @@ impl FeishuAdapter {
         // 检查缓存（TTL 过期后重新查询）
         {
             let mut cache = role_cache.lock().ok()?;
-            if let Some((role, expiry)) = cache.get(&cache_key) {
-                if expiry.elapsed() < Duration::from_secs(ROLE_CACHE_TTL_SECS) {
-                    return Some(role.clone());
-                }
-                // 缓存过期，移除
-                cache.remove(&cache_key);
+            if let Some(role) = cache.get(&cache_key) {
+                return Some(role.clone());
             }
         }
 
@@ -1600,22 +1578,10 @@ impl FeishuAdapter {
             SenderRole::Member
         };
 
-        // 写入缓存（TTL + im.chat.updated_v1 事件双重失效机制）
+        // 写入缓存（TTL + im.chat.updated_v1 事件双重失效机制）。
+        // 容量上限与 TTL 由 BoundedCache 保证。
         if let Ok(mut cache) = role_cache.lock() {
-            // 插入前主动淘汰过期项，避免惰性清理导致短时间突增
-            cache.retain(|_, (_, expiry)| {
-                expiry.elapsed() < Duration::from_secs(ROLE_CACHE_TTL_SECS)
-            });
-            // 容量上限：仍超限则移除最旧的一项（近似 FIFO）
-            if cache.len() >= ROLE_CACHE_LIMIT
-                && let Some(oldest) = cache
-                    .iter()
-                    .min_by_key(|(_, (_, expiry))| *expiry)
-                    .map(|(k, _)| k.clone())
-            {
-                cache.remove(&oldest);
-            }
-            cache.insert(cache_key, (role.clone(), Instant::now()));
+            cache.insert(cache_key, role.clone());
         }
 
         Some(role)

@@ -11,18 +11,24 @@
 mod types;
 
 use std::borrow::Cow;
-use std::collections::HashMap;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
+use easybot_adapter_kit::cache::BoundedCache;
 use easybot_core::bus::EventBus;
 use easybot_core::capabilities;
 use easybot_core::types::adapter::*;
 use easybot_core::types::error::GatewayError;
 use easybot_core::types::event::GatewayEvent;
+
+/// guild 元数据缓存容量上限（防止无界增长）。
+pub(crate) const GUILD_CACHE_LIMIT: usize = 5_000;
+
+/// guild 元数据缓存（owner_id / name），按插入顺序淘汰最旧项。
+pub(crate) type GuildCache = Arc<Mutex<BoundedCache<String, String>>>;
 use easybot_core::types::event::event_types;
 use easybot_core::types::message::*;
 use tokio::sync::Semaphore;
@@ -61,9 +67,9 @@ pub struct DiscordAdapter {
     /// Gateway 连接后得到的 bot user id，用于过滤自身消息
     bot_user_id: Option<String>,
     /// 服务器 Owner 缓存（guild_id → owner_user_id），事件驱动更新
-    guild_owner_cache: Arc<Mutex<HashMap<String, String>>>,
+    guild_owner_cache: GuildCache,
     /// Guild 名称缓存（从 Ready 事件中填充），用于入站消息的 chat_name
-    guild_name_cache: Arc<Mutex<HashMap<String, String>>>,
+    guild_name_cache: GuildCache,
     /// Gateway 分片数（由 GET /gateway/bot 动态获取，失败回退 1）
     shard_count: u32,
 }
@@ -132,8 +138,8 @@ impl DiscordAdapter {
             heartbeat: Heartbeat::new(),
             http_client: OnceLock::new(),
             bot_user_id: None,
-            guild_owner_cache: Arc::new(Mutex::new(HashMap::new())),
-            guild_name_cache: Arc::new(Mutex::new(HashMap::new())),
+            guild_owner_cache: Arc::new(Mutex::new(BoundedCache::new(GUILD_CACHE_LIMIT))),
+            guild_name_cache: Arc::new(Mutex::new(BoundedCache::new(GUILD_CACHE_LIMIT))),
             shard_count: 1,
         }
     }
@@ -481,8 +487,8 @@ impl DiscordAdapter {
         bot_user_id: String,
         mut cancel_rx: broadcast::Receiver<()>,
         heartbeat: Heartbeat,
-        guild_owner_cache: Arc<Mutex<HashMap<String, String>>>,
-        guild_name_cache: Arc<Mutex<HashMap<String, String>>>,
+        guild_owner_cache: GuildCache,
+        guild_name_cache: GuildCache,
         messages_in: Arc<AtomicU64>,
         shard_id: ShardId,
     ) {
@@ -539,7 +545,7 @@ impl DiscordAdapter {
                             let guild_id_str = msg.guild_id.map(|g| g.to_string());
                             let owner_id = guild_id_str.as_ref().and_then(|gid| {
                                 guild_owner_cache.try_lock().ok()
-                                    .and_then(|cache| cache.get(gid).cloned())
+                                    .and_then(|mut cache| cache.get(gid).cloned())
                             });
 
                             // 有限并发的 guild owner 查询（Semaphore 控制，最多 5 个并发）
@@ -566,10 +572,6 @@ impl DiscordAdapter {
                                                     .get("owner_id")
                                                     .and_then(|v| v.as_str())
                                                     && let Ok(mut cache) = cache.try_lock() {
-                                                        const GUILD_CACHE_LIMIT: usize = 5_000;
-                                                        if cache.len() > GUILD_CACHE_LIMIT {
-                                                            cache.clear();
-                                                        }
                                                         cache.insert(g, oid.to_string());
                                                     }
                                     });
@@ -578,7 +580,7 @@ impl DiscordAdapter {
                             // Look up guild name from cache for chat_name
                             let guild_name = guild_id_str.as_ref().and_then(|gid| {
                                 guild_name_cache.try_lock().ok()
-                                    .and_then(|cache| cache.get(gid).cloned())
+                                    .and_then(|mut cache| cache.get(gid).cloned())
                             });
                             if let Some(inbound) = DiscordAdapter::convert_message(
                                 &msg.message,
@@ -598,10 +600,6 @@ impl DiscordAdapter {
                         Some(Ok(Event::GuildUpdate(guild))) => {
                             heartbeat.beat(); // 事件驱动的 liveness 更新
                             if let Ok(mut cache) = guild_owner_cache.try_lock() {
-                                const GUILD_CACHE_LIMIT: usize = 5_000;
-                                if cache.len() > GUILD_CACHE_LIMIT {
-                                    cache.clear();
-                                }
                                 cache.insert(
                                     guild.id.to_string(),
                                     guild.owner_id.to_string(),
@@ -609,10 +607,6 @@ impl DiscordAdapter {
                             }
                             // Also update guild name cache
                             if let Ok(mut cache) = guild_name_cache.try_lock() {
-                                const GUILD_CACHE_LIMIT: usize = 5_000;
-                                if cache.len() > GUILD_CACHE_LIMIT {
-                                    cache.clear();
-                                }
                                 cache.insert(guild.id.to_string(), guild.name.clone());
                             }
                         }
@@ -621,10 +615,6 @@ impl DiscordAdapter {
                             if let GuildCreate::Available(g) = &*guild
                                 && let Ok(mut cache) = guild_name_cache.try_lock()
                             {
-                                const GUILD_CACHE_LIMIT: usize = 5_000;
-                                if cache.len() > GUILD_CACHE_LIMIT {
-                                    cache.clear();
-                                }
                                 cache.insert(g.id.to_string(), g.name.clone());
                             }
                         }
