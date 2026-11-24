@@ -139,9 +139,9 @@ secrets/data 目录属主 `UID 10001` 且仅属主可读。
 
 ## 控制适配器启用（尤其微信）
 
-启用规则：**设置了凭据的平台自动启用；个人微信无需凭据、默认自动启用并等待扫码登录**。
-容器部署时若不想启用微信（或要强制开关某平台），在挂载的 `gateway.yaml` 中显式声明
-（覆盖镜像内置 `/etc/easybot/gateway.yaml`，需继承容器基础配置）：
+启用规则：**设置了凭据的平台自动启用**；**个人微信无凭据、默认关闭**（自 v0.0.44 起 opt-in，
+需显式 `adapters.wechat.enabled: true` 才启动扫码登录）。容器部署时若要开关某平台，在挂载的
+`gateway.yaml` 中显式声明（覆盖镜像内置 `/etc/easybot/gateway.yaml`，需继承容器基础配置）：
 
 ```yaml
 server:
@@ -149,7 +149,7 @@ server:
   port: 8080
 adapters:
   wechat:
-    enabled: false        # 显式禁用（默认 None=自动；微信无凭据会自动启用）
+    enabled: false        # 显式关闭（个人微信默认即关闭；写 true 才启动扫码登录）
   telegram:
     enabled: true         # 显式启用（可选；设置了 token 也会自动启用）
 ```
@@ -164,8 +164,8 @@ docker run -d --name easybot \
 
 > **微信扫码登录**：微信适配器启动时会把登录二维码打印到 `docker logs -f easybot`，
 > 用手机微信扫码即可；登录态保存在数据卷 `easybot-data`，容器重启无需重扫。
-> 不启用则如上 `enabled: false`（已在镜像实测：日志出现
-> `Skipping adapter 'wechat' — explicitly disabled in config`）。
+> 关闭则写 `enabled: false`（启动日志出现
+> `Skipping adapter 'wechat' — explicitly disabled in config`，且健康监控不会把它重新拉起）。
 
 **不改 YAML、用环境变量切换**：在 `gateway.yaml` 里写 `enabled: ${EASYBOT_WECHAT_ENABLED}`，
 运行加 `-e EASYBOT_WECHAT_ENABLED=false` 即禁用（该值未设置时视为自动）。其余平台同理。

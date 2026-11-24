@@ -52,6 +52,9 @@
 - **Epic #140**：B 摞（wasm 插件）已暂缓，长驻分支 `epic/140-plugin-model` 为空壳，
   重启条件见 issue #140；A 摞（骨架/契约/加固）已全部合入 `main`。
 
+**待发版**：`main` 上有未发布修复 `fix(adapter): 显式 enabled:false 的适配器不再被健康监控拉起（修 #226）`
+（`configs` 拆为「实际启动过」/`declared_configs`「配置里声明」两个 map），待随 v0.0.47 发布。
+
 ## 本会话完成的大事（均已发布验证）
 
 1. **进程外插件架构**（破坏性）：`crates/easybot-plugin-protocol`（协议）+ `plugin/ipc.rs`（宿主 `IpcPluginAdapter`）+ `plugin/loader.rs`（进程外扫描/验签/工厂）+ SDK `run_plugin!`（替代 `declare_plugin!`/FFI）。**dlopen / libloading / FFI / PluginAdapterProxy / mock-adapter 全部移除**（含 Dockerfile、CI、脚本残留）。
