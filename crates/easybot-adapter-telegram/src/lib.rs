@@ -116,14 +116,13 @@ impl TelegramAdapter {
             .unwrap_or_else(|_| serde_json::Value::String(s.to_string()))
     }
 
-    /// 获取或创建缓存的 HTTP 客户端（延迟初始化，连接池复用）
+    /// 获取或创建缓存的 HTTP 客户端（延迟初始化，连接池复用）。
+    ///
+    /// 超时 / 连接超时 / User-Agent 统一由 `easybot-adapter-kit` 提供，
+    /// 避免各适配器参数漂移。
     fn http_client(&self) -> &reqwest::Client {
-        self.http_client.get_or_init(|| {
-            reqwest::Client::builder()
-                .timeout(Duration::from_secs(15))
-                .build()
-                .expect("构建 reqwest Client 失败")
-        })
+        self.http_client
+            .get_or_init(|| easybot_adapter_kit::http::client(Duration::from_secs(15)))
     }
 
     /// 设置事件总线（在 init 之前调用）
@@ -1802,97 +1801,16 @@ mod tests {
         assert_eq!(adapter.display_name(), "Telegram");
     }
 
-    #[test]
-    fn test_capabilities() {
-        let adapter = TelegramAdapter::new();
-        assert!(
-            adapter
-                .capabilities()
-                .iter()
-                .any(|c| c.name == CapabilityName::Text)
-        );
-    }
-
-    #[test]
-    fn test_default_state() {
-        let adapter = TelegramAdapter::new();
-        assert_eq!(adapter.state(), AdapterState::Created);
-    }
-
-    #[test]
-    fn test_default() {
-        let adapter = TelegramAdapter::default();
-        assert_eq!(adapter.platform_name(), "telegram");
-    }
-
-    #[test]
-    fn test_status_summary() {
-        let adapter = TelegramAdapter::new();
-        let s = adapter.status_summary();
-        assert_eq!(s.platform, "telegram");
-        assert_eq!(s.display_name, "Telegram");
-        assert!(!s.connected);
-        // health should be present (not None) — frontend relies on this
-        assert!(s.health.is_some(), "health should not be None");
-        assert_eq!(s.health.unwrap(), HealthStatus::Down);
-    }
-
-    #[test]
-    fn test_status_summary_includes_health() {
-        let adapter = TelegramAdapter::new();
-        // Before init/connect, state is Created → health_status() → Down
-        let s = adapter.status_summary();
-        assert_eq!(s.health, Some(HealthStatus::Down));
-    }
-
+    /// 平台无关的生命周期契约（init 幂等、disconnect 幂等、健康语义、
+    /// 状态摘要一致性等）统一由 adapter-kit 的 conformance 套件覆盖，
+    /// 不再在每个适配器里各抄一份。
     #[tokio::test]
-    async fn test_disconnect_idempotent() {
-        let mut adapter = TelegramAdapter::new();
-        // 在连接前 disconnect 不应 panic
-        adapter.disconnect().await.unwrap();
-        assert_eq!(adapter.state(), AdapterState::Stopped);
-    }
-
-    #[tokio::test]
-    async fn test_double_disconnect() {
-        let mut adapter = TelegramAdapter::new();
-        adapter.disconnect().await.unwrap();
-        adapter.disconnect().await.unwrap();
-        assert_eq!(adapter.state(), AdapterState::Stopped);
-    }
-
-    #[tokio::test]
-    async fn test_health_before_init() {
-        let adapter = TelegramAdapter::new();
-        let h = adapter.health().await;
-        assert_eq!(h.status, HealthStatus::Down);
-        assert!(!h.connected);
-    }
-
-    #[tokio::test]
-    async fn test_runtime_config_before_init() {
-        let adapter = TelegramAdapter::new();
-        let r = adapter.runtime_config();
-        assert!(!r.enabled);
-        assert!(!r.token_configured);
-    }
-
-    #[tokio::test]
-    async fn test_runtime_config_after_init() {
-        let mut adapter = TelegramAdapter::new();
-        adapter
-            .init(AdapterConfig {
-                enabled: Some(true),
-                token: Some("123:token".to_string()),
-                api_key: None,
-                base_url: None,
-                extra: serde_json::json!({}),
-            })
-            .await
-            .unwrap();
-        let r = adapter.runtime_config();
-        assert!(r.enabled);
-        assert!(r.token_configured);
+    async fn conformance() {
+        easybot_adapter_kit::conformance::run_all(
+            || Box::new(TelegramAdapter::new()),
+            easybot_adapter_kit::conformance::sample_config(),
+        )
+        .await;
     }
 
     #[tokio::test]

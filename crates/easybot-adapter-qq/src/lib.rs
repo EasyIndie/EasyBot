@@ -1654,6 +1654,19 @@ impl Default for QqAdapter {
 mod tests {
     use super::*;
 
+    /// 平台无关的生命周期契约（init 幂等、disconnect 幂等、健康语义、
+    /// 状态摘要一致性等）统一由 adapter-kit 的 conformance 套件覆盖。
+    #[tokio::test]
+    async fn conformance() {
+        easybot_adapter_kit::conformance::run_all(
+            || Box::new(QqAdapter::new()),
+            easybot_adapter_kit::conformance::sample_config_with_extra(
+                serde_json::json!({"app_id": "102000000"}),
+            ),
+        )
+        .await;
+    }
+
     #[test]
     fn test_create_adapter() {
         let adapter = QqAdapter::new();
@@ -1677,37 +1690,6 @@ mod tests {
     fn test_def_state_created() {
         let adapter = QqAdapter::new();
         assert_eq!(adapter.state(), AdapterState::Created);
-    }
-
-    #[tokio::test]
-    async fn test_disconnect_idempotent() {
-        let mut adapter = QqAdapter::new();
-        adapter.disconnect().await.unwrap();
-        assert_eq!(adapter.state(), AdapterState::Stopped);
-    }
-
-    #[tokio::test]
-    async fn test_double_disconnect() {
-        let mut adapter = QqAdapter::new();
-        adapter.disconnect().await.unwrap();
-        adapter.disconnect().await.unwrap();
-        assert_eq!(adapter.state(), AdapterState::Stopped);
-    }
-
-    #[tokio::test]
-    async fn test_health_before_init() {
-        let adapter = QqAdapter::new();
-        let h = adapter.health().await;
-        assert_eq!(h.status, HealthStatus::Down);
-        assert!(!h.connected);
-    }
-
-    #[tokio::test]
-    async fn test_runtime_config_before_init() {
-        let adapter = QqAdapter::new();
-        let r = adapter.runtime_config();
-        assert!(!r.enabled);
-        assert!(!r.token_configured);
     }
 
     #[tokio::test]
@@ -1751,17 +1733,6 @@ mod tests {
         let adapter = QqAdapter::new();
         let result = adapter.get_chat_info("123").await;
         assert!(result.is_err(), "Expected error when not initialized");
-    }
-
-    #[test]
-    fn test_capabilities() {
-        let adapter = QqAdapter::new();
-        assert!(
-            adapter
-                .capabilities()
-                .iter()
-                .any(|c| c.name == CapabilityName::Text && c.supported)
-        );
     }
 
     #[test]
@@ -1853,17 +1824,6 @@ mod tests {
         // 两个实例共享同一个 CachedTokenStore 状态
         assert!(store.needs_refresh());
         assert!(cloned.needs_refresh());
-    }
-
-    #[test]
-    fn test_status_summary() {
-        let adapter = QqAdapter::new();
-        let s = adapter.status_summary();
-        assert_eq!(s.platform, "qq");
-        assert_eq!(s.display_name, "QQ");
-        // health should be present (not None) — frontend relies on this
-        assert!(s.health.is_some(), "health should not be None");
-        assert_eq!(s.health.unwrap(), HealthStatus::Down);
     }
 
     // ── Gateway dispatch 测试 ──

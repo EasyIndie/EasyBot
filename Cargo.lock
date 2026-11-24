@@ -891,6 +891,7 @@ dependencies = [
  "async-trait",
  "base64 0.23.1",
  "chrono",
+ "easybot-adapter-kit",
  "easybot-core",
  "fixtures",
  "reqwest",
@@ -910,6 +911,7 @@ dependencies = [
  "async-trait",
  "base64 0.23.1",
  "chrono",
+ "easybot-adapter-kit",
  "easybot-core",
  "larksuite-oapi-sdk-rs",
  "reqwest",
@@ -921,12 +923,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "easybot-adapter-kit"
+version = "0.0.45"
+dependencies = [
+ "async-trait",
+ "easybot-core",
+ "reqwest",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "easybot-adapter-qq"
 version = "0.0.45"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
  "chrono",
+ "easybot-adapter-kit",
  "easybot-core",
  "fixtures",
  "futures",
@@ -946,6 +961,7 @@ version = "0.0.45"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
+ "easybot-adapter-kit",
  "easybot-core",
  "fixtures",
  "reqwest",
@@ -966,6 +982,7 @@ dependencies = [
  "base64 0.23.1",
  "chrono",
  "dirs",
+ "easybot-adapter-kit",
  "easybot-core",
  "md5",
  "qrcode",
