@@ -50,6 +50,25 @@ const MAX_LINE_BYTES: usize = 8 * 1024 * 1024;
 /// 事件回传速率上限（每分钟）。插件无沙箱，刷事件会打满宿主 CPU/事件总线。
 const MAX_EVENTS_PER_MINUTE: u32 = 6_000;
 
+/// 插件子进程默认内存上限（512 MB）。`0` 表示不限制。
+///
+/// 仅在 Unix 生效（`RLIMIT_AS`）；Windows 需要 Job Object，尚未实现。
+///
+/// 可用 `EASYBOT_PLUGIN_MEMORY_LIMIT_MB` 覆盖（`0` = 关闭）。仅在 Unix 生效
+/// （`RLIMIT_AS`）；Windows 需要 Job Object，尚未实现。
+#[cfg(unix)]
+const DEFAULT_PLUGIN_MEMORY_LIMIT_MB: u64 = 512;
+
+/// 解析生效的插件内存上限（字节）；`0` 表示不限。
+#[cfg(unix)]
+fn plugin_memory_limit_bytes() -> u64 {
+    let mb = std::env::var("EASYBOT_PLUGIN_MEMORY_LIMIT_MB")
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .unwrap_or(DEFAULT_PLUGIN_MEMORY_LIMIT_MB);
+    mb.saturating_mul(1024 * 1024)
+}
+
 /// 插件自述健康状态的编码：未上报（旧插件）。
 const HEALTH_UNREPORTED: u8 = 0;
 /// 插件自述健康。
@@ -277,6 +296,7 @@ impl IpcPluginAdapter {
         for (key, value) in &self.extra_env {
             command.env(key, value);
         }
+        apply_memory_limit(&mut command);
 
         // 新一代 pending + 复位存活标志（重连/重启场景）
         let pending: Arc<PendingMap> = Arc::new(Mutex::new(HashMap::new()));
@@ -826,6 +846,48 @@ mod tests {
     }
 }
 
+/// 给插件子进程加内存上限（Unix `RLIMIT_AS`）。
+///
+/// 插件无沙箱：一个内存泄漏的插件会先触发系统 OOM killer，而被杀的往往不是
+/// 它（Linux OOM score 偏袒小进程），结果是**宿主**被干掉。`RLIMIT_AS` 让
+/// 超限只影响插件自身 —— 分配失败 → 插件崩溃 → 宿主判 `Down` → 既有重连逻辑。
+///
+/// Windows 用 Job Object 才能达到同等效果，尚未实现（`docs/18` 已注明）。
+#[cfg(unix)]
+#[allow(unsafe_code)] // SAFETY: pre_exec 中仅调用 async-signal-safe 的 setrlimit
+fn apply_memory_limit(command: &mut Command) {
+    let limit = plugin_memory_limit_bytes();
+    if limit == 0 {
+        return;
+    }
+    // SAFETY: 闭包在 fork 之后、exec 之前运行，只调用 `setrlimit`
+    //（async-signal-safe）；失败不返回错误，只写 stderr —— 不能在 pre_exec
+    // 里做内存分配或加锁（会死锁）。
+    unsafe {
+        command.pre_exec(move || {
+            // rlim_t 在 64 位 Unix 上就是 u64；32 位目标上需要收窄（超限则饱和）。
+            #[cfg(target_pointer_width = "64")]
+            let limit_rlim: libc::rlim_t = limit;
+            #[cfg(not(target_pointer_width = "64"))]
+            let limit_rlim: libc::rlim_t =
+                libc::rlim_t::try_from(limit).unwrap_or(libc::rlim_t::MAX);
+            let rlim = libc::rlimit {
+                rlim_cur: limit_rlim,
+                rlim_max: limit_rlim,
+            };
+            if libc::setrlimit(libc::RLIMIT_AS, &rlim) != 0 {
+                // 用 write 而非 eprintln（后者可能分配）
+                let msg = b"easybot: failed to set RLIMIT_AS for plugin\n";
+                libc::write(2, msg.as_ptr().cast(), msg.len());
+            }
+            Ok(())
+        });
+    }
+}
+
+#[cfg(not(unix))]
+fn apply_memory_limit(_command: &mut Command) {}
+
 #[cfg(test)]
 mod heartbeat_tests {
     use super::*;
@@ -924,5 +986,31 @@ mod rate_limit_tests {
             assert!(limiter.allow());
         }
         assert_eq!(limiter.dropped(), 0);
+    }
+}
+
+#[cfg(test)]
+mod memory_limit_tests {
+    use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn default_is_512mb() {
+        // 不依赖环境变量的具体值（其它测试可能设置），只校验解析逻辑的量级：
+        // 未设置时默认 512 MB —— 这里直接断言常量，避免测试间环境变量竞争。
+        assert_eq!(DEFAULT_PLUGIN_MEMORY_LIMIT_MB, 512);
+        assert_eq!(
+            DEFAULT_PLUGIN_MEMORY_LIMIT_MB.saturating_mul(1024 * 1024),
+            512 * 1024 * 1024
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn applying_limit_does_not_break_command_construction() {
+        // 只为覆盖 pre_exec 注册路径（真正的限制效果需要子进程配合验证，
+        // 由集成测试用真实插件进程覆盖）。
+        let mut cmd = Command::new("/bin/true");
+        apply_memory_limit(&mut cmd);
     }
 }

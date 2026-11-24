@@ -50,6 +50,10 @@
 
 ### Fixed
 
+- **进程外插件内存上限（Unix）**（#216）—— 用 `RLIMIT_AS` 在 `pre_exec` 里把插件子进程
+  限制到 **512 MB**（`EASYBOT_PLUGIN_MEMORY_LIMIT_MB` 可调，`0` = 不限）。超限时只有插件
+  自己分配失败并退出，宿主判 `Down` 后走既有重连逻辑 —— 此前一个内存泄漏的插件会先触发
+  系统 OOM killer，而被杀的往往是宿主或同机其它进程。Windows 需 Job Object，尚未实现。
 - **`plugin disable` 在插件运行中会永久死锁** —— 原写法
   `if !enabled && let Some(p) = self.platforms.read().await.get(name).cloned() { stop_adapter(..) }`：
   `if let` 的临时值（读锁守卫）活到整个 body，而 `stop_adapter` 内要取同一把锁的**写锁**
