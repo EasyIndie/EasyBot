@@ -29,8 +29,18 @@ COPY tests/fixtures/src/ tests/fixtures/src/
 # plugin_scaffold_template.rs 用 include_str! 编译时内嵌发布者 CI 模板
 # （../../.github/workflows/plugin-publish.yml）→ 必须进入构建上下文
 COPY .github/workflows/plugin-publish.yml .github/workflows/
+
+# 发行 profile 覆盖口（默认值 = Cargo.toml 的 [profile.release]，产物不变）。
+# CI 的 PR 校验构建传入 LTO=false / codegen-units=16：fat LTO + codegen-units=1
+# 是发行产物的取舍，却是 PR 迭代的瓶颈（每次 release 编译 +5 分钟以上）。
+# 真正的 fat-LTO 产物仍由 main 的 build-amd64/arm64 与 release.yml 的
+# container-preflight（Dockerfile.release + Trivy 扫描）覆盖。
+ARG CARGO_PROFILE_RELEASE_LTO=fat
+ARG CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1
 RUN --mount=type=cache,target=/app/target \
     --mount=type=cache,target=/usr/local/cargo/registry \
+    CARGO_PROFILE_RELEASE_LTO="$CARGO_PROFILE_RELEASE_LTO" \
+    CARGO_PROFILE_RELEASE_CODEGEN_UNITS="$CARGO_PROFILE_RELEASE_CODEGEN_UNITS" \
     cargo build --locked --release --features "default,plugin-system" --bin easybot && \
     cp target/release/easybot /easybot
 

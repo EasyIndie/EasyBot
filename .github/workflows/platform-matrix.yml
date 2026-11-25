@@ -33,6 +33,7 @@ permissions:
 jobs:
   targets:
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
     strategy:
       matrix:
         include:
@@ -76,9 +77,16 @@ jobs:
           cache-shared-key: platform-${{ inputs.operation }}-${{ matrix.target }}
           cache-save-if: ${{ github.ref == 'refs/heads/main' }}
 
+      # 非 Linux 目标只做「能否编译 + 无 warning」验证：clippy 的完整 lint 在
+      # Linux x86_64 的 `test` 作业里已经跑过（build 一次、lint 一次），
+      # 这里再跑一遍 clippy driver 只是让 macOS/Windows 各多花约 2 分钟。
+      # 注意：`cargo check` 不像 clippy 那样接受 `-- <rustc args>`，把
+      # `-D warnings` 走 RUSTFLAGS；依赖 crate 有 `--cap-lints allow`，不受影响。
       - name: Check target
         if: inputs.operation == 'check' && !contains(matrix.target, 'musl')
-        run: bash scripts/ci-step.sh "target check" cargo clippy --workspace --features "default,plugin-system" --target ${{ matrix.target }} --locked -- -D warnings
+        env:
+          RUSTFLAGS: "-D warnings"
+        run: bash scripts/ci-step.sh "target check" cargo check --workspace --features "default,plugin-system" --target ${{ matrix.target }} --locked
 
       # musl dependencies such as ring and aws-lc-sys compile C sources.
       # Validate the release binary with zigbuild's cross C toolchain.

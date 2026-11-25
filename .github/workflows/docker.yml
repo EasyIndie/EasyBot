@@ -24,28 +24,81 @@ jobs:
   build-pr:
     if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     permissions:
       contents: read
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
+      # 只在「可能改变镜像构建行为」的改动上跑 release 编译（约 7 分钟）。
+      # 纯源码改动不会改变构建管线本身：漏了 COPY、漏了 workspace 成员、
+      # 改了依赖或基础镜像，都会体现在下面这些文件里。
+      #
+      # 取舍：源码里新增指向构建上下文之外的 `include_str!` 仍可能让镜像构建
+      # 失败而这里看不到 —— main 的 build-amd64/arm64 与 release 的
+      # container-preflight（Dockerfile.release + Trivy 扫描）会兜住。
+      - name: Decide whether the image needs building
+        id: gate
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        run: |
+          set -euo pipefail
+          if [ -z "${BASE_SHA:-}" ]; then
+            echo "needed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          changed=$(git diff --name-only "$BASE_SHA" HEAD)
+          echo "changed files since base: $(printf '%s\n' "$changed" | grep -c . || true)"
+          if printf '%s\n' "$changed" \
+            | grep -qE '^(Dockerfile|\.dockerignore|deploy/gateway\.container\.yaml|\.github/workflows/docker\.yml)$|(^|/)Cargo\.(toml|lock)$'; then
+            echo "needed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "needed=false" >> "$GITHUB_OUTPUT"
+            {
+              echo "### Docker 校验构建已跳过"
+              echo ""
+              echo "本次 diff 未触及构建管线相关文件（Dockerfile / .dockerignore / "
+              echo "Cargo.toml / Cargo.lock / 各成员清单 / deploy/gateway.container.yaml / "
+              echo "docker.yml），镜像构建行为与 main 上已验证过的一致，"
+              echo "省下约 7 分钟 release 编译。"
+              echo "main 的 build-amd64/arm64 与 release 的 container-preflight 仍会做完整构建。"
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Set up Docker Buildx
+        if: steps.gate.outputs.needed == 'true'
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
 
+      # 校验用构建刻意关掉 fat LTO / 单 codegen unit：Cargo.toml 的
+      # [profile.release] 是给发行产物用的，fat LTO + codegen-units=1 让
+      # 每次 PR 的 release 编译要 5 分钟以上（PR 关键路径）。这里只验证
+      # 「Dockerfile 仍能构建、二进制仍能链接」，真正的 fat-LTO 产物由
+      # main 的 build-amd64/arm64 与 release.yml 的 container-preflight 覆盖。
       - name: Build (validation only — no push)
+        if: steps.gate.outputs.needed == 'true'
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
         with:
           context: .
           push: false
           platforms: linux/amd64
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          build-args: |
+            CARGO_PROFILE_RELEASE_LTO=false
+            CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16
+          # 显式 scope：默认 scope 按 ref 隔离，PR 之间、PR 与 main 之间互不
+          # 复用层缓存；固定 scope 后所有 PR 共用一份（docs-only 等改动的
+          # 构建可秒级命中）。
+          cache-from: type=gha,scope=easybot-build-pr
+          cache-to: type=gha,mode=max,scope=easybot-build-pr
 
   # ── amd64: 原生 x64 构建 ──
   build-amd64:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     permissions:
       contents: read
       packages: write
@@ -66,14 +119,15 @@ jobs:
           push: true
           platforms: linux/amd64
           labels: ${{ steps.docker-prep.outputs.meta-labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=easybot-amd64
+          cache-to: type=gha,mode=max,scope=easybot-amd64
           outputs: type=image,name=${{ env.REGISTRY }}/${{ steps.docker-prep.outputs.lower-repo }},push-by-digest=true
 
   # ── arm64: 原生 ARM 构建（GitHub 原生 ARM runner） ──
   build-arm64:
     if: github.event_name == 'push'
     runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
     permissions:
       contents: read
       packages: write
@@ -94,8 +148,8 @@ jobs:
           push: true
           platforms: linux/arm64
           labels: ${{ steps.docker-prep.outputs.meta-labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=easybot-arm64
+          cache-to: type=gha,mode=max,scope=easybot-arm64
           outputs: type=image,name=${{ env.REGISTRY }}/${{ steps.docker-prep.outputs.lower-repo }},push-by-digest=true
 
   # ── Merge: 组合 multi-arch manifest 并打标签推送 ──
@@ -103,6 +157,7 @@ jobs:
     needs: [build-amd64, build-arm64]
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
       packages: write

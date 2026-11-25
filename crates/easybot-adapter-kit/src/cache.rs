@@ -255,20 +255,29 @@ mod tests {
 
     #[test]
     fn ttl_expires_entries() {
-        let mut c: BoundedCache<String, u32> = BoundedCache::with_ttl(8, Duration::from_millis(30));
-        c.insert("a".into(), 1);
-        assert_eq!(c.get(&"a".to_string()), Some(&1));
-        std::thread::sleep(Duration::from_millis(60));
-        assert_eq!(c.get(&"a".to_string()), None);
-        assert!(c.is_empty());
+        // 「未过期」与「已过期」用两个缓存分别断言：把 30ms TTL 的写读放在同一个
+        // 缓存上，重负载下（并行跑 24 个单测、CI 共享 runner）读到已被调度延迟
+        // 拖到过期后的条目 → 假失败（推送门禁与 CI 都踩过）。
+        let mut alive: BoundedCache<String, u32> =
+            BoundedCache::with_ttl(8, Duration::from_secs(60));
+        alive.insert("a".into(), 1);
+        assert_eq!(alive.get(&"a".to_string()), Some(&1));
+
+        let mut expiring: BoundedCache<String, u32> =
+            BoundedCache::with_ttl(8, Duration::from_millis(30));
+        expiring.insert("a".into(), 1);
+        std::thread::sleep(Duration::from_millis(120));
+        assert_eq!(expiring.get(&"a".to_string()), None);
+        assert!(expiring.is_empty());
     }
 
     #[test]
     fn sweep_reports_removed_entries() {
-        let mut c: BoundedCache<String, u32> = BoundedCache::with_ttl(8, Duration::from_millis(20));
+        let mut c: BoundedCache<String, u32> = BoundedCache::with_ttl(8, Duration::from_millis(30));
         c.insert("a".into(), 1);
         c.insert("b".into(), 2);
-        std::thread::sleep(Duration::from_millis(50));
+        // 只断言「过期方向」，仍在调度抖动下的安全侧：睡 120ms ≫ 30ms TTL。
+        std::thread::sleep(Duration::from_millis(120));
         assert_eq!(c.sweep(), 2);
         assert_eq!(c.sweep(), 0);
     }

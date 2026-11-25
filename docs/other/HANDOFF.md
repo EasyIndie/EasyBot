@@ -49,8 +49,8 @@
   资源上限（调用 30s / 退出 5s / stdout 单行 8MB / 事件 6000·min⁻¹ / 内存 RLIMIT_AS 512MB）。
 - **修掉的真实缺陷**：`plugin disable` 运行中死锁、`disconnect` 无界等待、
   Discord guild owner 查询无超时、媒体下载三种不一致实现（一条恶意 URL 可打爆内存）。
-- **Epic #140**：B 摞（wasm 插件）已暂缓，长驻分支 `epic/140-plugin-model` 为空壳，
-  重启条件见 issue #140；A 摞（骨架/契约/加固）已全部合入 `main`。
+- **Epic #140**：B 摞（wasm 插件）已暂缓；重启需先建分支（旧的长驻分支 `epic/140-plugin-model`
+  已删除），重启条件见 issue #140。A 摞（骨架/契约/加固）已全部合入 `main`。
 
 **v0.0.47（2026-11-25，缺陷修复版）**：#226 — 显式 `enabled: false` 的适配器不再被健康监控拉起
 （`configs` 拆为「实际启动过」/ `declared_configs`「配置里声明」两个 map）；同步修正微信
