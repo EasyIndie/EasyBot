@@ -4,11 +4,15 @@
 
 - **CI 迭代耗时缩减（仅流水线，不改验证覆盖）** —— PR 关键路径原本是 Docker 校验构建
   （fat LTO + `codegen-units=1`，约 8 分钟），macOS/Windows 的交叉检查再花一次 clippy：
-  - `build-pr` 用 `CARGO_PROFILE_RELEASE_LTO=false` / `CODEGEN_UNITS=16` 关闭发行配置
-    （真正的 fat-LTO 产物仍由 main 的 `build-amd64/arm64` 与 release 的 `container-preflight`
-    覆盖），并给 GHA layer cache 加固定 `scope`（默认按 ref 隔离，PR 之间互不复用）；
+  - `build-pr` 只在**构建管线相关文件**变更时执行（`Dockerfile` / `.dockerignore` /
+    `Cargo.toml` / `Cargo.lock` / 各 workspace 成员清单 / `deploy/gateway.container.yaml` /
+    `docker.yml`）；纯源码改动不再支付约 7 分钟的 release 编译，由 main 的
+    `build-amd64/arm64` 与 release 的 `container-preflight` 做完整构建兜底；
+  - 真的需要构建时用 `CARGO_PROFILE_RELEASE_LTO=false` / `CODEGEN_UNITS=16` 关掉发行配置
+    （fat LTO 只对发行产物有意义），并给 GHA layer cache 加固定 `scope`（默认按 ref 隔离，
+    PR 之间互不复用）；
   - 非 Linux 目标的 `cross-check` 由 `clippy` 改为 `cargo check`（完整 clippy 仍在 Linux
-    `test` 作业执行）；
+    `test` 作业执行；`cargo check` 不支持 `-- <rustc args>`，`-D warnings` 走 `RUSTFLAGS`）；
   - `test` 作业允许 PR 分支保存 Rust 缓存（缓存按分支隔离，同一 PR 的第二次及以后 push
     变为增量编译）；
   - push 到 `main` 时跳过 `cross-check` / `feature-check`（merge queue 已在合并前的确切
