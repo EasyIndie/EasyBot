@@ -34,7 +34,38 @@ jobs:
       - name: Format
         run: cargo fmt --all --check
 
-  # ── Test: clippy → build → test (merged check + test-default + test-all) ──
+  # ── Clippy: 独立作业，与 test 并行（见 CHANGELOG「CI 迭代耗时」） ──
+  #
+  # 独立成作业的理由：
+  # - clippy 的编译产物（clippy-driver 产出的 metadata）与 nextest 需要的
+  #   codegen 产物不是同一批，放在同一个作业里串行执行时，PR 关键路径 =
+  #   clippy + 构建 + nextest（冷跑 7–10 分钟）；拆开并行后 = max(两者)。
+  # - 独立缓存键（clippy-ubuntu）：两个作业同时写同一个 shared-key 会互相
+  #   覆盖（rust-cache 后写者赢），拆键也避免 clippy 作业读到只有 rustc 产物的
+  #   缓存后仍需从零过一遍 clippy driver。
+  test-clippy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: ./.github/actions/setup-rust
+        id: rust-setup
+        with:
+          components: clippy
+          install-protoc: auto
+          cache-shared-key: "clippy-ubuntu"
+          cache-save-if: "true"
+
+      - name: Clippy
+        run: bash scripts/ci-step.sh "clippy" cargo clippy --workspace --features "default,plugin-system" --all-targets --locked -- -D warnings
+
+      - name: Cache summary
+        if: always()
+        shell: bash
+        run: |
+          echo "Rust cache exact hit: ${{ steps.rust-setup.outputs.cache-hit || 'false' }}" >> "$GITHUB_STEP_SUMMARY"
+
+  # ── Test: build → nextest（clippy 已拆到 test-clippy） ──
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -43,17 +74,12 @@ jobs:
       - uses: ./.github/actions/setup-rust
         id: rust-setup
         with:
-          components: clippy, rustfmt
           install-protoc: auto
           cache-shared-key: "test-ubuntu"
           # 允许 PR 分支保存缓存：cache 按分支隔离，main 的缓存 PR 可读、PR 自己
           # 的缓存不会被其它分支读到 —— 于是「同一 PR 的第 2 次及以后 push」
-          # 只需增量编译（clippy/CLI 二进制/nextest 三项合计约 5 分钟 → 约 1 分钟）。
-          # main 的缓存条目仍由 main 自己的运行写入，不会被 PR 覆盖。
+          # 只需增量编译。main 的缓存条目仍由 main 自己的运行写入，不会被 PR 覆盖。
           cache-save-if: "true"
-
-      - name: Clippy
-        run: bash scripts/ci-step.sh "clippy" cargo clippy --workspace --features "default,plugin-system" --all-targets --locked -- -D warnings
 
       - name: Build ipc-mock-plugin
         run: bash scripts/ci-step.sh "ipc-mock-plugin build" cargo build -p ipc-mock-plugin --locked
