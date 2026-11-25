@@ -1,5 +1,7 @@
 ## [Unreleased]
 
+## [0.0.47] - 2026-11-25
+
 ### Fixed
 
 - **显式 `enabled: false` 的适配器被健康监控重新拉起（禁用失效）**（#226）—— v0.0.46 为
@@ -12,6 +14,14 @@
   移除）。同时修复「配置里列了但凭据未设置而被跳过」的平台被健康监控拉起的问题。
   回归测试：`test_health_monitor_never_resurrects_explicitly_disabled_adapter` /
   `test_health_monitor_skips_adapter_with_missing_credentials`。
+
+### Changed
+
+- **文档对齐个人微信的 opt-in 启用语义**（#226 关联）—— v0.0.44 起个人微信改为 opt-in
+  （需显式 `adapters.wechat.enabled: true`），但 `gateway.yaml`、`docs/01`、`deploy-kit/README`
+  仍写着「无需凭据、默认自动启用并等待扫码登录」。现统一为三态说明（缺省 = 自动 /
+  `true` = 强制启用 / `false` = 强制关闭，健康监控不会重新拉起），并补上开启/关闭微信的
+  YAML 示例与对应启动日志。
 
 ## [0.0.46] - 2026-11-24
 

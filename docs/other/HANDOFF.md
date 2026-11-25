@@ -1,6 +1,6 @@
 # 交接上下文（压缩版）
 
-> 目的：替代长对话历史。**保持简短，勿扩写。** 最后更新：2026-11-24。
+> 目的：替代长对话历史。**保持简短，勿扩写。** 最后更新：2026-11-25。
 
 ## 环境 / 命令速查
 
@@ -8,7 +8,7 @@
 |---|---|
 | 仓库根 | WSL `/mnt/e/EasyBot` |
 | cargo | 先 `export PATH="/root/.cargo/bin:$PATH"` |
-| 全量测试 | `cargo test --workspace --features "default,plugin-system" --locked`（当前 **884 passed / 0 failed**） |
+| 全量测试 | `cargo test --workspace --features "default,plugin-system" --locked`（当前 **886 passed / 0 failed**） |
 | 插件测试 | 先 `cargo build -p ipc-mock-plugin`；再 `cargo test -p easybot-core --features plugin-system --test ipc_adapter` |
 | 前端测试 | `cd crates/easybot-api/templates && npm test`（29）/ `npm run lint` |
 | 发布预检 | `bash scripts/release-preflight.sh`（**禁止 `\| tail`**，用 `> /tmp/log 2>&1; echo $?`） |
@@ -32,7 +32,7 @@
 
 | 仓库 | main | tag | 状态 |
 |---|---|---|---|
-| `EasyIndie/EasyBot` | 见 `git log -1` | **v0.0.43 / v0.0.44 / v0.0.45 / v0.0.46** | 均已发布（各 15 产物：6 平台二进制 + SPDX SBOM + deploy-kit + version.json） |
+| `EasyIndie/EasyBot` | 见 `git log -1` | **v0.0.43 / v0.0.44 / v0.0.45 / v0.0.46 / v0.0.47** | 均已发布（各 15 产物：6 平台二进制 + SPDX SBOM + deploy-kit + version.json） |
 | `EasyIndie/easybot-hello-adapter` | `2d4ba06` | **v0.2.0** | 已发布（6 平台可执行文件 + ed25519 签名） |
 
 **已合并 PR**：#148（v0.0.42 主体，118 文件）、#153（release.yml 修 ABI 路径）、#154（v0.0.43 双重 init 修复）。
@@ -52,8 +52,9 @@
 - **Epic #140**：B 摞（wasm 插件）已暂缓，长驻分支 `epic/140-plugin-model` 为空壳，
   重启条件见 issue #140；A 摞（骨架/契约/加固）已全部合入 `main`。
 
-**待发版**：`main` 上有未发布修复 `fix(adapter): 显式 enabled:false 的适配器不再被健康监控拉起（修 #226）`
-（`configs` 拆为「实际启动过」/`declared_configs`「配置里声明」两个 map），待随 v0.0.47 发布。
+**v0.0.47（2026-11-25，缺陷修复版）**：#226 — 显式 `enabled: false` 的适配器不再被健康监控拉起
+（`configs` 拆为「实际启动过」/ `declared_configs`「配置里声明」两个 map）；同步修正微信
+opt-in 的过时文档。PR #227 / SQUASH 提交 `692dc25`。
 
 ## 本会话完成的大事（均已发布验证）
 

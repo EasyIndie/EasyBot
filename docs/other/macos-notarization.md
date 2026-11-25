@@ -102,7 +102,7 @@ inputs（不绑定本仓库的 secret 名），因此可直接被其它仓库/�
 ```yaml
       - name: Sign and notarize macOS binary
         if: contains(matrix.target, 'apple-darwin')
-        uses: EasyIndie/EasyBot/.github/actions/macos-sign-notarize@v0.0.46
+        uses: EasyIndie/EasyBot/.github/actions/macos-sign-notarize@v0.0.47
         with:
           binary: target/${{ matrix.target }}/release/myapp
           cert-base64: ${{ secrets.APPLE_DEVELOPER_ID_CERT_BASE64 }}
@@ -136,7 +136,7 @@ inputs（不绑定本仓库的 secret 名），因此可直接被其它仓库/�
 ```yaml
       - name: Sign Windows binary
         if: contains(matrix.target, 'windows-msvc')
-        uses: EasyIndie/EasyBot/.github/actions/windows-sign@v0.0.46
+        uses: EasyIndie/EasyBot/.github/actions/windows-sign@v0.0.47
         with:
           binary: target/${{ matrix.target }}/release/myapp.exe
           cert-base64: ${{ secrets.WINDOWS_CODE_SIGNING_CERT_BASE64 }}
