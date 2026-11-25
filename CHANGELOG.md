@@ -18,6 +18,10 @@
   - push 到 `main` 时跳过 `cross-check` / `feature-check`（merge queue 已在合并前的确切
     代码树上跑过）；
   - 各作业补 `timeout-minutes`（避免卡死拖满 6 小时），`Security Audit` 补 `concurrency`。
+- **Swagger UI 改为 vendored（构建期不再联网下载）** —— `utoipa-swagger-ui` 的 build
+  script 原先每次 `cargo build` 都要 `curl` 下载 swagger-ui zip；一次 TLS reset 就让构建
+  失败（PR #228 因此在 merge queue 里被弹回，`exit status: 56`）。开启 `vendored` 特性后
+  由 `utoipa-swagger-ui-vendored` 以字节内嵌，构建完全离线、可复现。
 
 ## [0.0.47] - 2026-11-25
 

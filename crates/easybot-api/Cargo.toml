@@ -24,7 +24,11 @@ reqwest.workspace = true
 uuid.workspace = true
 sha2.workspace = true
 utoipa = { workspace = true, features = ["axum_extras"] }
-utoipa-swagger-ui = { workspace = true, features = ["axum"] }
+# `vendored`：Swagger UI 的 dist 由 `utoipa-swagger-ui-vendored` 以字节内嵌，
+# 构建期不再 `curl` 下载 swagger-ui zip。原实现在每次 `cargo build`（含 CI、
+# 离线/受限网络环境）都要访问 GitHub CDN —— 一次 TLS reset 就让 build script
+# 失败，PR #228 因此在 merge queue 里被弹回（utoipa-swagger-ui build.rs exit 56）。
+utoipa-swagger-ui = { workspace = true, features = ["axum", "vendored"] }
 
 [features]
 default = []
