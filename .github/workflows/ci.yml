@@ -25,6 +25,7 @@ jobs:
   # ── Lint: fmt only, no compilation (~20s) ──────────────────────────
   lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: actions-rust-lang/setup-rust-toolchain@a188e68d0fd2bd36ad51dccb2b07ba6e75105f30 # v2.0.1
@@ -36,6 +37,7 @@ jobs:
   # ── Test: clippy → build → test (merged check + test-default + test-all) ──
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - uses: ./.github/actions/setup-rust
@@ -44,7 +46,11 @@ jobs:
           components: clippy, rustfmt
           install-protoc: auto
           cache-shared-key: "test-ubuntu"
-          cache-save-if: ${{ github.ref == 'refs/heads/main' }}
+          # 允许 PR 分支保存缓存：cache 按分支隔离，main 的缓存 PR 可读、PR 自己
+          # 的缓存不会被其它分支读到 —— 于是「同一 PR 的第 2 次及以后 push」
+          # 只需增量编译（clippy/CLI 二进制/nextest 三项合计约 5 分钟 → 约 1 分钟）。
+          # main 的缓存条目仍由 main 自己的运行写入，不会被 PR 覆盖。
+          cache-save-if: "true"
 
       - name: Clippy
         run: bash scripts/ci-step.sh "clippy" cargo clippy --workspace --features "default,plugin-system" --all-targets --locked -- -D warnings
@@ -72,7 +78,11 @@ jobs:
   # ── Feature matrix: validate edge feature combinations ─────────────
   feature-check:
     name: feature-check (${{ matrix.label }})
+    # merge queue 已经在合并前的确切代码树上跑过该矩阵，push 到 main 时再跑一遍
+    # 纯属重复（每次 merge 白烧 3 个 runner × 约 3 分钟）。
+    if: github.event_name != 'push'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     strategy:
       matrix:
         include:
@@ -103,6 +113,7 @@ jobs:
   # ── Disaster recovery: backup integrity and restore drill ──────────
   disaster-recovery:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: SQLite backup, tamper detection and restore
@@ -110,6 +121,9 @@ jobs:
 
   # ── Cross-platform check (Linux/macOS/Windows × x64/arm64) ──
   cross-check:
+    # 同上：6 个平台的交叉编译检查由 merge queue 在合并前保证，
+    # push 到 main 时重复执行每次约 6.5 分钟 × 6 个 runner。
+    if: github.event_name != 'push'
     uses: ./.github/workflows/platform-matrix.yml
     with:
       operation: check
