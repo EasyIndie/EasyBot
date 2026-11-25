@@ -17,6 +17,8 @@
     变为增量编译）；
   - push 到 `main` 时跳过 `cross-check` / `feature-check`（merge queue 已在合并前的确切
     代码树上跑过）；
+  - `clippy` 从 `test` 拆成独立作业 `test-clippy`（两者并行、各自缓存键）：此前 PR 关键路径
+    是 `clippy + 构建 + nextest` 串行（冷跑 7–10 分钟），现在由较慢的一个决定；
   - 各作业补 `timeout-minutes`（避免卡死拖满 6 小时），`Security Audit` 补 `concurrency`。
 - **Swagger UI 改为 vendored（构建期不再联网下载）** —— `utoipa-swagger-ui` 的 build
   script 原先每次 `cargo build` 都要 `curl` 下载 swagger-ui zip；一次 TLS reset 就让构建

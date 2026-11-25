@@ -8,7 +8,7 @@
 |---|---|
 | 仓库根 | WSL `/mnt/e/EasyBot` |
 | cargo | 先 `export PATH="/root/.cargo/bin:$PATH"` |
-| CI 版图（v0.0.47 后） | PR：`lint` + `test` + `feature-check`×3 + `disaster-recovery` + `cross-check`×6（非 Linux 用 `cargo check`）+ `build-pr`（**仅构建管线文件改动时真构建**）。push 到 main：只跑 `lint`+`test`（矩阵由 merge queue 保证）+ Docker/Coverage。
+| CI 版图（v0.0.47 后） | PR：`lint` + `test-clippy` + `test` + `feature-check`×3 + `disaster-recovery` + `cross-check`×6（非 Linux 用 `cargo check`）+ `build-pr`（**仅构建管线文件改动时真构建**）。push 到 main：只跑 `lint`+`test-clippy`+`test`（矩阵由 merge queue 保证）+ Docker/Coverage。**新增 `test-clippy` 后需在 ruleset 追加必需检查（14 → 15 项）**。
 | 全量测试 | `cargo test --workspace --features "default,plugin-system" --locked`（当前 **886 passed / 0 failed**） |
 | 插件测试 | 先 `cargo build -p ipc-mock-plugin`；再 `cargo test -p easybot-core --features plugin-system --test ipc_adapter` |
 | 前端测试 | `cd crates/easybot-api/templates && npm test`（29）/ `npm run lint` |
